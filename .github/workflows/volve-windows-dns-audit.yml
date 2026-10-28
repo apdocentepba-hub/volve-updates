@@ -24,7 +24,11 @@ jobs:
           $physical=@($live | Where-Object {$_.HardwareInterface})
           Write-Output "Active physical adapters: $($physical.Count)"
           if($physical.Count -eq 0){throw 'no physical adapter on Windows runner'}
+          $checked=0
           foreach($a in $physical) {
+            if($null -eq (Get-NetIPInterface -InterfaceIndex ([int]$a.ifIndex) -AddressFamily IPv4 -ErrorAction SilentlyContinue)) {
+              Write-Output "Skipping adapter without a registered IPv4 interface"; continue
+            }
             $guid=([string]$a.InterfaceGuid).Trim('{','}')
             $index=[int]$a.ifIndex
             if($index -le 0 -or $guid.Length -lt 20){throw 'invalid adapter identity'}
@@ -35,4 +39,6 @@ jobs:
             $reg4=Get-ItemProperty -LiteralPath $regPath -ErrorAction Stop
             $mode=if(![string]::IsNullOrWhiteSpace([string]$reg4.NameServer)){'manual'}else{'automatic'}
             Write-Output "Windows IPv4 assignment mode: $mode"
+            $checked++
           }
+          if($checked -lt 1){throw 'No active physical adapter with readable DNS configuration'}
