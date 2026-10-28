@@ -11,7 +11,7 @@
 - Suite principal Go, suite con `-race` y módulo del motor DNS: aprobados.
 - Análisis estático y compilación cruzada para Windows: aprobados.
 - **Windows Server 2025 alojado por GitHub Actions**: tareas de prueba SYSTEM con repetición de 5 minutos y ejecución al inicio, verificación exacta de tipos de activadores y eliminación de tareas temporales: **APROBADO**. [Ver ejecución real](https://github.com/apdocentepba-hub/volve-updates/actions/runs/40766243840).
-- Auditoría **solo lectura** de adaptadores DNS en Windows: [ver ejecuciones](https://github.com/apdocentepba-hub/volve-updates/actions/workflows/volve-windows-dns-audit.yml). La VM tiene adaptadores virtuales y algunos sin IPv4, por lo que **NO corresponde usarla para modificar el DNS productivo**.
+- Auditoría **solo lectura** de adaptadores DNS en Windows: [ver ejecuciones](https://github.com/apdocentepba-hub/volve-updates/actions/workflows/volve-windows-dns-audit.yml). **APROBADA** después de separar los adaptadores físicos de los virtuales y omitir interfaces sin pila IPv4. Se validó la lectura del modo automático/manual y la identificación por GUID en Windows Server 2025. [Ver ejecución aprobada](https://github.com/apdocentepba-hub/volve-updates/actions/runs/40766912421). La VM también tiene adaptadores virtuales; no se modificó ninguna configuración DNS.
 
 ## Respaldo privado
 
