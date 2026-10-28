@@ -1,0 +1,60 @@
+name: VOLVE Windows DNS capture and loopback smoke
+on:
+  push:
+    paths:
+      - .github/workflows/volve-windows-capture-check.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  capture:
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - name: Exercise Windows adapter inventory and isolated UDP 53
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          # Mirrors the VOLVE snapshot logic; read-only. Do NOT call Set-DnsClientServerAddress.
+          $adapters=@(Get-NetAdapter -ErrorAction Stop | Where-Object {
+            $_.Status -eq 'Up' -and $_.HardwareInterface -and
+            $null -ne (Get-NetIPInterface -InterfaceIndex ([int]$_.ifIndex) -AddressFamily IPv4 -ErrorAction SilentlyContinue)
+          })
+          if($adapters.Count -ne 1){throw "expected one active physical IPv4 adapter; got $($adapters.Count)"}
+          $a=$adapters[0]
+          $guid=([string]$a.InterfaceGuid).Trim('{','}')
+          $index=[int]$a.ifIndex
+          $v4=@((Get-DnsClientServerAddress -InterfaceIndex $index -AddressFamily IPv4 -ErrorAction Stop).ServerAddresses | Where-Object {$_})
+          $v6=@((Get-DnsClientServerAddress -InterfaceIndex $index -AddressFamily IPv6 -ErrorAction Stop).ServerAddresses | Where-Object {$_})
+          $r4=Get-ItemProperty -LiteralPath "HKLM:\SYSTEM\CurrentControlSet\Services\Tcpip\Parameters\Interfaces\{$guid}" -ErrorAction Stop
+          $r6=Get-ItemProperty -LiteralPath "HKLM:\SYSTEM\CurrentControlSet\Services\Tcpip6\Parameters\Interfaces\{$guid}" -ErrorAction SilentlyContinue
+          $m4=![string]::IsNullOrWhiteSpace([string]$r4.NameServer)
+          $m6=![string]::IsNullOrWhiteSpace([string]$r6.NameServer)
+          if($m4 -ne $m6){throw 'Mixed DNS assignment modes, VOLVE must reject this configuration'}
+          $mode=if($m4){'manual'}else{'automatic'}
+          $snapshot=@{schema=1;interface_index=$index;interface_guid=$guid;alias=[string]$a.Name;restore_mode=$mode;ipv4=@($v4);ipv6=@($v6)} | ConvertTo-Json -Compress -Depth 5
+          $parsed=$snapshot | ConvertFrom-Json
+          if($parsed.interface_guid -ne ([string]$a.InterfaceGuid).Trim('{','}')){throw 'GUID normalization failed'}
+          if($parsed.interface_index -ne $index){throw 'snapshot interface index changed'}
+          Write-Output "VOLVE SNAPSHOT PASS; mode=$mode; IPv4 servers=$($v4.Count); IPv6 servers=$($v6.Count)"
+          # Verify the privileged DNS port can be used ONLY on loopback.
+          # Never change any adapter, global DNS setting or firewall policy.
+          $listener=$null
+          $client=$null
+          try {
+            $listener=[System.Net.Sockets.UdpClient]::new([System.Net.IPEndPoint]::new([System.Net.IPAddress]::Loopback,53))
+            $listener.Client.ReceiveTimeout=3000
+            $client=[System.Net.Sockets.UdpClient]::new()
+            $client.Connect([System.Net.IPAddress]::Loopback,53)
+            [byte[]]$packet=@(0x58,0x4f,0x4c,0x56,0x45,0x2d,0x43,0x49)
+            [void]$client.Send($packet,$packet.Length)
+            $remote=[System.Net.IPEndPoint]::new([System.Net.IPAddress]::Any,0)
+            [byte[]]$received=$listener.Receive([ref]$remote)
+            if($received.Length -ne $packet.Length){throw 'loopback UDP payload mismatch'}
+            if(([BitConverter]::ToString($received)) -ne ([BitConverter]::ToString($packet))){throw 'loopback UDP byte mismatch'}
+            if(!$remote.Address.Equals([System.Net.IPAddress]::Loopback)){throw 'unexpected sender to DNS loopback'}
+            Write-Output 'VOLVE LOOPBACK UDP 127.0.0.1:53 PASS'
+          } finally {
+            if($null -ne $client){$client.Dispose()}
+            if($null -ne $listener){$listener.Dispose()}
+          }
