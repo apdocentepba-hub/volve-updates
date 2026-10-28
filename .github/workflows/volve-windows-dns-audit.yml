@@ -1,0 +1,35 @@
+name: VOLVE Windows DNS preflight read-only
+on:
+  push:
+    paths:
+      - .github/workflows/volve-windows-dns-audit.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  network-preflight:
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - name: Inspect Windows DNS cmdlets and interface identity WITHOUT changing DNS
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          foreach($name in @('Get-NetAdapter','Get-DnsClientServerAddress','Set-DnsClientServerAddress')) {
+            $cmd=Get-Command $name -ErrorAction Stop
+            Write-Output "$name available in $($cmd.ModuleName)"
+          }
+          $live=@(Get-NetAdapter -ErrorAction Stop | Where-Object {$_.Status -eq 'Up'})
+          Write-Output "Active adapters: $($live.Count)"
+          foreach($a in $live) {
+            $guid=([string]$a.InterfaceGuid).Trim('{','}')
+            $index=[int]$a.ifIndex
+            if($index -le 0 -or $guid.Length -lt 20){throw 'invalid adapter identity'}
+            $v4=@((Get-DnsClientServerAddress -InterfaceIndex $index -AddressFamily IPv4 -ErrorAction Stop).ServerAddresses | Where-Object {$_})
+            $v6=@((Get-DnsClientServerAddress -InterfaceIndex $index -AddressFamily IPv6 -ErrorAction Stop).ServerAddresses | Where-Object {$_})
+            Write-Output "Adapter interface index=$index v4Servers=$($v4.Count) v6Servers=$($v6.Count) physical=$($a.HardwareInterface)"
+            $regPath="HKLM:\SYSTEM\CurrentControlSet\Services\Tcpip\Parameters\Interfaces\{$guid}"
+            $reg4=Get-ItemProperty -LiteralPath $regPath -ErrorAction Stop
+            $mode=if(![string]::IsNullOrWhiteSpace([string]$reg4.NameServer)){'manual'}else{'automatic'}
+            Write-Output "Windows IPv4 assignment mode: $mode"
+          }
