@@ -21,7 +21,10 @@ jobs:
           }
           $live=@(Get-NetAdapter -ErrorAction Stop | Where-Object {$_.Status -eq 'Up'})
           Write-Output "Active adapters: $($live.Count)"
-          foreach($a in $live) {
+          $physical=@($live | Where-Object {$_.HardwareInterface})
+          Write-Output "Active physical adapters: $($physical.Count)"
+          if($physical.Count -eq 0){throw 'no physical adapter on Windows runner'}
+          foreach($a in $physical) {
             $guid=([string]$a.InterfaceGuid).Trim('{','}')
             $index=[int]$a.ifIndex
             if($index -le 0 -or $guid.Length -lt 20){throw 'invalid adapter identity'}
