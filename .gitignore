@@ -1,0 +1,9 @@
+*.pem
+*PRIVATE*
+*.key
+*secret*
+*.p12
+*.pfx
+__pycache__/
+*.exe
+*.zip
