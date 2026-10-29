@@ -15,7 +15,7 @@ export const siteConfig = {
     android: { url: null as string | null, version: null as string | null, sha256: null as string | null },
   },
   donations: [
-    { id: "cafecito", label: "Cafecito", url: null },
+    { id: "cafecito", label: "Invitá un Cafecito", url: "https://cafecito.app/volve" },
     { id: "mercadopago", label: "Mercado Pago", url: null },
     { id: "transferencia", label: "Transferencia bancaria", url: null },
   ] as DonationChannel[],
