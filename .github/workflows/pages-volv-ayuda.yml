@@ -1,0 +1,33 @@
+name: Publicar directorio de ayuda VOLVÉ
+on:
+  push:
+    branches: [main]
+    paths:
+      - "docs/**"
+      - ".github/workflows/pages-volv-ayuda.yml"
+  workflow_dispatch:
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+concurrency:
+  group: volve-ayuda-pages
+  cancel-in-progress: true
+jobs:
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Leer archivos del repositorio
+        uses: actions/checkout@v4
+      - name: Configurar GitHub Pages
+        uses: actions/configure-pages@v5
+      - name: Publicar los archivos HTML
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: ./docs
+      - name: Desplegar sitio
+        id: deployment
+        uses: actions/deploy-pages@v4
