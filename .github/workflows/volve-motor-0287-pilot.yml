@@ -60,6 +60,22 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: '1.23.x'
+      - name: Validate VM-only real-reboot lab without running it
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $path='development/0.28.7/lab/VOLVE_VM_REBOOT_LAB.ps1'
+          $tokens=$null
+          $errorsList=$null
+          [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path $path),[ref]$tokens,[ref]$errorsList) | Out-Null
+          if($errorsList.Count -gt 0){$errorsList | Format-List;throw 'VM reboot script PowerShell parse failed'}
+          $content=[IO.File]::ReadAllText((Resolve-Path $path))
+          foreach($forbidden in @('Restart-Computer','shutdown.exe','Set-DnsClientServerAddress','netsh interface ip set dns','VOLVE-DNS-SERVER-0270')){
+            if($content.Contains($forbidden)){throw ('Unexpected production or reboot command in lab: '+$forbidden)}
+          }
+          & $path -Mode ValidateScript -LabId '123456'
+          if($LASTEXITCODE -ne 0){throw 'No-write validation failed'}
+          Write-Host 'PASS: VM lab syntax and no-write entry point; actual reboot NOT executed.'
       - name: Rebuild verified complete source ZIP
         shell: pwsh
         run: |
