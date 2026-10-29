@@ -58,7 +58,7 @@
  if(o.nota)c.append(make('div','notice',o.nota));
  const a=make('div','actions');a.append(external(o.fuente,'Fuente oficial ↗','btn subtle'));if(o.fuenteAlternativa)a.append(external(o.fuenteAlternativa,'Otra fuente oficial ↗','btn outline'));
  if(o.direccion){let search=o.direccion+', '+o.localidad+', Buenos Aires, Argentina';a.append(external('https://www.google.com/maps/search/?api=1&query='+encodeURIComponent(search),'Cómo llegar ↗','btn outline'))};
- if(o.tipo==='publico'&&o.telefono){let first=o.telefono.split('/')[0].replace(/[^\d+]/g,'');let tel=make('a','btn outline',o.telefono.includes('WhatsApp')?'Llamar / WhatsApp':'Llamar');tel.href='tel:'+first;a.append(tel)}
+ if(o.tipo==='publico'&&o.telefono){let first=o.telefono.split('/')[0].replace(/[^\d+]/g,'');let tel=make('a','btn outline','Llamar');tel.href='tel:'+first;a.append(tel);if(o.localidad==='Olavarría')a.append(external('https://wa.me/5492284520151','Consultar WhatsApp ↗','btn subtle'))}
  c.append(a);return c;
  };
  const render=()=>{const query=normalize(q.value.trim());const filtered=list.filter(o=>(!query||normalize([o.localidad,o.nombre,o.lugar,o.direccion].join(' ')).includes(query))&&(!zone.value||o.zona===zone.value)&&(!kind.value||o.tipo===kind.value)&&(!day.value||o.horarios.some(h=>h.dia===day.value))).sort((a,b)=>{const za={sur:0,oeste:1,norte:2,interior:3,Provincia:4};return (za[a.zona]-za[b.zona])||a.localidad.localeCompare(b.localidad,'es')});
