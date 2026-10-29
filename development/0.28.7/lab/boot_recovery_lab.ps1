@@ -49,11 +49,11 @@ if($Mode -eq 'stage'){
  Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trig -User SYSTEM -RunLevel Highest | Out-Null
  TaskAction $TaskName $cmd '/C exit 0'
  [IO.File]::WriteAllText($xmlPath,(Export-ScheduledTask -TaskName $TaskName),[Text.UTF8Encoding]::new($false))
- Journal @('prepare',$journal,$old,$new,$xmlPath,'0.29.0') | Out-Null
- Journal @('advance',$journal,'switching') | Out-Null
+ Journal -Arguments @('prepare',$journal,$old,$new,$xmlPath,'0.29.0') | Out-Null
+ Journal -Arguments @('advance',$journal,'switching') | Out-Null
  Set-ScheduledTask -TaskName $TaskName -Action (New-ScheduledTaskAction -Execute $notepad) | Out-Null
  TaskAction $TaskName $notepad ''
- Journal @('advance',$journal,'proving') | Out-Null
+ Journal -Arguments @('advance',$journal,'proving') | Out-Null
  # This recovery task *would* run on a boot; for CI it is manually started.
  # It cannot be published/installed; only exact CI disposable task names accepted.
  $script=$PSCommandPath
@@ -70,17 +70,17 @@ if($Mode -eq 'recover'){
  try{
   $who=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value
   if($who -ne 'S-1-5-18'){throw ('Boot recovery not running as SYSTEM: '+$who)}
-  $state=Journal @('status',$journal)
+  $state=Journal -Arguments @('status',$journal)
   if($state -ne 'ROLLBACK_REQUIRED'){throw 'Recovery is not required'}
-  Journal @('verify-snapshot',$journal,$xmlPath) | Out-Null
-  Journal @('verify-previous',$journal,$old) | Out-Null
+  Journal -Arguments @('verify-snapshot',$journal,$xmlPath) | Out-Null
+  Journal -Arguments @('verify-previous',$journal,$old) | Out-Null
   TaskAction $TaskName $notepad ''
-  Journal @('advance',$journal,'restoring') | Out-Null
+  Journal -Arguments @('advance',$journal,'restoring') | Out-Null
   $saved=[IO.File]::ReadAllText($xmlPath)
   if($saved -notmatch 'cmd\.exe'){throw 'Unexpected original task executable'}
   Register-ScheduledTask -TaskName $TaskName -Xml $saved -Force | Out-Null
   TaskAction $TaskName $cmd '/C exit 0'
-  Journal @('advance',$journal,'restored') | Out-Null
+  Journal -Arguments @('advance',$journal,'restored') | Out-Null
   [IO.File]::WriteAllText($success,'RESTORED_BY_SYSTEM_STARTUP_TASK',[Text.Encoding]::ASCII)
   Write-Host 'PASS: SYSTEM startup recovery restored original test task.'
   exit 0
@@ -96,7 +96,7 @@ if($Mode -eq 'verify'){
  if(Test-Path -LiteralPath $failure){throw ('Startup watchdog reported failure: '+[IO.File]::ReadAllText($failure))}
  if([IO.File]::ReadAllText($success) -ne 'RESTORED_BY_SYSTEM_STARTUP_TASK'){throw 'Unexpected result marker'}
  TaskAction $TaskName $cmd '/C exit 0'
- $state=Journal @('status',$journal)
+ $state=Journal -Arguments @('status',$journal)
  if($state -ne 'NO_ROLLBACK:restored'){throw ('Unexpected journal state: '+$state)}
  Write-Host 'PASS: boot-triggered SYSTEM watchdog manually invoked and restored original harmless test task.'
  exit 0
