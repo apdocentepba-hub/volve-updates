@@ -168,6 +168,113 @@ jobs:
           $root=Join-Path $env:RUNNER_TEMP ('VOLVE-CI-RECOVERY-'+$env:GITHUB_RUN_ID)
           & $lab -Phase tamper -TaskName ('VOLVE-CI-EngineRecovery-'+$env:GITHUB_RUN_ID) -JournalExe $helper -Workspace $root
           if($LASTEXITCODE -ne 0){throw 'Lab tamper validation failed'}
+      - name: Stage a disposable SYSTEM boot-trigger watchdog
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $lab=Join-Path $env:GITHUB_WORKSPACE 'development/0.28.7/lab/boot_recovery_lab.ps1'
+          $helper=Join-Path $env:RUNNER_TEMP 'volve-journal-lab.exe'
+          $root=Join-Path $env:RUNNER_TEMP ('VOLVE-CI-BOOT-'+$env:GITHUB_RUN_ID)
+          $task='VOLVE-CI-StartupMotor-'+$env:GITHUB_RUN_ID
+          $watchdog='VOLVE-CI-BootRecovery-'+$env:GITHUB_RUN_ID
+          & $lab -Mode stage -TaskName $task -WatchdogName $watchdog -Workspace $root -JournalExe $helper
+          if($LASTEXITCODE -ne 0){throw 'Boot recovery staging failed'}
+      - name: Trigger startup recovery under actual SYSTEM identity
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $watchdog='VOLVE-CI-BootRecovery-'+$env:GITHUB_RUN_ID
+          $root=Join-Path $env:RUNNER_TEMP ('VOLVE-CI-BOOT-'+$env:GITHUB_RUN_ID)
+          $done=Join-Path $root 'boot-recovery-success.marker'
+          $failed=Join-Path $root 'boot-recovery-failed.marker'
+          Start-ScheduledTask -TaskName $watchdog
+          $limit=[DateTime]::UtcNow.AddSeconds(60)
+          while([DateTime]::UtcNow -lt $limit){
+            if(Test-Path -LiteralPath $failed -PathType Leaf){throw ('Recovery task failed: '+[IO.File]::ReadAllText($failed))}
+            if(Test-Path -LiteralPath $done -PathType Leaf){break}
+            Start-Sleep -Milliseconds 500
+          }
+          if(-not (Test-Path -LiteralPath $done -PathType Leaf)){throw 'SYSTEM watchdog did not finish within 60s'}
+          Write-Host 'PASS: independent boot-triggered SYSTEM task successfully restored the test motor task.'
+      - name: Verify boot recovery status and original task identity
+        shell: pwsh
+        run: |
+          $lab=Join-Path $env:GITHUB_WORKSPACE 'development/0.28.7/lab/boot_recovery_lab.ps1'
+          $helper=Join-Path $env:RUNNER_TEMP 'volve-journal-lab.exe'
+          $root=Join-Path $env:RUNNER_TEMP ('VOLVE-CI-BOOT-'+$env:GITHUB_RUN_ID)
+          & $lab -Mode verify -TaskName ('VOLVE-CI-StartupMotor-'+$env:GITHUB_RUN_ID) -WatchdogName ('VOLVE-CI-BootRecovery-'+$env:GITHUB_RUN_ID) -Workspace $root -JournalExe $helper
+          if($LASTEXITCODE -ne 0){throw 'Startup watchdog verification failed'}
+      - name: Remove boot test SYSTEM tasks even after failure
+        if: always()
+        shell: pwsh
+        run: |
+          foreach($prefix in @('VOLVE-CI-StartupMotor-','VOLVE-CI-BootRecovery-')){
+            $task=$prefix+$env:GITHUB_RUN_ID
+            if($task -match '^VOLVE-CI-(StartupMotor|BootRecovery)-[0-9]+
+        if: always()
+        shell: pwsh
+        run: |
+          $task='VOLVE-CI-EngineRecovery-'+$env:GITHUB_RUN_ID
+          if($task -match '^VOLVE-CI-EngineRecovery-[0-9]+$'){
+            Unregister-ScheduledTask -TaskName $task -Confirm:$false -ErrorAction SilentlyContinue
+          }
+
+  scheduler-rollback-drill:
+    runs-on: windows-latest
+    timeout-minutes: 12
+    env:
+      TEST_TASK_NAME: VOLVE-CI-EngineSwap-${{ github.run_id }}
+    steps:
+      - name: Export original harmless task and interrupt after switch
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $name = $env:TEST_TASK_NAME
+          if ($name -notmatch '^VOLVE-CI-EngineSwap-[0-9]+$') { throw "Unsafe task name" }
+          $isAdmin = ([Security.Principal.WindowsPrincipal]::new([Security.Principal.WindowsIdentity]::GetCurrent())).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+          if (-not $isAdmin) { throw "This isolated runner cannot create test tasks" }
+          $original = Join-Path $env:WINDIR 'System32/cmd.exe'
+          $candidate = Join-Path $env:WINDIR 'System32/notepad.exe'
+          $action = New-ScheduledTaskAction -Execute $original -Argument '/C exit 0'
+          $trigger = New-ScheduledTaskTrigger -Once -At ((Get-Date).AddYears(1))
+          Register-ScheduledTask -TaskName $name -Action $action -Trigger $trigger -User SYSTEM -RunLevel Highest -Force | Out-Null
+          $saved = Export-ScheduledTask -TaskName $name
+          $snapshotPath = Join-Path $env:RUNNER_TEMP 'VOLVE_CI_original_task.xml'
+          [IO.File]::WriteAllText($snapshotPath, $saved, [Text.UTF8Encoding]::new($false))
+          if (-not (Test-Path $snapshotPath)) { throw "Snapshot not created" }
+          $newAction = New-ScheduledTaskAction -Execute $candidate
+          Set-ScheduledTask -TaskName $name -Action $newAction | Out-Null
+          $current = @(Get-ScheduledTask -TaskName $name).Actions[0]
+          if ($current.Execute -ne $candidate) { throw "Task was not switched" }
+          Write-Host 'TEST: task action switched; ending process without rollback to simulate interrupted update.'
+      - name: Recover original task in an independent process
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $name = $env:TEST_TASK_NAME
+          $snapshotPath = Join-Path $env:RUNNER_TEMP 'VOLVE_CI_original_task.xml'
+          if (-not (Test-Path -LiteralPath $snapshotPath -PathType Leaf)) { throw "No original task snapshot; fail closed" }
+          $saved = [IO.File]::ReadAllText($snapshotPath)
+          if (-not $saved.Contains('cmd.exe')) { throw "Snapshot does not identify expected harmless task" }
+          Register-ScheduledTask -TaskName $name -Xml $saved -Force | Out-Null
+          $restored = Get-ScheduledTask -TaskName $name
+          $original = Join-Path $env:WINDIR 'System32/cmd.exe'
+          if ($restored.Actions[0].Execute -ne $original -or $restored.Actions[0].Arguments -ne '/C exit 0') {
+            throw 'Rollback verification failed: original action not restored'
+          }
+          Write-Host 'PASS: Windows Task Scheduler task restored after simulated process interruption.'
+      - name: Remove only this test task
+        if: always()
+        shell: pwsh
+        run: |
+          $name = $env:TEST_TASK_NAME
+          if ($name -match '^VOLVE-CI-EngineSwap-[0-9]+$') {
+            Unregister-ScheduledTask -TaskName $name -Confirm:$false -ErrorAction SilentlyContinue
+          }
+){
+              Unregister-ScheduledTask -TaskName $task -Confirm:$false -ErrorAction SilentlyContinue
+            }
+          }
       - name: Remove isolated test-only task
         if: always()
         shell: pwsh
