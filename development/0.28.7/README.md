@@ -25,3 +25,9 @@ El paquete `VOLVE_0287_RECUPERACION_ENTRE_PROCESOS_NO_INSTALAR_v2.zip` incorpora
 El CI de Windows realiza una prueba de laboratorio con una tarea temporal `VOLVE-CI-EngineRecovery-<run_id>`, sin tráfico DNS: guarda la tarea original, marca `switching`, conmuta el ejecutable a uno inocuo, registra `proving`, termina el proceso y **en otra ejecución de PowerShell** vuelve al original y registra `restored`. Después altera el XML para comprobar que la verificación rechaza la modificación.
 
 **No es una recuperación probada después de reiniciar Windows**, porque el runner no se reinicia en esta prueba. Falta configurar el helper de recuperación real para arrancar de forma independiente al inicio, proteger respaldos con ACLs de SYSTEM/Administradores, controlar cortes de electricidad y verificar motor DNS real. No distribuir este piloto.
+
+## Prueba de interrupción forzada
+
+La nueva revisión v3 agrega una prueba más exigente en Windows: lanza el proceso del instalador piloto, espera que registre el cambio de tarea y **mata el proceso con Stop-Process -Force**. En un segundo proceso restaura la tarea original a partir del journal, verifica el hash del XML y el motor previo y rechaza un respaldo posteriormente modificado.
+
+Esto sigue siendo un **laboratorio**, sin activar DNS ni reiniciar Windows; no demuestra tolerancia a corte de energía ni recuperación automática al arrancar la PC. El motor real y su watchdog permanecen sin modificar en 0.28.6.

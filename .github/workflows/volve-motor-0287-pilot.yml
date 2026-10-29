@@ -45,8 +45,8 @@ jobs:
       - name: Overlay updated recovery journal and crash simulation
         shell: bash
         run: |
-          echo 'd3bd474696d9e7dd3a332c7e3d7ade456ad185510912eb1a7b6625252893eab9  development/0.28.7/VOLVE_0287_RECUPERACION_ENTRE_PROCESOS_NO_INSTALAR_v2.zip' | sha256sum --check
-          unzip -q -o development/0.28.7/VOLVE_0287_RECUPERACION_ENTRE_PROCESOS_NO_INSTALAR_v2.zip -d build
+          echo '773bd5eb5f1c4883021cc321856636354e964d3605dba9017e2fb5d1a7401b40  development/0.28.7/VOLVE_0287_RECUPERACION_INTERRUPCION_FORZADA_NO_INSTALAR_v3.zip' | sha256sum --check
+          unzip -q -o development/0.28.7/VOLVE_0287_RECUPERACION_INTERRUPCION_FORZADA_NO_INSTALAR_v3.zip -d build
       - name: Full unit tests and race detector
         working-directory: build/codigo
         run: |
@@ -91,8 +91,8 @@ jobs:
       - name: Overlay updated recovery journal and crash simulation
         shell: pwsh
         run: |
-          $archive='development/0.28.7/VOLVE_0287_RECUPERACION_ENTRE_PROCESOS_NO_INSTALAR_v2.zip'
-          if((Get-FileHash -Algorithm SHA256 $archive).Hash.ToLowerInvariant() -ne 'd3bd474696d9e7dd3a332c7e3d7ade456ad185510912eb1a7b6625252893eab9'){throw 'Recovery ZIP hash mismatch'}
+          $archive='development/0.28.7/VOLVE_0287_RECUPERACION_INTERRUPCION_FORZADA_NO_INSTALAR_v3.zip'
+          if((Get-FileHash -Algorithm SHA256 $archive).Hash.ToLowerInvariant() -ne '773bd5eb5f1c4883021cc321856636354e964d3605dba9017e2fb5d1a7401b40'){throw 'Recovery ZIP hash mismatch'}
           Expand-Archive -LiteralPath $archive -DestinationPath build -Force
       - name: Run updater tests on Windows
         working-directory: build/codigo
@@ -124,14 +124,34 @@ jobs:
           $env:CGO_ENABLED='0'
           go build -trimpath -o (Join-Path $env:RUNNER_TEMP 'volve-journal-lab.exe') ./cmd/volve-journal-lab
           if($LASTEXITCODE -ne 0){throw 'Recovery journal helper compilation failed'}
-      - name: Simulate interruption after task switch
+      - name: Force-kill updater process while leaving a switched task
         shell: pwsh
         run: |
+          $ErrorActionPreference='Stop'
           $lab=Join-Path $env:GITHUB_WORKSPACE 'build/lab/recovery_lab.ps1'
           $helper=Join-Path $env:RUNNER_TEMP 'volve-journal-lab.exe'
           $root=Join-Path $env:RUNNER_TEMP ('VOLVE-CI-RECOVERY-'+$env:GITHUB_RUN_ID)
-          & $lab -Phase switch -TaskName ('VOLVE-CI-EngineRecovery-'+$env:GITHUB_RUN_ID) -JournalExe $helper -Workspace $root
-          if($LASTEXITCODE -ne 0){throw 'Lab switch failed'}
+          $task='VOLVE-CI-EngineRecovery-'+$env:GITHUB_RUN_ID
+          $argsList=@('-NoProfile','-NonInteractive','-File',('"'+$lab+'"'),'-Phase','switch','-TaskName',$task,'-JournalExe',('"'+$helper+'"'),'-Workspace',('"'+$root+'"'))
+          $worker=Start-Process -FilePath (Get-Command pwsh).Source -ArgumentList $argsList -PassThru
+          try {
+            $ready=Join-Path $root 'switched.ready'
+            $deadline=[DateTime]::UtcNow.AddSeconds(70)
+            while([DateTime]::UtcNow -lt $deadline -and -not (Test-Path -LiteralPath $ready -PathType Leaf)){
+              if($worker.HasExited){throw ('Updater worker exited too early: '+$worker.ExitCode)}
+              Start-Sleep -Milliseconds 600
+            }
+            if(-not (Test-Path -LiteralPath $ready)){throw 'Worker never completed checkpoint'}
+            if([IO.File]::ReadAllText($ready) -ne 'SWITCHED_AND_JOURNALED'){throw 'Checkpoint marker invalid'}
+            if($worker.HasExited){throw 'Worker exited naturally, not a forced interruption'}
+            Stop-Process -Id $worker.Id -Force
+            $worker.WaitForExit()
+            $status=& $helper status (Join-Path $root 'recovery.json')
+            if($LASTEXITCODE -ne 0 -or $status -ne 'ROLLBACK_REQUIRED'){throw 'Recovery journal missing after forced termination'}
+            Write-Host 'PASS: updater process force-killed after task switch; journal requires rollback'
+          } finally {
+            if(-not $worker.HasExited){Stop-Process -Id $worker.Id -Force -ErrorAction SilentlyContinue}
+          }
       - name: Restore original task from a fresh process
         shell: pwsh
         run: |
