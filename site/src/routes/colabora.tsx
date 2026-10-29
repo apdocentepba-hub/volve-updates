@@ -42,7 +42,7 @@ function Colabora() {
               ),
             )}
           </div>
-          <p className="mt-5 text-xs opacity-80">Importante: en el enlace directo de Mercado Pago, la pantalla de pago muestra <strong>APDocentePBA</strong> como destinatario. Comprobá el nombre antes de confirmar cualquier aporte. No te pedimos claves ni datos bancarios.</p>
+          <p className="mt-5 text-xs opacity-80">Importante: en el enlace directo de Mercado Pago, la pantalla de pago muestra <strong>Proyectos Independientes</strong> como destinatario. Comprobá el nombre antes de confirmar cualquier aporte. No te pedimos claves ni datos bancarios.</p>
           <p className="mt-3 text-xs opacity-70">Solo vamos a habilitar canales oficiales verificados. Desconfiá de cualquier alias o cuenta que no figure en este sitio.</p>
         </div>
         <div className="grid gap-4">
@@ -75,7 +75,7 @@ function Colabora() {
             <div>
               <h2 className="text-2xl font-bold text-primary">Aportá el monto que quieras con Mercado Pago</h2>
               <p className="mt-3 max-w-xl text-muted-foreground">Escaneá este QR o abrí el enlace y elegí cuánto aportar. Es un QR que dirige a <strong>Tu Link</strong> de Mercado Pago, no un QR de cobro presencial.</p>
-              <p className="mt-3 max-w-xl rounded-xl bg-warm-soft p-3 text-sm text-accent-foreground"><strong>Antes de pagar:</strong> Mercado Pago mostrará <strong>APDocentePBA</strong> como nombre del receptor. Confirmá que sea ese destinatario y revisá el importe.</p>
+              <p className="mt-3 max-w-xl rounded-xl bg-warm-soft p-3 text-sm text-accent-foreground"><strong>Antes de pagar:</strong> Mercado Pago mostrará <strong>Proyectos Independientes</strong> como nombre del receptor. Confirmá que sea ese destinatario y revisá el importe.</p>
               <a href={mercadoPagoUrl} target="_blank" rel="noopener noreferrer" className="mt-5 inline-flex items-center rounded-full bg-warm px-6 py-3 font-bold text-accent-foreground transition hover:opacity-90">Abrir Mercado Pago ↗</a>
               <p className="mt-3 break-all text-xs text-muted-foreground">{mercadoPagoUrl}</p>
             </div>
