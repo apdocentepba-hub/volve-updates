@@ -1,4 +1,4 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import { Wind, MessageCircle, Wallet, Smartphone, Heart } from "lucide-react";
 import { PageHero, SectionTitle, meta } from "@/components/ui-bits";
 import { HelpBox } from "@/components/HelpBox";
@@ -20,7 +20,7 @@ function Ayuda() {
   return (
     <>
       <PageHero eyebrow="Ayuda" title="No tenés que atravesarlo solo ni sola" intro="Si sentís que las apuestas te están ganando terreno, hay personas preparadas para escucharte, gratis y sin juzgar." />
-      <section className="container-v py-12"><HelpBox /></section>
+      <section className="container-v py-12"><HelpBox /><div className="mt-8 rounded-3xl border border-border bg-sage-soft p-6"><h2 className="text-2xl font-bold text-primary">Centros y reuniones de ayuda</h2><p className="my-3 text-muted-foreground">45 recursos bonaerenses: grupos presenciales y virtuales, horarios, teléfonos y direcciones.</p><Link to="/centros-y-reuniones" className="inline-flex rounded-full bg-primary px-6 py-3 font-semibold text-primary-foreground">📍 Encontrá ayuda cerca tuyo</Link></div></section>
       <section className="container-v py-12">
         <SectionTitle eyebrow="Para el momento difícil" title="Algunas ideas breves" intro="No son un diagnóstico ni un tratamiento: son gestos simples que a muchas personas les sirven." />
         <div className="mt-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">

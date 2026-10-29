@@ -54,6 +54,7 @@ function Index() {
               <Link to="/proyecto" className="inline-flex items-center gap-2 rounded-full bg-primary px-6 py-3.5 font-semibold text-primary-foreground shadow-soft transition hover:opacity-90">
                 Conocé el proyecto <ArrowRight className="h-4 w-4" />
               </Link>
+              <Link to="/centros-y-reuniones" className="inline-flex items-center gap-2 rounded-full bg-sage-soft px-6 py-3.5 font-semibold text-primary transition hover:bg-secondary">📍 Centros y reuniones</Link>
               <Link to="/ayuda" className="inline-flex items-center gap-2 rounded-full border-2 border-primary px-6 py-3 font-semibold text-primary transition hover:bg-secondary">
                 <LifeBuoy className="h-4 w-4" /> Necesito ayuda
               </Link>
@@ -83,6 +84,7 @@ function Index() {
         <div className="container-v">
           <SectionTitle eyebrow="Ayuda ahora" title="Si lo necesitás hoy, no esperes al software" intro="Hablar con alguien es el paso más importante. Estas vías son gratuitas y existen ya." />
           <div className="mt-10"><HelpBox /></div>
+          <Link to="/centros-y-reuniones" className="mt-6 inline-flex items-center rounded-full bg-primary px-6 py-3 font-semibold text-primary-foreground">📍 Encontrá ayuda cerca tuyo · 45 recursos en PBA</Link>
         </div>
       </section>
 

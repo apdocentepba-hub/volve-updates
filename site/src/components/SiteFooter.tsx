@@ -29,6 +29,7 @@ export function SiteFooter() {
           <ul className="space-y-3 text-sm">
             <li><Link to="/proyecto" className="hover:underline">Qué es VOLVÉ</Link></li>
             <li><Link to="/educacion" className="hover:underline">Educación</Link></li>
+            <li><Link to="/centros-y-reuniones" className="hover:underline">Centros y reuniones PBA</Link></li>
             <li><Link to="/colabora" className="hover:underline">Colaborá y transparencia</Link></li>
             <li><Link to="/preguntas" className="hover:underline">Preguntas frecuentes</Link></li>
             <li className="inline-flex items-center gap-2">
