@@ -1,0 +1,67 @@
+name: VOLVE Windows DNS capture stream validation
+on:
+  push:
+    paths:
+      - .github/workflows/volve-windows-dns-streams.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  snapshot:
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - name: Capture DNS configuration read-only with Windows PowerShell 5.1
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $script=@'
+          $ErrorActionPreference='Stop'
+          $ProgressPreference='SilentlyContinue'
+          [Console]::OutputEncoding=[System.Text.Encoding]::UTF8
+          try {
+            $adapters=@(Get-NetAdapter -ErrorAction Stop | Where-Object {
+              $_.Status -eq 'Up' -and $_.HardwareInterface -and
+              $null -ne (Get-NetIPInterface -InterfaceIndex ([int]$_.ifIndex) -AddressFamily IPv4 -ErrorAction SilentlyContinue)
+            })
+            if($adapters.Count -ne 1){throw "Expected one physical IPv4 adapter; got $($adapters.Count)"}
+            $a=$adapters[0]
+            $index=[int]$a.ifIndex
+            $guid=([string]$a.InterfaceGuid).Trim('{','}')
+            $ipv4=@((Get-DnsClientServerAddress -InterfaceIndex $index -AddressFamily IPv4 -ErrorAction Stop).ServerAddresses | Where-Object {$_})
+            $ipv6=@((Get-DnsClientServerAddress -InterfaceIndex $index -AddressFamily IPv6 -ErrorAction Stop).ServerAddresses | Where-Object {$_})
+            $r4=Get-ItemProperty -LiteralPath "HKLM:\SYSTEM\CurrentControlSet\Services\Tcpip\Parameters\Interfaces\{$guid}" -ErrorAction Stop
+            $r6=Get-ItemProperty -LiteralPath "HKLM:\SYSTEM\CurrentControlSet\Services\Tcpip6\Parameters\Interfaces\{$guid}" -ErrorAction SilentlyContinue
+            $m4=![string]::IsNullOrWhiteSpace([string]$r4.NameServer)
+            $m6=![string]::IsNullOrWhiteSpace([string]$r6.NameServer)
+            if($m4 -ne $m6){throw 'Mixed DNS assignment modes'}
+            $mode=if($m4){'manual'}else{'automatic'}
+            $snapshot=@{schema=1;interface_index=$index;interface_guid=$guid;alias=[string]$a.Name;restore_mode=$mode;ipv4=@($ipv4);ipv6=@($ipv6)}
+            $json=ConvertTo-Json -InputObject $snapshot -Compress -Depth 5
+            [Console]::Out.WriteLine($json)
+          } catch {
+            [Console]::Error.WriteLine('VOLVE_DNS_CAPTURE_ERROR: ' + $_.Exception.Message)
+            exit 8
+          }
+          '@
+          $encoded=[Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($script))
+          $psi=[System.Diagnostics.ProcessStartInfo]::new()
+          $psi.FileName='powershell.exe'
+          $psi.Arguments="-NoProfile -NonInteractive -EncodedCommand $encoded"
+          $psi.UseShellExecute=$false
+          $psi.CreateNoWindow=$true
+          $psi.RedirectStandardOutput=$true
+          $psi.RedirectStandardError=$true
+          $psi.StandardOutputEncoding=[Text.Encoding]::UTF8
+          $psi.StandardErrorEncoding=[Text.Encoding]::UTF8
+          $p=[System.Diagnostics.Process]::new()
+          $p.StartInfo=$psi
+          [void]$p.Start()
+          $stdout=$p.StandardOutput.ReadToEnd()
+          $stderr=$p.StandardError.ReadToEnd()
+          $p.WaitForExit()
+          if($p.ExitCode -ne 0){throw "Windows inventory script exited $($p.ExitCode): $($stderr.Substring(0,[Math]::Min(200,$stderr.Length)))"}
+          if($stderr.Trim().Length -ne 0){throw 'Unexpected stderr from capture script'}
+          $obj=$stdout | ConvertFrom-Json -ErrorAction Stop
+          if($obj.schema -ne 1 -or $obj.interface_index -le 0 -or !$obj.interface_guid){throw 'Invalid JSON snapshot'}
+          Write-Output "PASS read-only DNS snapshot: family IPv4=$($obj.ipv4.Count), IPv6=$($obj.ipv6.Count), mode=$($obj.restore_mode). No adapter changes."
