@@ -1,0 +1,48 @@
+name: VOLVE Windows service task and DNS cmdlet contract
+on:
+  push:
+    paths:
+      - .github/workflows/volve-windows-service-contract-0270.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  service-contract:
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - name: Verify Task Scheduler exact action parsing without changing DNS
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $task='VOLVE-CI-DNS-CONTRACT-'+$PID
+          $tmp=Join-Path $env:RUNNER_TEMP ('VOLVE TEST '+$PID)
+          New-Item -ItemType Directory -Path $tmp | Out-Null
+          $script=Join-Path $tmp 'watchdog.ps1'
+          '[IO.File]::WriteAllText((Join-Path $env:TEMP ''VOLVE_CI_WORKER_PROBE.txt''),''ok'')' | Set-Content -LiteralPath $script -Encoding UTF8
+          $exe="$env:WINDIR\System32\WindowsPowerShell\v1.0\powershell.exe"
+          $arg="-NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$script`""
+          $action="`"$exe`" $arg"
+          try {
+            & schtasks.exe /Create /TN $task /SC MINUTE /MO 1 /RU SYSTEM /RL HIGHEST /TR $action
+            if($LASTEXITCODE -ne 0){throw 'task create failed'}
+            [xml]$xml=(& schtasks.exe /Query /TN $task /XML | Out-String)
+            $act=@($xml.Task.Actions.Exec)
+            if($act.Count -ne 1){throw "Actions unexpected: $($act.Count)"}
+            $reportedArg=[string]$act[0].Arguments
+            if($reportedArg -ne $arg){throw "Arguments mismatch: $reportedArg"}
+            if([string]$act[0].Command -ne $exe){throw 'Command mismatch'}
+            $system=[string]$xml.Task.Principals.Principal.UserId
+            if($system -notin @('SYSTEM','S-1-5-18','NT AUTHORITY\SYSTEM')){throw "Not SYSTEM: $system"}
+            & schtasks.exe /Run /TN $task
+            if($LASTEXITCODE -ne 0){throw 'task run failed'}
+            $check=Join-Path $env:TEMP 'VOLVE_CI_WORKER_PROBE.txt'
+            for($i=0;$i -lt 30 -and -not (Test-Path $check);$i++){Start-Sleep -Milliseconds 300}
+            if(!(Test-Path $check)){throw 'task not executed'}
+            if(-not (Get-Command Set-DnsClientServerAddress -ErrorAction Stop).Parameters.ContainsKey('ResetServerAddresses')){throw 'DNS reset API unavailable'}
+            Write-Host 'PASS task exact arguments; SYSTEM; executed; Windows DNS reset cmdlet exists. No DNS was changed.'
+          } finally {
+            & schtasks.exe /Delete /TN $task /F 2>$null | Out-Null
+            Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath (Join-Path $env:TEMP 'VOLVE_CI_WORKER_PROBE.txt') -Force -ErrorAction SilentlyContinue
+          }
