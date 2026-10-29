@@ -1,8 +1,7 @@
 name: VOLVE 0.28.7 motor-updater pilot CI (NO release)
 on:
   push:
-    branches:
-      - feature/motor-updater-0287-pilot
+    branches: [feature/motor-updater-0287-pilot]
     paths:
       - 'development/0.28.7/**'
       - '.github/workflows/volve-motor-0287-pilot.yml'
@@ -12,49 +11,78 @@ permissions:
 jobs:
   linux-tests:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
           go-version: '1.23.x'
-      - name: Expand candidate source
-        run: mkdir -p build && unzip -q development/0.28.7/VOLVE_0287_CODIGO_MOTOR_PILOTO_NO_INSTALAR.zip -d build
-      - name: Unit tests and race detector
+      - name: Rebuild source ZIP and verify SHA-256
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import hashlib
+          src=Path('development/0.28.7/complete-source-parts')
+          parts=sorted(src.glob('part-*.bin'))
+          if len(parts)!=10: raise RuntimeError('Expected 10 source chunks')
+          with open('source.zip','wb') as dst:
+              for i,p in enumerate(parts):
+                  if p.name!=f'part-{i:02d}.bin': raise RuntimeError('Unexpected chunk order')
+                  with open(p,'rb') as f: dst.write(f.read())
+          digest=hashlib.sha256(Path('source.zip').read_bytes()).hexdigest()
+          assert digest=='92b3536559151260375b17a64eedd009df8399e45460637208027b7ca0587ba5',digest
+          print('Reconstructed and verified complete source.')
+          PY
+          mkdir build && unzip -q source.zip -d build
+      - name: Full unit tests and race detector
         working-directory: build/codigo
         run: |
           go test ./... -count=1
           go test -race ./motorupdate ./releaseupdate -count=1
   windows-build:
     runs-on: windows-latest
-    timeout-minutes: 18
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
           go-version: '1.23.x'
-      - name: Expand candidate source
+      - name: Rebuild verified complete source ZIP
         shell: pwsh
         run: |
+          $ErrorActionPreference="Stop"
+          $items=@(Get-ChildItem development/0.28.7/complete-source-parts -Filter 'part-*.bin' -File | Sort-Object Name)
+          if($items.Count -ne 10){throw "Expected 10 chunks"}
+          $out=[IO.File]::Create((Join-Path (Get-Location) 'source.zip'))
+          try {
+            for($i=0;$i -lt 10;$i++){
+              if($items[$i].Name -ne ('part-{0:D2}.bin' -f $i)){throw "Chunk order"}
+              $s=[IO.File]::OpenRead($items[$i].FullName)
+              try{$s.CopyTo($out)}finally{$s.Dispose()}
+            }
+          }finally{$out.Dispose()}
+          $hash=(Get-FileHash -Algorithm SHA256 source.zip).Hash.ToLowerInvariant()
+          if($hash -ne '92b3536559151260375b17a64eedd009df8399e45460637208027b7ca0587ba5'){throw "Source hash mismatch"}
           New-Item -ItemType Directory build -Force | Out-Null
-          Expand-Archive -LiteralPath development/0.28.7/VOLVE_0287_CODIGO_MOTOR_PILOTO_NO_INSTALAR.zip -DestinationPath build -Force
-      - name: Tests on Windows
+          Expand-Archive -LiteralPath source.zip -DestinationPath build -Force
+      - name: Run updater tests on Windows
         working-directory: build/codigo
         shell: pwsh
         run: |
           $env:CGO_ENABLED="0"
           go test ./motorupdate ./releaseupdate -count=1
           if($LASTEXITCODE -ne 0){throw "Unit tests failed"}
-      - name: Compile GUI for Windows x64
+      - name: Compile complete Windows GUI (not for distribution)
         working-directory: build/codigo
         shell: pwsh
         run: |
           $env:CGO_ENABLED="0"
           $env:GOOS="windows"
           $env:GOARCH="amd64"
-          go build -trimpath -ldflags '-H windowsgui' -o VOLVE_0287_MOTOR_PILOT_NO_INSTALL.exe .
+          go build -trimpath -ldflags '-H windowsgui' -o VOLVE_0287_PILOT_NO_INSTALL.exe .
           if($LASTEXITCODE -ne 0){throw "Windows compilation failed"}
-          $f="VOLVE_0287_MOTOR_PILOT_NO_INSTALL.exe"
+          $f="VOLVE_0287_PILOT_NO_INSTALL.exe"
           $bytes=[IO.File]::ReadAllBytes((Resolve-Path $f))
           if($bytes.Length -lt 1000000 -or $bytes[0] -ne 77 -or $bytes[1] -ne 90){throw "Invalid Windows PE"}
           Get-FileHash -Algorithm SHA256 $f | Format-List
