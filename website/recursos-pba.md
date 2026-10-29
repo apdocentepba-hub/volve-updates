@@ -53,3 +53,9 @@ Para autoexclusión en PBA, dirigir exclusivamente al regulador https://loteria.
 
 ## Artefacto listo
 Se preparó una página HTML autónoma con filtros por localidad, zona, día y tipo de asistencia, **45 registros** (10 centros públicos, 31 grupos Jugadores Anónimos y 4 grupos Jug-Anon). Falta integrarla a la web principal, cuya edición en Lovable estaba bloqueada por agotamiento de créditos al 29/10/2026.
+
+
+## Corrección editorial prioritaria (29/10/2026)
+**Olavarría tiene una discrepancia entre fuentes oficiales.** El directorio general de Lotería PBA indica Hornos 2992 y 02284 410-102 (https://loteria.gba.gob.ar/juego-compulsivo), mientras que una nota posterior de Lotería PBA (https://loteria.gba.gob.ar/node/522) y la Municipalidad de Olavarría (https://www.olavarria.gov.ar/cayetano-compartio-su-experiencia-sobre-la-adiccion-al-juego/) indican Alsina 3157 y WhatsApp 2284-520151. La página HTML marca la discrepancia y recomienda confirmar. Hasta que se reconfirme, no publicar una dirección sin la advertencia.
+
+Otros recursos verificados para integrar: **No Da**, Ministerio de Salud PBA https://noda.gba.gob.ar/ (orientación 0800-222-5462), **SEDRONAR 141** (https://www.argentina.gob.ar/salud/sedronar) y material UNICEF sobre educación financiera para docentes (https://www.unicef.org/argentina/informes/guia-docentes-educacion-financiera). El grupo de San Martín está marcado como suspendido por Jugadores Anónimos, por lo que no debe aparecer como reunión activa. No enlazar a sitios de operadores.
