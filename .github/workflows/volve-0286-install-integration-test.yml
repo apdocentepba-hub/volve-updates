@@ -4,6 +4,7 @@ on:
   push:
     paths:
       - 'release-candidates/v0.28.5/parts/**'
+      - '.github/workflows/volve-0286-install-integration-test.yml'
   workflow_dispatch:
 
 permissions:
@@ -55,13 +56,27 @@ jobs:
           $old=(Join-Path $env:RUNNER_TEMP "VOLVE_Centro_0.28.5.exe")
           $target=Join-Path $env:ProgramData "VOLVE-Browser-Filter/VOLVE_Centro_Proteccion_0_28_6.exe"
           $args='--apply-staged-panel-update "'+$staged+'"'
+          Write-Host "Old executable $old"
+          & $old --check-app-updates
+          Write-Host "Read-only check exit code $LASTEXITCODE"
           $proc=Start-Process -FilePath $old -ArgumentList $args -PassThru
+          Write-Host "Launched process $($proc.Id)"
+          Start-Sleep -Seconds 3
+          Write-Host "Process exited? $($proc.HasExited)"
+          if ($proc.HasExited) { Write-Host "Process code $($proc.ExitCode)" }
+          Write-Host "Running processes with VOLVE name:"
+          Get-Process | Where-Object {$_.ProcessName -match 'VOLVE'} | Select-Object Id, ProcessName, MainWindowTitle | Format-Table
           try {
-            $deadline=[DateTime]::UtcNow.AddSeconds(60)
+            $deadline=[DateTime]::UtcNow.AddSeconds(20)
             while (([DateTime]::UtcNow -lt $deadline) -and -not (Test-Path -LiteralPath $target)) {
               Start-Sleep -Seconds 1
             }
-            if (-not (Test-Path -LiteralPath $target)) { throw "The versioned 0.28.6 panel was not installed" }
+            if (-not (Test-Path -LiteralPath $target)) {
+              Write-Host "ProgramData directory:"
+              Get-ChildItem -LiteralPath (Join-Path $env:ProgramData "VOLVE-Browser-Filter") -ErrorAction SilentlyContinue | Select-Object Name,Length
+              Write-Host "Process still running? $(-not $proc.HasExited)"
+              throw "The versioned 0.28.6 panel was not installed"
+            }
             $digest=(Get-FileHash -Algorithm SHA256 $target).Hash.ToLowerInvariant()
             if ($digest -ne "8659d948427e515e3471508487c81afadb6c9cecfd3633aedc6ea67459f1d72a") { throw "Wrong installed panel hash" }
             $link=Join-Path $env:ProgramData "Microsoft/Windows/Start Menu/Programs/VOLVE - Centro de proteccion.lnk"
