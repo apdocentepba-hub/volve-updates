@@ -39,3 +39,11 @@ Esto sigue siendo un **laboratorio**, sin activar DNS ni reiniciar Windows; no d
 [Logs y ejecución](https://github.com/apdocentepba-hub/volve-updates/actions/runs/40970083681)
 
 **Límites:** este ensayo no equivale a un reinicio real de Windows ni reproduce un corte eléctrico. Tampoco implementa aún el controlador de motor DNS para producción; no se ha instalado ninguna actualización del motor en equipos de usuarios.
+
+## Ensayo de recuperador con trigger de inicio y cuenta SYSTEM
+
+Se incorporó `development/0.28.7/lab/boot_recovery_lab.ps1`, estrictamente limitado a tareas de prueba con nombres `VOLVE-CI-StartupMotor-<id>` y `VOLVE-CI-BootRecovery-<id>`. En un Windows alojado por GitHub Actions: (1) se guarda una tarea inocua, (2) se modifica su ejecutable de prueba, (3) se prepara un recuperador independiente con trigger `AtStartup`, cuenta `SYSTEM`, y (4) **se ejecuta manualmente** esa tarea de inicio simulando el arranque. Se valida que la tarea original fue restaurada y que el journal quedó en `restored`.
+
+Una segunda prueba altera el respaldo XML antes de activar el recuperador; el watchdog se niega a restaurarlo y deja intacta la tarea modificada. Las dos pruebas aprobaron junto con compilación Windows y tests Linux. [Ejecución 40973526501](https://github.com/apdocentepba-hub/volve-updates/actions/runs/40973526501).
+
+**No equivale a un reinicio verdadero.** Falta ensayar el arranque real de Windows en VM, comprobar ACLs del directorio de recuperación, evitar que rutas no autorizadas sean ejecutadas y luego sustituir un motor DNS real con respaldo versionado, verificación IPv4/IPv6 y control de no perder Internet. El canal estable continúa en 0.28.6; no publicar 0.28.7 como instalador.
