@@ -42,6 +42,11 @@ jobs:
           unzip -q -o development/0.28.7/VOLVE_0287_PRECHECK_RESCATE_OVERLAY_NO_INSTALAR.zip -d build
       - name: Overlay crash recovery journal tests
         run: cp development/0.28.7/journal/*.go build/codigo/motorupdate/
+      - name: Overlay updated journal and recover-from-crash helper
+        shell: bash
+        run: |
+          echo 'd3bd474696d9e7dd3a332c7e3d7ade456ad185510912eb1a7b6625252893eab9  development/0.28.7/VOLVE_0287_RECUPERACION_ENTRE_PROCESOS_NO_INSTALAR_v2.zip' | sha256sum --check
+          unzip -q -o development/0.28.7/VOLVE_0287_RECUPERACION_ENTRE_PROCESOS_NO_INSTALAR_v2.zip -d build
       - name: Full unit tests and race detector
         working-directory: build/codigo
         run: |
@@ -83,6 +88,13 @@ jobs:
       - name: Overlay crash recovery journal tests
         shell: pwsh
         run: Copy-Item development/0.28.7/journal/*.go build/codigo/motorupdate/ -Force
+      - name: Overlay updated journal and recover-from-crash helper
+        shell: pwsh
+        run: |
+          $archive='development/0.28.7/VOLVE_0287_RECUPERACION_ENTRE_PROCESOS_NO_INSTALAR_v2.zip'
+          $hash=(Get-FileHash -Algorithm SHA256 $archive).Hash.ToLowerInvariant()
+          if($hash -ne 'd3bd474696d9e7dd3a332c7e3d7ade456ad185510912eb1a7b6625252893eab9'){throw 'Recovery overlay SHA mismatch'}
+          Expand-Archive -LiteralPath $archive -DestinationPath build -Force
       - name: Run updater tests on Windows
         working-directory: build/codigo
         shell: pwsh
@@ -105,6 +117,98 @@ jobs:
           $bytes=[IO.File]::ReadAllBytes((Resolve-Path $f))
           if($bytes.Length -lt 1000000 -or $bytes[0] -ne 77 -or $bytes[1] -ne 90){throw "Invalid Windows PE"}
           Get-FileHash -Algorithm SHA256 $f | Format-List
+
+      - name: Build isolated recovery journal helper
+        shell: pwsh
+        working-directory: build/codigo
+        run: |
+          $env:CGO_ENABLED='0'
+          go build -trimpath -o (Join-Path $env:RUNNER_TEMP 'volve-journal-lab.exe') ./cmd/volve-journal-lab
+          if($LASTEXITCODE -ne 0){throw 'Recovery journal helper compilation failed'}
+      - name: Simulate interrupted task switchover and persist journal
+        shell: pwsh
+        run: |
+          $lab=Join-Path $env:GITHUB_WORKSPACE 'build/lab/recovery_lab.ps1'
+          $helper=Join-Path $env:RUNNER_TEMP 'volve-journal-lab.exe'
+          $root=Join-Path $env:RUNNER_TEMP ('VOLVE-CI-RECOVERY-'+$env:GITHUB_RUN_ID)
+          & $lab -Phase switch -TaskName ('VOLVE-CI-EngineRecovery-'+$env:GITHUB_RUN_ID) -JournalExe $helper -Workspace $root
+          if($LASTEXITCODE -ne 0){throw 'Lab switchover step failed'}
+      - name: Restore task and verify journal from a fresh PowerShell process
+        shell: pwsh
+        run: |
+          $lab=Join-Path $env:GITHUB_WORKSPACE 'build/lab/recovery_lab.ps1'
+          $helper=Join-Path $env:RUNNER_TEMP 'volve-journal-lab.exe'
+          $root=Join-Path $env:RUNNER_TEMP ('VOLVE-CI-RECOVERY-'+$env:GITHUB_RUN_ID)
+          & $lab -Phase recover -TaskName ('VOLVE-CI-EngineRecovery-'+$env:GITHUB_RUN_ID) -JournalExe $helper -Workspace $root
+          if($LASTEXITCODE -ne 0){throw 'Lab recovery from fresh process failed'}
+      - name: Reject tampered original Task Scheduler XML
+        shell: pwsh
+        run: |
+          $lab=Join-Path $env:GITHUB_WORKSPACE 'build/lab/recovery_lab.ps1'
+          $helper=Join-Path $env:RUNNER_TEMP 'volve-journal-lab.exe'
+          $root=Join-Path $env:RUNNER_TEMP ('VOLVE-CI-RECOVERY-'+$env:GITHUB_RUN_ID)
+          & $lab -Phase tamper -TaskName ('VOLVE-CI-EngineRecovery-'+$env:GITHUB_RUN_ID) -JournalExe $helper -Workspace $root
+          if($LASTEXITCODE -ne 0){throw 'Recovery lab security tamper check failed'}
+      - name: Remove the disposable task regardless of outcome
+        if: always()
+        shell: pwsh
+        run: |
+          $n='VOLVE-CI-EngineRecovery-'+$env:GITHUB_RUN_ID
+          if($n -match '^VOLVE-CI-EngineRecovery-[0-9]+
+    runs-on: windows-latest
+    timeout-minutes: 12
+    env:
+      TEST_TASK_NAME: VOLVE-CI-EngineSwap-${{ github.run_id }}
+    steps:
+      - name: Export original harmless task and interrupt after switch
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $name = $env:TEST_TASK_NAME
+          if ($name -notmatch '^VOLVE-CI-EngineSwap-[0-9]+$') { throw "Unsafe task name" }
+          $isAdmin = ([Security.Principal.WindowsPrincipal]::new([Security.Principal.WindowsIdentity]::GetCurrent())).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+          if (-not $isAdmin) { throw "This isolated runner cannot create test tasks" }
+          $original = Join-Path $env:WINDIR 'System32/cmd.exe'
+          $candidate = Join-Path $env:WINDIR 'System32/notepad.exe'
+          $action = New-ScheduledTaskAction -Execute $original -Argument '/C exit 0'
+          $trigger = New-ScheduledTaskTrigger -Once -At ((Get-Date).AddYears(1))
+          Register-ScheduledTask -TaskName $name -Action $action -Trigger $trigger -User SYSTEM -RunLevel Highest -Force | Out-Null
+          $saved = Export-ScheduledTask -TaskName $name
+          $snapshotPath = Join-Path $env:RUNNER_TEMP 'VOLVE_CI_original_task.xml'
+          [IO.File]::WriteAllText($snapshotPath, $saved, [Text.UTF8Encoding]::new($false))
+          if (-not (Test-Path $snapshotPath)) { throw "Snapshot not created" }
+          $newAction = New-ScheduledTaskAction -Execute $candidate
+          Set-ScheduledTask -TaskName $name -Action $newAction | Out-Null
+          $current = @(Get-ScheduledTask -TaskName $name).Actions[0]
+          if ($current.Execute -ne $candidate) { throw "Task was not switched" }
+          Write-Host 'TEST: task action switched; ending process without rollback to simulate interrupted update.'
+      - name: Recover original task in an independent process
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $name = $env:TEST_TASK_NAME
+          $snapshotPath = Join-Path $env:RUNNER_TEMP 'VOLVE_CI_original_task.xml'
+          if (-not (Test-Path -LiteralPath $snapshotPath -PathType Leaf)) { throw "No original task snapshot; fail closed" }
+          $saved = [IO.File]::ReadAllText($snapshotPath)
+          if (-not $saved.Contains('cmd.exe')) { throw "Snapshot does not identify expected harmless task" }
+          Register-ScheduledTask -TaskName $name -Xml $saved -Force | Out-Null
+          $restored = Get-ScheduledTask -TaskName $name
+          $original = Join-Path $env:WINDIR 'System32/cmd.exe'
+          if ($restored.Actions[0].Execute -ne $original -or $restored.Actions[0].Arguments -ne '/C exit 0') {
+            throw 'Rollback verification failed: original action not restored'
+          }
+          Write-Host 'PASS: Windows Task Scheduler task restored after simulated process interruption.'
+      - name: Remove only this test task
+        if: always()
+        shell: pwsh
+        run: |
+          $name = $env:TEST_TASK_NAME
+          if ($name -match '^VOLVE-CI-EngineSwap-[0-9]+$') {
+            Unregister-ScheduledTask -TaskName $name -Confirm:$false -ErrorAction SilentlyContinue
+          }
+){
+            Unregister-ScheduledTask -TaskName $n -Confirm:$false -ErrorAction SilentlyContinue
+          }
 
   scheduler-rollback-drill:
     runs-on: windows-latest

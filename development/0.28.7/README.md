@@ -17,3 +17,11 @@ El código completo de referencia permanece en `complete-source-parts/` como ZIP
 **Importante:** el código de journal y la prueba de Scheduler todavía **no son un controlador de motor DNS para producción**. Falta integrar: (1) respaldo original de task XML y motor versionado con permisos SYSTEM, (2) recuperación independiente antes del siguiente arranque si Windows se reinicia o la máquina se apaga durante la actualización, (3) validación de tráfico DNS real IPv4/IPv6 y conectividad, (4) restauración comprobada del motor anterior, no simplemente poner DNS en automático, y (5) firma del paquete oficial y distribución escalonada. No se modificó el DNS real y el CLI piloto sigue siendo de solo lectura.
 
 Referencia de ZIP de desarrollo: [Carpeta Drive](https://drive.google.com/drive/folders/1mV1XzqsDqAKOVuw_FWIwaOaSnWmTwt5y).
+
+## Recuperación con journal y proceso independiente (29/10)
+
+El paquete `VOLVE_0287_RECUPERACION_ENTRE_PROCESOS_NO_INSTALAR_v2.zip` incorpora correcciones de estado que prohíben iniciar transacciones fuera de `prepared`. Agrega un helper Go que verifica el journal, el hash del motor anterior y el XML original de la tarea antes de autorizar el rollback.
+
+El CI de Windows realiza una prueba de laboratorio con una tarea temporal `VOLVE-CI-EngineRecovery-<run_id>`, sin tráfico DNS: guarda la tarea original, marca `switching`, conmuta el ejecutable a uno inocuo, registra `proving`, termina el proceso y **en otra ejecución de PowerShell** vuelve al original y registra `restored`. Después altera el XML para comprobar que la verificación rechaza la modificación.
+
+**No es una recuperación probada después de reiniciar Windows**, porque el runner no se reinicia en esta prueba. Falta configurar el helper de recuperación real para arrancar de forma independiente al inicio, proteger respaldos con ACLs de SYSTEM/Administradores, controlar cortes de electricidad y verificar motor DNS real. No distribuir este piloto.
