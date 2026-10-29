@@ -14,10 +14,14 @@ export const siteConfig = {
     windows: { url: null as string | null, version: null as string | null, sha256: null as string | null },
     android: { url: null as string | null, version: null as string | null, sha256: null as string | null },
   },
+  bankTransfer: {
+    // Alias público facilitado por el responsable de VOLVÉ. No publicar el CBU completo.
+    alias: "Martinpodu4",
+  },
   donations: [
     { id: "cafecito", label: "Invitá un Cafecito", url: "https://cafecito.app/volve" },
     { id: "mercadopago", label: "Mercado Pago · elegí el monto", url: "https://link.mercadopago.com.ar/volve" },
-    { id: "transferencia", label: "Transferencia bancaria", url: null },
+    { id: "transferencia", label: "Transferencia por alias", url: null },
   ] as DonationChannel[],
   transparency: {
     categories: ["Infraestructura", "Desarrollo", "Comunicación", "Remuneración del trabajo"],

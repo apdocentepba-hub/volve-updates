@@ -2,7 +2,8 @@ import { createFileRoute } from "@tanstack/react-router";
 import { Server, Code2, Megaphone, UserRound, FileText, HeartHandshake } from "lucide-react";
 import { PageHero, SectionTitle, StatusPill, meta } from "@/components/ui-bits";
 import { siteConfig, isLive } from "@/config/site";
-import { Instagram, Share2, Users } from "lucide-react";
+import { Instagram, Share2, Users, Copy, Check, Landmark } from "lucide-react";
+import { useState } from "react";
 import { QRCodeSVG } from "qrcode.react";
 
 export const Route = createFileRoute("/colabora")({
@@ -22,6 +23,19 @@ function Colabora() {
   const anyLive = channels.some((c) => isLive(c.url));
   const cafecitoUrl = channels.find((c) => c.id === "cafecito")?.url;
   const mercadoPagoUrl = channels.find((c) => c.id === "mercadopago")?.url;
+  const transferAlias = siteConfig.bankTransfer.alias;
+  const [copied, setCopied] = useState(false);
+  const [copyError, setCopyError] = useState(false);
+  const copyAlias = async () => {
+    try {
+      await navigator.clipboard.writeText(transferAlias);
+      setCopied(true);
+      setCopyError(false);
+    } catch {
+      setCopied(false);
+      setCopyError(true);
+    }
+  };
   return (
     <>
       <PageHero eyebrow="Colaborá" title="VOLVÉ es gratuito y queremos que siga siéndolo" intro="Detrás hay horas de trabajo, pruebas y servidores. Si querés y podés, un aporte a voluntad nos ayuda a sostenerlo. Si no, usarlo y compartirlo también es colaborar." />
@@ -35,7 +49,9 @@ function Colabora() {
           <div className="mt-8"><StatusPill>{anyLive ? "Canales habilitados" : "Canal de aportes en preparación"}</StatusPill></div>
           <div className="mt-5 grid gap-3 sm:grid-cols-3">
             {channels.map((c) =>
-              isLive(c.url) ? (
+              c.id === "transferencia" && transferAlias ? (
+                <a key={c.id} href="#transferencia" className="rounded-xl bg-warm px-4 py-3 text-center font-semibold text-accent-foreground">Transferencia por alias</a>
+              ) : isLive(c.url) ? (
                 <a key={c.id} href={c.url} target="_blank" rel="noopener noreferrer" className="rounded-xl bg-warm px-4 py-3 text-center font-semibold text-accent-foreground">{c.label}</a>
               ) : (
                 <button key={c.id} disabled aria-disabled="true" className="cursor-not-allowed rounded-xl border border-dashed border-deep-foreground/30 px-4 py-3 text-sm opacity-70">{c.label} · próximamente</button>
@@ -79,6 +95,30 @@ function Colabora() {
               <a href={mercadoPagoUrl} target="_blank" rel="noopener noreferrer" className="mt-5 inline-flex items-center rounded-full bg-warm px-6 py-3 font-bold text-accent-foreground transition hover:opacity-90">Abrir Mercado Pago ↗</a>
               <p className="mt-3 break-all text-xs text-muted-foreground">{mercadoPagoUrl}</p>
             </div>
+          </div>
+        </section>
+      )}
+      {transferAlias && (
+        <section id="transferencia" className="container-v scroll-mt-24 pb-8" aria-label="Transferencia directa por alias">
+          <div className="rounded-3xl border border-border bg-card p-6 md:p-8">
+            <div className="flex items-center gap-3">
+              <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-secondary"><Landmark className="h-6 w-6 text-primary" aria-hidden="true" /></span>
+              <div>
+                <h2 className="text-2xl font-bold text-primary">Transferencia directa</h2>
+                <p className="mt-1 text-sm text-muted-foreground">Sin pasar por Cafecito ni por un enlace de pago.</p>
+              </div>
+            </div>
+            <p className="mt-5 text-sm font-semibold text-primary">Alias para transferir</p>
+            <div className="mt-2 flex flex-wrap items-center gap-3">
+              <input aria-label="Alias para transferencia" type="text" value={transferAlias} readOnly onFocus={(event) => event.currentTarget.select()} className="min-w-0 flex-1 rounded-xl border border-border bg-muted px-4 py-3 font-semibold text-primary" />
+              <button type="button" onClick={copyAlias} className="inline-flex items-center justify-center gap-2 rounded-xl bg-primary px-5 py-3 font-semibold text-primary-foreground transition hover:opacity-90">
+                {copied ? <Check className="h-4 w-4" aria-hidden="true" /> : <Copy className="h-4 w-4" aria-hidden="true" />}
+                {copied ? "Alias copiado" : "Copiar alias"}
+              </button>
+            </div>
+            <p className="mt-2 text-sm text-muted-foreground" role="status" aria-live="polite">{copied ? "Listo: pegá el alias en la aplicación bancaria para iniciar la transferencia." : copyError ? "No se pudo copiar automáticamente. Seleccioná el alias del campo y copialo manualmente." : "Podés copiar el alias o seleccionarlo para pegarlo en tu banco o billetera virtual."}</p>
+            <p className="mt-4 rounded-xl bg-warm-soft p-4 text-sm leading-relaxed text-accent-foreground"><strong>Antes de confirmar la transferencia:</strong> comprobá el nombre legal del titular y los datos que te muestra tu banco o billetera. Ese nombre puede diferir de «VOLVÉ» o «Proyectos Independientes». Si no reconocés el destinatario, no transfieras. No pedimos comprobantes ni datos de tarjetas en esta web.</p>
+            <p className="mt-3 text-xs text-muted-foreground">Publicamos únicamente el alias facilitado para el proyecto, no el CBU completo. Los aportes son voluntarios y no otorgan beneficios exclusivos.</p>
           </div>
         </section>
       )}
