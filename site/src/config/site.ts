@@ -16,7 +16,7 @@ export const siteConfig = {
   },
   bankTransfer: {
     // Alias público facilitado por el responsable de VOLVÉ. No publicar el CBU completo.
-    alias: null as string | null,
+    alias: "volve.prevencion" as string | null,
   },
   donations: [
     { id: "cafecito", label: "Invitá un Cafecito", url: "https://cafecito.app/volve" },
