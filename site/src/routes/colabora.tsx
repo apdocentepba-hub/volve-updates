@@ -3,6 +3,7 @@ import { Server, Code2, Megaphone, UserRound, FileText, HeartHandshake } from "l
 import { PageHero, SectionTitle, StatusPill, meta } from "@/components/ui-bits";
 import { siteConfig, isLive } from "@/config/site";
 import { Instagram, Share2, Users } from "lucide-react";
+import { QRCodeSVG } from "qrcode.react";
 
 export const Route = createFileRoute("/colabora")({
   head: () => meta("Colaborá con VOLVÉ — Aportes voluntarios y transparencia", "VOLVÉ es gratuito y queremos que siga siéndolo. Conocé cómo se usarán los aportes voluntarios y nuestra política de transparencia.", "/colabora"),
@@ -19,6 +20,7 @@ const uses = [
 function Colabora() {
   const channels = siteConfig.donations;
   const anyLive = channels.some((c) => isLive(c.url));
+  const cafecitoUrl = channels.find((c) => c.id === "cafecito")?.url;
   return (
     <>
       <PageHero eyebrow="Colaborá" title="VOLVÉ es gratuito y queremos que siga siéndolo" intro="Detrás hay horas de trabajo, pruebas y servidores. Si querés y podés, un aporte a voluntad nos ayuda a sostenerlo. Si no, usarlo y compartirlo también es colaborar." />
@@ -27,7 +29,7 @@ function Colabora() {
           <HeartHandshake className="h-9 w-9 text-sage" />
           <h2 className="mt-5 text-3xl font-bold">Aportes a voluntad</h2>
           <p className="mt-4 text-lg leading-relaxed opacity-85">
-            No existe un monto mínimo ni beneficios exclusivos por aportar. El acceso al software nunca depende de pagar: no hay precio, ni suscripción, ni versión “premium”.
+            Los aportes son voluntarios y cada plataforma ofrece sus propias opciones de importe. El acceso al software nunca depende de pagar: no hay suscripción ni versión “premium”.
           </p>
           <div className="mt-8"><StatusPill>{anyLive ? "Canales habilitados" : "Canal de aportes en preparación"}</StatusPill></div>
           <div className="mt-5 grid gap-3 sm:grid-cols-3">
@@ -47,6 +49,21 @@ function Colabora() {
           ))}
         </div>
       </section>
+      {isLive(cafecitoUrl) && (
+        <section className="container-v pb-8">
+          <div className="grid gap-6 items-center rounded-3xl border border-border bg-card p-6 md:grid-cols-[auto_1fr] md:p-8">
+            <div className="mx-auto rounded-2xl border border-border bg-white p-4">
+              <QRCodeSVG value={cafecitoUrl} size={192} level="H" marginSize={4} title="QR oficial del perfil Cafecito de VOLVÉ" />
+            </div>
+            <div>
+              <h2 className="text-2xl font-bold text-primary">Escaneá para apoyar a VOLVÉ</h2>
+              <p className="mt-3 max-w-xl text-muted-foreground">Este QR abre exclusivamente nuestro perfil público de <strong>Cafecito</strong>. No es un QR de cobro directo de Mercado Pago. Ahí vas a ver los importes disponibles y los medios habilitados antes de pagar.</p>
+              <a href={cafecitoUrl} target="_blank" rel="noopener noreferrer" className="mt-5 inline-flex items-center rounded-full bg-warm px-6 py-3 font-bold text-accent-foreground transition hover:opacity-90">Abrir Cafecito ↗</a>
+              <p className="mt-3 break-all text-xs text-muted-foreground">{cafecitoUrl}</p>
+            </div>
+          </div>
+        </section>
+      )}
       <section className="container-v py-12">
         <SectionTitle eyebrow="Colaborar sin dinero" title="Podés ayudar desde ahora" intro="Mientras preparamos medios de aportes económicos verificados, estas formas de colaboración están disponibles y no requieren pagar nada." />
         <div className="mt-7 grid gap-4 md:grid-cols-3">
@@ -79,7 +96,7 @@ function Colabora() {
             ))}
           </div>
           {siteConfig.transparency.reports.length === 0 ? (
-            <p className="mt-6 flex items-center gap-2 text-muted-foreground"><FileText className="h-5 w-5" /> Primer informe pendiente: recaudación no habilitada.</p>
+            <p className="mt-6 flex items-center gap-2 text-muted-foreground"><FileText className="h-5 w-5" /> Primer informe pendiente: Cafecito ya está habilitado, pero no publicaremos cifras hasta verificar los movimientos.</p>
           ) : (
             <ul className="mt-6 space-y-2">{siteConfig.transparency.reports.map((r) => <li key={r.url}><a href={r.url} className="text-primary underline">{r.period}</a></li>)}</ul>
           )}
