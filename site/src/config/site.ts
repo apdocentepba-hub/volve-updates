@@ -16,7 +16,7 @@ export const siteConfig = {
   },
   donations: [
     { id: "cafecito", label: "Invitá un Cafecito", url: "https://cafecito.app/volve" },
-    { id: "mercadopago", label: "Mercado Pago", url: null },
+    { id: "mercadopago", label: "Mercado Pago · elegí el monto", url: "https://link.mercadopago.com.ar/volve" },
     { id: "transferencia", label: "Transferencia bancaria", url: null },
   ] as DonationChannel[],
   transparency: {

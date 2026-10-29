@@ -21,6 +21,7 @@ function Colabora() {
   const channels = siteConfig.donations;
   const anyLive = channels.some((c) => isLive(c.url));
   const cafecitoUrl = channels.find((c) => c.id === "cafecito")?.url;
+  const mercadoPagoUrl = channels.find((c) => c.id === "mercadopago")?.url;
   return (
     <>
       <PageHero eyebrow="Colaborá" title="VOLVÉ es gratuito y queremos que siga siéndolo" intro="Detrás hay horas de trabajo, pruebas y servidores. Si querés y podés, un aporte a voluntad nos ayuda a sostenerlo. Si no, usarlo y compartirlo también es colaborar." />
@@ -41,7 +42,8 @@ function Colabora() {
               ),
             )}
           </div>
-          <p className="mt-5 text-xs opacity-70">Solo vamos a habilitar canales oficiales verificados. Desconfiá de cualquier alias o cuenta que no figure en este sitio.</p>
+          <p className="mt-5 text-xs opacity-80">Importante: en el enlace directo de Mercado Pago, la pantalla de pago muestra <strong>APDocentePBA</strong> como destinatario. Comprobá el nombre antes de confirmar cualquier aporte. No te pedimos claves ni datos bancarios.</p>
+          <p className="mt-3 text-xs opacity-70">Solo vamos a habilitar canales oficiales verificados. Desconfiá de cualquier alias o cuenta que no figure en este sitio.</p>
         </div>
         <div className="grid gap-4">
           {uses.map(({ icon: I, t, d }) => (
@@ -64,8 +66,24 @@ function Colabora() {
           </div>
         </section>
       )}
+      {isLive(mercadoPagoUrl) && (
+        <section className="container-v pb-8">
+          <div className="grid gap-6 items-center rounded-3xl border border-border bg-card p-6 md:grid-cols-[auto_1fr] md:p-8">
+            <div className="mx-auto rounded-2xl border border-border bg-white p-4">
+              <QRCodeSVG value={mercadoPagoUrl} size={192} level="H" marginSize={4} title="QR que abre el enlace de Mercado Pago de VOLVÉ" />
+            </div>
+            <div>
+              <h2 className="text-2xl font-bold text-primary">Aportá el monto que quieras con Mercado Pago</h2>
+              <p className="mt-3 max-w-xl text-muted-foreground">Escaneá este QR o abrí el enlace y elegí cuánto aportar. Es un QR que dirige a <strong>Tu Link</strong> de Mercado Pago, no un QR de cobro presencial.</p>
+              <p className="mt-3 max-w-xl rounded-xl bg-warm-soft p-3 text-sm text-accent-foreground"><strong>Antes de pagar:</strong> Mercado Pago mostrará <strong>APDocentePBA</strong> como nombre del receptor. Confirmá que sea ese destinatario y revisá el importe.</p>
+              <a href={mercadoPagoUrl} target="_blank" rel="noopener noreferrer" className="mt-5 inline-flex items-center rounded-full bg-warm px-6 py-3 font-bold text-accent-foreground transition hover:opacity-90">Abrir Mercado Pago ↗</a>
+              <p className="mt-3 break-all text-xs text-muted-foreground">{mercadoPagoUrl}</p>
+            </div>
+          </div>
+        </section>
+      )}
       <section className="container-v py-12">
-        <SectionTitle eyebrow="Colaborar sin dinero" title="Podés ayudar desde ahora" intro="Mientras preparamos medios de aportes económicos verificados, estas formas de colaboración están disponibles y no requieren pagar nada." />
+        <SectionTitle eyebrow="Colaborar sin dinero" title="Podés ayudar desde ahora" intro="Además de los aportes voluntarios, podés ayudar sin gastar dinero. Estas opciones siempre estarán disponibles." />
         <div className="mt-7 grid gap-4 md:grid-cols-3">
           <a href={"https://api.whatsapp.com/send?text="+encodeURIComponent("Conocé VOLVÉ: un proyecto argentino que desarrolla tecnología gratuita para prevenir apuestas online. https://volve-web.onrender.com/")} target="_blank" rel="noopener noreferrer" className="group rounded-3xl border border-border bg-card p-7 transition hover:border-sage hover:shadow-soft">
             <Share2 className="h-7 w-7 text-primary" aria-hidden="true"/>
@@ -96,7 +114,7 @@ function Colabora() {
             ))}
           </div>
           {siteConfig.transparency.reports.length === 0 ? (
-            <p className="mt-6 flex items-center gap-2 text-muted-foreground"><FileText className="h-5 w-5" /> Primer informe pendiente: Cafecito ya está habilitado, pero no publicaremos cifras hasta verificar los movimientos.</p>
+            <p className="mt-6 flex items-center gap-2 text-muted-foreground"><FileText className="h-5 w-5" /> Primer informe pendiente: Cafecito y Mercado Pago directo están habilitados, pero no publicaremos cifras hasta verificar los movimientos.</p>
           ) : (
             <ul className="mt-6 space-y-2">{siteConfig.transparency.reports.map((r) => <li key={r.url}><a href={r.url} className="text-primary underline">{r.period}</a></li>)}</ul>
           )}
