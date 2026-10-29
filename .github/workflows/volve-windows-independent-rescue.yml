@@ -1,0 +1,72 @@
+name: VOLVE Windows independent rescue rehearsal
+on:
+  push:
+    paths:
+      - .github/workflows/volve-windows-independent-rescue.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  independent-rescue:
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - name: Verify a separate SYSTEM task can recover an interrupted journal
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $work=Join-Path $env:RUNNER_TEMP ('VOLVE-CI-RESCUE-'+[guid]::NewGuid().ToString('N'))
+          $name='VOLVE-CI-RESCUE-'+$PID
+          New-Item -ItemType Directory -Path $work -Force | Out-Null
+          $state=Join-Path $work 'simulated-adapter.txt'
+          $journal=Join-Path $work 'journal.json'
+          $receipt=Join-Path $work 'receipt.txt'
+          $agent=Join-Path $work 'independent-recovery.ps1'
+          $original='VOLVE_CI_ORIGINAL_AUTOMATIC'
+          $changed='VOLVE_CI_SIMULATED_LOCAL_FILTER'
+          # This is a stand-in for an adapter; no real network commands are used.
+          [IO.File]::WriteAllText($state,$changed)
+          [IO.File]::WriteAllText($journal,(@{schema=1;phase='pending';original=$original;expected=$changed}|ConvertTo-Json -Compress))
+          @'
+          $ErrorActionPreference='Stop'
+          $root=$PSScriptRoot
+          $journalPath=Join-Path $root 'journal.json'
+          $statePath=Join-Path $root 'simulated-adapter.txt'
+          $receiptPath=Join-Path $root 'receipt.txt'
+          if(-not(Test-Path -LiteralPath $journalPath)){throw 'Missing pending journal'}
+          $j=Get-Content -LiteralPath $journalPath -Raw -Encoding UTF8 | ConvertFrom-Json
+          if($j.schema -ne 1 -or $j.phase -ne 'pending'){throw 'Invalid rescue journal'}
+          if(([IO.File]::ReadAllText($statePath)) -ne $j.expected){throw 'Unrecognized simulated state'}
+          # The rescue script is run by Task Scheduler, independently of the first process.
+          [IO.File]::WriteAllText($statePath,[string]$j.original)
+          if(([IO.File]::ReadAllText($statePath)) -ne $j.original){throw 'Recovery not verified'}
+          [IO.File]::WriteAllText($receiptPath,'VOLVE_CI_INDEPENDENT_RESCUE_OK')
+          Remove-Item -LiteralPath $journalPath -Force
+          '@ | Set-Content -LiteralPath $agent -Encoding UTF8
+          $powerShell="$env:WINDIR\System32\WindowsPowerShell\v1.0\powershell.exe"
+          $action=New-ScheduledTaskAction -Execute $powerShell -Argument ('-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "'+$agent+'"')
+          $trigger=New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(5)
+          $principal=New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest
+          try {
+            if(Get-ScheduledTask -TaskName $name -ErrorAction SilentlyContinue){throw 'Task name collision'}
+            Register-ScheduledTask -TaskName $name -Action $action -Trigger $trigger -Principal $principal -ErrorAction Stop | Out-Null
+            $task=Get-ScheduledTask -TaskName $name -ErrorAction Stop
+            if([string]$task.Principal.UserId -notin @('SYSTEM','S-1-5-18')){throw 'Task not SYSTEM'}
+            if(@($task.Actions).Count -ne 1){throw 'Task action mismatch'}
+            # The commissioning process does NOT invoke the recovery logic directly.
+            Start-ScheduledTask -TaskName $name -ErrorAction Stop
+            $deadline=(Get-Date).AddSeconds(35)
+            while((Get-Date) -lt $deadline -and !(Test-Path -LiteralPath $receipt)){
+              Start-Sleep -Milliseconds 300
+            }
+            if(!(Test-Path -LiteralPath $receipt)){throw 'Independent recovery task did not complete'}
+            if(([IO.File]::ReadAllText($receipt)) -ne 'VOLVE_CI_INDEPENDENT_RESCUE_OK'){throw 'Rescue receipt invalid'}
+            if(([IO.File]::ReadAllText($state)) -ne $original){throw 'Simulated state was not restored'}
+            if(Test-Path -LiteralPath $journal){throw 'Journal was not cleared'}
+            Write-Output 'PASS: Scheduled Task as SYSTEM recovered simulated state from durable journal independently.'
+            Write-Output 'NOT TESTED: real DNS adapter changes, DHCP/IPv6 restoration, electrical power loss, process persistence.'
+          }
+          finally {
+            Unregister-ScheduledTask -TaskName $name -Confirm:$false -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue
+          }
