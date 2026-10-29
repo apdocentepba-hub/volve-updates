@@ -1,0 +1,41 @@
+name: VOLVE Windows scheduler persistence dry-run
+on:
+  push:
+    paths:
+      - .github/workflows/volve-windows-dns-task-settings.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  task-settings:
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - name: Verify SYSTEM task with unlimited execution and rollback task scheduling
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $name="VOLVE-CI-DNS-WORKER-$PID"
+          $rescue="VOLVE-CI-DNS-WATCHDOG-$PID"
+          try {
+            $args='/c timeout /t 1 /nobreak >nul'
+            $worker=New-ScheduledTaskAction -Execute "$env:WINDIR\System32\cmd.exe" -Argument $args
+            $trigger=New-ScheduledTaskTrigger -AtStartup
+            $rescueTrigger=New-ScheduledTaskTrigger -Once -At ((Get-Date).AddMinutes(10)) -RepetitionInterval (New-TimeSpan -Minutes 1)
+            $principal=New-ScheduledTaskPrincipal -UserId SYSTEM -LogonType ServiceAccount -RunLevel Highest
+            Register-ScheduledTask -TaskName $name -Action $worker -Trigger $trigger -Principal $principal | Out-Null
+            Register-ScheduledTask -TaskName $rescue -Action $worker -Trigger $rescueTrigger -Principal $principal | Out-Null
+            $settings=New-ScheduledTaskSettingsSet -ExecutionTimeLimit ([TimeSpan]::Zero) -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1) -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
+            Set-ScheduledTask -TaskName $name -Settings $settings -ErrorAction Stop | Out-Null
+            $current=Get-ScheduledTask -TaskName $name -ErrorAction Stop
+            if($current.Settings.ExecutionTimeLimit -ne [TimeSpan]::Zero){throw 'worker still has execution time limit'}
+            if([string]$current.Principal.UserId -notin @('SYSTEM','S-1-5-18')){throw 'worker is not SYSTEM'}
+            if([string]$current.Triggers[0].CimClass.CimClassName -ne 'MSFT_TaskBootTrigger'){throw 'worker is not at startup'}
+            $r=Get-ScheduledTask -TaskName $rescue -ErrorAction Stop
+            if([string]$r.Principal.UserId -notin @('SYSTEM','S-1-5-18')){throw 'rescue not SYSTEM'}
+            Write-Output 'PASS: SYSTEM startup worker unlimited duration; separate SYSTEM rescue scheduled.'
+            Write-Output 'NO DNS adapter changes or activation were attempted.'
+          } finally {
+            Unregister-ScheduledTask -TaskName $name -Confirm:$false -ErrorAction SilentlyContinue
+            Unregister-ScheduledTask -TaskName $rescue -Confirm:$false -ErrorAction SilentlyContinue
+          }
