@@ -28,7 +28,7 @@ jobs:
             $settings=New-ScheduledTaskSettingsSet -ExecutionTimeLimit ([TimeSpan]::Zero) -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1) -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
             Set-ScheduledTask -TaskName $name -Settings $settings -ErrorAction Stop | Out-Null
             $current=Get-ScheduledTask -TaskName $name -ErrorAction Stop
-            if($current.Settings.ExecutionTimeLimit -ne [TimeSpan]::Zero){throw 'worker still has execution time limit'}
+            if([string]$current.Settings.ExecutionTimeLimit -ne 'PT0S'){throw 'worker still has execution time limit'}
             if([string]$current.Principal.UserId -notin @('SYSTEM','S-1-5-18')){throw 'worker is not SYSTEM'}
             if([string]$current.Triggers[0].CimClass.CimClassName -ne 'MSFT_TaskBootTrigger'){throw 'worker is not at startup'}
             $r=Get-ScheduledTask -TaskName $rescue -ErrorAction Stop
