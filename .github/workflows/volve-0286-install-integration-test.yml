@@ -64,6 +64,33 @@ jobs:
           Start-Sleep -Seconds 3
           Write-Host "Process exited? $($proc.HasExited)"
           if ($proc.HasExited) { Write-Host "Process code $($proc.ExitCode)" }
+          $probeSource = @'
+          using System;
+          using System.Text;
+          using System.Runtime.InteropServices;
+          public static class VolveWindowProbe {
+              private delegate bool CB(IntPtr h, IntPtr p);
+              [DllImport("user32.dll")] private static extern bool EnumWindows(CB cb, IntPtr p);
+              [DllImport("user32.dll")] private static extern bool EnumChildWindows(IntPtr h, CB cb, IntPtr p);
+              [DllImport("user32.dll")] private static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
+              [DllImport("user32.dll", CharSet=CharSet.Unicode)] private static extern int GetWindowText(IntPtr h, StringBuilder s, int max);
+              static string T(IntPtr h) { var b=new StringBuilder(4096); GetWindowText(h,b,b.Capacity); return b.ToString(); }
+              public static string Dump(int pid) {
+                  var sb=new StringBuilder();
+                  EnumWindows((h,l)=>{
+                      uint p; GetWindowThreadProcessId(h,out p);
+                      if (p==(uint)pid) {
+                          sb.AppendLine("WINDOW: "+T(h));
+                          EnumChildWindows(h,(ch,l2)=>{ var txt=T(ch); if(!String.IsNullOrWhiteSpace(txt)) sb.AppendLine("CHILD: "+txt); return true;},IntPtr.Zero);
+                      }
+                      return true;
+                  },IntPtr.Zero);
+                  return sb.ToString();
+              }
+          }
+          '@
+          Add-Type -TypeDefinition $probeSource
+          Write-Host ([VolveWindowProbe]::Dump($proc.Id))
           Write-Host "Running processes with VOLVE name:"
           Get-Process | Where-Object {$_.ProcessName -match 'VOLVE'} | Select-Object Id, ProcessName, MainWindowTitle | Format-Table
           try {
