@@ -1,0 +1,76 @@
+name: VOLVE 0.28.5 to 0.28.6 Windows isolated installation
+
+on:
+  push:
+    paths:
+      - 'release-candidates/v0.28.5/parts/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  updater-integration:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Reconstruct verified versions
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $cases = @(
+            @{v="0.28.5"; expected="6a11e7d79b4c79e5d422f8746c4925ae93189454e8c3c59e373bb423958135c1"},
+            @{v="0.28.6"; expected="8659d948427e515e3471508487c81afadb6c9cecfd3633aedc6ea67459f1d72a"}
+          )
+          foreach ($c in $cases) {
+            $dir = "release-candidates/v$($c.v)/parts"
+            $parts = @(Get-ChildItem -LiteralPath $dir -Filter 'part-*.bin' -File | Sort-Object Name)
+            if ($parts.Count -ne 29) { throw "Unexpected chunk count for $($c.v): $($parts.Count)" }
+            $dest = Join-Path $env:RUNNER_TEMP ("VOLVE_Centro_"+$c.v+".exe")
+            $out = [IO.File]::Create($dest)
+            try {
+              for ($i=0; $i -lt 29; $i++) {
+                if ($parts[$i].Name -ne ("part-{0:D2}.bin" -f $i)) { throw "Missing part $i" }
+                $inputStream=[IO.File]::OpenRead($parts[$i].FullName)
+                try { $inputStream.CopyTo($out) } finally { $inputStream.Dispose() }
+              }
+            } finally { $out.Dispose() }
+            $h=(Get-FileHash -Algorithm SHA256 $dest).Hash.ToLowerInvariant()
+            if ($h -ne $c.expected) { throw "Wrong binary hash for $($c.v)" }
+            Write-Host ("Verified "+$c.v)
+          }
+      - name: Simulate signed staged installation with 0.28.5
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $isAdmin = ([Security.Principal.WindowsPrincipal]::new([Security.Principal.WindowsIdentity]::GetCurrent())).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+          if (-not $isAdmin) { throw "Runner is not admin; test cannot validate elevated install" }
+          $staged=Join-Path $env:RUNNER_TEMP "VOLVE_Update_0_28_6.exe"
+          Copy-Item -LiteralPath (Join-Path $env:RUNNER_TEMP "VOLVE_Centro_0.28.6.exe") -Destination $staged
+          Copy-Item -LiteralPath "release-candidates/v0.28.6/fixture/stable.json" -Destination ($staged+".json")
+          Copy-Item -LiteralPath "release-candidates/v0.28.6/fixture/stable.json.sig" -Destination ($staged+".sig")
+          $old=(Join-Path $env:RUNNER_TEMP "VOLVE_Centro_0.28.5.exe")
+          $target=Join-Path $env:ProgramData "VOLVE-Browser-Filter/VOLVE_Centro_Proteccion_0_28_6.exe"
+          $args='--apply-staged-panel-update "'+$staged+'"'
+          $proc=Start-Process -FilePath $old -ArgumentList $args -PassThru
+          try {
+            $deadline=[DateTime]::UtcNow.AddSeconds(60)
+            while (([DateTime]::UtcNow -lt $deadline) -and -not (Test-Path -LiteralPath $target)) {
+              Start-Sleep -Seconds 1
+            }
+            if (-not (Test-Path -LiteralPath $target)) { throw "The versioned 0.28.6 panel was not installed" }
+            $digest=(Get-FileHash -Algorithm SHA256 $target).Hash.ToLowerInvariant()
+            if ($digest -ne "8659d948427e515e3471508487c81afadb6c9cecfd3633aedc6ea67459f1d72a") { throw "Wrong installed panel hash" }
+            $link=Join-Path $env:ProgramData "Microsoft/Windows/Start Menu/Programs/VOLVE - Centro de proteccion.lnk"
+            $deadline=[DateTime]::UtcNow.AddSeconds(15)
+            while (([DateTime]::UtcNow -lt $deadline) -and -not (Test-Path -LiteralPath $link)) { Start-Sleep -Seconds 1 }
+            if (-not (Test-Path -LiteralPath $link)) { throw "Shortcut was not created" }
+            $shortcut=(New-Object -ComObject WScript.Shell).CreateShortcut($link)
+            if ($shortcut.TargetPath -ne $target) { throw "Shortcut points to wrong version: $($shortcut.TargetPath)" }
+            Write-Host "PASS: 0.28.5 installed signed 0.28.6 without invoking DNS setup"
+          } finally {
+            if ($proc -and -not $proc.HasExited) { Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue }
+          }
