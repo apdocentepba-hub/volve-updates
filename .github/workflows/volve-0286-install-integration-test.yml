@@ -52,6 +52,9 @@ jobs:
           $staged=Join-Path $env:RUNNER_TEMP "VOLVE_Update_0_28_6.exe"
           Copy-Item -LiteralPath (Join-Path $env:RUNNER_TEMP "VOLVE_Centro_0.28.6.exe") -Destination $staged
           Copy-Item -LiteralPath "release-candidates/v0.28.6/fixture/stable.json" -Destination ($staged+".json")
+          # On Windows git checkout may convert LF to CRLF: signatures cover exact bytes.
+          $manifestText=[IO.File]::ReadAllText($staged+".json",[Text.Encoding]::UTF8).Replace("`r`n","`n")
+          [IO.File]::WriteAllText(($staged+".json"),$manifestText,[Text.UTF8Encoding]::new($false))
           Copy-Item -LiteralPath "release-candidates/v0.28.6/fixture/stable.json.sig" -Destination ($staged+".sig")
           $old=(Join-Path $env:RUNNER_TEMP "VOLVE_Centro_0.28.5.exe")
           $target=Join-Path $env:ProgramData "VOLVE-Browser-Filter/VOLVE_Centro_Proteccion_0_28_6.exe"
