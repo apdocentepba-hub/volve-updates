@@ -1,11 +1,16 @@
-# VOLVÉ 0.28.7 — Actualizador del motor DNS (piloto)
+# VOLVÉ 0.28.7 — Seguridad de reemplazo del motor (piloto)
 
-**NO INSTALAR NI PUBLICAR COMO RELEASE ESTABLE.** La versión operativa sigue siendo VOLVÉ 0.28.6 y el canal releases/stable.json permanece intacto.
+**NO INSTALAR.** El canal estable y el motor DNS de la 0.28.6 no se modifican.
 
-El paquete completo se almacena en 10 bloques binarios dentro de development/0.28.7/complete-source-parts. El CI reconstruye el ZIP exacto, valida su SHA-256 antes de extraer y compila el programa con el motor antiguo incorporado. SHA-256 ZIP: 92b3536559151260375b17a64eedd009df8399e45460637208027b7ca0587ba5.
+El código completo de referencia permanece en `complete-source-parts/` como ZIP reconstruible mediante GitHub Actions, y el archivo `VOLVE_0287_PRECHECK_RESCATE_OVERLAY_NO_INSTALAR.zip` superpone las correcciones recientes. CI verifica el SHA-256 del overlay antes de compilar.
 
-El ZIP de codigo liviano anterior fue publicado para revisión de texto, pero no contiene el ejecutable de motor heredado (requerido por go:embed). No usarlo para compilar el programa completo.
+## Avances de esta revisión
 
-Nuevo: firma Ed25519 y SHA-256 del canal aislado de actualizaciones del motor, preparación segura en una carpeta de versión, comando --check-motor-updates y opción avanzada de solo lectura. Las pruebas de recuperación usan un controlador simulado.
+- Reversión con **contexto independiente de 90 s** cuando se cancela o supera el tiempo una actualización; no reutiliza la cancelación que provocó el fallo.
+- Un nuevo comando experimental `--motor-upgrade-preflight` de **solo lectura**, que verifica que el motor y las tareas SYSTEM pertenezcan a VOLVÉ, que las acciones y los scripts de rescate coincidan exactamente, que el registro original de DNS esté activo y que respondan IPv4 e IPv6.
+- Rechazo explícito de binarios vacíos, directorios, scripts modificados, tarea ajena, registro de recuperación no activo y registros con campos inesperados.
+- Pruebas unitarias Windows y una prueba de cancelación con doble simulado.
 
-**Todavía no existe controlador Windows real que cambie la tarea del motor y la restaure después de un fallo.** En consecuencia no se publica releases/motor-stable.json ni se toca la instalación actual.
+**Importante:** todavía no se creó un controlador real de conmutación del motor ni un recuperador independiente post-reinicio; por lo tanto, el CLI piloto no modifica el DNS ni la programación del equipo. Antes de actualizar el motor real debe probarse recuperación persistente después de cortar un proceso y reiniciar Windows, más pruebas de conectividad.
+
+Referencia de ZIP de desarrollo: [Carpeta Drive](https://drive.google.com/drive/folders/1mV1XzqsDqAKOVuw_FWIwaOaSnWmTwt5y).

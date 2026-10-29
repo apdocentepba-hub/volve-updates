@@ -35,6 +35,11 @@ jobs:
           print('Reconstructed and verified complete source.')
           PY
           mkdir build && unzip -q source.zip -d build
+      - name: Apply verified read-only preflight and rollback fixes
+        shell: bash
+        run: |
+          test "$(sha256sum development/0.28.7/VOLVE_0287_PRECHECK_RESCATE_OVERLAY_NO_INSTALAR.zip | cut -d ' ' -f1)" = "fdfd31f21df81fe6da6075bfd442354297874576b6dc2c38f19bd35a681d95cd"
+          unzip -q -o development/0.28.7/VOLVE_0287_PRECHECK_RESCATE_OVERLAY_NO_INSTALAR.zip -d build
       - name: Full unit tests and race detector
         working-directory: build/codigo
         run: |
@@ -66,6 +71,13 @@ jobs:
           if($hash -ne '92b3536559151260375b17a64eedd009df8399e45460637208027b7ca0587ba5'){throw "Source hash mismatch"}
           New-Item -ItemType Directory build -Force | Out-Null
           Expand-Archive -LiteralPath source.zip -DestinationPath build -Force
+      - name: Apply verified read-only preflight and rollback fixes
+        shell: pwsh
+        run: |
+          $f='development/0.28.7/VOLVE_0287_PRECHECK_RESCATE_OVERLAY_NO_INSTALAR.zip'
+          $sha=(Get-FileHash -Algorithm SHA256 $f).Hash.ToLowerInvariant()
+          if($sha -ne 'fdfd31f21df81fe6da6075bfd442354297874576b6dc2c38f19bd35a681d95cd'){throw "Overlay mismatch"}
+          Expand-Archive -LiteralPath $f -DestinationPath build -Force
       - name: Run updater tests on Windows
         working-directory: build/codigo
         shell: pwsh
@@ -73,6 +85,8 @@ jobs:
           $env:CGO_ENABLED="0"
           go test ./motorupdate ./releaseupdate -count=1
           if($LASTEXITCODE -ne 0){throw "Unit tests failed"}
+          go test . -run 'TestMotorJournalReadOnlyRejectsUnsafeStates|TestMotorPreflightOnlyReadsKnownFiles' -count=1
+          if($LASTEXITCODE -ne 0){throw "Read-only preflight tests failed"}
       - name: Compile complete Windows GUI (not for distribution)
         working-directory: build/codigo
         shell: pwsh
