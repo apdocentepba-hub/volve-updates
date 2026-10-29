@@ -1,35 +1,28 @@
-# VOLVÉ — Canal oficial de actualizaciones
+# VOLVÉ — Canal oficial de actualizaciones de Windows
 
-Canal previsto para Windows: `stable`, rama `main`.
+## Centro de protección (0.28.5 en adelante)
 
-## Estado del canal
+**Canal de actualización firmado activo para el panel: VOLVÉ 0.28.6 (piloto).**
 
-**Estructura publicada; actualizaciones automáticas todavía NO habilitadas.**
+El Centro consulta estos dos archivos de la rama principal:
 
-El agente instalado en Windows consulta:
+- `https://raw.githubusercontent.com/apdocentepba-hub/volve-updates/main/releases/stable.json`
+- `https://raw.githubusercontent.com/apdocentepba-hub/volve-updates/main/releases/stable.json.sig`
 
-- `https://raw.githubusercontent.com/apdocentepba-hub/volve-updates/main/stable/manifest.json`
-- `https://raw.githubusercontent.com/apdocentepba-hub/volve-updates/main/stable/manifest.sig`
+El manifiesto está firmado con Ed25519 y la clave pública está incorporada en el cliente. El cliente comprueba la firma, la versión, el tamaño y el SHA-256 del ejecutable antes de ofrecer la actualización. El programa anterior conserva su copia al instalar una nueva versión y, al aplicar el cambio, requiere permisos administrativos de Windows.
 
-Estos dos archivos **todavía no existen**, intencionalmente. No hay una nueva versión verificada para distribuir y no se debe publicar un manifiesto de prueba con una versión mayor.
+**Límite de esta actualización:** solo instala una nueva versión del Centro de protección. **No actualiza ni reinstala el motor DNS, el watchdog, el instalador integral, los bloqueos de VPN o las tareas de rescate.** Estos componentes siguen requiriendo su propio mecanismo de actualización y validación.
 
-## Formato y seguridad
+## Publicación 0.28.6
 
-- `public-key.base64.txt` es la clave **pública** Ed25519 que utiliza el actualizador.
-- La clave **privada** no está incluida y debe permanecer fuera de GitHub, Releases, issues y registros.
-- El manifiesto de versión y su firma autentican una actualización; el ejecutable verifica además el SHA-256 del paquete.
-- El transporte debe ser HTTPS. La firma del manifiesto no sustituye la firma Authenticode del ejecutable Windows.
-- El agente 0.14.x conocido solo permite actualizar el **panel** `VOLVE_Centro_Proteccion.exe`; no actualiza motor DNS, catálogo, instalador ni el propio agente.
+- [Release de prueba v0.28.6](https://github.com/apdocentepba-hub/volve-updates/releases/tag/v0.28.6)
+- [Integración de instalación 0.28.5 → 0.28.6 aprobada en Windows de GitHub](https://github.com/apdocentepba-hub/volve-updates/actions/runs/40927834477)
+- SHA-256 del ejecutable: `8659d948427e515e3471508487c81afadb6c9cecfd3633aedc6ea67459f1d72a`
 
-## Procedimiento de una actualización REAL
+Validado: versión anterior instala el panel nuevo en un Windows temporal con privilegios administrativos y genera el acceso directo correcto. Pendiente: confirmación del botón y flujo UAC en una PC del usuario, pruebas de protección DNS real y firma Authenticode para Windows.
 
-1. Compilar y probar el nuevo panel en Windows x64, incluyendo controles de regresión y reversión.
-2. Crear un ZIP con **únicamente** `VOLVE_Centro_Proteccion.exe`.
-3. Publicar el ZIP en un Release de GitHub y obtener su dirección HTTPS real.
-4. Firmar el manifiesto con `tools/firmar_actualizacion.py`, usando la clave privada almacenada fuera de este repositorio.
-5. Verificar localmente versión, firma y SHA-256. Publicar **juntos** `stable/manifest.json` y `stable/manifest.sig`.
-6. Probar la actualización desde el agente Windows antes de ampliar su distribución.
+El archivo `releases/stable.json` y su firma se publicaron juntos. Para próximas versiones, primero subir el binario, validar descarga e instalación, luego firmar fuera de línea y publicar ambos archivos en el mismo commit. No subir la clave privada.
 
-Las tareas horarias registradas en Windows no prueban, por sí solas, que las descargas se hayan aplicado correctamente.
+## Agente anterior (0.14.x)
 
-**Estado actual:** canal creado y documentado, sin paquetes anunciados.
+El canal legado `stable/manifest.json` y `stable/manifest.sig` es distinto del canal moderno y permanece inactivo. No se debe mezclar su clave con el canal 0.28.x. Si se habilita en el futuro, requiere una revisión de compatibilidad independiente.
