@@ -1,0 +1,43 @@
+name: Publicar candidato VOLVE v0.28.6
+
+on:
+  push:
+    paths:
+      - 'release-candidates/v0.28.6/VOLVE_0_28_6_CENTRO.exe'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify exact PE and SHA-256
+        shell: pwsh
+        run: |
+          $f = "release-candidates/v0.28.6/VOLVE_0_28_6_CENTRO.exe"
+          if (-not (Test-Path $f)) { throw "EXE missing" }
+          $hash = (Get-FileHash -Algorithm SHA256 $f).Hash.ToLowerInvariant()
+          if ($hash -ne "8659d948427e515e3471508487c81afadb6c9cecfd3633aedc6ea67459f1d72a") { throw "SHA256 mismatch" }
+          $bytes = [IO.File]::ReadAllBytes((Resolve-Path $f))
+          if ($bytes.Length -ne 14858240 -or $bytes[0] -ne 77 -or $bytes[1] -ne 90) { throw "invalid PE" }
+          Write-Host "Verified exact file bytes"
+      - name: Smoke test - only read-only update check
+        shell: pwsh
+        run: |
+          $f = (Resolve-Path "release-candidates/v0.28.6/VOLVE_0_28_6_CENTRO.exe").Path
+          $p = Start-Process -FilePath $f -ArgumentList '--check-app-updates' -Wait -PassThru -NoNewWindow
+          if ($p.ExitCode -ne 0) { throw "Updater check failed" }
+          Write-Host "Executable invoked; DNS was not modified"
+      - name: Create immutable pre-release (no stable channel yet)
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = "v0.28.6"
+          gh release view $tag --repo "${{ github.repository }}" *> $null
+          if ($LASTEXITCODE -eq 0) { throw "Release already exists; refuse overwrite" }
+          gh release create $tag "release-candidates/v0.28.6/VOLVE_0_28_6_CENTRO.exe" --repo "${{ github.repository }}" --prerelease --target "${{ github.sha }}" --title "VOLVÉ 0.28.6 (piloto de auto-actualización)" --notes "Candidato para probar el botón Actualizar VOLVÉ desde 0.28.5. Modifica solo el Centro de protección. No ejecutar Instalación DNS. No publicar releases/stable.json hasta validar la firma y comprobar el proceso."
