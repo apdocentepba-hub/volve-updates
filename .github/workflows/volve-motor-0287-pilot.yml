@@ -210,68 +210,7 @@ jobs:
         run: |
           foreach($prefix in @('VOLVE-CI-StartupMotor-','VOLVE-CI-BootRecovery-')){
             $task=$prefix+$env:GITHUB_RUN_ID
-            if($task -match '^VOLVE-CI-(StartupMotor|BootRecovery)-[0-9]+
-        if: always()
-        shell: pwsh
-        run: |
-          $task='VOLVE-CI-EngineRecovery-'+$env:GITHUB_RUN_ID
-          if($task -match '^VOLVE-CI-EngineRecovery-[0-9]+$'){
-            Unregister-ScheduledTask -TaskName $task -Confirm:$false -ErrorAction SilentlyContinue
-          }
-
-  scheduler-rollback-drill:
-    runs-on: windows-latest
-    timeout-minutes: 12
-    env:
-      TEST_TASK_NAME: VOLVE-CI-EngineSwap-${{ github.run_id }}
-    steps:
-      - name: Export original harmless task and interrupt after switch
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = "Stop"
-          $name = $env:TEST_TASK_NAME
-          if ($name -notmatch '^VOLVE-CI-EngineSwap-[0-9]+$') { throw "Unsafe task name" }
-          $isAdmin = ([Security.Principal.WindowsPrincipal]::new([Security.Principal.WindowsIdentity]::GetCurrent())).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
-          if (-not $isAdmin) { throw "This isolated runner cannot create test tasks" }
-          $original = Join-Path $env:WINDIR 'System32/cmd.exe'
-          $candidate = Join-Path $env:WINDIR 'System32/notepad.exe'
-          $action = New-ScheduledTaskAction -Execute $original -Argument '/C exit 0'
-          $trigger = New-ScheduledTaskTrigger -Once -At ((Get-Date).AddYears(1))
-          Register-ScheduledTask -TaskName $name -Action $action -Trigger $trigger -User SYSTEM -RunLevel Highest -Force | Out-Null
-          $saved = Export-ScheduledTask -TaskName $name
-          $snapshotPath = Join-Path $env:RUNNER_TEMP 'VOLVE_CI_original_task.xml'
-          [IO.File]::WriteAllText($snapshotPath, $saved, [Text.UTF8Encoding]::new($false))
-          if (-not (Test-Path $snapshotPath)) { throw "Snapshot not created" }
-          $newAction = New-ScheduledTaskAction -Execute $candidate
-          Set-ScheduledTask -TaskName $name -Action $newAction | Out-Null
-          $current = @(Get-ScheduledTask -TaskName $name).Actions[0]
-          if ($current.Execute -ne $candidate) { throw "Task was not switched" }
-          Write-Host 'TEST: task action switched; ending process without rollback to simulate interrupted update.'
-      - name: Recover original task in an independent process
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = "Stop"
-          $name = $env:TEST_TASK_NAME
-          $snapshotPath = Join-Path $env:RUNNER_TEMP 'VOLVE_CI_original_task.xml'
-          if (-not (Test-Path -LiteralPath $snapshotPath -PathType Leaf)) { throw "No original task snapshot; fail closed" }
-          $saved = [IO.File]::ReadAllText($snapshotPath)
-          if (-not $saved.Contains('cmd.exe')) { throw "Snapshot does not identify expected harmless task" }
-          Register-ScheduledTask -TaskName $name -Xml $saved -Force | Out-Null
-          $restored = Get-ScheduledTask -TaskName $name
-          $original = Join-Path $env:WINDIR 'System32/cmd.exe'
-          if ($restored.Actions[0].Execute -ne $original -or $restored.Actions[0].Arguments -ne '/C exit 0') {
-            throw 'Rollback verification failed: original action not restored'
-          }
-          Write-Host 'PASS: Windows Task Scheduler task restored after simulated process interruption.'
-      - name: Remove only this test task
-        if: always()
-        shell: pwsh
-        run: |
-          $name = $env:TEST_TASK_NAME
-          if ($name -match '^VOLVE-CI-EngineSwap-[0-9]+$') {
-            Unregister-ScheduledTask -TaskName $name -Confirm:$false -ErrorAction SilentlyContinue
-          }
-){
+            if($task -match '^VOLVE-CI-(StartupMotor|BootRecovery)-[0-9]+$'){
               Unregister-ScheduledTask -TaskName $task -Confirm:$false -ErrorAction SilentlyContinue
             }
           }
