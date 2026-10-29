@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="1080" viewBox="0 0 1080 1080">
+<defs><linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#0A2E3B"/><stop offset="1" stop-color="#112A2F"/></linearGradient><linearGradient id="wash" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#2E8D88"/><stop offset="1" stop-color="#6CB6A8"/></linearGradient></defs>
+<rect width="1080" height="1080" fill="url(#bg)"/>
+<circle cx="1000" cy="140" r="305" fill="#1F565B" opacity=".42"/><circle cx="1035" cy="942" r="270" fill="#225858" opacity=".32"/>
+<path d="M64 112 L64 80 L95 80" fill="none" stroke="#FDC83D" stroke-width="13" stroke-linecap="round"/>
+<text x="80" y="202" fill="#FAFAF4" font-size="114" font-family="DejaVu Sans,sans-serif" font-weight="bold" letter-spacing="-7">VOLVÉ</text>
+<rect x="80" y="226" rx="7" ry="7" width="500" height="16" fill="#FFCA3C"/>
+<text x="80" y="294" fill="#9BE0D6" font-size="30" font-family="DejaVu Sans,sans-serif" font-weight="bold" letter-spacing="5">PREVENCIÓN DE APUESTAS</text>
+<text x="76" y="451" fill="#FFFFFF" font-size="79" font-family="DejaVu Sans,sans-serif" font-weight="bold">NO ES SOLO</text>
+<text x="76" y="544" fill="#FEC83D" font-size="76" font-family="DejaVu Sans,sans-serif" font-weight="bold">UNA APUESTA.</text>
+<rect x="78" y="593" rx="19" width="930" height="178" fill="#FFFFFF" opacity=".10"/>
+<text x="108" y="650" fill="#FFFFFF" font-size="34" font-family="DejaVu Sans,sans-serif">Puede afectar tu salud mental,</text>
+<text x="108" y="703" fill="#FFFFFF" font-size="34" font-family="DejaVu Sans,sans-serif">tus vínculos y tu economía.</text>
+<text x="82" y="838" fill="#D5F8EC" font-size="44" font-family="DejaVu Sans,sans-serif" font-weight="bold">Siempre hay otra salida.</text>
+<rect x="75" y="894" width="930" height="2" fill="#6DABA3" opacity=".7"/>
+<text x="80" y="947" fill="#F5F6F0" font-size="30" font-family="DejaVu Sans,sans-serif" font-weight="bold">@volveprevencion</text>
+<text x="80" y="993" fill="#A4D1CB" font-size="27" font-family="DejaVu Sans,sans-serif">Tecnología gratuita en desarrollo.</text>
+<path d="M913 962 l25 25 l52 -61" fill="none" stroke="#FFCB43" stroke-width="12" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>
