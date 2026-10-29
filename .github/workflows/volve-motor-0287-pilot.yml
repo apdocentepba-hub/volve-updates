@@ -273,6 +273,48 @@ jobs:
               Unregister-ScheduledTask -TaskName $task -Confirm:$false -ErrorAction SilentlyContinue
             }
           }
+      - name: Validate VM-only reboot proof parser and platform gate
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $script='development/0.28.7/lab/vm_reboot_proof.ps1'
+          $tokens=$null
+          $errors=$null
+          $ast=[System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path $script).Path,[ref]$tokens,[ref]$errors)
+          if($errors.Count -gt 0){$errors | Out-String | Write-Host;throw 'PowerShell VM proof has syntax errors'}
+          $disallowed=@('Restart-Computer','Stop-Computer','Set-DnsClientServerAddress','Uninstall-WindowsFeature')
+          $commands=$ast.FindAll({param($n) $n -is [System.Management.Automation.Language.CommandAst]},$true)
+          foreach($cmd in $commands){
+            if($cmd.GetCommandName() -in $disallowed){throw ('Unsafe command in VM proof: '+$cmd.GetCommandName())}
+          }
+          & $script -Mode Probe
+          if($LASTEXITCODE -ne 0){throw 'VM detection probe failed'}
+      - name: Verify VM trial cannot pass without real reboot
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $script=Join-Path $env:GITHUB_WORKSPACE 'development/0.28.7/lab/vm_reboot_proof.ps1'
+          $lab=Join-Path $env:GITHUB_WORKSPACE 'development/0.28.7/lab/boot_recovery_lab.ps1'
+          $helper=Join-Path $env:RUNNER_TEMP 'volve-journal-lab.exe'
+          $trialId='2026'+$env:GITHUB_RUN_ID
+          $kit=Join-Path $env:ProgramData ('VOLVE-VM-RebootLab-'+$trialId)
+          try {
+            & $script -Mode Prepare -RunId $trialId -LabScript $lab -JournalExe $helper
+            if($LASTEXITCODE -ne 0){throw 'VM-only preparation failed'}
+            $rejected=$false
+            try { & $script -Mode Verify -RunId $trialId }
+            catch {
+              if($_.Exception.Message -match 'NOT VERIFIED: VM has not undergone a new boot'){$rejected=$true}
+              else {throw}
+            }
+            if(-not $rejected){throw 'Security regression: VM rehearsal passed without a reboot'}
+            Write-Host 'PASS: VM proof requires an actual new boot and rejects same-boot verification.'
+          } finally {
+            if(Test-Path -LiteralPath $kit -PathType Container){
+              & $script -Mode Cleanup -RunId $trialId
+              if($LASTEXITCODE -ne 0){throw 'VM trial cleanup failed'}
+            }
+          }
       - name: Remove isolated test-only task
         if: always()
         shell: pwsh

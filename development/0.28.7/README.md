@@ -47,3 +47,9 @@ Se incorporó `development/0.28.7/lab/boot_recovery_lab.ps1`, estrictamente limi
 Una segunda prueba altera el respaldo XML antes de activar el recuperador; el watchdog se niega a restaurarlo y deja intacta la tarea modificada. Las dos pruebas aprobaron junto con compilación Windows y tests Linux. [Ejecución 40973526501](https://github.com/apdocentepba-hub/volve-updates/actions/runs/40973526501).
 
 **No equivale a un reinicio verdadero.** Falta ensayar el arranque real de Windows en VM, comprobar ACLs del directorio de recuperación, evitar que rutas no autorizadas sean ejecutadas y luego sustituir un motor DNS real con respaldo versionado, verificación IPv4/IPv6 y control de no perder Internet. El canal estable continúa en 0.28.6; no publicar 0.28.7 como instalador.
+
+## Laboratorio para reinicio REAL de VM (preparado, no ejecutado aún)
+
+Archivos: `development/0.28.7/lab/vm_reboot_proof.ps1` y `development/0.28.7/lab/VM_REBOOT_README.md`. El procedimiento está limitado a una VM dedicada, comprueba hipervisor y privilegios, prepara tareas desechables exclusivamente con prefijos CI y conserva un registro de fecha de arranque. Tras **reinicio real de la VM**, una segunda sesión comprueba que el arranque es posterior al registro, que el recuperador `SYSTEM` se ejecutó y que la tarea inocua y el journal quedaron restaurados.
+
+La validación de CI `Verify VM trial cannot pass without real reboot` debe **rechazar** la verificación en la misma sesión de arranque. Esto no constituye una prueba de reinicio real: sólo prepara un protocolo reproducible y valida las guardas. El script no ejecuta `Restart-Computer` y jamás debe correrse en la computadora personal.
