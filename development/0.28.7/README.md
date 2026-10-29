@@ -31,3 +31,11 @@ El CI de Windows realiza una prueba de laboratorio con una tarea temporal `VOLVE
 La nueva revisión v3 agrega una prueba más exigente en Windows: lanza el proceso del instalador piloto, espera que registre el cambio de tarea y **mata el proceso con Stop-Process -Force**. En un segundo proceso restaura la tarea original a partir del journal, verifica el hash del XML y el motor previo y rechaza un respaldo posteriormente modificado.
 
 Esto sigue siendo un **laboratorio**, sin activar DNS ni reiniciar Windows; no demuestra tolerancia a corte de energía ni recuperación automática al arrancar la PC. El motor real y su watchdog permanecen sin modificar en 0.28.6.
+
+## Validación del corte forzado (GitHub Actions 40970083681)
+
+**APROBADO:** se interrumpió con `Stop-Process -Force` el proceso independiente que había marcado `proving` y cambiado exclusivamente una tarea de prueba. Otra instancia independiente verificó el journal y el hash del respaldo, restauró el XML original y dejó el registro en `restored`. La prueba posterior alteró el XML y confirmó que su verificación era rechazada. También aprobaron la compilación Windows y las pruebas Linux.
+
+[Logs y ejecución](https://github.com/apdocentepba-hub/volve-updates/actions/runs/40970083681)
+
+**Límites:** este ensayo no equivale a un reinicio real de Windows ni reproduce un corte eléctrico. Tampoco implementa aún el controlador de motor DNS para producción; no se ha instalado ninguna actualización del motor en equipos de usuarios.
