@@ -204,6 +204,49 @@ jobs:
           $root=Join-Path $env:RUNNER_TEMP ('VOLVE-CI-BOOT-'+$env:GITHUB_RUN_ID)
           & $lab -Mode verify -TaskName ('VOLVE-CI-StartupMotor-'+$env:GITHUB_RUN_ID) -WatchdogName ('VOLVE-CI-BootRecovery-'+$env:GITHUB_RUN_ID) -Workspace $root -JournalExe $helper
           if($LASTEXITCODE -ne 0){throw 'Startup watchdog verification failed'}
+      - name: Stage second boot recovery case with damaged original-task XML
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $suffix=$env:GITHUB_RUN_ID+'1'
+          $lab=Join-Path $env:GITHUB_WORKSPACE 'development/0.28.7/lab/boot_recovery_lab.ps1'
+          $helper=Join-Path $env:RUNNER_TEMP 'volve-journal-lab.exe'
+          $root=Join-Path $env:RUNNER_TEMP ('VOLVE-CI-BOOT-'+$suffix)
+          & $lab -Mode stage -TaskName ('VOLVE-CI-StartupMotor-'+$suffix) -WatchdogName ('VOLVE-CI-BootRecovery-'+$suffix) -Workspace $root -JournalExe $helper
+          if($LASTEXITCODE -ne 0){throw 'Damaged snapshot lab setup failed'}
+          [IO.File]::AppendAllText((Join-Path $root 'old-task.xml'),'<!-- unauthorized modification -->')
+      - name: Reject tampered boot-recovery snapshot and preserve current task
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $suffix=$env:GITHUB_RUN_ID+'1'
+          $root=Join-Path $env:RUNNER_TEMP ('VOLVE-CI-BOOT-'+$suffix)
+          $watchdog='VOLVE-CI-BootRecovery-'+$suffix
+          Start-ScheduledTask -TaskName $watchdog
+          $failure=Join-Path $root 'boot-recovery-failed.marker'
+          $success=Join-Path $root 'boot-recovery-success.marker'
+          $limit=[DateTime]::UtcNow.AddSeconds(60)
+          while([DateTime]::UtcNow -lt $limit -and -not (Test-Path -LiteralPath $failure -PathType Leaf)){
+            if(Test-Path -LiteralPath $success -PathType Leaf){throw 'Security regression: modified snapshot was accepted'}
+            Start-Sleep -Milliseconds 500
+          }
+          if(-not (Test-Path -LiteralPath $failure -PathType Leaf)){throw 'Recovery did not reject damaged snapshot'}
+          if([IO.File]::ReadAllText($failure) -notmatch 'Journal helper rejected operation verify-snapshot'){throw 'Unexpected failure cause'}
+          $task=Get-ScheduledTask -TaskName ('VOLVE-CI-StartupMotor-'+$suffix)
+          $expected=Join-Path $env:WINDIR 'System32/notepad.exe'
+          if(@($task.Actions).Count -ne 1 -or $task.Actions[0].Execute -ne $expected){throw 'Rejected snapshot nevertheless changed the test task'}
+          Write-Host 'PASS: SYSTEM boot watchdog rejected altered snapshot and left task unchanged.'
+      - name: Remove corrupted-snapshot test SYSTEM tasks
+        if: always()
+        shell: pwsh
+        run: |
+          $suffix=$env:GITHUB_RUN_ID+'1'
+          foreach($prefix in @('VOLVE-CI-StartupMotor-','VOLVE-CI-BootRecovery-')){
+            $name=$prefix+$suffix
+            if($name -match '^VOLVE-CI-(StartupMotor|BootRecovery)-[0-9]+$'){
+              Unregister-ScheduledTask -TaskName $name -Confirm:$false -ErrorAction SilentlyContinue
+            }
+          }
       - name: Remove boot test SYSTEM tasks even after failure
         if: always()
         shell: pwsh
