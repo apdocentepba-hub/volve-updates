@@ -1,0 +1,40 @@
+name: VOLVE Windows task XML argument roundtrip
+on:
+  push:
+    paths:
+      - .github/workflows/volve-windows-task-args-diagnostic.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  task-arguments:
+    runs-on: windows-latest
+    timeout-minutes: 8
+    steps:
+      - name: Inspect exact Task Scheduler /TR XML representation
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $name="VOLVE-CI-TASK-ARGS-$PID"
+          $root=Join-Path $env:RUNNER_TEMP 'VOLVE CI Folder'
+          New-Item -ItemType Directory -Force -Path $root | Out-Null
+          $script=Join-Path $root 'VOLVE_DNS_Watchdog_0270.ps1'
+          Set-Content -LiteralPath $script -Value 'exit 0' -Encoding ascii
+          $exe=Join-Path $env:WINDIR 'System32\WindowsPowerShell\v1.0\powershell.exe'
+          $args='-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "'+$script+'"'
+          $action='"'+$exe+'" '+$args
+          try {
+            & schtasks.exe /Create /TN $name /SC MINUTE /MO 1 /RU SYSTEM /RL HIGHEST /TR $action | Out-Null
+            if($LASTEXITCODE -ne 0){throw 'Failed to create task'}
+            [xml]$doc=(& schtasks.exe /Query /TN $name /XML | Out-String)
+            $actualExecutable=[string]$doc.Task.Actions.Exec.Command
+            $actualArgs=[string]$doc.Task.Actions.Exec.Arguments
+            Write-Output "TARGET_COMMAND=$exe"
+            Write-Output "ACTUAL_COMMAND=$actualExecutable"
+            Write-Output "TARGET_ARGS=$args"
+            Write-Output "ACTUAL_ARGS=$actualArgs"
+            Write-Output "EXACT_MATCH=$($args -ceq $actualArgs)"
+          } finally {
+            & schtasks.exe /Delete /TN $name /F 2>$null | Out-Null
+            Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
+          }
