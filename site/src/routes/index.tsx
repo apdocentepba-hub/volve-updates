@@ -58,6 +58,9 @@ function Index() {
               <Link to="/ayuda" className="inline-flex items-center gap-2 rounded-full border-2 border-primary px-6 py-3 font-semibold text-primary transition hover:bg-secondary">
                 <LifeBuoy className="h-4 w-4" /> Necesito ayuda
               </Link>
+              <Link to="/colabora" className="inline-flex items-center gap-2 rounded-full bg-warm px-6 py-3.5 font-bold text-accent-foreground shadow-soft transition hover:opacity-90">
+                <HeartHandshake className="h-5 w-5" aria-hidden="true" /> Colaborá con VOLVÉ
+              </Link>
             </div>
             <p className="mt-6 inline-flex items-center gap-2 rounded-xl bg-card/70 px-4 py-2 text-sm text-muted-foreground">
               <Clock className="h-4 w-4" /> Descarga: <strong className="text-foreground">PRÓXIMAMENTE</strong> — todavía no hay instalador estable.
@@ -115,7 +118,7 @@ function Index() {
       <section className="container-v pt-16">
         <div className="rounded-[2rem] bg-deep p-10 text-deep-foreground md:p-14">
           <h2 className="max-w-2xl text-3xl font-bold md:text-4xl">VOLVÉ es gratuito y queremos que siga siéndolo</h2>
-          <p className="mt-4 max-w-2xl text-lg opacity-85">Si algún día querés y podés, un aporte voluntario sostiene el desarrollo. Nunca va a ser condición para usarlo.</p>
+          <p className="mt-4 max-w-2xl text-lg opacity-85">Tu ayuda suma: compartí el proyecto, colaborá con su difusión o conocé los futuros canales de aportes voluntarios. El software seguirá siendo gratuito.</p>
           <Link to="/colabora" className="mt-8 inline-flex items-center gap-2 rounded-full bg-warm px-6 py-3.5 font-semibold text-accent-foreground transition hover:opacity-90">
             Cómo colaborar <ArrowRight className="h-4 w-4" />
           </Link>

@@ -2,6 +2,7 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { Wind, MessageCircle, Wallet, Smartphone, Heart } from "lucide-react";
 import { PageHero, SectionTitle, meta } from "@/components/ui-bits";
 import { HelpBox } from "@/components/HelpBox";
+import { SupportStrip } from "@/components/SupportStrip";
 
 export const Route = createFileRoute("/ayuda")({
   head: () => meta("Necesito ayuda — VOLVÉ", "Llamá gratis al 0800-444-4000, programa oficial de la Provincia de Buenos Aires. Autoexclusión y consejos breves para el momento difícil.", "/ayuda"),
@@ -30,6 +31,7 @@ function Ayuda() {
         </div>
         <p className="mt-10 rounded-2xl bg-warm-soft p-5 text-sm text-accent-foreground">Si estás en peligro o pensás en hacerte daño, llamá al 135 (CABA y GBA, Centro de Asistencia al Suicida) o acercate a una guardia. Ante una emergencia, 107 o 911.</p>
       </section>
+      <div className="container-v pt-8"><SupportStrip /></div>
     </>
   );
 }

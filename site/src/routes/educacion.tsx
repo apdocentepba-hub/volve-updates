@@ -2,6 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { Sparkles } from "lucide-react";
 import { PageHero, SectionTitle, meta } from "@/components/ui-bits";
 import { notes, upcoming } from "@/content/education";
+import { SupportStrip } from "@/components/SupportStrip";
 
 export const Route = createFileRoute("/educacion")({
   head: () => meta("Educación sobre apuestas online y prevención — VOLVÉ", "Notas breves y claras para entender por qué cuesta frenar, qué señales mirar y cómo cuidarse frente a las apuestas online.", "/educacion"),
@@ -48,6 +49,7 @@ function Educacion() {
           {upcoming.map((u) => <li key={u} className="flex items-start gap-3 rounded-2xl border border-dashed border-border p-5 text-muted-foreground"><Sparkles className="h-5 w-5 shrink-0 text-warm" />{u}</li>)}
         </ul>
       </section>
+      <div className="container-v pt-8"><SupportStrip /></div>
     </>
   );
 }

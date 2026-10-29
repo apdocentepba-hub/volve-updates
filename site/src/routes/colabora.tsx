@@ -2,6 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { Server, Code2, Megaphone, UserRound, FileText, HeartHandshake } from "lucide-react";
 import { PageHero, SectionTitle, StatusPill, meta } from "@/components/ui-bits";
 import { siteConfig, isLive } from "@/config/site";
+import { Instagram, Share2, Users } from "lucide-react";
 
 export const Route = createFileRoute("/colabora")({
   head: () => meta("Colaborá con VOLVÉ — Aportes voluntarios y transparencia", "VOLVÉ es gratuito y queremos que siga siéndolo. Conocé cómo se usarán los aportes voluntarios y nuestra política de transparencia.", "/colabora"),
@@ -44,6 +45,29 @@ function Colabora() {
           {uses.map(({ icon: I, t, d }) => (
             <div key={t} className="flex gap-4 rounded-2xl border border-border bg-card p-5"><I className="h-6 w-6 shrink-0 text-primary" /><div><h3 className="font-bold text-primary">{t}</h3><p className="text-sm text-muted-foreground">{d}</p></div></div>
           ))}
+        </div>
+      </section>
+      <section className="container-v py-12">
+        <SectionTitle eyebrow="Colaborar sin dinero" title="Podés ayudar desde ahora" intro="Mientras preparamos medios de aportes económicos verificados, estas formas de colaboración están disponibles y no requieren pagar nada." />
+        <div className="mt-7 grid gap-4 md:grid-cols-3">
+          <a href={"https://api.whatsapp.com/send?text="+encodeURIComponent("Conocé VOLVÉ: un proyecto argentino que desarrolla tecnología gratuita para prevenir apuestas online. https://volve-web.onrender.com/")} target="_blank" rel="noopener noreferrer" className="group rounded-3xl border border-border bg-card p-7 transition hover:border-sage hover:shadow-soft">
+            <Share2 className="h-7 w-7 text-primary" aria-hidden="true"/>
+            <h3 className="mt-4 text-xl font-bold text-primary">Compartí el proyecto</h3>
+            <p className="mt-2 text-sm leading-relaxed text-muted-foreground">Mandá la web por WhatsApp a alguien que quiera conocerla, sin enviar mensajes automáticamente.</p>
+            <span className="mt-5 inline-block font-semibold text-primary underline">Compartir por WhatsApp ↗</span>
+          </a>
+          <a href={siteConfig.instagramUrl} target="_blank" rel="noopener noreferrer" className="group rounded-3xl border border-border bg-card p-7 transition hover:border-sage hover:shadow-soft">
+            <Instagram className="h-7 w-7 text-primary" aria-hidden="true"/>
+            <h3 className="mt-4 text-xl font-bold text-primary">Ayudanos a difundir</h3>
+            <p className="mt-2 text-sm leading-relaxed text-muted-foreground">Seguí @volveprevencion y compartí contenidos de prevención que puedan servir.</p>
+            <span className="mt-5 inline-block font-semibold text-primary underline">Instagram de VOLVÉ ↗</span>
+          </a>
+          <a href={siteConfig.instagramUrl} target="_blank" rel="noopener noreferrer" className="group rounded-3xl border border-border bg-card p-7 transition hover:border-sage hover:shadow-soft">
+            <Users className="h-7 w-7 text-primary" aria-hidden="true"/>
+            <h3 className="mt-4 text-xl font-bold text-primary">Ofrecé tu colaboración</h3>
+            <p className="mt-2 text-sm leading-relaxed text-muted-foreground">¿Querés aportar conocimiento técnico, diseño o difusión? Podés escribirnos por Instagram.</p>
+            <span className="mt-5 inline-block font-semibold text-primary underline">Contactar al proyecto ↗</span>
+          </a>
         </div>
       </section>
       <section className="container-v py-12" id="transparencia">

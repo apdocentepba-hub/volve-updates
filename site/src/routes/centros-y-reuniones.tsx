@@ -2,6 +2,7 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
 import { PageHero, meta } from "@/components/ui-bits";
 import entries from "@/data/ayuda-pba.json";
+import { SupportStrip } from "@/components/SupportStrip";
 
 type Meeting = { dia: string; hora: string };
 type Resource = { tipo: "publico"|"ja"|"familias"; zona: string; localidad: string; nombre: string; lugar: string; direccion: string; horarios: Meeting[]; telefono?: string; nota?: string; fuente: string; fuenteAlternativa?: string };
@@ -67,5 +68,6 @@ function Directory(){
     <p className="mt-8 rounded-2xl bg-warm-soft p-5 text-sm text-accent-foreground">Los horarios y las sedes pueden cambiar. Verificá directamente con cada organización. El grupo «Catedral» de San Martín figura suspendido y no aparece aquí. Olavarría registra dos direcciones oficiales distintas: confirmá antes de ir.</p>
     <p className="mt-5 text-sm text-muted-foreground">¿Querés ayuda inmediata? <Link to="/ayuda" className="font-semibold text-primary underline">Ver opciones y orientación</Link> · Fuentes revisadas en octubre de 2026.</p>
   </section>
+  <div className="container-v pb-12"><SupportStrip /></div>
  </>;
 }

@@ -1,5 +1,5 @@
 import { Link } from "@tanstack/react-router";
-import { Instagram, Phone } from "lucide-react";
+import { Instagram, Phone, HeartHandshake } from "lucide-react";
 import { siteConfig, isLive } from "@/config/site";
 import { Logo } from "./Logo";
 
@@ -30,7 +30,7 @@ export function SiteFooter() {
             <li><Link to="/proyecto" className="hover:underline">Qué es VOLVÉ</Link></li>
             <li><Link to="/educacion" className="hover:underline">Educación</Link></li>
             <li><Link to="/centros-y-reuniones" className="hover:underline">Centros y reuniones PBA</Link></li>
-            <li><Link to="/colabora" className="hover:underline">Colaborá y transparencia</Link></li>
+            <li><Link to="/colabora" className="inline-flex items-center gap-2 rounded-xl bg-warm px-4 py-2.5 font-bold text-accent-foreground hover:opacity-90"><HeartHandshake className="h-5 w-5" aria-hidden="true"/> Colaborá con VOLVÉ</Link></li>
             <li><Link to="/preguntas" className="hover:underline">Preguntas frecuentes</Link></li>
             <li className="inline-flex items-center gap-2">
               <Instagram className="h-4 w-4" />

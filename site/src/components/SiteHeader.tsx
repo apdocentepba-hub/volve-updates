@@ -1,5 +1,5 @@
 import { Link } from "@tanstack/react-router";
-import { Menu, X, LifeBuoy } from "lucide-react";
+import { Menu, X, LifeBuoy, HeartHandshake } from "lucide-react";
 import { useState } from "react";
 import { Logo } from "./Logo";
 
@@ -24,8 +24,8 @@ export function SiteHeader() {
         </Link>
         <nav className="hidden items-center gap-1 md:flex" aria-label="Principal">
           {nav.map((n) => (
-            <Link key={n.to} to={n.to} className="rounded-full px-4 py-2 text-sm font-medium text-muted-foreground transition hover:bg-muted hover:text-foreground" activeProps={{ className: "text-primary bg-secondary" }}>
-              {n.label}
+            <Link key={n.to} to={n.to} className={n.to === "/colabora" ? "inline-flex items-center gap-1.5 rounded-full bg-warm px-4 py-2 text-sm font-bold text-accent-foreground transition hover:opacity-85" : "rounded-full px-4 py-2 text-sm font-medium text-muted-foreground transition hover:bg-muted hover:text-foreground"} activeProps={{ className: "ring-2 ring-primary/35" }}>
+              {n.to === "/colabora" && <HeartHandshake className="h-4 w-4" aria-hidden="true" />}{n.label}
             </Link>
           ))}
           <Link to="/ayuda" className="ml-2 inline-flex items-center gap-2 rounded-full bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground transition hover:opacity-90">
@@ -40,8 +40,8 @@ export function SiteHeader() {
         <nav id="menu-movil" className="border-t border-border bg-background md:hidden" aria-label="Menú móvil">
           <div className="container-v flex flex-col gap-1 py-4">
             {nav.map((n) => (
-              <Link key={n.to} to={n.to} onClick={() => setOpen(false)} className="rounded-xl px-4 py-3 text-base font-medium hover:bg-muted">
-                {n.label}
+              <Link key={n.to} to={n.to} onClick={() => setOpen(false)} className={n.to === "/colabora" ? "inline-flex items-center justify-center gap-2 rounded-xl bg-warm px-4 py-3 text-base font-bold text-accent-foreground" : "rounded-xl px-4 py-3 text-base font-medium hover:bg-muted"}>
+                {n.to === "/colabora" && <HeartHandshake className="h-5 w-5" aria-hidden="true" />}{n.label}
               </Link>
             ))}
             <Link to="/ayuda" onClick={() => setOpen(false)} className="mt-2 inline-flex items-center justify-center gap-2 rounded-xl bg-primary px-4 py-3 font-semibold text-primary-foreground">
