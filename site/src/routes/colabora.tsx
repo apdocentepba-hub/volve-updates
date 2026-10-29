@@ -23,7 +23,7 @@ function Colabora() {
   const anyLive = channels.some((c) => isLive(c.url));
   const cafecitoUrl = channels.find((c) => c.id === "cafecito")?.url;
   const mercadoPagoUrl = channels.find((c) => c.id === "mercadopago")?.url;
-  const transferAlias = siteConfig.bankTransfer.alias;
+  const transferAlias = siteConfig.bankTransfer.alias ?? "";
   const [copied, setCopied] = useState(false);
   const [copyError, setCopyError] = useState(false);
   const copyAlias = async () => {
