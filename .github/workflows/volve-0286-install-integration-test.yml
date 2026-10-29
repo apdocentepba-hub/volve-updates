@@ -43,25 +43,34 @@ jobs:
             if ($h -ne $c.expected) { throw "Wrong binary hash for $($c.v)" }
             Write-Host ("Verified "+$c.v)
           }
+      - name: Fetch signed live update using VOLVÉ 0.28.5
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $old=Join-Path $env:RUNNER_TEMP "VOLVE_Centro_0.28.5.exe"
+          $stage=Join-Path $env:LOCALAPPDATA "VOLVE/updates/VOLVE_Update_0_28_6.exe"
+          $p=Start-Process -FilePath $old -ArgumentList '--check-app-updates' -PassThru
+          $until=[DateTime]::UtcNow.AddSeconds(130)
+          while ([DateTime]::UtcNow -lt $until -and -not (Test-Path -LiteralPath $stage)) {
+            if ($p.HasExited) { Write-Host "Check exited with code $($p.ExitCode)" }
+            Start-Sleep -Seconds 2
+          }
+          if (-not (Test-Path -LiteralPath $stage)) { throw "0.28.5 did not download the signed update from live channel" }
+          $sha=(Get-FileHash -Algorithm SHA256 $stage).Hash.ToLowerInvariant()
+          if ($sha -ne "8659d948427e515e3471508487c81afadb6c9cecfd3633aedc6ea67459f1d72a") { throw "Downloaded file SHA256 mismatch" }
+          if (-not (Test-Path -LiteralPath ($stage+".json")) -or -not (Test-Path -LiteralPath ($stage+".sig"))) { throw "Missing signed manifest sidecars" }
+          Write-Host "PASS: 0.28.5 downloaded verified 0.28.6 from the real signed channel"
       - name: Simulate signed staged installation with 0.28.5
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
           $isAdmin = ([Security.Principal.WindowsPrincipal]::new([Security.Principal.WindowsIdentity]::GetCurrent())).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
           if (-not $isAdmin) { throw "Runner is not admin; test cannot validate elevated install" }
-          $staged=Join-Path $env:RUNNER_TEMP "VOLVE_Update_0_28_6.exe"
-          Copy-Item -LiteralPath (Join-Path $env:RUNNER_TEMP "VOLVE_Centro_0.28.6.exe") -Destination $staged
-          Copy-Item -LiteralPath "release-candidates/v0.28.6/fixture/stable.json" -Destination ($staged+".json")
-          # On Windows git checkout may convert LF to CRLF: signatures cover exact bytes.
-          $manifestText=[IO.File]::ReadAllText($staged+".json",[Text.Encoding]::UTF8).Replace("`r`n","`n")
-          [IO.File]::WriteAllText(($staged+".json"),$manifestText,[Text.UTF8Encoding]::new($false))
-          Copy-Item -LiteralPath "release-candidates/v0.28.6/fixture/stable.json.sig" -Destination ($staged+".sig")
+          $staged=Join-Path $env:LOCALAPPDATA "VOLVE/updates/VOLVE_Update_0_28_6.exe"
           $old=(Join-Path $env:RUNNER_TEMP "VOLVE_Centro_0.28.5.exe")
           $target=Join-Path $env:ProgramData "VOLVE-Browser-Filter/VOLVE_Centro_Proteccion_0_28_6.exe"
           $args='--apply-staged-panel-update "'+$staged+'"'
           Write-Host "Old executable $old"
-          & $old --check-app-updates
-          Write-Host "Read-only check exit code $LASTEXITCODE"
           $proc=Start-Process -FilePath $old -ArgumentList $args -PassThru
           Write-Host "Launched process $($proc.Id)"
           Start-Sleep -Seconds 3
