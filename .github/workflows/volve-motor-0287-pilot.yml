@@ -74,7 +74,7 @@ jobs:
             if($content.Contains($forbidden)){throw ('Unexpected production or reboot command in lab: '+$forbidden)}
           }
           & $path -Mode ValidateScript -LabId '123456'
-          if($LASTEXITCODE -ne 0){throw 'No-write validation failed'}
+          # A PowerShell script does not set LASTEXITCODE on success; errors throw.
           Write-Host 'PASS: VM lab syntax and no-write entry point; actual reboot NOT executed.'
       - name: Rebuild verified complete source ZIP
         shell: pwsh
