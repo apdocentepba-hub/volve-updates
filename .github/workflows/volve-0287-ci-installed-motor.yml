@@ -78,6 +78,25 @@ jobs:
             & $script -Mode Install -LabId $labId -SourceExe $source -ExpectedSHA256 $hash
             $installed=$true
             & $script -Mode Verify -LabId $labId -ExpectedSHA256 $hash
+            # The installer must reject a mismatched signed-inventory hash
+            # and an attempt to overwrite this same installed motor.
+            $badHash='0'*64
+            $badRejected=$false
+            try { & $script -Mode Verify -LabId $labId -ExpectedSHA256 $badHash } catch { $badRejected=$true }
+            if(-not $badRejected){throw 'Installer accepted wrong installed engine SHA256'}
+            $overwriteRejected=$false
+            try { & $script -Mode Install -LabId $labId -SourceExe $source -ExpectedSHA256 $hash } catch { $overwriteRejected=$true }
+            if(-not $overwriteRejected){throw 'Installer accepted overwriting already-registered motor'}
+            & $script -Mode Verify -LabId $labId -ExpectedSHA256 $hash
+            $folderACL=Get-Acl -LiteralPath $root -ErrorAction Stop
+            if(-not $folderACL.AreAccessRulesProtected){throw 'Installed motor directory inherited broad ACL'}
+            $allowedSIDs=@('S-1-5-18','S-1-5-32-544')
+            foreach($rule in @($folderACL.Access)){
+              if($rule.AccessControlType -ne [Security.AccessControl.AccessControlType]::Allow){continue}
+              $sid=$rule.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value
+              if($sid -notin $allowedSIDs){throw ('Install folder grants access to unexpected SID '+$sid)}
+            }
+            Write-Host 'PASS: installer refuses tampered SHA256, duplicate installation and inherited broad NTFS ACL'
             $taskInfo=Get-ScheduledTask -TaskName $task -ErrorAction Stop
             if([string]$taskInfo.Actions[0].Execute -ine $exe){throw 'Task not running installed ProgramData EXE'}
             $taskXML=[xml](Export-ScheduledTask -TaskName $task -ErrorAction Stop)
