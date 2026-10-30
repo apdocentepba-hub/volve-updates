@@ -32,22 +32,28 @@ func safeInventoryDirectory(path string) error {
     if path == "" || !filepath.IsAbs(path) {
         return errors.New("ruta de inventario no absoluta")
     }
-    info, err := os.Lstat(path)
-    if err != nil { return err }
-    if !info.IsDir() || info.Mode() & os.ModeSymlink != 0 {
-        return errors.New("ruta de inventario no es un directorio real")
-    }
-    // Refuse intermediate path reparse points/symlinks too. A future Windows
-    // SYSTEM driver additionally MUST enforce ProgramData ACL ownership.
-    resolved, err := filepath.EvalSymlinks(path)
-    if err != nil { return err }
-    clean := filepath.Clean(path)
-    if runtime.GOOS == "windows" {
-        if !strings.EqualFold(filepath.Clean(resolved), clean) {
-            return errors.New("inventario pasa por un enlace o redirección")
+    // Examine every actual path component using Lstat, not EvalSymlinks
+    // string equality. On Windows, EvalSymlinks can expand DOS 8.3 paths
+    // (RUNNER~1 -> runneradmin) without a symlink; rejecting this is a
+    // false positive. A junction/symlink is detected by Lstat at its
+    // original path component rather than by the spelling of its target.
+    clean:=filepath.Clean(path)
+    volume:=filepath.VolumeName(clean)
+    root:=string(os.PathSeparator)
+    if volume!="" {root=volume+root}
+    current:=root
+    rest:=strings.TrimPrefix(clean,root)
+    for _,component:=range strings.Split(rest,string(os.PathSeparator)) {
+        if component=="" {continue}
+        current=filepath.Join(current,component)
+        info,err:=os.Lstat(current)
+        if err!=nil{return err}
+        if info.Mode() & os.ModeSymlink != 0 {
+            return fmt.Errorf("componente del inventario redirigido: %s",component)
         }
-    } else if filepath.Clean(resolved) != clean {
-        return errors.New("inventario pasa por un enlace")
+        if !info.IsDir() {
+            return fmt.Errorf("componente del inventario no es directorio: %s",component)
+        }
     }
     return nil
 }
