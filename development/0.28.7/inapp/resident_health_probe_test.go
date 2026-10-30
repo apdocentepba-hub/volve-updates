@@ -3,6 +3,7 @@ package motorupdate
 import (
  "context"
  "encoding/binary"
+ "fmt"
  "net"
  "strings"
  "testing"
@@ -70,5 +71,57 @@ func TestResidentHealthRejectsFakeAnswerCountWithoutAddress(t *testing.T) {
  complete[len(reply)+11]=16
  if hasResidentDNSAddress(complete,len(reply),1) {
   t.Fatal("false RDLEN claiming extra bytes was trusted")
+ }
+}
+
+func TestResidentCompletionIntegratesRealDNSAndTCP(t *testing.T){
+ ipv4:=dnsStub(t,"udp4","127.0.0.1:0",false)
+ ipv6:=dnsStub(t,"udp6","[::1]:0",false)
+ listener,err:=net.Listen("tcp","127.0.0.1:0");if err!=nil{t.Fatal(err)}
+ defer listener.Close()
+ dir:=t.TempDir()
+ intent,err:=ArmResidentRecoveryIntent(context.Background(),dir,residentFixture(),
+  residentLabACL,residentLabACL)
+ if err!=nil{t.Fatal(err)}
+ identities:=0
+ checks:=ResidentActiveHealthChecks{
+  IPv4DNS:ipv4,IPv6DNS:ipv6,TCPAddresses:[]string{listener.Addr().String()},
+  VerifyIdentity:func(_ context.Context,actual ResidentRecoveryIntent,outcome string)error{
+   identities++
+   if actual!=intent||outcome!="restored"{return fmt.Errorf("wrong running motor identity")}
+   return nil
+  },
+ }
+ if err:=ConfirmResidentRecoveryOutcome(context.Background(),dir,"restored",
+  residentLabACL,residentLabACL,checks);err!=nil{t.Fatal(err)}
+ if identities!=2{t.Fatalf("running identity was not rechecked: %d",identities)}
+ state,err:=InspectResidentRecoveryJournal(context.Background(),dir,residentLabACL)
+ if err!=nil||state.Status!="restored"{t.Fatalf("real DNS/TCP checks did not close recovery: %+v %v",state,err)}
+}
+
+func TestResidentCompletionRejectsFalseDNSWithRealTCP(t *testing.T){
+ ipv4:=dnsStub(t,"udp4","127.0.0.1:0",true)
+ ipv6:=dnsStub(t,"udp6","[::1]:0",false)
+ listener,err:=net.Listen("tcp","127.0.0.1:0");if err!=nil{t.Fatal(err)}
+ defer listener.Close()
+ dir:=t.TempDir()
+ if _,err:=ArmResidentRecoveryIntent(context.Background(),dir,residentFixture(),
+  residentLabACL,residentLabACL);err!=nil{t.Fatal(err)}
+ checks:=ResidentActiveHealthChecks{
+  IPv4DNS:ipv4,IPv6DNS:ipv6,TCPAddresses:[]string{listener.Addr().String()},
+  VerifyIdentity:func(context.Context,ResidentRecoveryIntent,string)error{return nil}, // CI TEST ONLY
+ }
+ if err:=ConfirmResidentRecoveryOutcome(context.Background(),dir,"committed",
+  residentLabACL,residentLabACL,checks);err==nil{t.Fatal("forged DNS reply completed upgrade")}
+ state,err:=InspectResidentRecoveryJournal(context.Background(),dir,residentLabACL)
+ if err!=nil||state.Status!="recovery-required"{t.Fatalf("failed DNS probe consumed recovery record: %+v %v",state,err)}
+}
+func TestResidentActiveHealthNeverAssumesSystemIdentity(t *testing.T){
+ checks:=NewResidentNetworkHealth(nil)
+ if checks.IPv4DNS!="127.0.0.1:53"||checks.IPv6DNS!="[::1]:53"{
+  t.Fatal("production probes have unrecognized DNS port")
+ }
+ if err:=checks.VerifyRunningIdentity(context.Background(),residentFixture(),"restored");err==nil{
+  t.Fatal("missing privileged Windows verifier was silently allowed")
  }
 }
