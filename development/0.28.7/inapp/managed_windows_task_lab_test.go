@@ -62,6 +62,7 @@ type managedWindowsTaskLab struct {
     failConnectivityOnce bool
     restored bool
     committed bool
+    publicKey ed25519.PublicKey
 }
 
 func (d *managedWindowsTaskLab) currentAction() (string, string, error) {
@@ -105,12 +106,20 @@ func (d *managedWindowsTaskLab) InstallVersionedCandidate(ctx context.Context, c
     targetDir:=filepath.Join(d.root,"motor-0.28.7")
     if err:=os.Mkdir(targetDir,0700);err!=nil{return err}
     d.installedExe=filepath.Join(targetDir,"VOLVE_DNS_Motor_0_28_7.exe")
-    src,err:=os.Open(candidate);if err!=nil{return err}
-    defer src.Close()
-    dst,err:=os.OpenFile(d.installedExe,os.O_CREATE|os.O_EXCL|os.O_WRONLY,0600);if err!=nil{return err}
-    if _,err=io.Copy(dst,src);err!=nil{dst.Close();return err}
-    if err=dst.Sync();err!=nil{dst.Close();return err}
-    return dst.Close()
+    // Copy the signed package as three immutable/versioned files, not just EXE:
+    // the installed-version inventory re-verifies the manifest and signature.
+    for _,suffix:=range []string{"",".json",".sig"} {
+        src,err:=os.Open(candidate+suffix);if err!=nil{return err}
+        dest,err:=os.OpenFile(d.installedExe+suffix,os.O_CREATE|os.O_EXCL|os.O_WRONLY,0600)
+        if err!=nil{src.Close();return err}
+        _,err=io.Copy(dest,src)
+        if err==nil{err=dest.Sync()}
+        closeErr:=dest.Close()
+        src.Close()
+        if err!=nil{return err}
+        if closeErr!=nil{return closeErr}
+    }
+    return nil
 }
 
 func (d *managedWindowsTaskLab) Switch(ctx context.Context) error {
@@ -147,13 +156,11 @@ func (d *managedWindowsTaskLab) ProbeConnectivity(ctx context.Context) error {
 
 func (d *managedWindowsTaskLab) Commit(ctx context.Context, m motorupdate.Manifest) error {
     if err:=ctx.Err();err!=nil{return err}
-    if d.restored {return errors.New("cannot commit reverted pilot")}
-    path:=filepath.Join(d.root,"confirmed-version.json")
-    data,err:=json.Marshal(struct{Version string `json:"version"`}{Version:m.Version});if err!=nil{return err}
-    if err:=os.WriteFile(path,data,0600);err!=nil{return err}
-    f,err:=os.OpenFile(path,os.O_RDWR,0600);if err!=nil{return err}
-    err=f.Sync();f.Close()
-    if err==nil{d.committed=true};return err
+    if d.restored{return errors.New("cannot commit reverted pilot")}
+    if m.Version!="0.28.7"{return errors.New("unexpected lab version")}
+    if err:=motorupdate.RecordVerifiedEngine(d.root,d.installedExe,d.publicKey);err!=nil{return err}
+    d.committed=true
+    return nil
 }
 
 func (d *managedWindowsTaskLab) Restore(ctx context.Context) error {
@@ -204,14 +211,19 @@ func TestManagedWindowsDisposableTaskIntegration(t *testing.T) {
             d:=&managedWindowsTaskLab{
                 name:name,root:filepath.Join(root,"transaction"),original:original,
                 backup:filepath.Join(root,"transaction","original-task.xml"),
-                stagedExe:candidate,failConnectivityOnce:failNetwork,
+                stagedExe:candidate,failConnectivityOnce:failNetwork,publicKey:key,
             }
             err:=motorupdate.ApplyManagedWithRollback(context.Background(),candidate,key,"0.27.0","0.28.7",d)
             if failNetwork {
                 if err==nil || !d.restored || d.committed {t.Fatalf("expected safe restoration with no commit: %v; %+v",err,d)}
                 if err=d.Probe(context.Background());err!=nil{t.Fatalf("original task not restored: %v",err)}
+                if _,err:=motorupdate.InspectInstalledEngine(d.root,key);!errors.Is(err,motorupdate.ErrUnregisteredEngine) {
+                    t.Fatalf("failed update incorrectly marked installed: %v",err)
+                }
             }else{
                 if err!=nil || !d.committed || d.restored {t.Fatalf("expected confirmed disposable test task: %v; %+v",err,d)}
+                got,verifyErr:=motorupdate.InspectInstalledEngine(d.root,key)
+                if verifyErr!=nil || got!="0.28.7" {t.Fatalf("verified installed receipt missing: %q %v",got,verifyErr)}
             }
         })
     }
