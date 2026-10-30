@@ -34,14 +34,14 @@ func verifyRecoveryACL(ctx context.Context, journalPath, snapshotPath string) er
     `[int][Security.AccessControl.FileSystemRights]::TakeOwnership;`+
   `$paths=@(`+q(dir)+`,`+q(journalPath)+`,`+q(snapshotPath)+`);`+
   `foreach($path in $paths){`+
-  `$item=Get-Item -LiteralPath $path -Force -ErrorAction Stop;`+
-  `if(($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0){throw 'Recovery path is a reparse point'};`+
-  `$acl=Get-Acl -LiteralPath $path -ErrorAction Stop;`+
-  `$owner=([Security.Principal.NTAccount]$acl.Owner).Translate([Security.Principal.SecurityIdentifier]).Value;`+
+  `$attributes=[IO.File]::GetAttributes($path);`+
+  `if(($attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0){throw 'Recovery path is a reparse point'};`+
+  `if([IO.Directory]::Exists($path)){$acl=[IO.Directory]::GetAccessControl($path)}else{$acl=[IO.File]::GetAccessControl($path)};`+
+  `$owner=$acl.GetOwner([Security.Principal.SecurityIdentifier]).Value;`+
   `if($owner -notin $allowed){throw 'Untrusted recovery ACL owner: '+$owner};`+
   `if($path -eq $paths[0] -and -not $acl.AreAccessRulesProtected){throw 'Recovery directory inherits untrusted DACL'};`+
-  `foreach($ace in $acl.Access){`+
-    `$sid=$ace.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value;`+
+  `foreach($ace in $acl.GetAccessRules($true,$true,[Security.Principal.SecurityIdentifier])){`+
+    `$sid=$ace.IdentityReference.Value;`+
     `if($ace.AccessControlType -eq [Security.AccessControl.AccessControlType]::Allow -and `+
        `$sid -notin $allowed -and (([int]$ace.FileSystemRights -band $critical) -ne 0)){`+
       `throw 'Untrusted writer on recovery ACL: '+$sid`+
