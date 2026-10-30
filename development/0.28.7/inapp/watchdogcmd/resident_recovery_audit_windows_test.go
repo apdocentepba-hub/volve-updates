@@ -12,6 +12,7 @@ import (
     "strings"
     "testing"
     "time"
+    "unicode/utf16"
 
     "volve-browser-protection/motorupdate"
 )
@@ -70,6 +71,20 @@ func TestResidentTaskXMLRequiresExactSYSTEMAction(t *testing.T) {
     exe:=filepath.Join(os.Getenv("WINDIR"),"ProgramData","VOLVE-CI","VOLVE_DNS_Server_0270.exe")
     if err:=validateResidentTaskXML(residentTestXML(exe,"S-1-5-18","--dns-service",false),exe);err!=nil{
         t.Fatalf("valid exported task XML rejected: %v",err)
+    }
+    taskSchedulerText:=strings.Replace(string(residentTestXML(exe,"SYSTEM","--dns-service",false)),
+        "encoding=\"UTF-8\"","encoding=\"UTF-16\"",1)
+    if err:=validateResidentTaskXML([]byte(taskSchedulerText),exe);err!=nil{
+        t.Fatalf("Task Scheduler UTF-16 declaration over UTF-8 transport rejected: %v",err)
+    }
+    units:=utf16.Encode([]rune(taskSchedulerText))
+    utf16LE:=[]byte{0xff,0xfe}
+    for _,unit:=range units {utf16LE=append(utf16LE,byte(unit),byte(unit>>8))}
+    if err:=validateResidentTaskXML(utf16LE,exe);err!=nil{
+        t.Fatalf("actual UTF-16LE Task Scheduler XML rejected: %v",err)
+    }
+    if err:=validateResidentTaskXML(utf16LE[:len(utf16LE)-1],exe);err==nil{
+        t.Fatal("truncated UTF-16LE Task Scheduler XML accepted")
     }
     hidden:=string(residentTestXML(exe,"SYSTEM","--dns-service",false))
     hidden=strings.Replace(hidden,"</Actions>","<ComHandler><ClassId>{00000000-0000-0000-0000-000000000000}</ClassId></ComHandler></Actions>",1)
