@@ -69,6 +69,7 @@ func TestIndependentMotorWatchdogRunsAsSYSTEM(t *testing.T){
  jpath:=filepath.Join(root,"watchdog-system.json")
  writeCIWatchdogJournal(t,jpath,ciWatchdogJournal{Schema:1,Phase:"pending",TaskName:oldName,
   OriginalExe:original,OriginalArgs:"/C exit 0",SnapshotFile:d.backup,SnapshotSHA256:d.originalHash})
+ secureCIPilotRecovery(t,jpath,d.backup)
  watcherName:=fmt.Sprintf("VOLVE-CI-ManagedWatchdog-%d",time.Now().UnixNano())
  // Crucial ordering: the durable pending journal and the SYSTEM boot-recovery
  // task must exist BEFORE the candidate is installed or the task is switched.
@@ -111,6 +112,7 @@ func TestIndependentMotorWatchdogSYSTEMLeavesCommittedUpgradeIntact(t *testing.T
  journalPath:=filepath.Join(root,"watchdog-committed.json")
  writeCIWatchdogJournal(t,journalPath,ciWatchdogJournal{Schema:1,Phase:"committed",TaskName:name,
    OriginalExe:original,OriginalArgs:"/C exit 0",SnapshotFile:d.backup,SnapshotSHA256:d.originalHash})
+ secureCIPilotRecovery(t,journalPath,d.backup)
  watcherName:=fmt.Sprintf("VOLVE-CI-ManagedWatchdog-%d",time.Now().UnixNano())
  if err:=createSYSTEMWatchdogLabTask(watcherName,helper,journalPath);err!=nil{t.Fatal(err)}
  t.Cleanup(func(){if err:=removeSYSTEMWatchdogLabTask(watcherName);err!=nil{t.Errorf("cleanup watchdog task: %v",err)}})
