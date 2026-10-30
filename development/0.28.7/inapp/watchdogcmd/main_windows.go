@@ -204,8 +204,18 @@ func run(ctx context.Context,path string) error {
     }
 }
 func main(){
+    if len(os.Args)==3 && os.Args[1]=="--audit-resident-rollback" {
+        ctx,cancel:=context.WithTimeout(context.Background(),90*time.Second);defer cancel()
+        evidence,err:=auditResidentRollback(ctx,os.Args[2])
+        if err!=nil{
+            fmt.Fprintln(os.Stderr,"VOLVÉ: respaldo productivo NO VERIFICADO; ninguna tarea, archivo o DNS fue modificado:",err)
+            os.Exit(1)
+        }
+        fmt.Printf("VOLVÉ: respaldo productivo comprobado (SOLO LECTURA)\nMotor SHA-256: %s\nTarea SYSTEM SHA-256: %s\nNo autoriza cambiar el motor ni ejecutar rollback productivo.\n",evidence.LegacySHA256,evidence.TaskXMLSHA256)
+        return
+    }
     if len(os.Args)!=3 || os.Args[1]!="--recover-pilot-journal"{
-        fmt.Fprintln(os.Stderr,"usage: volve-managed-watchdog --recover-pilot-journal <ABSOLUTE-JOURNAL>; no production tasks allowed")
+        fmt.Fprintln(os.Stderr,"usage: volve-managed-watchdog --recover-pilot-journal <ABSOLUTE-JOURNAL> | --audit-resident-rollback <ABSOLUTE-INSTALL-ROOT>; no production switches allowed")
         os.Exit(2)
     }
     ctx,cancel:=context.WithTimeout(context.Background(),90*time.Second);defer cancel()
