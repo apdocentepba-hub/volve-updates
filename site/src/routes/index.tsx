@@ -70,6 +70,34 @@ function Index() {
         </div>
       </section>
 
+      <section className="container-v py-16" aria-labelledby="que-es-volve">
+        <div className="rounded-[2rem] border border-border bg-card p-8 shadow-soft md:p-12">
+          <div className="grid gap-8 lg:grid-cols-[1.2fr_1fr] lg:items-center">
+            <div>
+              <p className="text-sm font-semibold uppercase tracking-widest text-sage">Te lo contamos fácil</p>
+              <h2 id="que-es-volve" className="mt-3 text-3xl font-bold text-primary md:text-4xl">¿Qué es VOLVÉ?</h2>
+              <p className="mt-5 text-lg leading-relaxed">
+                VOLVÉ es un programa gratuito que estamos desarrollando para ayudar a quienes quieren alejarse de las apuestas online. Su objetivo es poner una barrera digital en esos momentos en los que cuesta frenar.
+              </p>
+              <p className="mt-4 text-muted-foreground leading-relaxed">
+                La idea es sencilla: la persona decide instalarlo y activarlo; el programa busca impedir el acceso a sitios de apuestas conocidos y mantener esa protección actualizada. No pretende vigilarte ni juzgarte.
+              </p>
+            </div>
+            <div className="rounded-3xl bg-sage-soft p-7">
+              <h3 className="text-xl font-bold text-primary">¿Cómo te ayudaría?</h3>
+              <ol className="mt-5 space-y-4">
+                <li><strong>1. Vos decidís.</strong> La protección se activa voluntariamente.</li>
+                <li><strong>2. Sumás una barrera.</strong> El software está diseñado para bloquear páginas de apuestas.</li>
+                <li><strong>3. Tenés ayuda a mano.</strong> Te acercamos recursos gratuitos y oficiales de orientación.</li>
+              </ol>
+            </div>
+          </div>
+          <div className="mt-7 rounded-2xl border border-border bg-warm-soft px-5 py-4 text-sm leading-relaxed">
+            <strong>Importante:</strong> la versión para Windows continúa en pruebas y todavía no hay una descarga pública estable. Android está planificado para más adelante. VOLVÉ complementa el acompañamiento profesional, no lo reemplaza. Será siempre gratuito, con donaciones opcionales.
+          </div>
+        </div>
+      </section>
+
       <section className="container-v py-20">
         <SectionTitle eyebrow="Cómo ayuda" title="Barreras digitales para ganar tiempo y tomar decisiones" intro="VOLVÉ está en desarrollo y pruebas. Queremos dificultar el acceso impulsivo a sitios de apuestas y mejorar la resistencia del bloqueo. Antes de lanzar, verificaremos su comportamiento en escenarios reales." />
         <div className="mt-10 grid gap-5 md:grid-cols-3">
@@ -94,7 +122,7 @@ function Index() {
       <section className="container-v grid gap-10 py-20 md:grid-cols-2">
         <div>
           <SectionTitle eyebrow="Estado real" title="En desarrollo y pruebas" intro="A octubre de 2026 estamos probando la versión para Windows. Android viene después. Preferimos decirlo claro antes que publicar algo que no esté listo." />
-          <p className="mt-6 flex items-center gap-2 text-sm text-muted-foreground"><Lock className="h-4 w-4" /> Sin cuentas, sin rastreo, sin venta de datos.</p>
+          <p className="mt-6 flex items-center gap-2 text-sm text-muted-foreground"><Lock className="h-4 w-4" /> Sin cuentas ni registro de navegación; el sitio cuenta visitas de forma agregada.</p>
         </div>
         <DownloadBlock />
       </section>
