@@ -204,6 +204,17 @@ func run(ctx context.Context,path string) error {
     }
 }
 func main(){
+    if len(os.Args)==3 && os.Args[1]=="--audit-resident-journal" {
+        ctx,cancel:=context.WithTimeout(context.Background(),90*time.Second);defer cancel()
+        state,err:=auditResidentJournal(ctx,os.Args[2])
+        if err!=nil{
+            fmt.Fprintln(os.Stderr,"VOLVÉ: JOURNAL RESIDENTE NO VERIFICADO; no se modificó el motor:",err)
+            os.Exit(1)
+        }
+        fmt.Printf("VOLVÉ: JOURNAL RESIDENTE (SOLO LECTURA)\\nEstado: %s\\nMotor anterior SHA-256: %s\\nNo habilita un cambio productivo.\\n",
+            state.Status,state.Intent.LegacySHA256)
+        return
+    }
     if len(os.Args)==3 && os.Args[1]=="--audit-resident-rollback" {
         ctx,cancel:=context.WithTimeout(context.Background(),90*time.Second);defer cancel()
         evidence,err:=auditResidentRollback(ctx,os.Args[2])
@@ -215,7 +226,7 @@ func main(){
         return
     }
     if len(os.Args)!=3 || os.Args[1]!="--recover-pilot-journal"{
-        fmt.Fprintln(os.Stderr,"usage: volve-managed-watchdog --recover-pilot-journal <ABSOLUTE-JOURNAL> | --audit-resident-rollback <ABSOLUTE-INSTALL-ROOT>; no production switches allowed")
+        fmt.Fprintln(os.Stderr,"usage: volve-managed-watchdog --recover-pilot-journal <ABSOLUTE-JOURNAL> | --audit-resident-rollback <INSTALL-ROOT> | --audit-resident-journal <PROTECTED-JOURNAL-DIR>; no production switches allowed")
         os.Exit(2)
     }
     ctx,cancel:=context.WithTimeout(context.Background(),90*time.Second);defer cancel()
