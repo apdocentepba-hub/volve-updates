@@ -95,8 +95,28 @@ func armPreparedResidentJournal(ctx context.Context,root string,
  intent motorupdate.ResidentRecoveryIntent)(motorupdate.ResidentRecoveryIntent,error){
     var empty motorupdate.ResidentRecoveryIntent
     if err:=ctx.Err();err!=nil{return empty,err}
+    if !isAdmin(){return empty,errors.New("arming a resident recovery journal requires administrator")}
+    if !filepath.IsAbs(root){return empty,errors.New("install root must be absolute")}
+    // Never arm a recovery journal for fabricated legacy bytes. The fallback
+    // must already be present, immutable and independently hash-verified.
+    // The signed permit, live task identity and watchdog still belong to the
+    // future transactional driver and are NOT inferred from these hashes.
+    backupDir:=filepath.Join(root,localRecoveryFolder,localRecoverySnapshot)
+    original,err:=motorupdate.VerifyUnversionedLegacyRecovery(
+        backupDir,checkSealedLegacyRecoveryACL)
+    if err!=nil{return empty,fmt.Errorf("protected original DNS recovery missing: %w",err)}
+    if intent.LegacySHA256!=original.ExeSHA256 ||
+        intent.TaskXMLSHA256!=original.XMLSHA256 {
+        return empty,errors.New("journal does not identify the sealed original motor and SYSTEM XML")
+    }
     dir,err:=ensureSecureResidentRecoveryJournalDir(root)
     if err!=nil{return empty,err}
+    // Re-read the protected fallback immediately before recording an intent.
+    again,err:=motorupdate.VerifyUnversionedLegacyRecovery(
+        backupDir,checkSealedLegacyRecoveryACL)
+    if err!=nil || again!=original {
+        return empty,errors.New("protected recovery changed while preparing journal")
+    }
     return motorupdate.ArmResidentRecoveryIntent(ctx,dir,intent,
         sealNewResidentJournalNode,checkSealedResidentJournalACL)
 }
