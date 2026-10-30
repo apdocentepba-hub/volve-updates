@@ -55,3 +55,14 @@ jobs:
           done
           echo '=== Existing engine installation references ==='
           grep -RnE --include='*.go' 'schtasks|Register-ScheduledTask|New-ScheduledTask|VOLVE_DNS|dnsMotor|motorDNS' src/codigo | head -95 || true
+
+      - name: Inspect DNS source motor binary and boot identity
+        shell: bash
+        run: |
+          echo '===== DNS SERVICE BINARY ORIGIN ====='
+          sed -n '1,106p;235,365p;450,515p' src/codigo/dnsprod_windows.go
+          echo '===== REFERENCE PE SHA256 AND SIZE ====='
+          find src/codigo/assets -maxdepth 1 -type f -name '*DNS*' -printf '%f %s bytes\n' || true
+          sha256sum src/codigo/assets/VOLVE_DNS_Server_0270.exe || true
+          echo '===== SERVICE CONFIG AND DNS CHECK ====='
+          grep -RnE 'func checkDNSLocal|func expectedRescueArgs|func taskQuery|func installRoot|func taskRestore|func psQuote' src/codigo --include='*.go' | head -45
