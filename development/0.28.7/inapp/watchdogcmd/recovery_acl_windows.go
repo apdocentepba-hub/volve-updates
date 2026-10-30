@@ -8,6 +8,7 @@ import (
  "fmt"
  "os"
  "path/filepath"
+ "strings"
 )
 
 // verifyRecoveryACL is read-only. A live motor transition must reject
@@ -17,7 +18,21 @@ import (
 func verifyRecoveryACL(ctx context.Context, journalPath, snapshotPath string) error {
  if err:=guardedSnapshotPath(journalPath,snapshotPath);err!=nil{return err}
  dir:=filepath.Clean(filepath.Dir(journalPath))
- for _,p:=range []string{dir,journalPath,snapshotPath}{
+ // Every intermediate directory requires protected ownership and DACL.
+ // Otherwise an untrusted user could rename a child directory after the
+ // snapshot hash/ACL check and substitute a different recovery file.
+ rel,err:=filepath.Rel(dir,filepath.Clean(snapshotPath))
+ if err!=nil{return err}
+ paths:=[]string{dir,journalPath}
+ parent:=dir
+ segments:=strings.Split(rel,string(os.PathSeparator))
+ for i,segment:=range segments {
+   if segment=="" || segment=="." || segment==".." {return errors.New("unsafe snapshot path segment")}
+   parent=filepath.Join(parent,segment)
+   if i<len(segments)-1 {paths=append(paths,parent)}
+ }
+ paths=append(paths,snapshotPath)
+ for _,p:=range paths {
    if !filepath.IsAbs(p){return errors.New("recovery ACL path is not absolute")}
    if _,err:=os.Lstat(p);err!=nil{return err}
  }
@@ -32,7 +47,7 @@ func verifyRecoveryACL(ctx context.Context, journalPath, snapshotPath string) er
     `[int][Security.AccessControl.FileSystemRights]::DeleteSubdirectoriesAndFiles -bor `+
     `[int][Security.AccessControl.FileSystemRights]::ChangePermissions -bor `+
     `[int][Security.AccessControl.FileSystemRights]::TakeOwnership;`+
-  `$paths=@(`+q(dir)+`,`+q(journalPath)+`,`+q(snapshotPath)+`);`+
+  `$paths=@(`+func()string{var v []string;for _,p:=range paths{v=append(v,q(p))};return strings.Join(v,",")}()+`);`+
   `foreach($path in $paths){`+
   `$attributes=[IO.File]::GetAttributes($path);`+
   `if(($attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0){throw 'Recovery path is a reparse point'};`+
