@@ -146,6 +146,16 @@ La prueba `real_catalog_motor_windows_test.go` construye un catálogo sintético
 
 **Límite:** no se ha probado todavía `runDNSService()` completo escuchando IPv4/IPv6 en puerto 53, cargando un catálogo real de producción en una máquina virtual desechable ni sobreviviendo a un reinicio de Windows. El reemplazo de la tarea productiva sigue mecánicamente bloqueado. Siguiente objetivo: ensayo aislado del servicio residente con el catálogo real y reversión independiente del proceso.
 
+## PASO 2 — Servidor residente real IPv4 + IPv6: código compartido y ensayos aislados
+
+Se extrajo la rutina de inicio del servicio DNS residente a `runDNSServiceAt(ctx,root,port,upstreams,ready)` dentro de `production_dns_service_runner_windows.go`. El **comando productivo `--dns-service`** conserva la entrada `runDNSService()`, `installRoot()`, el puerto fijo **53**, los servidores upstream originales y la recarga de catálogos cada cinco minutos; ahora llama a la **misma rutina** que se usa en laboratorio. Si cambia inesperadamente el cuerpo original del servidor, `apply_overlay.go` rechaza el parche en lugar de modificar código desconocido.
+
+Prueba `TestResidentDualStackDNSFullCatalogFromRealRunner`: desde una carpeta temporal construye 400.002 registros Full, levanta la rutina de servidor residente en **127.0.0.1 y ::1 simultáneamente** usando un puerto temporal distinto de 53 y un upstream local ficticio, procesa **cuatro bloqueos y dos respuestas permitidas** por UDP real, y comprueba el cierre al cancelar el contexto. También se probaron el rechazo de un catálogo Full ausente y la negativa a iniciar con el puerto IPv4 ocupado. El flujo de Windows CI toma una instantánea de los servidores DNS del sistema antes y después para confirmar que el ensayo no los cambió.
+
+**Evidencia verificada:** [GitHub Actions #41046264454](https://github.com/apdocentepba-hub/volve-updates/actions/runs/41046264454), **3/3 trabajos exitosos**. En el log Windows: `TestResidentDualStackDNSFullCatalogFromRealRunner` PASS, `TestResidentDNSRunnerFailClosedWithoutFullCatalog` PASS, `TestResidentDNSRunnerRejectsAlreadyBoundIPv4Port` PASS.
+
+**NO equivale a una actualización productiva probada.** Este ensayo no abrió el puerto 53, no actualizó ni arrancó la tarea `VOLVE-DNS-SERVER-0270`, no utilizó el catálogo real del usuario, no configuró Windows para consumir el DNS propio, no reinició una VM y no probó que el motor instalado sobreviva a la actualización. El paso 2 sigue pendiente de un laboratorio VM desechable con el motor real, puente de versión firmado y recuperación independiente verificable tras reinicio, antes de desbloquear el actualizador productivo.
+
 ## Lo que falta para una actualización del motor sin reinstalar
 
 - Registrar y verificar la versión/identidad real del motor que está instalado (no deducir de nombre de archivo).
