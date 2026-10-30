@@ -62,3 +62,12 @@ Ver [CI actual de la política](https://github.com/apdocentepba-hub/volve-update
 - El restaurador de tarea CI usa ahora el mutex nativo antes de leer journal/restaurar y rechaza de entrada la tarea VOLVE-DNS-SERVER-0270. Este cambio es exclusivamente de laboratorio y no habilita producción.
 - CI definitivo pendiente: https://github.com/apdocentepba-hub/volve-updates/actions/runs/41109704800. **No** acreditar puntos adicionales antes del resultado verde 3/3.
 - Todavía faltan una ACL propia para el objeto mutex de producción, un SYSTEM watchdog registrado con disparador de inicio, recuperación efectiva y prueba de reinicio persistente en la misma VM. Por seguridad **no** aplicar este mutex experimental a la tarea real.
+
+
+## Avance: auditoría independiente de decisión de rescate al arrancar (30/10/2026)
+
+- Se agregó el ejecutable watchdog con opción `--audit-resident-boot-plan <INSTALL-ROOT>`. La función `auditResidentBootPlan` devuelve `recover-original` únicamente cuando existe un journal `recovery-required` y se verifica la cadena completa de original instalado, respaldo NTFS, tarea SYSTEM y journal; si hay un recibo terminal auténtico, devuelve `no-action`. La operación es exclusivamente de lectura.
+- Pruebas Windows: crean respaldo y journal descartables, ejecutan el comando desde un proceso distinto, comprueban pendiente/confirmado, rechazo de EXE adulterado y journal roto. **No se modifican tareas SYSTEM ni red**, y no simulan un reboot real.
+- Se corrigió el test de catálogo DNS en Windows que falló en #41109879360 al elegir 32 puertos TCP temporales no válidos para UDP en el runner. Ahora elige un puerto UDP temporal primero, comprueba TCP en ese mismo puerto y reintenta hasta 128 veces; el test no fue omitido ni se alteró el DNS real. Evidencia pendiente de CI de la corrección.
+- Ejecución con el nuevo auditor: https://github.com/apdocentepba-hub/volve-updates/actions/runs/41110541483. Al registrar este avance, Windows y Linux estaban en progreso; no se declaró aprobado el nuevo código.
+- Marcadores: paso 2 **40%** y paso 3 **30%** hasta que exista nueva evidencia integral. Lo siguiente prioritario es instalar y verificar un watchdog SYSTEM genuino sobre una VM persistente, con exclusión de procesos y restauración de tarea+motor limitada y autorizada. La tarea productiva continúa bloqueada.
