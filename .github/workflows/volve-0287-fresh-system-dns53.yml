@@ -91,7 +91,7 @@ jobs:
             if($record.Principal.UserId -notin @('SYSTEM','S-1-5-18') -or @($record.Actions).Count -ne 1 -or [string]$record.Actions[0].Execute -ine $exe){throw 'Task does not match expected SYSTEM binary'}
             $taskXML=Export-ScheduledTask -TaskName $task -ErrorAction Stop
             $taskDocument=[xml]$taskXML
-            if(-not $taskDocument.Task.Triggers.BootTrigger){throw 'SYSTEM motor has no startup trigger'}
+            if(@($taskDocument.SelectNodes("//*[local-name()='BootTrigger']")).Count -ne 1){throw 'SYSTEM motor has no startup trigger'}
             Start-ScheduledTask -TaskName $task -ErrorAction Stop
             $deadline=(Get-Date).AddSeconds(25)
             do{
