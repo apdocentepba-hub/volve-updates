@@ -60,7 +60,7 @@ function Read-Metadata([string]$dir) {
     if(-not (Test-Path -LiteralPath $path -PathType Leaf)) {throw 'No prepared VM trial metadata'}
     $data = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json
     if($data.schema -ne 1 -or $data.runId -ne $RunId -or $data.computer -ne $env:COMPUTERNAME) {throw 'VM trial metadata mismatch'}
-    foreach($member in @('bootBeforeUtc','labSha256','journalSha256')) {
+    foreach($member in @('bootBeforeUtc','labSha256','journalSha256','evidenceLibSha256')) {
         if($null -eq $data.$member -or [string]::IsNullOrWhiteSpace([string]$data.$member)){throw ('Missing '+$member)}
     }
     return $data
@@ -72,6 +72,11 @@ function Assert-LabIdentity([string]$dir,[object]$meta) {
     if(-not (Test-Path -LiteralPath $lab -PathType Leaf) -or -not (Test-Path -LiteralPath $helper -PathType Leaf)) {throw 'Missing protected VM test tools'}
     if((Get-FileHash -Algorithm SHA256 -LiteralPath $lab).Hash -ne $meta.labSha256) {throw 'VM lab script was changed'}
     if((Get-FileHash -Algorithm SHA256 -LiteralPath $helper).Hash -ne $meta.journalSha256) {throw 'VM journal tool was changed'}
+    $evidenceLib=Join-Path $dir 'reboot_event_chain.ps1'
+    if(-not (Test-Path -LiteralPath $evidenceLib -PathType Leaf)){throw 'Missing protected boot-event verification helper'}
+    if((Get-FileHash -Algorithm SHA256 -LiteralPath $evidenceLib).Hash -ne $meta.evidenceLibSha256){
+        throw 'Boot-event verification helper was changed after preparing the VM trial'
+    }
 }
 function Assert-LabTask([string]$name,[string]$expectedPath) {
     $task=Get-ScheduledTask -TaskName $name -ErrorAction Stop
@@ -101,6 +106,9 @@ if($Mode -eq 'Prepare') {
     $taskLog=Get-WinEvent -ListLog 'Microsoft-Windows-TaskScheduler/Operational' -ErrorAction Stop
     if(-not $taskLog.IsEnabled) {throw 'REFUSED: enable Task Scheduler Operational history in the isolated VM before Prepare'}
     if(-not (Test-Path -LiteralPath $LabScript -PathType Leaf) -or -not (Test-Path -LiteralPath $JournalExe -PathType Leaf)) {throw 'Pass valid -LabScript and -JournalExe development paths'}
+    $sourceEvidenceLib=Join-Path $PSScriptRoot 'reboot_event_chain.ps1'
+    if(-not (Test-Path -LiteralPath $sourceEvidenceLib -PathType Leaf)){throw 'Missing boot-event correlation library; fail before staging'}
+
     if(Test-Path -LiteralPath $kit) {throw 'Trial already exists. Refusing to overwrite a staged recovery.'}
     if(Get-ScheduledTask -TaskName $labTask -ErrorAction SilentlyContinue){throw 'Disposable motor task name already in use'}
     if(Get-ScheduledTask -TaskName $bootTask -ErrorAction SilentlyContinue){throw 'Disposable watchdog task name already in use'}
@@ -110,12 +118,15 @@ if($Mode -eq 'Prepare') {
     $copiedJournal=Join-Path $kit 'volve-journal-lab.exe'
     Copy-Item -LiteralPath $LabScript -Destination $copiedLab -ErrorAction Stop
     Copy-Item -LiteralPath $JournalExe -Destination $copiedJournal -ErrorAction Stop
+    $copiedEvidenceLib=Join-Path $kit 'reboot_event_chain.ps1'
+    Copy-Item -LiteralPath $sourceEvidenceLib -Destination $copiedEvidenceLib -ErrorAction Stop
     $before=BootTimeUTC
     $metadata=[ordered]@{
         schema=1;runId=$RunId;computer=$env:COMPUTERNAME;
         bootBeforeUtc=$before.ToString('o');
         labSha256=(Get-FileHash -Algorithm SHA256 -LiteralPath $copiedLab).Hash;
         journalSha256=(Get-FileHash -Algorithm SHA256 -LiteralPath $copiedJournal).Hash;
+        evidenceLibSha256=(Get-FileHash -Algorithm SHA256 -LiteralPath $copiedEvidenceLib).Hash;
     }
     $metadata | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $kit 'vm-trial.json') -Encoding UTF8
     & $copiedLab -Mode stage -TaskName $labTask -WatchdogName $bootTask -Workspace $root -JournalExe $copiedJournal
@@ -142,25 +153,14 @@ if($Mode -eq 'Verify') {
     $before=$before.ToUniversalTime()
     $now=BootTimeUTC
     if($now -le $before.AddSeconds(5)) {throw 'NOT VERIFIED: VM has not undergone a new boot since the trial was prepared'}
-    # A fresh boot alone is insufficient: a watchdog started manually after
-    # reboot could otherwise be misreported as automatically started at boot.
-    # Task Scheduler Operational event 118 specifically records a boot trigger.
+    # A boot timestamp plus a success marker could be forged or produced by a
+    # manually invoked recovery. Match the same task *instance* across actual
+    # startup trigger 118, task start 100, zero-exit action 201 and completion
+    # 102. The library is hash-pinned in VM metadata before the initial boot.
     $taskLog=Get-WinEvent -ListLog 'Microsoft-Windows-TaskScheduler/Operational' -ErrorAction Stop
-    if(-not $taskLog.IsEnabled) {throw 'NOT VERIFIED: Task Scheduler Operational history is disabled'}
-    $bootEvents=@(Get-WinEvent -FilterHashtable @{
-        LogName='Microsoft-Windows-TaskScheduler/Operational'
-        Id=118
-        StartTime=$now.AddSeconds(-3)
-    } -ErrorAction SilentlyContinue)
-    $expectedEventTask='\' + $bootTask
-    $bootEvent=$null
-    foreach($evt in $bootEvents) {
-        foreach($p in $evt.Properties) {
-            if(([string]$p.Value) -eq $expectedEventTask) {$bootEvent=$evt;break}
-        }
-        if($null -ne $bootEvent) {break}
-    }
-    if($null -eq $bootEvent) {throw 'NOT VERIFIED: no Task Scheduler event 118 confirms an automatic startup trigger for this trial'}
+    if(-not $taskLog.IsEnabled){throw 'NOT VERIFIED: Task Scheduler Operational history is disabled'}
+    . (Join-Path $kit 'reboot_event_chain.ps1')
+    $bootChain=Get-VolvRealBootChain -TaskName ('\'+$bootTask) -BootUTC $now
     $watch=Get-ScheduledTask -TaskName $bootTask -ErrorAction Stop
     if($watch.Principal.UserId -notin @('SYSTEM','S-1-5-18') -or @($watch.Triggers).Count -ne 1 -or $watch.Triggers[0].CimClass.CimClassName -ne 'MSFT_TaskBootTrigger') {throw 'Unexpected watchdog task identity/trigger'}
     $taskInfo=Get-ScheduledTaskInfo -TaskName $bootTask -ErrorAction Stop
@@ -174,7 +174,26 @@ if($Mode -eq 'Verify') {
     $journal=Join-Path $root 'recovery.json'
     $status=& $helper status $journal
     if($LASTEXITCODE -ne 0 -or $status -ne 'NO_ROLLBACK:restored') {throw 'Recovery journal is not in restored state'}
-    [IO.File]::WriteAllText((Join-Path $kit 'vm-proof-success.txt'),('Verified UTC: '+[DateTime]::UtcNow.ToString('o')+'; boot UTC: '+$now.ToString('o')+'; TaskScheduler event: 118; record: '+$bootEvent.RecordId))
+    # An auditable, machine-readable result. The JSON is evidence from a
+    # real VM run ONLY; the GitHub unit tests cannot generate it successfully.
+    $proof=[ordered]@{
+        schema=2;test='VOLVE-VM-REAL-REBOOT';runId=$RunId;computer=$env:COMPUTERNAME;
+        bootBeforeUtc=$before.ToString('o');bootAfterUtc=$now.ToString('o');
+        verifiedUtc=[DateTime]::UtcNow.ToString('o');
+        watchdogTask=$bootTask;motorTask=$labTask;
+        taskInstanceId=$bootChain.InstanceId;
+        schedulerEventIds=$bootChain.EventIds;
+        schedulerEventRecordIds=$bootChain.RecordIds;
+        watchdogLastTaskResult=[int]$taskInfo.LastTaskResult;
+        recoveryJournalState=$status;
+        restoredAction=$cmd;restoredArguments='/C exit 0';
+        originalTaskSnapshotSha256=(Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $root 'old-task.xml')).Hash;
+        bootChainVerificationSha256=$meta.evidenceLibSha256;
+    }
+    $proofPath=Join-Path $kit 'vm-proof-evidence.json'
+    if(Test-Path -LiteralPath $proofPath){throw 'Previous boot proof already exists; refusing silent overwrite'}
+    $proof | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $proofPath -Encoding UTF8
+    [IO.File]::WriteAllText((Join-Path $kit 'vm-proof-success.txt'),('Verified UTC: '+$proof.verifiedUtc+'; boot UTC: '+$proof.bootAfterUtc+'; correlated scheduler events: '+$bootChain.EventIds+'; records: '+$bootChain.RecordIds))
     Write-Host 'PASS: actual VM reboot detected and SYSTEM startup watchdog restored the disposable original task.'
     Write-Host ('Evidence stored in '+$kit)
     return
