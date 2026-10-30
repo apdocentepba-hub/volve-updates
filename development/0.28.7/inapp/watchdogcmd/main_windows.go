@@ -188,6 +188,12 @@ func savePhase(path string,j journal) error {
 }
 func run(ctx context.Context,path string) error {
     j,err:=readJournal(path);if err!=nil{return err}
+    // Recovery is privileged, so even "committed" and "restored" markers
+    // cannot be trusted if the journal can be changed by an ordinary user.
+    // Fail before any Task Scheduler access or journal modification.
+    if err:=verifyRecoveryACL(ctx,path,j.SnapshotFile);err!=nil{
+        return fmt.Errorf("recovery transaction ACL not trusted: %w",err)
+    }
     switch j.Phase {
     case "committed","restored":return nil
     case "pending":
