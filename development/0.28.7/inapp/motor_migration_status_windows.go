@@ -42,7 +42,7 @@ func motorMigrationStatus(
     // to a less constrained legacy identity path.
     if result, found := preparedSignedLegacyMigrationStatus(
         ctx, installDir, candidate, panelVersion, key, elevated, preflight,
-        checkLegacyRecoveryACL,
+        checkSealedLegacyRecoveryACL,
     ); found { return result }
     statement,err:=readBoundedProvenance(filepath.Join(installDir,legacyUpgradeStatement),4096)
     if errors.Is(err,os.ErrNotExist) {
