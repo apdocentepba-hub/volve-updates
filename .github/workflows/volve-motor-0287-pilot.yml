@@ -129,17 +129,6 @@ jobs:
         run: |
           go run development/0.28.7/inapp/apply_overlay.go build/codigo
           if($LASTEXITCODE -ne 0){throw 'Unified updater source overlay failed'}
-      - name: Inspect isolated DNS service entrypoints for safe native loopback tests
-        shell: pwsh
-        working-directory: build/codigo
-        run: |
-          $ErrorActionPreference='Stop'
-          Write-Host 'DNS SERVICE ENTRYPOINTS'
-          Get-ChildItem -Recurse -Filter '*.go' -File | Where-Object {$_.FullName -match 'dnsprod|dnsproxy|dnsactivation|dnspreflight'} | Select-Object -ExpandProperty FullName
-          Write-Host 'DNS ENTRYPOINT DEFINITIONS'
-          Get-ChildItem -Recurse -Filter '*.go' -File | Where-Object {$_.FullName -match 'dnsprod|dnsproxy'} | ForEach-Object { Select-String -LiteralPath $_.FullName -Pattern '^func ','^type ','net.Listen','ListenPacket','127.0.0.1','dns-service' | Select-Object -First 60 | ForEach-Object { Write-Host ($_.Path+':'+$_.LineNumber+' '+$_.Line.Trim()) } }
-          Write-Host 'DNSPROXY TEST API'
-          Get-ChildItem dnsproxy -Filter '*test.go' | ForEach-Object { Get-Content $_.FullName -TotalCount 135 }
       - name: Run updater tests on Windows
         working-directory: build/codigo
         shell: pwsh
@@ -205,6 +194,25 @@ jobs:
           if($bytes.Length -lt 1000000 -or $bytes[0] -ne 77 -or $bytes[1] -ne 90){throw "Invalid Windows PE"}
           Get-FileHash -Algorithm SHA256 $f | Format-List
 
+      - name: Step 2 - Run actual DNS core on isolated Windows loopback (NO PORT 53)
+        shell: pwsh
+        working-directory: build/codigo
+        run: |
+          $ErrorActionPreference='Stop'
+          go test ./dnsproxy -run 'TestProbeRealSockets|TestLiveLoopbackUDP|TestSlowFirstUpstreamStillAllowsHealthyFallback' -count=1 -timeout 90s -v
+          if($LASTEXITCODE -ne 0){throw 'Windows isolated DNS socket tests failed'}
+          go test . -run TestMotorDNSIsolatedLoopbackProof -count=1 -timeout 45s -v
+          if($LASTEXITCODE -ne 0){throw 'Five real DNS loopback queries failed'}
+          $exe=(Resolve-Path 'VOLVE_0287_PILOT_NO_INSTALL.exe').Path
+          $stdOut=Join-Path $env:RUNNER_TEMP 'VOLVE-CI-isolated-dns.out.txt'
+          $stdErr=Join-Path $env:RUNNER_TEMP 'VOLVE-CI-isolated-dns.err.txt'
+          $process=Start-Process -FilePath $exe -ArgumentList '--motor-dns-isolated-loopback' -PassThru -RedirectStandardOutput $stdOut -RedirectStandardError $stdErr
+          if(-not $process.WaitForExit(20000)){Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue;throw 'Full VOLVE binary did not finish isolated DNS test'}
+          if($process.ExitCode -ne 0){throw ('Full VOLVE binary DNS test failed: '+(Get-Content $stdErr -Raw -ErrorAction SilentlyContinue))}
+          $report=Get-Content $stdOut -Raw -ErrorAction SilentlyContinue
+          if($report -notmatch 'VOLVE_DNS_ISOLATED_LOOPBACK_OK' -or $report -notmatch '3 bloqueadas, 2 permitidas'){throw ('Full VOLVE binary did not report verified DNS packets: '+$report)}
+          Write-Host $report
+          Write-Host 'PASS: actual Windows VOLVE application processed five isolated DNS queries without changing DNS adapters or Task Scheduler'
       - name: Step 2 signed full VOLVE binary and disposable SYSTEM rollback
         shell: pwsh
         working-directory: build/codigo
