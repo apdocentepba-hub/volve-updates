@@ -204,6 +204,17 @@ func run(ctx context.Context,path string) error {
     }
 }
 func main(){
+    if len(os.Args)==3 && os.Args[1]=="--audit-resident-chain" {
+        ctx,cancel:=context.WithTimeout(context.Background(),90*time.Second);defer cancel()
+        evidence,err:=auditPendingResidentChain(ctx,os.Args[2])
+        if err!=nil{
+            fmt.Fprintln(os.Stderr,"VOLVÉ: CADENA DE RESCATE NO VERIFICADA; ninguna tarea ni DNS fue modificado:",err)
+            os.Exit(1)
+        }
+        fmt.Printf("VOLVÉ: CADENA DE RESCATE COHERENTE (SOLO LECTURA)\nMotor anterior SHA-256: %s\nTarea SYSTEM SHA-256: %s\nMotor destino: %s (%s)\nNo autoriza cambio de motor productivo.\n",
+            evidence.LegacySHA256,evidence.TaskXMLSHA256,evidence.TargetVersion,evidence.TargetSHA256)
+        return
+    }
     if len(os.Args)==3 && os.Args[1]=="--audit-resident-journal" {
         ctx,cancel:=context.WithTimeout(context.Background(),90*time.Second);defer cancel()
         state,err:=auditResidentJournal(ctx,os.Args[2])
@@ -226,7 +237,7 @@ func main(){
         return
     }
     if len(os.Args)!=3 || os.Args[1]!="--recover-pilot-journal"{
-        fmt.Fprintln(os.Stderr,"usage: volve-managed-watchdog --recover-pilot-journal <ABSOLUTE-JOURNAL> | --audit-resident-rollback <INSTALL-ROOT> | --audit-resident-journal <PROTECTED-JOURNAL-DIR>; no production switches allowed")
+        fmt.Fprintln(os.Stderr,"usage: volve-managed-watchdog --recover-pilot-journal <ABSOLUTE-JOURNAL> | --audit-resident-rollback <INSTALL-ROOT> | --audit-resident-journal <PROTECTED-JOURNAL-DIR> | --audit-resident-chain <INSTALL-ROOT>; no production switches allowed")
         os.Exit(2)
     }
     ctx,cancel:=context.WithTimeout(context.Background(),90*time.Second);defer cancel()
