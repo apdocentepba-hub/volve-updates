@@ -116,3 +116,53 @@ func TestResidentCompletionRejectsMissingHealthEvidenceAndCancellation(t *testin
  }
  if fake.identityCalls!=0{t.Fatal("a rejected completion ran the external health gate")}
 }
+
+
+func TestResidentHealthAuditOnlyReadsPendingJournal(t *testing.T) {
+ dir:=t.TempDir()
+ created,err:=ArmResidentRecoveryIntent(context.Background(),dir,residentFixture(),
+  residentLabACL,residentLabACL)
+ if err!=nil{t.Fatal(err)}
+ audit:=&residentCompletionLab{}
+ proof,err:=AuditResidentRecoveryOutcome(context.Background(),dir,"restored",
+  residentLabACL,audit)
+ if err!=nil||proof!=created{t.Fatalf("read-only audit failed: %v %+v",err,proof)}
+ if audit.identityCalls!=2||audit.dnsCalls!=1||audit.connectivityCalls!=1{
+  t.Fatalf("health gates not run: %+v",audit)
+ }
+ if _,err:=os.Stat(filepath.Join(dir,ResidentResultFile));!os.IsNotExist(err){
+  t.Fatalf("read-only audit unexpectedly wrote terminal receipt: %v",err)
+ }
+ again,err:=AuditResidentRecoveryOutcome(context.Background(),dir,"restored",
+  residentLabACL,&residentCompletionLab{})
+ if err!=nil||again!=proof{t.Fatalf("read-only audit consumed pending journal: %v",err)}
+ // Audit is evidence only, and does not prevent a future privileged writer
+ // from completing the same transaction after independent confirmation.
+ if err:=ConfirmResidentRecoveryOutcome(context.Background(),dir,"restored",
+  residentLabACL,residentLabACL,&residentCompletionLab{});err!=nil{t.Fatal(err)}
+ if _,err:=AuditResidentRecoveryOutcome(context.Background(),dir,"restored",
+  residentLabACL,&residentCompletionLab{});err==nil{
+  t.Fatal("completed journal was accepted as still pending")
+ }
+}
+
+func TestResidentHealthAuditRejectsFailedProbeWithoutMutation(t *testing.T) {
+ for _,stage:=range []string{"identity","dns","network","identity-recheck"} {
+  t.Run(stage,func(t *testing.T){
+   dir:=t.TempDir()
+   if _,err:=ArmResidentRecoveryIntent(context.Background(),dir,residentFixture(),
+    residentLabACL,residentLabACL);err!=nil{t.Fatal(err)}
+   if _,err:=AuditResidentRecoveryOutcome(context.Background(),dir,"committed",
+    residentLabACL,&residentCompletionLab{failOn:stage});err==nil{
+    t.Fatalf("audit reported false health success for %s",stage)
+   }
+   state,err:=InspectResidentRecoveryJournal(context.Background(),dir,residentLabACL)
+   if err!=nil||state.Status!="recovery-required"{
+    t.Fatalf("failed audit consumed recovery: %v %+v",err,state)
+   }
+   if _,err:=os.Stat(filepath.Join(dir,ResidentResultFile));!os.IsNotExist(err){
+    t.Fatalf("failed audit wrote terminal receipt: %v",err)
+   }
+  })
+ }
+}
