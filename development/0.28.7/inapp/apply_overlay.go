@@ -41,8 +41,8 @@ func patchResidentDNSEntry(path string) error {
     old:=src[start:end]
     for _,required:=range []string{
         "engine, e := fullEngine()",
-        "sv4.Run(ctx, \\"127.0.0.1\\", 53)",
-        "sv6.Run(ctx, \\"::1\\", 53)",
+        "sv4.Run(ctx, \"127.0.0.1\", 53)",
+        "sv6.Run(ctx, \"::1\", 53)",
         "sv4.SwapRules(updated)",
         "sv6.SwapRules(updated)",
         "last := feedSignature()",
