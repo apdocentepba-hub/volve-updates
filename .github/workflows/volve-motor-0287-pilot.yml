@@ -129,6 +129,18 @@ jobs:
         run: |
           go run development/0.28.7/inapp/apply_overlay.go build/codigo
           if($LASTEXITCODE -ne 0){throw 'Unified updater source overlay failed'}
+      - name: Inspect exact production DNS service execution path (read-only CI)
+        shell: pwsh
+        working-directory: build/codigo
+        run: |
+          $ErrorActionPreference='Stop'
+          Write-Host '=== DNS full engine and service ==='
+          $src=Get-Content dnsprod_windows.go
+          $first=337; $last=454
+          for($i=$first;$i -le $last;$i++){Write-Host ('{0:D4} {1}' -f ($i+1),$src[$i])}
+          Write-Host '=== Main CLI DNS dispatch ==='
+          $main=Get-Content main_windows.go
+          for($i=465;$i -le 515;$i++){Write-Host ('{0:D4} {1}' -f ($i+1),$main[$i])}
       - name: Run updater tests on Windows
         working-directory: build/codigo
         shell: pwsh
