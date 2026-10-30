@@ -22,7 +22,7 @@ const signedMigrationSignature = ".migration.sig"
 // preparedSignedLegacyMigrationStatus is the READ-ONLY bridge from the native
 // "Actualizar VOLVÉ" response to the exact signed legacy-migration verifier.
 // The third argument deliberately injects an ACL checker for disposable tests;
-// the actual caller ALWAYS supplies checkLegacyRecoveryACL. No task, binary,
+// the actual caller ALWAYS supplies checkSealedLegacyRecoveryACL. No task, binary,
 // DNS adapter, watchdog or journal is modified here.
 func preparedSignedLegacyMigrationStatus(
     ctx context.Context, installDir, candidate, panelVersion string,
