@@ -21,12 +21,16 @@ import (
 // independently signed channels. The existing Centre install marker must stay
 // the LAST line so the current native UI can continue to use UAC safely.
 func checkAllUpdates() (string, error) {
+    // Both channels have independent timeouts. Checking them concurrently
+    // keeps the existing native UI 120-second bound intact even if a remote
+    // release server is slow.
+    motorDone := make(chan string, 1)
+    go func() { motorDone <- checkAndStageMotorUpdate() }()
     panel, err := checkAndStageUpdate()
     if err != nil {
         return "", err
     }
-    motor := checkAndStageMotorUpdate()
-    return mergeUpdateReports(panel, motor), nil
+    return mergeUpdateReports(panel, <-motorDone), nil
 }
 
 func mergeUpdateReports(panel, motor string) string {
