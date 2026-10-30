@@ -36,6 +36,13 @@ func switchVerifiedMotorTaskAction(
 ) error {
     if err:=ctx.Err();err!=nil{return err}
     if !ownedMotorTaskName(name) {return errors.New("tarea motor fuera de lista autorizada")}
+    // Enforce a mechanical fail-closed gate: the lab switch is real and is
+    // tested against disposable SYSTEM tasks, but production cannot switch
+    // without an independent watchdog proven to restore the resident motor.
+    // Do not remove this gate merely because all CI tests pass.
+    if name==dnsServiceTask {
+        return errors.New("cambio del motor productivo bloqueado: falta integrar y probar watchdog independiente de recuperación")
+    }
     if !filepath.IsAbs(oldExe) || !filepath.IsAbs(candidate) {return errors.New("rutas de motor no absolutas")}
     if name==dnsServiceTask && (oldArgs!="--dns-service" || newArgs!="--dns-service") {
         return errors.New("argumentos del motor productivo no autorizados")
