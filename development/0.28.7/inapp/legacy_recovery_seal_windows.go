@@ -35,8 +35,16 @@ func isNewLegacyRecoveryNode(path string) bool {
 // Accept ONLY objects just created by our privileged snapshot workflow;
 // never operate on an existing backup directory or resident motor.
 func sealNewLegacyRecoveryNode(path string) error {
+    if !isNewLegacyRecoveryNode(path) {
+        return errors.New("refusing to seal unrelated or already published backup")
+    }
+    return sealNewProtectedRecoveryNode(path)
+}
+
+// Shared by two explicitly allowlisted wrappers: original backup files and
+// new resident journal files. The helper itself is never exposed as a CLI.
+func sealNewProtectedRecoveryNode(path string) error {
     if !isAdmin() {return errors.New("privileged recovery sealing requires administrator")}
-    if !isNewLegacyRecoveryNode(path) {return errors.New("refusing to seal unrelated or already published path")}
     info,err:=os.Lstat(path);if err!=nil{return err}
     if info.Mode()&os.ModeSymlink!=0 || (!info.IsDir() && !info.Mode().IsRegular()) {
         return errors.New("recovery node is a link or special file")
@@ -78,7 +86,7 @@ func checkSealedLegacyRecoveryACL(dir string) error {
     if !filepath.IsAbs(dir) {return errors.New("sealed recovery path must be absolute")}
     name:=filepath.Base(dir)
     if name!=localRecoveryFolder && name!=localRecoverySnapshot &&
-       !strings.HasPrefix(name,".legacy-recovery-") {
+       name!=localRecoveryJournal && !strings.HasPrefix(name,".legacy-recovery-") {
         return errors.New("not an approved rollback directory")
     }
     if err:=checkLegacyRecoveryACL(dir);err!=nil{return err}
