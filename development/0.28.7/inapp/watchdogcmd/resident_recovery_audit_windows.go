@@ -6,8 +6,10 @@ package main
 // schedules, starts, imports or changes a task, executable, DNS or adapter.
 // The live motor switch remains hard-blocked elsewhere.
 import (
+    "bytes"
     "context"
     "encoding/xml"
+    "io"
     "errors"
     "fmt"
     "os"
@@ -30,6 +32,7 @@ type residentTaskXML struct {
         Principal []struct { UserID string `xml:"UserId"` } `xml:"Principal"`
     } `xml:"Principals"`
     Actions []struct {
+        InnerXML string `xml:",innerxml"`
         Exec []struct {
             Command string `xml:"Command"`
             Arguments string `xml:"Arguments"`
@@ -48,6 +51,7 @@ func validateResidentTaskXML(data []byte, expectedExe string) error {
        len(task.Actions[0].Exec)!=1 {
         return errors.New("resident task must have exactly one SYSTEM principal and one Exec action")
     }
+    if err:=exactOneResidentAction(task.Actions[0].InnerXML);err!=nil{return err}
     owner:=strings.TrimSpace(task.Principals[0].Principal[0].UserID)
     action:=task.Actions[0].Exec[0]
     if owner!="SYSTEM" && owner!="S-1-5-18" {
@@ -57,6 +61,35 @@ func validateResidentTaskXML(data []byte, expectedExe string) error {
         action.Arguments!="--dns-service" {
         return errors.New("recovery task XML points to another motor or arguments")
     }
+    return nil
+}
+
+// XML unmarshalling ignores unfamiliar action types by default. Verify all
+// direct action nodes independently so a ComHandler or other task action
+// cannot hide alongside the one expected DNS Exec.
+func exactOneResidentAction(inner string) error {
+    decoder:=xml.NewDecoder(bytes.NewReader([]byte(inner)))
+    depth:=0
+    count:=0
+    for {
+        token,err:=decoder.Token()
+        if err==io.EOF {break}
+        if err!=nil{return fmt.Errorf("resident task actions XML invalid: %w",err)}
+        switch node:=token.(type) {
+        case xml.StartElement:
+            if depth==0 {
+                count++
+                if node.Name.Local!="Exec" {
+                    return errors.New("resident task contains an unrecognized extra action")
+                }
+            }
+            depth++
+        case xml.EndElement:
+            depth--
+            if depth<0 {return errors.New("resident task actions nesting invalid")}
+        }
+    }
+    if depth!=0 || count!=1 {return errors.New("resident task must contain exactly one Exec action")}
     return nil
 }
 
