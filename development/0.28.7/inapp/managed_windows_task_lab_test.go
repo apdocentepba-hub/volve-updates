@@ -96,7 +96,7 @@ func (d *managedWindowsTaskLab) Snapshot(ctx context.Context) error {
     data,err:=os.ReadFile(d.backup);if err!=nil{return err}
     if len(data)==0 || len(data)>1<<20 {return errors.New("invalid task snapshot length")}
     h:=sha256.Sum256(data);d.originalHash=hex.EncodeToString(h[:])
-    f,err:=os.Open(d.backup);if err!=nil{return err}
+    f,err:=os.OpenFile(d.backup,os.O_RDWR,0600);if err!=nil{return err}
     err=f.Sync();f.Close();return err
 }
 
@@ -151,7 +151,7 @@ func (d *managedWindowsTaskLab) Commit(ctx context.Context, m motorupdate.Manife
     path:=filepath.Join(d.root,"confirmed-version.json")
     data,err:=json.Marshal(struct{Version string `json:"version"`}{Version:m.Version});if err!=nil{return err}
     if err:=os.WriteFile(path,data,0600);err!=nil{return err}
-    f,err:=os.Open(path);if err!=nil{return err}
+    f,err:=os.OpenFile(path,os.O_RDWR,0600);if err!=nil{return err}
     err=f.Sync();f.Close()
     if err==nil{d.committed=true};return err
 }
