@@ -11,6 +11,7 @@ import (
  "fmt"
  "regexp"
  "runtime"
+ "sync"
  "syscall"
  "unsafe"
 )
@@ -54,13 +55,11 @@ func acquireCIBootMutex(ctx context.Context,name string)(func(),error) {
   switch uint32(result){
   case windowsWaitObject0,windowsWaitAbandoned:
    acquired=true
-   released:=false
-   return func(){
-    if released{return}
-    released=true
+   var once sync.Once
+   return func(){once.Do(func(){
     procReleaseBootMutex.Call(h)
     procCloseBootHandle.Call(h)
-   },nil
+   })},nil
   case windowsWaitTimeout:
    continue
   case windowsWaitFailed:
