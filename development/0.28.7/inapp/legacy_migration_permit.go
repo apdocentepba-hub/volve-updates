@@ -121,9 +121,17 @@ func VerifySignedUnversionedLegacyMigration(
         return empty,errors.New("signed candidate does not match signed migration destination")
     }
     if !versionRe.MatchString(panelVersion){return empty,errors.New("panel version unrecognized")}
-    ok,err:=IsEligible("0.27.0",panelVersion,candidateManifest)
-    if err!=nil || !ok {
-        return empty,errors.New("destination is not a permitted upward migration for this legacy task or panel")
+    // Unknown historical versions are NEVER guessed from task name.
+    // For this exact legacy task, a signed publisher bridge is only allowed
+    // into the new updater generation (>=0.28.7); then enforce panel
+    // compatibility independently. The signed hash pins the precise target.
+    cutoff,err:=compareVersions(candidateManifest.Version,"0.28.7")
+    if err!=nil || cutoff<0 {
+        return empty,errors.New("legacy migration destination below first supported updater generation")
+    }
+    panelCmp,err:=compareVersions(panelVersion,candidateManifest.MinPanelVersion)
+    if err!=nil || panelCmp<0 {
+        return empty,errors.New("panel too old for signed candidate")
     }
     receipt,err:=VerifyUnversionedLegacyRecovery(backupDir,protectBackup)
     if err!=nil{return empty,fmt.Errorf("safe rollback backup unavailable: %w",err)}
