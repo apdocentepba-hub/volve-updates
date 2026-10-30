@@ -47,6 +47,9 @@ jobs:
         run: |
           echo '773bd5eb5f1c4883021cc321856636354e964d3605dba9017e2fb5d1a7401b40  development/0.28.7/VOLVE_0287_RECUPERACION_INTERRUPCION_FORZADA_NO_INSTALAR_v3.zip' | sha256sum --check
           unzip -q -o development/0.28.7/VOLVE_0287_RECUPERACION_INTERRUPCION_FORZADA_NO_INSTALAR_v3.zip -d build
+      - name: Wire signed panel and motor staging into in-app updater (candidate)
+        shell: bash
+        run: go run development/0.28.7/inapp/apply_overlay.go build/codigo
       - name: Inspect existing updater integration points (development only)
         shell: bash
         run: |
@@ -121,6 +124,11 @@ jobs:
           $archive='development/0.28.7/VOLVE_0287_RECUPERACION_INTERRUPCION_FORZADA_NO_INSTALAR_v3.zip'
           if((Get-FileHash -Algorithm SHA256 $archive).Hash.ToLowerInvariant() -ne '773bd5eb5f1c4883021cc321856636354e964d3605dba9017e2fb5d1a7401b40'){throw 'Recovery ZIP hash mismatch'}
           Expand-Archive -LiteralPath $archive -DestinationPath build -Force
+      - name: Wire signed panel and motor staging into Windows GUI (candidate)
+        shell: pwsh
+        run: |
+          go run development/0.28.7/inapp/apply_overlay.go build/codigo
+          if($LASTEXITCODE -ne 0){throw 'Unified updater source overlay failed'}
       - name: Run updater tests on Windows
         working-directory: build/codigo
         shell: pwsh
@@ -128,7 +136,7 @@ jobs:
           $env:CGO_ENABLED="0"
           go test ./motorupdate ./releaseupdate -count=1
           if($LASTEXITCODE -ne 0){throw "Unit tests failed"}
-          go test . -run 'TestMotorJournalReadOnlyRejectsUnsafeStates|TestMotorPreflightOnlyReadsKnownFiles' -count=1
+          go test . -run 'TestMotorJournalReadOnlyRejectsUnsafeStates|TestMotorPreflightOnlyReadsKnownFiles|TestMergeUpdateReports' -count=1
           if($LASTEXITCODE -ne 0){throw "Read-only preflight tests failed"}
       - name: Compile complete Windows GUI (not for distribution)
         working-directory: build/codigo
