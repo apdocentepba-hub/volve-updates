@@ -12,8 +12,8 @@ func runningEvidenceFixture(t *testing.T)(ResidentRunningEvidence,string,string)
  sha:=strings.Repeat("a",64)
  return ResidentRunningEvidence{
   TaskName:"VOLVE-DNS-SERVER-0270",TaskFolder:`\`,TaskPrincipal:"S-1-5-18",
-  TaskState:"Running",TaskActionExecute:exe,TaskActionArguments:"--dns-service",
-  ProcessCount:1,ProcessPath:exe,ProcessCommandLine:`"`+exe+`" --dns-service`,
+  TaskState:"Running",TaskActionCount:1,TaskActionExecute:exe,TaskActionArguments:"--dns-service",
+  ProcessCount:1,ProcessID:4242,DNSIPv4OwnerPID:4242,DNSIPv6OwnerPID:4242,ProcessPath:exe,ProcessCommandLine:`"`+exe+`" --dns-service`,
   ProcessOwnerSID:"S-1-5-18",DiskSHA256:sha,
  },exe,sha
 }
@@ -26,7 +26,8 @@ func TestResidentRunningEvidenceExactIdentity(t *testing.T) {
 func TestResidentRunningEvidenceRejectsUnrelatedOrForgedProcess(t *testing.T) {
  for _,kind:=range []string{
   "task","folder","principal","state","action-exe","action-args",
-  "process-count","process-path","process-owner","process-args","disk-sha",
+  "action-count","process-count","process-id","dns-ipv4-pid","dns-ipv6-pid",
+  "process-path","process-owner","process-args","disk-sha",
   "invalid-expected-sha","relative-expected-path",
  } {
   t.Run(kind,func(t *testing.T){
@@ -38,7 +39,11 @@ func TestResidentRunningEvidenceRejectsUnrelatedOrForgedProcess(t *testing.T) {
    case "state":observed.TaskState="Ready"
    case "action-exe":observed.TaskActionExecute=exe+".old"
    case "action-args":observed.TaskActionArguments="--disable"
+   case "action-count":observed.TaskActionCount=2
    case "process-count":observed.ProcessCount=2
+   case "process-id":observed.ProcessID=0
+   case "dns-ipv4-pid":observed.DNSIPv4OwnerPID=4243
+   case "dns-ipv6-pid":observed.DNSIPv6OwnerPID=4243
    case "process-path":observed.ProcessPath=exe+".other"
    case "process-owner":observed.ProcessOwnerSID="S-1-5-21-1000"
    case "process-args":observed.ProcessCommandLine=exe+" --dns-service --extra"
