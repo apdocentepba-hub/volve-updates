@@ -66,6 +66,7 @@ func TestIndependentWatchdogRestoresAfterUpdaterExit(t *testing.T) {
             journal:=ciWatchdogJournal{Schema:1,Phase:"pending",TaskName:name,
                 OriginalExe:original,OriginalArgs:"/C exit 0",SnapshotFile:d.backup,SnapshotSHA256:d.originalHash}
             writeCIWatchdogJournal(t,journalPath,journal)
+            secureCIPilotRecovery(t,journalPath,d.backup)
             if tamper {
                 changed:=append(append([]byte{},originalXML...),[]byte("<!--modified-->")...)
                 if err:=os.WriteFile(d.backup,changed,0600);err!=nil{t.Fatal(err)}
