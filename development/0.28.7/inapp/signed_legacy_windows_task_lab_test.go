@@ -152,6 +152,9 @@ func TestWindowsSignedPreparedCopyTamperingIsRejected(t *testing.T){
     d:=&signedLegacyWindowsTaskLab{managedWindowsTaskLab:&managedWindowsTaskLab{
         root:filepath.Join(root,"ci-transaction"),publicKey:key,
     }}
+    // The normal transaction's Snapshot creates this directory. This
+    // isolated copy-verification test skips Snapshot by design.
+    if err:=os.MkdirAll(d.root,0700);err!=nil{t.Fatal(err)}
     if err:=d.InstallVersionedCandidate(context.Background(),candidate);err!=nil{t.Fatal(err)}
     if err:=d.VerifyPreparedTarget(context.Background(),manifest);err!=nil{
         t.Fatalf("signed installed copy unexpectedly invalid: %v",err)
