@@ -126,6 +126,16 @@ El ensayo arma primero un journal de recuperación protegido con ACL para SYSTEM
 
 **Límites:** el ejecutable compilado **NO se arrancó** en modo `--dns-service`, no se comprobó resolución real de DNS con él, no hubo cambio del adaptador ni reinicio de VM. El motor original del ensayo es `cmd.exe`, no el motor DNS real. El motor productivo `VOLVE-DNS-SERVER-0270` continúa mecánicamente bloqueado para el cambio. Aún falta la constancia firmada auténtica para el motor heredado instalado, un arranque real en VM aislada con recuperación del servicio DNS y pruebas de salud, antes de desplegar.
 
+## PASO 2 — Motor DNS real en loopback temporal desde el ejecutable completo
+
+Se añadió `motor_dns_isolated_probe_windows.go` y el comando de diagnóstico `--motor-dns-isolated-loopback` al Centro 0.28.7 de desarrollo. El comando invoca directamente **`dnsproxy.SelfTest()` del motor real**, que abre un servidor DNS UDP y un upstream ficticio sobre `127.0.0.1` en puertos asignados por Windows, envía cinco consultas reales, verifica **tres respuestas NXDOMAIN y dos permitidas**, detiene los sockets y devuelve un marcador de éxito estricto.
+
+La CI de Windows **ejecuta el .exe completo compilado** con ese comando (no solamente pruebas de unidad), comprueba su código de salida y el marcador del resultado, y ensaya también los tests reales de sockets y failover del módulo `dnsproxy`. Antes y después toma una instantánea de los servidores DNS configurados en los adaptadores de Windows y verifica que **no cambiaron**; verifica además que no haya aparecido/modificado la tarea productiva `VOLVE-DNS-SERVER-0270`. Si las pruebas o la configuración no coinciden, CI falla.
+
+**Aprobado:** [GitHub Actions #41042473099](https://github.com/apdocentepba-hub/volve-updates/actions/runs/41042473099): **3/3 trabajos** (Windows, Linux, reversión). El proceso de prueba validó cinco consultas (3 bloqueadas, 2 permitidas).
+
+**Límites decisivos:** este es el **código DNS real ejecutado desde la aplicación completa**, pero **NO** es la ejecución del servicio productivo `runDNSService()` en el puerto 53 ni una prueba del servicio con el adaptador del sistema apuntando al DNS propio. No se instalaron tareas ni se ensayó un reinicio real de Windows. El futuro reemplazo del motor residente permanece bloqueado. Para cerrar el paso 2 aún falta ejecutar y revertir el servicio real en una VM aislada con la atestación legítima del motor 0.28.6 y un watchdog de recuperación.
+
 ## Lo que falta para una actualización del motor sin reinstalar
 
 - Registrar y verificar la versión/identidad real del motor que está instalado (no deducir de nombre de archivo).
