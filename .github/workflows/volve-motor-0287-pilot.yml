@@ -158,6 +158,16 @@ jobs:
           go test . -run '^TestActualFullCatalog' -count=1 -timeout 3m -v
           if($LASTEXITCODE -ne 0){throw 'Production DNS feed reader or live UDP block proof failed'}
           Write-Host 'PASS: real Full feed parser rejects missing/truncated catalog and processes >400k-rule DNS fixture'
+      - name: Step 2 - Verify real Windows ACL and immutable local legacy DNS engine recovery snapshot
+        shell: pwsh
+        working-directory: build/codigo
+        run: |
+          $ErrorActionPreference='Stop'
+          go test ./motorupdate -run '^TestUnversionedRecovery' -count=1 -timeout 2m -v
+          if($LASTEXITCODE -ne 0){throw 'Engine backup integrity and anti-overwrite tests failed'}
+          go test . -run '^TestWindows(ProtectedLocalLegacyRollbackBackup|LegacyRollbackRejectsUnexpectedExistingDestination)$' -count=1 -timeout 2m -v
+          if($LASTEXITCODE -ne 0){throw 'Windows SYSTEM/Admin ACL protected backup test failed'}
+          Write-Host 'PASS: active unversioned 0.28.6-style DNS binary + SYSTEM task snapshot retained with SHA256, anti-tamper and strict Windows ACL; no DNS change'
       - name: Verify in-app motor readiness tells real blockers without altering production
         shell: pwsh
         working-directory: build/codigo
