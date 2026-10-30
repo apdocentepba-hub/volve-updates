@@ -214,3 +214,41 @@ func TestManagedWindowsDisposableTaskIntegration(t *testing.T) {
         })
     }
 }
+
+func TestNativeMotorTaskRejectsUnsignedMutationAndWrongOwner(t *testing.T) {
+    name:=fmt.Sprintf("VOLVE-CI-ManagedMotor-%d",time.Now().UnixNano())
+    original:=filepath.Join(os.Getenv("WINDIR"),"System32","cmd.exe")
+    if err:=createDisposableTask(name,original);err!=nil{t.Fatal(err)}
+    t.Cleanup(func(){if err:=removeDisposableTask(name);err!=nil{t.Errorf("cleanup: %v",err)}})
+    root:=t.TempDir()
+    candidate,key:=prepareSignedLabCandidate(t,root)
+    if err:=os.WriteFile(candidate,[]byte("MZ_UNTRUSTED"),0600);err!=nil{t.Fatal(err)}
+    err:=switchVerifiedMotorTaskAction(context.Background(),name,original,"/C exit 0",candidate,"",key)
+    if err==nil{t.Fatal("unverified motor was allowed to change SYSTEM task")}
+    exe,args,checkErr:=(&managedWindowsTaskLab{name:name}).currentAction()
+    if checkErr!=nil || !strings.EqualFold(filepath.Clean(exe),filepath.Clean(original)) || args!="/C exit 0" {
+        t.Fatalf("task mutated after rejected signature: %s %s %v",exe,args,checkErr)
+    }
+    if err:=switchVerifiedMotorTaskAction(context.Background(),"UnknownSYSTEMTask",original,"/C exit 0",candidate,"",key);err==nil{
+        t.Fatal("arbitrary SYSTEM task allowed")
+    }
+}
+
+func TestNativeMotorTaskRestoreRejectsTamperedBackup(t *testing.T) {
+    name:=fmt.Sprintf("VOLVE-CI-ManagedMotor-%d",time.Now().UnixNano())
+    original:=filepath.Join(os.Getenv("WINDIR"),"System32","cmd.exe")
+    if err:=createDisposableTask(name,original);err!=nil{t.Fatal(err)}
+    t.Cleanup(func(){if err:=removeDisposableTask(name);err!=nil{t.Errorf("cleanup: %v",err)}})
+    root:=t.TempDir()
+    d:=&managedWindowsTaskLab{name:name,root:root,backup:filepath.Join(root,"original-task.xml")}
+    if err:=d.Snapshot(context.Background());err!=nil{t.Fatal(err)}
+    data,err:=os.ReadFile(d.backup);if err!=nil{t.Fatal(err)}
+    if err:=os.WriteFile(d.backup,append(data,[]byte("<!--tamp-->" )...),0600);err!=nil{t.Fatal(err)}
+    if err:=restoreVerifiedMotorTaskXML(context.Background(),name,d.backup,d.originalHash,original,"/C exit 0");err==nil{
+        t.Fatal("altered rollback XML was accepted")
+    }
+    exe,args,err:=d.currentAction()
+    if err!=nil || !strings.EqualFold(filepath.Clean(exe),filepath.Clean(original)) || args!="/C exit 0"{
+        t.Fatalf("tampered snapshot changed the SYSTEM task: %q %q %v",exe,args,err)
+    }
+}
