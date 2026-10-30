@@ -5,6 +5,7 @@ package main
 import (
     "context"
     "os"
+    "os/exec"
     "path/filepath"
     "strings"
     "testing"
@@ -53,5 +54,45 @@ func TestWindowsLegacyRollbackRejectsUnexpectedExistingDestination(t *testing.T)
     if err:=os.WriteFile(parent,[]byte("unrecognized"),0600);err!=nil{t.Fatal(err)}
     if _,err:=ensureSecureLegacyRecoveryParent(root);err==nil {
         t.Fatal("unexpected existing rollback target accepted")
+    }
+}
+
+// TestWindowsLegacyRollbackRejectsUnsafeChildFileACL demonstrates that a
+// perfectly intact SHA256 is NOT sufficient if an untrusted user can change
+// the recovery EXE, task XML or its receipt. Every fixture is under t.TempDir;
+// no production Windows task, DNS, registry or installed VOLVÉ file is used.
+func TestWindowsLegacyRollbackRejectsUnsafeChildFileACL(t *testing.T) {
+    if !isAdmin() { t.Skip("requires CI elevated Windows runner") }
+    for _,filename:=range []string{
+        "VOLVE_DNS_Legacy_Recovery.exe",
+        "VOLVE_DNS_Legacy_Task.xml",
+        "VOLVE_DNS_Legacy_Recovery.json",
+    } {
+        t.Run(filename,func(t *testing.T){
+            root:=t.TempDir()
+            parent,err:=ensureSecureLegacyRecoveryParent(root)
+            if err!=nil { t.Fatal(err) }
+            installed:=filepath.Join(root,dnsServiceFile)
+            if err:=os.WriteFile(installed,[]byte("MZ-LAB-DNS"),0600);err!=nil{t.Fatal(err)}
+            xml:=[]byte(strings.Repeat("<Task><Principal>SYSTEM</Principal></Task>",4))
+            backup:=filepath.Join(parent,localRecoverySnapshot)
+            _,err=motorupdate.PrepareUnversionedLegacyRecovery(
+                context.Background(),installed,xml,backup,checkLegacyRecoveryACL)
+            if err!=nil { t.Fatal(err) }
+            // Prove that the existing protected backup is accepted first.
+            if _,err:=motorupdate.VerifyUnversionedLegacyRecovery(backup,checkLegacyRecoveryACL);err!=nil {
+                t.Fatal(err)
+            }
+            target:=filepath.Join(backup,filename)
+            out,err:=exec.Command("icacls.exe",target,"/grant","*S-1-1-0:W").CombinedOutput()
+            if err!=nil { t.Fatalf("cannot add disposable Everyone write ACE: %v %s",err,string(out)) }
+            // No bytes were edited. Only the file DACL was weakened.
+            if err:=checkLegacyRecoveryACL(backup);err==nil {
+                t.Fatal("file-level unsafe NTFS writer was trusted")
+            }
+            if _,err:=motorupdate.VerifyUnversionedLegacyRecovery(backup,checkLegacyRecoveryACL);err==nil {
+                t.Fatal("hash-valid but world-writable rollback file was trusted")
+            }
+        })
     }
 }
