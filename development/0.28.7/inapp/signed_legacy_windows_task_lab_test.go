@@ -75,6 +75,25 @@ func (d *signedLegacyWindowsTaskLab) IndependentRecoveryReady(ctx context.Contex
     return nil
 }
 
+// VerifyPreparedTarget is a separate check of the VERSIONED INSTALLED COPY.
+// It rejects a bad or substituted candidate even if its earlier staged
+// download and the signed migration authorization were valid.
+func (d *signedLegacyWindowsTaskLab) VerifyPreparedTarget(ctx context.Context, manifest motorupdate.Manifest) error {
+    if err:=ctx.Err();err!=nil{return err}
+    if d.installedExe=="" || !filepath.IsAbs(d.installedExe) {
+        return errors.New("versioned motor was not installed in CI lab")
+    }
+    rel,err:=filepath.Rel(d.root,d.installedExe)
+    if err!=nil || rel=="." || rel==".." || filepath.IsAbs(rel) ||
+        strings.HasPrefix(rel,".."+string(os.PathSeparator)) {
+        return errors.New("prepared engine escaped disposable versioned directory")
+    }
+    verified,err:=motorupdate.VerifyStaged(d.installedExe,d.publicKey)
+    if err!=nil{return fmt.Errorf("signed installed candidate failed: %w",err)}
+    if verified!=manifest {return errors.New("installed motor version, hash or size differs from publisher manifest")}
+    return nil
+}
+
 // Snapshot was durably written and its recovery task armed BEFORE calling the
 // signed transaction. Fail closed if that precondition changed.
 func (d *signedLegacyWindowsTaskLab) Snapshot(ctx context.Context) error {
@@ -123,6 +142,24 @@ func (d *signedLegacyWindowsTaskLab) Commit(ctx context.Context,m motorupdate.Ma
     if _,err=f.Write(append(next,'\n'));err!=nil{f.Close();return err}
     if err=f.Sync();err!=nil{f.Close();return err}
     return f.Close()
+}
+
+func TestWindowsSignedPreparedCopyTamperingIsRejected(t *testing.T){
+    root:=t.TempDir()
+    candidate,key:=prepareSignedLabCandidate(t,root)
+    manifest,err:=motorupdate.VerifyStaged(candidate,key)
+    if err!=nil{t.Fatal(err)}
+    d:=&signedLegacyWindowsTaskLab{managedWindowsTaskLab:&managedWindowsTaskLab{
+        root:filepath.Join(root,"ci-transaction"),publicKey:key,
+    }}
+    if err:=d.InstallVersionedCandidate(context.Background(),candidate);err!=nil{t.Fatal(err)}
+    if err:=d.VerifyPreparedTarget(context.Background(),manifest);err!=nil{
+        t.Fatalf("signed installed copy unexpectedly invalid: %v",err)
+    }
+    if err:=os.WriteFile(d.installedExe,[]byte("MZ_TAMPERED_INSTALLED_COPY"),0600);err!=nil{t.Fatal(err)}
+    if err:=d.VerifyPreparedTarget(context.Background(),manifest);err==nil{
+        t.Fatal("staged signature incorrectly accepted an altered installed executable")
+    }
 }
 
 func TestWindowsSignedUnversionedMigrationWithActualSYSTEMRecovery(t *testing.T){
