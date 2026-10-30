@@ -19,6 +19,18 @@ El archivo `apply_overlay.go` copia `inapp_motor_update_windows.go` y las prueba
 
 El código no se copia a `main`, no altera el manifiesto firmado ni el ZIP estable, y **no es un instalador**. Hasta generar un EXE completo firmado y distribuir una nueva versión de Centro en el canal estable, la 0.28.6 instalada seguirá usando su botón original.
 
+## Contrato de instalación y reversión de motor incorporado en el piloto
+
+El nuevo `motorupdate.ApplyManagedWithRollback` exige que el futuro controlador de Windows:
+- valide la identidad, versión y firma del candidato antes de actuar;
+- confirme un respaldo duradero antes de instalar o conmutar;
+- instale el nuevo ejecutable en una ubicación versionada;
+- compruebe **por separado** el DNS local y la conectividad externa;
+- registre la versión como confirmada **solo cuando ambas comprobaciones resulten correctas**;
+- ante cualquier error posterior al respaldo, intente recuperar y comprobar el motor anterior con un contexto independiente del proceso de actualización.
+
+Incluye pruebas de orden correcto, candidato adulterado, versión heredada no identificada, errores en cada fase y cancelación que no debe cancelar el rollback. Es un **contrato con controladores simulados**, no un controlador real de Windows; por tanto no habilita todavía el botón para reemplazar el motor en una PC.
+
 ## Lo que falta para una actualización del motor sin reinstalar
 
 - Registrar y verificar la versión/identidad real del motor que está instalado (no deducir de nombre de archivo).
