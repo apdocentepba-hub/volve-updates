@@ -4,9 +4,9 @@ package main
 
 import (
     "context"
+    "encoding/base64"
+    "time"
     "crypto/ed25519"
-    "crypto/sha256"
-    "encoding/hex"
     "errors"
     "fmt"
     "os"
@@ -110,7 +110,16 @@ func formatLegacyUpgradeEvidence(e LegacyUpgradeEvidence)string{
     return b.String()
 }
 
-// Retain SHA256 import as an explicit indication that the identity is
-// cryptographic, not a product filename or mutable GUI version.
-var _ = sha256.Size
-var _ = hex.EncodedLen
+
+func runMotorUpgradeEvidenceCLI(candidate string) error {
+    rawKey,err:=base64.StdEncoding.DecodeString(updaterPublicKey)
+    if err!=nil || len(rawKey)!=ed25519.PublicKeySize{
+        return errors.New("clave pública de actualización inválida")
+    }
+    ctx,cancel:=context.WithTimeout(context.Background(),35*time.Second)
+    defer cancel()
+    report,err:=inspectResidentMotorUpgradeReadOnly(ctx,candidate,ed25519.PublicKey(rawKey))
+    if err!=nil{return err}
+    fmt.Print(formatLegacyUpgradeEvidence(report))
+    return nil
+}
