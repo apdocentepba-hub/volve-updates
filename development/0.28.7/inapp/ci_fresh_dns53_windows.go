@@ -46,8 +46,11 @@ func assertCIFreshVM(root, token string)error{
   !strings.Contains(identity,"qemu") && !strings.Contains(identity,"virtualbox"){
   return errors.New("machine is not attested as a virtual machine")
  }
- if _,err:=os.Lstat(root);err==nil{return errors.New("existing test root: refusing overwrite")}
- if !os.IsNotExist(err){return fmt.Errorf("cannot verify test root: %w",err)}
+ if _,err:=os.Lstat(root);err==nil{
+  return errors.New("existing test root: refusing overwrite")
+ }else if !os.IsNotExist(err){
+  return fmt.Errorf("cannot verify test root: %w",err)
+ }
  return nil
 }
 
