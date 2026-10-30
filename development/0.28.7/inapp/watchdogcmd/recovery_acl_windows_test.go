@@ -20,15 +20,11 @@ func hardenedTestACL(t *testing.T, journalPath, snapshotPath string) {
   args:=append([]string{p,"/inheritance:r","/grant:r"},grant...)
   out,err:=exec.Command("icacls.exe",args...).CombinedOutput()
   if err!=nil {t.Fatalf("failed to set disposable ACL: %v %s",err,string(out))}
-  // Windows ownership is independent of the DACL: the file owner has the
-  // ability to rewrite its permissions. Use Administrators as owner.
-  script:=`$ErrorActionPreference='Stop';`+
-   `$p=`+q(p)+`;$acl=Get-Acl -LiteralPath $p;`+
-   `$acl.SetOwner([Security.Principal.SecurityIdentifier]'S-1-5-32-544');`+
-   `Set-Acl -LiteralPath $p -AclObject $acl -ErrorAction Stop;`+
-   `Write-Output 'OK'`
-  outText,err:=ps(context.Background(),script)
-  if err!=nil || outText!="OK" {t.Fatalf("failed setting disposable ACL owner: %v %q",err,outText)}
+  // Ownership is independent from ACL grants: use the Windows security
+  // descriptor utility to set Administrators as the owner. This avoids
+  // importing PowerShell Security modules from a newly hardened test folder.
+  ownerOutput,ownerErr:=exec.Command("icacls.exe",p,"/setowner","*S-1-5-32-544").CombinedOutput()
+  if ownerErr!=nil {t.Fatalf("failed setting disposable ACL owner: %v %s",ownerErr,string(ownerOutput))}
  }
 }
 
