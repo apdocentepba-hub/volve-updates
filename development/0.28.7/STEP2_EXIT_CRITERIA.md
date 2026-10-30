@@ -25,3 +25,14 @@
 La **brecha principal** es B+C: todavía **no existe** el driver que efectivamente conmuta el motor real junto a un watchdog productivo capaz de revertirlo. El código incluye una barrera explícita que rechaza `VOLVE-DNS-SERVER-0270` en `switchVerifiedMotorTaskAction`. **Debe permanecer activa** hasta demostrar B, C, D y E con autorización. El siguiente desarrollo prioritario es implementar y verificar el adaptador SYSTEM watchdog y el driver **en un laboratorio aislado**, sin desproteger ni alterar el VOLVÉ 0.28.6 instalado.
 
 **No realizado:** migración real del motor del usuario, firma editorial de producción, publicación de motor estable y prueba de reboot persistente.
+
+
+## Nueva subetapa: restauración del journal residente mediante tarea CI (30/10/2026)
+
+**Código:** el watchdog ahora incluye `resident_pilot_restore_windows.go`. Es un mecanismo de recuperación que consume el **formato residente** (respaldo del motor original + tarea SYSTEM + journal con nonce), comprueba coherencia de SHA/ACL antes de cualquier acción, y construye una restauración usando PowerShell con comprobaciones de identidad de la tarea y del motor tanto antes como después de reimportar el XML. La ruta del destino es derivada de la versión registrada; el ejecutable candidato puede estar ausente, porque un rollback debe preservar la posibilidad de restaurar cuando falla la descarga/instalación. **Barrera obligatoria:** la función rechaza `VOLVE-DNS-SERVER-0270` y cualquier nombre distinto de tareas `VOLVE-CI-ManagedMotor-*` de laboratorio. No existe opción productiva CLI para esta operación ni se registra ninguna tarea real.
+
+**Pruebas añadidas:** `resident_pilot_restore_windows_test.go` utiliza un ejecutor PowerShell **simulado** (sin importar, crear, arrancar ni modificar ninguna tarea del Programador). Exige rechazo del nombre productivo, respaldo adulterado, journal finalizado, ausencia de ejecutor, resultados ambiguos o fallo en la restitución. Comprueba que el plan exige comprobar la identidad SYSTEM y las huellas del archivo XML/EXE antes de la importación. El circuito de restauración real del Scheduler sigue **SIN EJECUTAR** y requerirá una prueba Windows aislada expresamente habilitada.
+
+**Trazabilidad:** commits `452a25ba`, `1714cd66`, `9b6d0e48`, `48884528`; [CI actual](https://github.com/apdocentepba-hub/volve-updates/actions/runs/41100759300). Los resultados de CI deben consultarse antes de anunciar aprobación.
+
+**Sigue bloqueado:** tarea SYSTEM y motor DNS productivos, journal terminal confirmado por probes DNS/Internet, permiso editorial firmado de producción, prueba de reinicio real en VM persistente, y publicación del motor.
