@@ -8,6 +8,7 @@ import (
     "encoding/hex"
     "encoding/json"
     "os"
+    "os/exec"
     "path/filepath"
     "strings"
     "testing"
@@ -115,5 +116,36 @@ func TestResidentChainRequiresExistingProtectedJournal(t *testing.T){
     if err:=os.Remove(filepath.Join(dir,motorupdate.ResidentIntentFile));err!=nil{t.Fatal(err)}
     if _,err:=auditPendingResidentChain(context.Background(),root);err==nil{
         t.Fatal("missing recovery intent accepted")
+    }
+}
+
+
+// Exercise the actual independent command entry point as another process,
+// with an intact bundle followed by a changed original motor. It is not a
+// production update or a real reboot and never touches Task Scheduler.
+func TestResidentChainCLIChild(t *testing.T) {
+    if os.Getenv("VOLVE_CI_CHAIN_CHILD")!="yes"{return}
+    root:=os.Getenv("VOLVE_CI_CHAIN_ROOT")
+    if root==""{t.Fatal("missing disposable CI root")}
+    os.Args=[]string{os.Args[0],"--audit-resident-chain",root}
+    main()
+}
+func TestResidentChainAuditedFromSeparateProcess(t *testing.T) {
+    root,_,_,_:=chainFixture(t,false)
+    invoke:=func()([]byte,error){
+        cmd:=exec.Command(os.Args[0],"-test.run=^TestResidentChainCLIChild$","-test.v")
+        cmd.Env=append(os.Environ(),"VOLVE_CI_CHAIN_CHILD=yes","VOLVE_CI_CHAIN_ROOT="+root)
+        return cmd.CombinedOutput()
+    }
+    out,err:=invoke()
+    if err!=nil || !strings.Contains(string(out),"CADENA DE RESCATE COHERENTE") ||
+        !strings.Contains(string(out),"SOLO LECTURA"){
+        t.Fatalf("separate watchdog did not verify bound recovery: %v %s",err,out)
+    }
+    path:=filepath.Join(root,residentLegacyExe)
+    if err:=os.WriteFile(path,[]byte("MZ changed simulated installed motor"),0600);err!=nil{t.Fatal(err)}
+    out,err=invoke()
+    if err==nil || !strings.Contains(string(out),"CADENA DE RESCATE NO VERIFICADA"){
+        t.Fatalf("separate watchdog accepted changed resident motor: %v %s",err,out)
     }
 }
