@@ -199,6 +199,8 @@ jobs:
         working-directory: build/codigo
         run: |
           $ErrorActionPreference='Stop'
+          $dnsBefore=Get-DnsClientServerAddress | Sort-Object InterfaceIndex,AddressFamily | Select-Object InterfaceIndex,AddressFamily,ServerAddresses | ConvertTo-Json -Compress -Depth 5
+          $prodBefore=@(Get-ScheduledTask -TaskName 'VOLVE-DNS-SERVER-0270' -ErrorAction SilentlyContinue).Count
           go test ./dnsproxy -run 'TestProbeRealSockets|TestLiveLoopbackUDP|TestSlowFirstUpstreamStillAllowsHealthyFallback' -count=1 -timeout 90s -v
           if($LASTEXITCODE -ne 0){throw 'Windows isolated DNS socket tests failed'}
           go test . -run TestMotorDNSIsolatedLoopbackProof -count=1 -timeout 45s -v
@@ -212,7 +214,11 @@ jobs:
           $report=Get-Content $stdOut -Raw -ErrorAction SilentlyContinue
           if($report -notmatch 'VOLVE_DNS_ISOLATED_LOOPBACK_OK' -or $report -notmatch '3 bloqueadas, 2 permitidas'){throw ('Full VOLVE binary did not report verified DNS packets: '+$report)}
           Write-Host $report
-          Write-Host 'PASS: actual Windows VOLVE application processed five isolated DNS queries without changing DNS adapters or Task Scheduler'
+          $dnsAfter=Get-DnsClientServerAddress | Sort-Object InterfaceIndex,AddressFamily | Select-Object InterfaceIndex,AddressFamily,ServerAddresses | ConvertTo-Json -Compress -Depth 5
+          $prodAfter=@(Get-ScheduledTask -TaskName 'VOLVE-DNS-SERVER-0270' -ErrorAction SilentlyContinue).Count
+          if($dnsBefore -cne $dnsAfter){throw 'Windows DNS adapter configuration changed during isolated proof'}
+          if($prodBefore -ne $prodAfter){throw 'Production VOLVE DNS task unexpectedly changed during isolated proof'}
+          Write-Host 'PASS: real VOLVE binary processed five DNS packets on temporary loopback; Windows DNS server addresses and production task unchanged'
       - name: Step 2 signed full VOLVE binary and disposable SYSTEM rollback
         shell: pwsh
         working-directory: build/codigo
