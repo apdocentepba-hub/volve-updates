@@ -6,7 +6,7 @@ Fecha de corte inicial: 30/10/2026. Rama de desarrollo: feature/motor-updater-02
 
 Las cifras son **estimaciones conservadoras de ingeniería por entregables ponderados**, no una medición del tiempo, ni una cantidad de líneas, ni un porcentaje de protección. Se acumula crédito parcial por código efectivamente integrado y verificable; aprobar CI no reemplaza los ensayos sobre un equipo Windows persistente. Nunca publicar como cerrado un paso que no haya aprobado todos sus criterios obligatorios.
 
-### Paso 2 — Actualización del motor DNS: 40/100 (40%)
+### Paso 2 — Actualización del motor DNS: 43/100 (43%)
 
 | Subentregable | Peso | Puntos reconocidos | Estado |
 | --- | ---: | ---: | --- |
@@ -14,9 +14,9 @@ Las cifras son **estimaciones conservadoras de ingeniería por entregables ponde
 | Respaldo anterior y journal protegido | 15 | 15 | Código y auditorías NTFS probados |
 | Watchdog de recuperación SYSTEM independiente | 25 | 5 | Lab descartable; NO hay watchdog productivo |
 | Controlador Windows real que cambia y revierte el motor | 20 | 0 | Bloqueado expresamente |
-| Tests adversos, DNS dual-stack, identidad, rollback en CI | 15 | 12 | Baterías CI; faltan escenarios productivos |
+| Tests adversos, DNS dual-stack, identidad, rollback en CI | 15 | 15 | Motor compilado ejecutado bajo SYSTEM en DNS/53 real y sondeado externamente en VM descartable; faltan escenarios productivos |
 | Reinicio real repetible de VM persistente | 10 | 0 | Sin ejecutar |
-| **TOTAL** | **100** | **40** | **Paso abierto** |
+| **TOTAL** | **100** | **43** | **Paso abierto** |
 
 Los seis criterios A–F de STEP2_EXIT_CRITERIA.md siguen sin aprobarse **como condiciones de cierre completas**, aunque hay subtrabajos de esos criterios realizados.
 
@@ -81,3 +81,12 @@ Ver [CI actual de la política](https://github.com/apdocentepba-hub/volve-update
 - Última validación CI de código nuevo: https://github.com/apdocentepba-hub/volve-updates/actions/runs/41111279348. Al registrar esta entrada está **queued**, sin resultado aprobado; la compilación corregida anterior https://github.com/apdocentepba-hub/volve-updates/actions/runs/41110975418 está **in_progress**.
 - Afirmaciones permitidas: código subido y causa del fallo anterior verificada. Afirmaciones NO permitidas: watchdog productivo funcionando, restauración real después de un reinicio, actualización automática instalada en 0.28.6, o CI nuevo aprobado antes de completarse.
 - Porcentajes verificados **sin cambios**: paso 2 **40%** y paso 3 **30%**. Siguiente bloqueo prioritario: controlador SYSTEM persistente con rollback real, acompañado por prueba de misma VM Windows tras reinicio y firma editorial legítima.
+
+
+## Avance comprobado — Primer motor real bajo SYSTEM con DNS/53 y consulta externa (30/10/2026)
+
+**GitHub Actions [#41124486390](https://github.com/apdocentepba-hub/volve-updates/actions/runs/41124486390): trabajo Windows fresh-system-dns53 COMPLETADO CON ÉXITO.** La ejecución reconstruyó el código completo por SHA-256, compiló una variante aislada de VOLVÉ con etiqueta `volveci`, creó una tarea **descartable** de Windows bajo el usuario SYSTEM, inició **el runner productivo de DNS** en 127.0.0.1:53 y [::1]:53, y efectuó consultas UDP desde **otro proceso**. Las pruebas comprobaron bloqueos NXDOMAIN de `betwarrior.bet.ar`, `www.betwarrior.bet.ar` y `stake.com`, además de un dominio permitido, propiedad exclusiva de los endpoints por el proceso SYSTEM y preservación del DNS del sistema y `hosts`. Al terminar se retiró la tarea descartable.
+
+**Código:** `inapp/ci_fresh_dns53_windows.go`, `inapp/ci_fresh_dns53_windows_test.go` y flujo `.github/workflows/volve-0287-fresh-system-dns53.yml`. Estos archivos CI NO se compilan en releases normales sin la etiqueta especial, y la tarea de prueba no usa `VOLVE-DNS-SERVER-0270`.
+
+**Crédito de progreso:** el subentregable de ensayos de DNS/identidad/rollback pasa de 12/15 a **15/15**, elevando el paso 2 a **43/100**. Sigue abierto: driver de instalación permanente, firma editorial de la release, watchdog SYSTEM persistente, cambio transaccional de DNS del adaptador con reversión, actualización desde el programa instalado y **reinicio real de VM persistente**. Este CI NO es un instalador descargable ni demuestra protección sostenida en la PC del usuario. **Paso 3 permanece 30/100**.
