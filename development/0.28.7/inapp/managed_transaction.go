@@ -5,6 +5,7 @@ import (
     "crypto/ed25519"
     "errors"
     "fmt"
+    "time"
 )
 
 // ManagedSwitchDriver is the contract required before VOLVE can replace a
@@ -52,28 +53,45 @@ func ApplyManagedWithRollback(ctx context.Context, candidate string, key ed25519
     // After the durable snapshot, any unsuccessful transition must restore the
     // original engine using an independent bounded context, even if ctx expired.
     if err := ctx.Err(); err != nil {
-        return restoreAndVerify(driver, err)
+        return restoreManagedAndVerify(driver, err)
     }
     if err := driver.InstallVersionedCandidate(ctx, candidate); err != nil {
-        return restoreAndVerify(driver, fmt.Errorf("no se preparó el motor versionado: %w", err))
+        return restoreManagedAndVerify(driver, fmt.Errorf("no se preparó el motor versionado: %w", err))
     }
     if err := ctx.Err(); err != nil {
-        return restoreAndVerify(driver, err)
+        return restoreManagedAndVerify(driver, err)
     }
     if err := driver.Switch(ctx); err != nil {
-        return restoreAndVerify(driver, fmt.Errorf("falló el cambio de motor: %w", err))
+        return restoreManagedAndVerify(driver, fmt.Errorf("falló el cambio de motor: %w", err))
     }
     if err := driver.Probe(ctx); err != nil {
-        return restoreAndVerify(driver, fmt.Errorf("el motor nuevo no responde localmente: %w", err))
+        return restoreManagedAndVerify(driver, fmt.Errorf("el motor nuevo no responde localmente: %w", err))
     }
     if err := driver.ProbeConnectivity(ctx); err != nil {
-        return restoreAndVerify(driver, fmt.Errorf("no se verificó conectividad tras el cambio: %w", err))
+        return restoreManagedAndVerify(driver, fmt.Errorf("no se verificó conectividad tras el cambio: %w", err))
     }
     if err := ctx.Err(); err != nil {
-        return restoreAndVerify(driver, err)
+        return restoreManagedAndVerify(driver, err)
     }
     if err := driver.Commit(ctx, manifest); err != nil {
-        return restoreAndVerify(driver, fmt.Errorf("no se pudo confirmar versión y registro del motor: %w", err))
+        return restoreManagedAndVerify(driver, fmt.Errorf("no se pudo confirmar versión y registro del motor: %w", err))
     }
     return nil
+}
+
+// restoreManagedAndVerify does not report a successful rollback unless the
+// original engine responds on local DNS probes AND external connectivity
+// works again. Restore runs even when the update context was cancelled.
+func restoreManagedAndVerify(d ManagedSwitchDriver, cause error) error {
+    rescueCtx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+    defer cancel()
+    if err := d.Restore(rescueCtx); err != nil {
+        return errors.Join(cause, fmt.Errorf("CRÍTICO: motor anterior no restaurado: %w", err))
+    }
+    localErr := d.Probe(rescueCtx)
+    internetErr := d.ProbeConnectivity(rescueCtx)
+    if localErr != nil || internetErr != nil {
+        return errors.Join(cause, fmt.Errorf("CRÍTICO: restauración no comprobada (DNS local: %v; Internet: %v)", localErr, internetErr))
+    }
+    return fmt.Errorf("actualización revertida; motor y conectividad recuperados: %w", cause)
 }
