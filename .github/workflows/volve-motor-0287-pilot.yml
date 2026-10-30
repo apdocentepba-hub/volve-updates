@@ -47,6 +47,13 @@ jobs:
         run: |
           echo '773bd5eb5f1c4883021cc321856636354e964d3605dba9017e2fb5d1a7401b40  development/0.28.7/VOLVE_0287_RECUPERACION_INTERRUPCION_FORZADA_NO_INSTALAR_v3.zip' | sha256sum --check
           unzip -q -o development/0.28.7/VOLVE_0287_RECUPERACION_INTERRUPCION_FORZADA_NO_INSTALAR_v3.zip -d build
+      - name: Inspect existing updater integration points (development only)
+        shell: bash
+        run: |
+          echo '=== updater source files ==='
+          find build/codigo -name '*.go' | sort | grep -E '(releaseupdate|motorupdate|update|main\.go|panel)' | head -75
+          echo '=== GUI and signed-update entrypoints ==='
+          rg -n 'check-app-updates|install-app-update|HighestInstalledPanel|EnsureNoInstalledDowngrade|DownloadVerified|Motor.*Upgrade|Actualiza|Updater|update.*panel|InstallPanel' build/codigo -g '*.go' | head -180 || true
       - name: Full unit tests and race detector
         working-directory: build/codigo
         run: |
