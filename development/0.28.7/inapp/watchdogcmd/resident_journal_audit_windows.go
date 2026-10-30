@@ -45,7 +45,14 @@ func checkResidentJournalNTFS(ctx context.Context,path string)error{
   `$rules=@($acl.GetAccessRules($true,$true,[Security.Principal.SecurityIdentifier]));`+
   `foreach($r in $rules){`+
   `if($r.AccessControlType -ne [Security.AccessControl.AccessControlType]::Allow -or $r.IdentityReference.Value -notin $allowed){throw 'Foreign journal ACL entry'};`+
-  `};foreach($sid in $allowed){if(@($rules|Where-Object{$_.IdentityReference.Value -eq $sid}).Count -eq 0){throw 'Missing SYSTEM/Admin trustee'}};`+
+  `};$full=[int][Security.AccessControl.FileSystemRights]::FullControl;`+
+  `foreach($sid in $allowed){`+
+  `$hasFull=$false;foreach($r in $rules){`+
+  `if($r.AccessControlType -eq [Security.AccessControl.AccessControlType]::Allow -and `+
+  `$r.IdentityReference.Value -eq $sid -and `+
+  `(([int]$r.FileSystemRights -band $full) -eq $full)){$hasFull=$true}`+
+  `};if(-not $hasFull){throw ('Missing SYSTEM/Admin FullControl: '+$sid)}`+
+  `};`+
   `Write-Output 'VOLVE_RESIDENT_JOURNAL_ACL_OK'`
  out,err:=ps(ctx,script)
  if err!=nil{return fmt.Errorf("journal ACL rejected: %w",err)}
