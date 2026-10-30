@@ -165,3 +165,45 @@ func TestBootRecoveryRefusesInvalidInputsOrCancellation(t *testing.T){
  }
  if lab.lockCalls!=0{t.Fatal("invalid recovery acquired privileged lease")}
 }
+
+
+func TestBootRecoveryRetryAfterRestoreSucceededButHealthFailed(t *testing.T){
+ dir:=armBootPolicyJournal(t)
+ lab:=&bootPolicyLab{}
+ checks:=&bootIdentityLab{failFirst:true,networkFailure:true}
+ // A crash or failed network probe AFTER restoring the original cannot
+ // produce a terminal receipt. The next independent boot must safely retry.
+ if _,err:=RecoverPendingResidentAfterBoot(context.Background(),dir,
+  residentLabACL,residentLabACL,checks,lab);err==nil{
+  t.Fatal("DNS restored without network confirmation")
+ }
+ if lab.restoreCalls!=1{t.Fatalf("original motor was not restored once: %+v",lab)}
+ state,err:=InspectResidentRecoveryJournal(context.Background(),dir,residentLabACL)
+ if err!=nil||state.Status!="recovery-required"{t.Fatalf("interrupted boot lost pending transaction: %v %+v",err,state)}
+ // A later invocation observes the original motor still running and should
+ // finalize after fresh DNS/network probes WITHOUT re-switching the task.
+ checks.networkFailure=false
+ status,err:=RecoverPendingResidentAfterBoot(context.Background(),dir,
+  residentLabACL,residentLabACL,checks,lab)
+ if err!=nil||status!="restored"{t.Fatalf("second boot could not recover: %s %v",status,err)}
+ if lab.restoreCalls!=1||lab.lockCalls!=2||lab.unlockCalls!=2{
+  t.Fatalf("boot retry switched task twice or leaked mutex: %+v",lab)
+ }
+ final,err:=InspectResidentRecoveryJournal(context.Background(),dir,residentLabACL)
+ if err!=nil||final.Status!="restored"{t.Fatalf("journal did not finalize after healthy retry: %+v %v",final,err)}
+}
+
+func TestBootRecoveryRejectsCorruptIntentWithoutTouchingMotor(t *testing.T){
+ dir:=armBootPolicyJournal(t)
+ intentFile:=filepath.Join(dir,ResidentIntentFile)
+ if err:=os.WriteFile(intentFile,[]byte("{\"schema\":1"),0600);err!=nil{t.Fatal(err)}
+ lab:=&bootPolicyLab{}
+ if _,err:=RecoverPendingResidentAfterBoot(context.Background(),dir,
+  residentLabACL,residentLabACL,&bootIdentityLab{},lab);err==nil{
+  t.Fatal("partial/corrupt recovery intent was trusted")
+ }
+ if lab.verifyCalls!=0||lab.restoreCalls!=0{t.Fatal("corrupt journal triggered privileged task operation")}
+ if _,err:=os.Lstat(filepath.Join(dir,ResidentResultFile));!os.IsNotExist(err){
+  t.Fatalf("corrupt journal incorrectly finalized: %v",err)
+ }
+}
