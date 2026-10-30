@@ -105,28 +105,14 @@ func ensureSecureLegacyRecoveryParent(root string)(string,error){
         if err:=os.Mkdir(parent,0700);err!=nil{return "",err}
         newFolder=true
     }else{return "",err}
-    // Never rewrite ACLs on an existing folder. Reject it instead.
+    // Never rewrite ACLs on an existing folder. A newly-created folder is
+    // explicitly sealed with an Administrators owner and protected DACL.
     if newFolder {
-        // Replace the DACL rather than adding ACEs to an inherited or
-        // explicit runner/user entry. .NET Framework Directory APIs are used:
-        // Get-Acl module autoload is unreliable in WindowsPowerShell 5 CI.
-        script:=`$ErrorActionPreference='Stop';$p=`+psQuote(parent)+`;`+
-          `$a=[System.IO.Directory]::GetAccessControl($p);`+
-          `$a.SetAccessRuleProtection($true,$false);`+
-          `foreach($existing in @($a.Access)){$a.RemoveAccessRuleSpecific($existing)|Out-Null};`+
-          `$inherit=[Security.AccessControl.InheritanceFlags]::ContainerInherit -bor [Security.AccessControl.InheritanceFlags]::ObjectInherit;`+
-          `foreach($name in @('S-1-5-18','S-1-5-32-544')){`+
-          `$identity=[Security.Principal.SecurityIdentifier]::new($name);`+
-          `$rule=[Security.AccessControl.FileSystemAccessRule]::new($identity,[Security.AccessControl.FileSystemRights]::FullControl,$inherit,[Security.AccessControl.PropagationFlags]::None,[Security.AccessControl.AccessControlType]::Allow);`+
-          `$a.AddAccessRule($rule)`+
-          `};[System.IO.Directory]::SetAccessControl($p,$a);`+
-          `Write-Output 'ROLLBACK_ACL_CREATED'`
-        out,e:=runPS(script)
-        if e!=nil || !hasStandaloneRollbackToken(out,"ROLLBACK_ACL_CREATED"){
-            return "",fmt.Errorf("failed protecting rollback folder: %v, output %q",e,out)
+        if err:=sealNewLegacyRecoveryNode(parent);err!=nil{
+            return "",fmt.Errorf("failed sealing new rollback parent: %w",err)
         }
     }
-    if err:=checkLegacyRecoveryACL(parent);err!=nil{return "",err}
+    if err:=checkSealedLegacyRecoveryACL(parent);err!=nil{return "",err}
     return parent,nil
 }
 
@@ -151,7 +137,8 @@ func prepareInstalledLegacyRecovery(ctx context.Context)(motorupdate.LegacyRecov
     parent,err:=ensureSecureLegacyRecoveryParent(root)
     if err!=nil{return empty,err}
     target:=filepath.Join(parent,localRecoverySnapshot)
-    record,err:=motorupdate.PrepareUnversionedLegacyRecovery(ctx,original,task,target,checkLegacyRecoveryACL)
+    record,err:=motorupdate.PrepareUnversionedLegacyRecoveryWithSealing(
+        ctx,original,task,target,checkSealedLegacyRecoveryACL,sealNewLegacyRecoveryNode)
     if err!=nil{return empty,err}
     // Do not misreport as ready for a production switch if the running DNS
     // stopped responding or the rescue changed during snapshot.
@@ -177,11 +164,11 @@ func verifyInstalledLegacyRecovery() error {
     if !isAdmin(){return errors.New("backup verification requires administrator")}
     root,err:=installRoot();if err!=nil{return err}
     parent:=filepath.Join(root,localRecoveryFolder)
-    if err:=checkLegacyRecoveryACL(parent);err!=nil{
+    if err:=checkSealedLegacyRecoveryACL(parent);err!=nil{
         return fmt.Errorf("recovery parent directory insecure: %w",err)
     }
     target:=filepath.Join(parent,localRecoverySnapshot)
-    r,err:=motorupdate.VerifyUnversionedLegacyRecovery(target,checkLegacyRecoveryACL)
+    r,err:=motorupdate.VerifyUnversionedLegacyRecovery(target,checkSealedLegacyRecoveryACL)
     if err!=nil{return err}
     fmt.Printf("VOLVÉ: RESPALDO LOCAL INTACTO\nSHA-256: %s\nTarea: %s\n"+
       "NO se atribuye una versión antigua ni autoriza cambiar tareas.\n",r.ExeSHA256,r.OriginalTask)
