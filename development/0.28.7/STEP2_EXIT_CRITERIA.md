@@ -36,3 +36,16 @@ La **brecha principal** es B+C: todavía **no existe** el driver que efectivamen
 **Trazabilidad:** commits `452a25ba`, `1714cd66`, `9b6d0e48`, `48884528`; [CI actual](https://github.com/apdocentepba-hub/volve-updates/actions/runs/41100759300). Los resultados de CI deben consultarse antes de anunciar aprobación.
 
 **Sigue bloqueado:** tarea SYSTEM y motor DNS productivos, journal terminal confirmado por probes DNS/Internet, permiso editorial firmado de producción, prueba de reinicio real en VM persistente, y publicación del motor.
+
+
+## Avance adicional — validación de ACL y confirmación con DNS (30/10/2026)
+
+**REALIZADO:** el watchdog `checkResidentJournalNTFS` pasó de aceptar cualquier ACE permitida de SYSTEM/Administradores a exigir explícitamente `FullControl` para ambos en cada entrada del journal. Caso negativo `TestWindowsResidentJournalRejectsReadOnlyAdministratorACL` evita confundir DACL protegida pero de solo lectura con journal recuperable (commits `bfbdebf339bb`, `3362501c4ca7`).
+
+**NUEVO CONTRATO DE CIERRE:** `motorupdate.ConfirmResidentRecoveryOutcome` exige comprobar identidad efectiva de la tarea/motor SYSTEM antes y después de los sondeos, respuesta DNS local y conectividad externa **antes** de crear un recibo terminal `committed` o `restored`. Mantiene `recovery-required` si cualquiera falla. `resident_completion_test.go` contiene dobles de prueba que simulan fallas en cada compuerta y concurrencia; **no** prueban DNS real. No existe aún un adaptador Windows productivo que implemente `ResidentCompletionChecks`; por eso la nueva API no se invoca desde el Centro (commits `1a87743b0920`, `c3b2afd1334e`, `5da6977372d8`).
+
+**CORRECCIÓN EXTRA:** en la rutina de restauración de tarea CI se calcula SHA-256 del mismo bloque de bytes XML que se transforma para la importación, evitando la comprobación seguida de una segunda lectura independiente. Esta rutina continúa restringida a tareas efímeras de prueba; sin invocación productiva ni validación de reinicio real (commit `27eb68559994`).
+
+**CI PENDIENTE:** [Actions #41102094866](https://github.com/apdocentepba-hub/volve-updates/actions/runs/41102094866). En el último control figuraba `queued` por espera de GitHub Actions. No presentar esta versión como compilada, ensayada o aprobada en Windows hasta recibir conclusión definitiva. La anterior [#41097414505](https://github.com/apdocentepba-hub/volve-updates/actions/runs/41097414505) sí figura exitosa.
+
+**BLOQUEOS NO RESUELTOS:** permisos editoriales reales, tarea SYSTEM del watchdog PRODUCTIVA y persistente, recuperación efectiva del motor/tarea, driver Windows de conmutación, sondeos reales post-cambio y prueba de reinicio de VM persistente. `VOLVE-DNS-SERVER-0270` sigue bloqueada por diseño; no modificar `main`, el canal estable ni la instalación 0.28.6.
