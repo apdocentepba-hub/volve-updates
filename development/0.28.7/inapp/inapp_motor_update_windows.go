@@ -131,5 +131,7 @@ func checkAndStageMotorUpdate() string {
             "Ubicación de preparación: %s\n"+
             "No se instaló: la identidad/versionado del motor heredado y la reversión independiente deben validarse antes de cambiar el servicio DNS.",
         m.Version, candidate,
-    ) + "\nInventario: " + engineLabel
+    ) + "\nInventario: " + engineLabel +
+        "\nPreparación para instalar desde VOLVÉ: " +
+        explainPreparedMotorMigration(candidate,ed25519.PublicKey(key))
 }
