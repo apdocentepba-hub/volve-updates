@@ -138,3 +138,19 @@ func TestWindowsResidentJournalAuditSeparateProcess(t *testing.T){
     "restored",seal,protect);err!=nil{t.Fatal(err)}
  invoke("restored")
 }
+
+
+// Security regression: a protected journal may be readable but impossible to
+// finalize or recover because Admins have only READ. The independent watchdog
+// must reject it even though both allowed SIDs are present in the DACL.
+func TestWindowsResidentJournalRejectsReadOnlyAdministratorACL(t *testing.T) {
+ dir,seal,protect:=journalAuditFixture(t)
+ if _,err:=motorupdate.ArmResidentRecoveryIntent(context.Background(),dir,
+     journalAuditIdentity(),seal,protect);err!=nil{t.Fatal(err)}
+ intent:=filepath.Join(dir,motorupdate.ResidentIntentFile)
+ out,err:=exec.Command("icacls.exe",intent,"/grant:r","*S-1-5-32-544:R").CombinedOutput()
+ if err!=nil{t.Fatalf("cannot apply read-only disposable ACL: %v %s",err,out)}
+ if _,err:=auditResidentJournal(context.Background(),dir);err==nil {
+     t.Fatal("watchdog trusted a journal without Administrators FullControl")
+ }
+}
