@@ -8,7 +8,42 @@ import (
  "context"
  "errors"
  "fmt"
+ "regexp"
+ "strings"
 )
+
+// VerifiedFreshCatalogTask must originate from a separate, privileged,
+// read-only identity inspector; an installer-supplied claim is not trusted.
+// Name alone can never approve an existing SYSTEM/task action.
+type VerifiedFreshCatalogTask struct {
+ Name string
+ TaskPath string
+ ActionCount int
+ ActionVerified bool
+ PrincipalVerified bool
+ DefinitionSHA256 string
+}
+var freshTaskSHA256 = regexp.MustCompile(`^[a-f0-9]{64}package motorupdate
+
+// A CLEAN installation is NOT a migration from a protected legacy DNS task.
+// This policy distinguishes the two paths without disabling the legacy signed
+// migration and rollback requirements. It is a preflight only; it never writes
+// DNS, tasks, files, registry or a product inventory.
+import (
+ "context"
+ "errors"
+ "fmt"
+ "regexp"
+ "strings"
+)
+
+)
+
+func allowedFreshAuxiliaryTask(t *VerifiedFreshCatalogTask) bool {
+ return t!=nil && t.Name=="VOLVE-CATALOGO-0230" && t.TaskPath==`\` &&
+  t.ActionCount==1 && t.ActionVerified && t.PrincipalVerified &&
+  freshTaskSHA256.MatchString(strings.ToLower(t.DefinitionSHA256))
+}
 
 type FreshMotorInstallEvidence struct {
  // Root and identity were independently inspected with Administrator access,
@@ -18,6 +53,8 @@ type FreshMotorInstallEvidence struct {
  VersionedMotorPresent bool
  InstalledEngineInventoryPresent bool
  VOLVETaskCount int
+ // Only ONE independently inspected catalog task may exist without DNS motor.
+ VerifiedCatalogTask *VerifiedFreshCatalogTask
  VOLVEServiceCount int
  LocalIPv4DNSConfigured bool
  LocalIPv6DNSConfigured bool
@@ -40,9 +77,19 @@ func CheckFreshMotorInstallReadiness(ctx context.Context, e FreshMotorInstallEvi
  if e.LegacyExecutablePresent || e.VersionedMotorPresent || e.InstalledEngineInventoryPresent {
   return errors.New("motor already exists: use signed migration/update, never a fresh install")
  }
- if e.VOLVETaskCount!=0 || e.VOLVEServiceCount!=0 ||
+ if e.VOLVETaskCount<0 || e.VOLVEServiceCount!=0 ||
     e.UDP53IPv4OwnerCount!=0 || e.UDP53IPv6OwnerCount!=0 {
-  return fmt.Errorf("existing task/service or occupied DNS/53 prevents a clean installation")
+  return fmt.Errorf("existing/unknown service or occupied DNS/53 prevents clean installation")
+ }
+ switch e.VOLVETaskCount {
+ case 0:
+  if e.VerifiedCatalogTask!=nil {return errors.New("catalog task record contradicts observed count")}
+ case 1:
+  if !allowedFreshAuxiliaryTask(e.VerifiedCatalogTask) {
+   return errors.New("unverified or unrelated VOLVE task prevents clean motor installation")
+  }
+ default:
+  return fmt.Errorf("%d VOLVE tasks: clean installation requires exhaustive task inspection",e.VOLVETaskCount)
  }
  if e.LocalIPv4DNSConfigured || e.LocalIPv6DNSConfigured {
   return errors.New("a Windows adapter still points to local DNS; restore original settings first")
