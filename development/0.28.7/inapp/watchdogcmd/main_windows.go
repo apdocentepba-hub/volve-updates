@@ -211,7 +211,7 @@ func main(){
             fmt.Fprintln(os.Stderr,"VOLVÉ: JOURNAL RESIDENTE NO VERIFICADO; no se modificó el motor:",err)
             os.Exit(1)
         }
-        fmt.Printf("VOLVÉ: JOURNAL RESIDENTE (SOLO LECTURA)\\nEstado: %s\\nMotor anterior SHA-256: %s\\nNo habilita un cambio productivo.\\n",
+        fmt.Printf("VOLVÉ: JOURNAL RESIDENTE (SOLO LECTURA)\nEstado: %s\nMotor anterior SHA-256: %s\nNo habilita un cambio productivo.\n",
             state.Status,state.Intent.LegacySHA256)
         return
     }
