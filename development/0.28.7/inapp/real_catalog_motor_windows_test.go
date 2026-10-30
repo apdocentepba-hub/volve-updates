@@ -56,10 +56,24 @@ func TestActualFullCatalogLoadsAndBlocksOnLiveWindowsUDP(t *testing.T) {
     putLabFullCatalog(t,root,400002)
     eng,err:=fullEngineAt(root)
     if err!=nil{t.Fatalf("real Full catalog loader rejected valid fixture: %v",err)}
-    free,err:=net.ListenPacket("udp","127.0.0.1:0")
-    if err!=nil{t.Fatal(err)}
-    port:=free.LocalAddr().(*net.UDPAddr).Port
-    free.Close()
+    // The production DNS server binds BOTH TCP and UDP. Selecting a free
+    // UDP port alone was flaky on Windows runners: the same port can be
+    // disallowed for TCP (WSAEACCES 10013). Require both protocols to bind
+    // during discovery, and retry excluded/occupied ephemeral ports.
+    port:=0
+    for attempt:=0;attempt<32;attempt++{
+        probeTCP,tcpErr:=net.Listen("tcp","127.0.0.1:0")
+        if tcpErr!=nil{t.Fatalf("cannot probe local TCP: %v",tcpErr)}
+        proposed:=probeTCP.Addr().(*net.TCPAddr).Port
+        probeUDP,udpErr:=net.ListenPacket("udp",fmt.Sprintf("127.0.0.1:%d",proposed))
+        if udpErr==nil{
+            probeUDP.Close()
+            port=proposed
+        }
+        probeTCP.Close()
+        if port!=0{break}
+    }
+    if port==0{t.Fatal("no shared TCP/UDP localhost port available for isolated DNS test")}
     ctx,cancel:=context.WithCancel(context.Background())
     defer cancel()
     srv:=dnsproxy.New(eng,nil)
