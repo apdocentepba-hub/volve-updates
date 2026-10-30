@@ -44,6 +44,16 @@ Se añadió `managed_windows_task_lab_test.go`, una prueba Windows que ejercita 
 
 **Límite:** es una prueba del controlador transaccional con tareas reales de Windows, pero **no ejecuta el motor DNS real, no mide conectividad externa real ni valida recuperación tras un corte eléctrico**. No está habilitado el reemplazo del DNS desde la aplicación instalada.
 
+## Registro del motor realmente instalado (nuevo)
+
+Se incorporó `motorupdate.InspectInstalledEngine` y `RecordVerifiedEngine`. El verificador **nunca identifica la versión por el nombre del archivo**: exige registro administrativo, manifiesto Ed25519 firmado, firma separada y SHA-256 del EXE instalado. Rechaza retrocesos, cambios de huella con versión repetida, inventarios alterados, archivos enlazados y ubicaciones ajenas.
+
+El comprobador del botón `Actualizar VOLVÉ` consulta ese inventario para evitar descargar una versión anterior. Cuando el motor heredado 0.28.6 no tiene aún un registro verificable, **no inventa la versión** ni autoriza sustituir el servicio. La prueba de Windows con tarea SYSTEM desechable ya copia los tres archivos del paquete, confirma el inventario firmado cuando la transacción tiene éxito y comprueba que un rollback no registra la nueva versión.
+
+**CI validado:** [GitHub Actions 40983028270](https://github.com/apdocentepba-hub/volve-updates/actions/runs/40983028270), 3/3 jobs aprobados, pruebas Linux y Windows incluidas. Durante el desarrollo se corrigió un falso rechazo de rutas temporales de Windows que usaban nombres DOS 8.3 (`RUNNER~1`) sin ser enlaces: la comprobación de seguridad ahora examina los componentes reales mediante `Lstat`.
+
+Este avance **no habilita la actualización del DNS real**; se debe conectar el inventario a un controlador administrativo real con respaldo, aislamiento de acceso y recuperación ante interrupción antes de publicar un release del motor.
+
 ## Lo que falta para una actualización del motor sin reinstalar
 
 - Registrar y verificar la versión/identidad real del motor que está instalado (no deducir de nombre de archivo).
