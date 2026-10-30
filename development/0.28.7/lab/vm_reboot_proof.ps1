@@ -96,6 +96,10 @@ $root=Join-Path $kit ('VOLVE-CI-BOOT-'+$RunId)
 $cmd=Join-Path $env:WINDIR 'System32\cmd.exe'
 
 if($Mode -eq 'Prepare') {
+    # VM-only readiness: without prior Task Scheduler history, an actual
+    # startup trigger cannot be distinguished from a manual Start-ScheduledTask.
+    $taskLog=Get-WinEvent -ListLog 'Microsoft-Windows-TaskScheduler/Operational' -ErrorAction Stop
+    if(-not $taskLog.IsEnabled) {throw 'REFUSED: enable Task Scheduler Operational history in the isolated VM before Prepare'}
     if(-not (Test-Path -LiteralPath $LabScript -PathType Leaf) -or -not (Test-Path -LiteralPath $JournalExe -PathType Leaf)) {throw 'Pass valid -LabScript and -JournalExe development paths'}
     if(Test-Path -LiteralPath $kit) {throw 'Trial already exists. Refusing to overwrite a staged recovery.'}
     if(Get-ScheduledTask -TaskName $labTask -ErrorAction SilentlyContinue){throw 'Disposable motor task name already in use'}
@@ -138,6 +142,25 @@ if($Mode -eq 'Verify') {
     $before=$before.ToUniversalTime()
     $now=BootTimeUTC
     if($now -le $before.AddSeconds(5)) {throw 'NOT VERIFIED: VM has not undergone a new boot since the trial was prepared'}
+    # A fresh boot alone is insufficient: a watchdog started manually after
+    # reboot could otherwise be misreported as automatically started at boot.
+    # Task Scheduler Operational event 118 specifically records a boot trigger.
+    $taskLog=Get-WinEvent -ListLog 'Microsoft-Windows-TaskScheduler/Operational' -ErrorAction Stop
+    if(-not $taskLog.IsEnabled) {throw 'NOT VERIFIED: Task Scheduler Operational history is disabled'}
+    $bootEvents=@(Get-WinEvent -FilterHashtable @{
+        LogName='Microsoft-Windows-TaskScheduler/Operational'
+        Id=118
+        StartTime=$now.AddSeconds(-3)
+    } -ErrorAction SilentlyContinue)
+    $expectedEventTask='\' + $bootTask
+    $bootEvent=$null
+    foreach($evt in $bootEvents) {
+        foreach($p in $evt.Properties) {
+            if(([string]$p.Value) -eq $expectedEventTask) {$bootEvent=$evt;break}
+        }
+        if($null -ne $bootEvent) {break}
+    }
+    if($null -eq $bootEvent) {throw 'NOT VERIFIED: no Task Scheduler event 118 confirms an automatic startup trigger for this trial'}
     $watch=Get-ScheduledTask -TaskName $bootTask -ErrorAction Stop
     if($watch.Principal.UserId -notin @('SYSTEM','S-1-5-18') -or @($watch.Triggers).Count -ne 1 -or $watch.Triggers[0].CimClass.CimClassName -ne 'MSFT_TaskBootTrigger') {throw 'Unexpected watchdog task identity/trigger'}
     $taskInfo=Get-ScheduledTaskInfo -TaskName $bootTask -ErrorAction Stop
@@ -151,7 +174,7 @@ if($Mode -eq 'Verify') {
     $journal=Join-Path $root 'recovery.json'
     $status=& $helper status $journal
     if($LASTEXITCODE -ne 0 -or $status -ne 'NO_ROLLBACK:restored') {throw 'Recovery journal is not in restored state'}
-    [IO.File]::WriteAllText((Join-Path $kit 'vm-proof-success.txt'),('Verified UTC: '+[DateTime]::UtcNow.ToString('o')+'; boot UTC: '+$now.ToString('o')))
+    [IO.File]::WriteAllText((Join-Path $kit 'vm-proof-success.txt'),('Verified UTC: '+[DateTime]::UtcNow.ToString('o')+'; boot UTC: '+$now.ToString('o')+'; TaskScheduler event: 118; record: '+$bootEvent.RecordId))
     Write-Host 'PASS: actual VM reboot detected and SYSTEM startup watchdog restored the disposable original task.'
     Write-Host ('Evidence stored in '+$kit)
     return
