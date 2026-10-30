@@ -84,6 +84,16 @@ La recuperación se ensayó con tareas temporales reales en Windows de dos maner
 
 **Alcance real:** la tarea de laboratorio tiene disparador de arranque válido, pero **no se reinició físicamente ninguna máquina o VM durante esta batería**; el disparador se accionó manualmente en Windows para comprobar su funcionamiento. El watchdog sigue rechazando `VOLVE-DNS-SERVER-0270` y el botón de actualización **no puede reemplazar todavía el motor DNS de producción**. Antes de liberar la actualización falta probar la interrupción/reinicio real, controlar ACL de los respaldos persistentes, conservar y arrancar efectivamente el motor original y validar DNS/Internet después de la recuperación.
 
+## Verificación de permisos de Windows sobre los respaldos (etapa actual)
+
+Se añadió al recuperador independiente `verifyRecoveryACL`, una comprobación **de solo lectura** de las ACL efectivas de Windows, utilizando las API .NET de descriptores de seguridad y los SID (no los nombres localizados). Exige propietario SYSTEM (`S-1-5-18`) o Administradores (`S-1-5-32-544`), DACL protegida en la carpeta de transacción y ausencia de permisos de escritura, borrado o cambio de permisos otorgados a cuentas no autorizadas en el journal, respaldo y directorios intermedios.
+
+En GitHub Actions se probó que una carpeta heredada/de propiedad del usuario fuera rechazada, que un respaldo protegido únicamente para SYSTEM/Administradores fuera aceptado, que añadir escritura para Everyone fuera rechazado y que una ruta fuera de la carpeta de la transacción no pudiera utilizarse. Las primeras ejecuciones descubrieron dos problemas del laboratorio: carga del módulo PowerShell Get-Acl y conservación de permisos explícitos de usuario al retirar herencia. Se corrigieron usando las API .NET de ACL y una DACL nueva, sin conservar las entradas anteriores.
+
+**CI aprobado:** [ejecución 40988214483](https://github.com/apdocentepba-hub/volve-updates/actions/runs/40988214483), **3/3 trabajos**, con pruebas Windows del recuperador y compatibilidad del Centro.
+
+**Límite importante:** la comprobación de ACL está desarrollada y probada, pero **todavía no se exige en la ruta activa `run` del watchdog de laboratorio**. Falta conectar el control antes de cualquier cambio al servicio real, instalar un directorio persistente propio y asegurado bajo ProgramData, y comprobar que también sus directorios padres no puedan ser sustituidos por un usuario corriente. No equivale a un motor DNS actualizado ni a una prueba de un reinicio real de máquina.
+
 ## Lo que falta para una actualización del motor sin reinstalar
 
 - Registrar y verificar la versión/identidad real del motor que está instalado (no deducir de nombre de archivo).
