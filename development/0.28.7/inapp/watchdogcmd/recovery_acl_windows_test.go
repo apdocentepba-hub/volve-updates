@@ -14,20 +14,35 @@ import (
 func hardenedTestACL(t *testing.T, journalPath, snapshotPath string) {
  t.Helper()
  dir:=filepath.Dir(journalPath)
- for _,p:=range []string{dir,journalPath,snapshotPath}{
-  grant:=[]string{"*S-1-5-18:F","*S-1-5-32-544:F"}
-  if p==dir {grant=[]string{"*S-1-5-18:(OI)(CI)F","*S-1-5-32-544:(OI)(CI)F"}}
-  args:=append([]string{p,"/inheritance:r","/grant:r"},grant...)
-  out,err:=exec.Command("icacls.exe",args...).CombinedOutput()
-  if err!=nil {t.Fatalf("failed to set disposable ACL: %v %s",err,string(out))}
-  // Ownership is independent from ACL grants: use the Windows security
-  // descriptor utility to set Administrators as the owner. This avoids
-  // importing PowerShell Security modules from a newly hardened test folder.
-  ownerOutput,ownerErr:=exec.Command("icacls.exe",p,"/setowner","*S-1-5-32-544").CombinedOutput()
-  if ownerErr!=nil {t.Fatalf("failed setting disposable ACL owner: %v %s",ownerErr,string(ownerOutput))}
+ for _,p:=range []string{dir,journalPath,snapshotPath} {
+  // Start with an empty *protected* DACL rather than layering two allow
+  // entries over the runner's existing explicit user ACE. The latter could
+  // still let that user falsify a committed transaction.
+  script:=`$ErrorActionPreference='Stop';`+
+    `$p=`+q(p)+`;$system=[Security.Principal.SecurityIdentifier]'S-1-5-18';`+
+    `$admins=[Security.Principal.SecurityIdentifier]'S-1-5-32-544';`+
+    `if([IO.Directory]::Exists($p)){`+
+      `$acl=New-Object Security.AccessControl.DirectorySecurity;`+
+      `foreach($sid in @($system,$admins)){`+
+        `$rule=New-Object Security.AccessControl.FileSystemAccessRule($sid,[Security.AccessControl.FileSystemRights]::FullControl,`+
+          `[Security.AccessControl.InheritanceFlags]'ContainerInherit,ObjectInherit',`+
+          `[Security.AccessControl.PropagationFlags]::None,[Security.AccessControl.AccessControlType]::Allow);`+
+        `$acl.AddAccessRule($rule)};`+
+      `$acl.SetAccessRuleProtection($true,$false);$acl.SetOwner($admins);`+
+      `[IO.Directory]::SetAccessControl($p,$acl)`+
+    `}else{`+
+      `$acl=New-Object Security.AccessControl.FileSecurity;`+
+      `foreach($sid in @($system,$admins)){`+
+        `$rule=New-Object Security.AccessControl.FileSystemAccessRule($sid,[Security.AccessControl.FileSystemRights]::FullControl,`+
+          `[Security.AccessControl.AccessControlType]::Allow);`+
+        `$acl.AddAccessRule($rule)};`+
+      `$acl.SetAccessRuleProtection($true,$false);$acl.SetOwner($admins);`+
+      `[IO.File]::SetAccessControl($p,$acl)`+
+    `};Write-Output 'OK'`
+  output,err:=ps(context.Background(),script)
+  if err!=nil || output!="OK" {t.Fatalf("failed to set protected test ACL: %v %q",err,output)}
  }
 }
-
 func TestRecoveryACLRejectsOrdinaryTempDirectory(t *testing.T){
  jpath,j:=fixtureJournal(t,"pending")
  err:=verifyRecoveryACL(context.Background(),jpath,j.SnapshotFile)
