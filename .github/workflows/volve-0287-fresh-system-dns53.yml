@@ -122,23 +122,7 @@ jobs:
             $savedTask=Get-ScheduledTask -TaskName $task -ErrorAction Stop
             if($savedTask.Principal.UserId -notin @('SYSTEM','S-1-5-18') -or @($savedTask.Triggers).Count -ne 1){throw 'Installed startup task changed unexpectedly'}
             Start-ScheduledTask -TaskName $task -ErrorAction Stop
-            go test . -run '^TestCIFreshResidentSYSTEMPort53          }finally{
-            Remove-Item Env:\VOLVE_CI_FRESH_DNS53_PROBE -ErrorAction SilentlyContinue
-            if($registered){
-              Stop-ScheduledTask -TaskName $task -ErrorAction SilentlyContinue
-              Start-Sleep -Seconds 2
-              Unregister-ScheduledTask -TaskName $task -Confirm:$false -ErrorAction SilentlyContinue
-            }
-            # Never delete an unknown process: only terminate our exact compiled CI binary if still running.
-            $left=@(Get-CimInstance Win32_Process -Filter "Name='VOLVE_CI_FreshDNS53.exe'" -ErrorAction SilentlyContinue | Where-Object { [string]$_.ExecutablePath -ieq $exe })
-            foreach($p in $left){Stop-Process -Id $p.ProcessId -Force -ErrorAction Stop}
-            $after=(Get-DnsClientServerAddress | Sort-Object InterfaceIndex,AddressFamily | Select-Object InterfaceIndex,AddressFamily,ServerAddresses | ConvertTo-Json -Compress -Depth 6)
-            if($base -cne $after){throw 'FATAL: Windows DNS adapter settings changed'}
-            $hostsAfter=(Get-FileHash -Algorithm SHA256 -LiteralPath "$env:WINDIR\System32\drivers\etc\hosts").Hash
-            if($hosts -ne $hostsAfter){throw 'FATAL: hosts protection changed'}
-            Write-Host 'PASS: disposable task removed and Windows hosts/DNS untouched'
-          }
- -count=1 -timeout 1m -v
+            go test . -run '^TestCIFreshResidentSYSTEMPort53$' -count=1 -timeout 1m -v
             if($LASTEXITCODE -ne 0){throw 'Real DNS/53 failed after restarting same registered SYSTEM task'}
             Write-Host 'PASS: persistent AtStartup SYSTEM task restarted with exact original 400k catalog and DNS blocking still works'
             # Corrupt the lab catalog after stopping, to prove the next start
