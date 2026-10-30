@@ -54,14 +54,28 @@ func TestReadJournalRejectsUnknownFieldsAndTrailingData(t *testing.T){
   if _,err:=readJournal(path);err==nil{t.Fatal("malformed journal accepted")}
  }
 }
+func secureFixtureJournal(t *testing.T,phase string)(string,journal){
+ t.Helper()
+ path,j:=fixtureJournal(t,phase)
+ hardenedTestACL(t,path,j.SnapshotFile)
+ return path,j
+}
+func TestWatchdogRequiresTrustedACLBeforeAnyPhase(t *testing.T){
+ for _,phase:=range []string{"pending","committed","restored"}{
+  path,_:=fixtureJournal(t,phase)
+  if err:=run(context.Background(),path);err==nil {
+   t.Fatalf("insecure transaction accepted in phase %s",phase)
+  }
+ }
+}
 func TestCommittedJournalNeverRestoresOrTouchesTask(t *testing.T){
- path,_:=fixtureJournal(t,"committed")
+ path,_:=secureFixtureJournal(t,"committed")
  if err:=run(context.Background(),path);err!=nil{t.Fatalf("committed journal: %v",err)}
- path,_=fixtureJournal(t,"restored")
+ path,_=secureFixtureJournal(t,"restored")
  if err:=run(context.Background(),path);err!=nil{t.Fatalf("already restored journal: %v",err)}
 }
 func TestIndependentRecoveryRejectsWrongSnapshotHash(t *testing.T){
- path,j:=fixtureJournal(t,"pending")
+ path,j:=secureFixtureJournal(t,"pending")
  if err:=os.WriteFile(j.SnapshotFile,[]byte("tampered"),0600);err!=nil{t.Fatal(err)}
  err:=run(context.Background(),path)
  if err==nil || !strings.Contains(err.Error(),"SHA256") {
