@@ -9,6 +9,7 @@ import (
  "errors"
  "fmt"
  "os"
+ "path/filepath"
  "os/exec"
  "strings"
  "testing"
@@ -114,4 +115,21 @@ func TestWindowsBootMutexContendedLeaseRespectsCancellation(t *testing.T){
   t.Fatal("contended recovery mutex did not respect cancellation")
  }
  if time.Since(start)>3*time.Second{t.Fatal("contended recovery lock ignored bounded wait")}
+}
+
+
+func TestWindowsResidentPilotRestoreNeverLocksProductionTask(t *testing.T){
+ root:=t.TempDir()
+ if err:=restoreResidentPilotSYSTEMTask(context.Background(),root,"VOLVE-DNS-SERVER-0270");err==nil{
+  t.Fatal("production DNS task reached CI-only restore")
+ }
+ valid:="VOLVE-CI-ManagedMotor-1793423456789012345"
+ ctx,cancel:=context.WithCancel(context.Background());cancel()
+ if err:=restoreResidentPilotSYSTEMTask(ctx,root,valid);!errors.Is(err,context.Canceled) {
+  t.Fatalf("cancelled restore attempted boot mutex or journal access: %v",err)
+ }
+ // No journal path is created as a side effect of denial.
+ if _,err:=os.Stat(filepath.Join(root,"legacy-engine-recovery"));!os.IsNotExist(err){
+  t.Fatalf("denied restore mutated recovery disk state: %v",err)
+ }
 }
