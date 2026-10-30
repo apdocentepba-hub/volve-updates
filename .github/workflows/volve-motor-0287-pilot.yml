@@ -150,6 +150,14 @@ jobs:
           if($LASTEXITCODE -ne 0){throw "Unit tests failed"}
           go test . -run 'TestMotorJournalReadOnlyRejectsUnsafeStates|TestMotorPreflightOnlyReadsKnownFiles|TestMergeUpdateReports' -count=1
           if($LASTEXITCODE -ne 0){throw "Read-only preflight tests failed"}
+      - name: Step 2 - Prove production Full DNS catalog loader with 400k rules on loopback
+        shell: pwsh
+        working-directory: build/codigo
+        run: |
+          $ErrorActionPreference='Stop'
+          go test . -run '^TestActualFullCatalog' -count=1 -timeout 3m -v
+          if($LASTEXITCODE -ne 0){throw 'Production DNS feed reader or live UDP block proof failed'}
+          Write-Host 'PASS: real Full feed parser rejects missing/truncated catalog and processes >400k-rule DNS fixture'
       - name: Verify signed legacy resident and candidate engine evidence (READ ONLY)
         shell: pwsh
         working-directory: build/codigo
