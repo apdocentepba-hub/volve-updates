@@ -94,6 +94,16 @@ En GitHub Actions se probó que una carpeta heredada/de propiedad del usuario fu
 
 **Límite importante:** la comprobación de ACL está desarrollada y probada, pero **todavía no se exige en la ruta activa `run` del watchdog de laboratorio**. Falta conectar el control antes de cualquier cambio al servicio real, instalar un directorio persistente propio y asegurado bajo ProgramData, y comprobar que también sus directorios padres no puedan ser sustituidos por un usuario corriente. No equivale a un motor DNS actualizado ni a una prueba de un reinicio real de máquina.
 
+## Verificación de ACL obligatoria al ejecutar el recuperador — piloto protegido
+
+La protección por SID/DACL ya está **conectada al ejecutable de recuperación**: `run` rechaza un journal y su XML si el propietario, los permisos de escritura o los directorios intermedios no son seguros; esta comprobación se realiza **antes de actuar**, incluyendo si el registro dice `committed` o `restored`. Los permisos Unix `0600` no sustituyen los descriptores de seguridad de Windows.
+
+Las pruebas de laboratorio recrean los respaldos y el journal con listas de acceso explícitas y protegidas para SYSTEM y Administradores. Se comprueba recuperación en un proceso aparte, recuperación desde una tarea real SYSTEM y rechazo de respaldo alterado. Una prueba adicional crea únicamente una carpeta desechable `%ProgramData%\\VOLVE-CI-MotorRecovery-*`, confirma que los permisos iniciales no son confiables, la asegura sin conservar entradas explícitas del usuario y verifica el rechazo cuando se concede escritura a Everyone; luego limpia esa carpeta. **No crea ni modifica el directorio de VOLVÉ productivo.**
+
+El primer conjunto integrado superó [GitHub Actions 40990488696](https://github.com/apdocentepba-hub/volve-updates/actions/runs/40990488696) con Windows, Linux y rollback (3/3).
+
+**Límites pendientes:** el recuperador sigue restringido a tareas `VOLVE-CI-ManagedMotor-*`. Falta definir un árbol de instalación y journal productivo persistente con ACLs y propiedad confiables desde sus directorios padres, verificar el arranque y salud del servicio DNS anterior después de la restauración, y realizar un reinicio auténtico de máquina virtual durante la conmutación. Ninguno de estos pilotos autoriza publicar una actualización del motor DNS real.
+
 ## Lo que falta para una actualización del motor sin reinstalar
 
 - Registrar y verificar la versión/identidad real del motor que está instalado (no deducir de nombre de archivo).
