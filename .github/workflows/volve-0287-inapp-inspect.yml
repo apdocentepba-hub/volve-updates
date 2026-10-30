@@ -32,6 +32,8 @@ jobs:
       - name: Print targeted updater sources (no user data, no secrets)
         shell: bash
         run: |
+          echo '===== VERSION CONSTANTS AND CLI ====='
+          grep -RnE --include='*.go' '(^const version|^var version|version = "0\\.28|version[[:space:]]*=[[:space:]]*"0\\.28)' src/codigo | head -30 || true
           for file in motorupdate/manifest.go motorupdate/stage.go motorupdate/transaction.go panel_windows.go main_windows.go; do
             echo "===== SOURCE FILE $file ====="
             case "$file" in
