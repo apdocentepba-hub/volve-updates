@@ -73,3 +73,13 @@ La **brecha principal** es B+C: todavía **no existe** el driver que efectivamen
 **EVIDENCIA DE PRUEBAS:** el validador puro de identidad fue comprobado localmente con `go test -race`, `go vet` y compilación cruzada de su módulo aislado para Windows. GitHub Actions de la rama completa sigue siendo la validación definitiva para el conjunto; ver [ejecución #41104967298](https://github.com/apdocentepba-hub/volve-updates/actions/runs/41104967298). No afirmar que pasó hasta confirmar el estado final.
 
 **LIMITACIONES FUNDAMENTALES:** comprobar tarea, proceso, PID y puertos es evidencia fuerte de identidad observable, pero **NO demuestra por sí solo** que Task Scheduler haya sido quien lanzó el proceso, que los bytes cargados en memoria sigan idénticos al disco, ni que exista un permiso editorial de migración vigente o un watchdog SYSTEM productivo. La ejecución real de esa comprobación sobre Windows instalado y el ensayo de reinicio persistente continúan pendientes. El bloqueo del switch productivo permanece activo y `main` no se modifica.
+
+
+## Paso 2 — Auditoría completa de recuperación sin confirmar el journal (30/10/2026)
+
+- Resultado verificado: GitHub Actions #41104967298 finalizó 3/3 success. Esto valida la batería de identidad de tarea, proceso y propietarios de puertos DNS en piloto; NO certifica migración productiva.
+- Implementado: motorupdate.AuditResidentRecoveryOutcome audita identidad SYSTEM, DNS dual-stack, conectividad y journal protegido sin escribir el recibo terminal. ConfirmResidentRecoveryOutcome reutiliza el mismo contrato antes de escribir un resultado definitivo.
+- Tests: TestResidentHealthAuditOnlyReadsPendingJournal y TestResidentHealthAuditRejectsFailedProbeWithoutMutation; rechazo de identidad, DNS, red, cambio concurrente o journal finalizado.
+- Windows: auditWindowsResidentRecoveryHealthReadOnly conecta el journal NTFS protegido y el adaptador de identidad + motor firmado con la auditoría real de red, pero no posee CLI productiva ni permite alterar el DNS.
+- CI pendiente de cierre: https://github.com/apdocentepba-hub/volve-updates/actions/runs/41106173732. No inferir 3/3 aprobados antes de consultar su conclusión.
+- Bloqueos: watchdog SYSTEM productivo persistente, conmutación de motor real y reversión, permiso editorial real, y prueba de apagado/reinicio en la misma VM Windows. Producción VOLVE-DNS-SERVER-0270 y main siguen bloqueados.
