@@ -1,0 +1,42 @@
+name: VOLVE 0.28.7 in-app updater integration inspect (NO release)
+on:
+  push:
+    branches: [feature/motor-updater-0287-pilot]
+    paths: ['.github/workflows/volve-0287-inapp-inspect.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - name: Rebuild authenticated development sources
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import hashlib
+          parts=sorted(Path('development/0.28.7/complete-source-parts').glob('part-*.bin'))
+          assert len(parts)==10
+          with open('source.zip','wb') as out:
+              for i,p in enumerate(parts):
+                  assert p.name==f'part-{i:02d}.bin'
+                  out.write(p.read_bytes())
+          assert hashlib.sha256(Path('source.zip').read_bytes()).hexdigest()=='92b3536559151260375b17a64eedd009df8399e45460637208027b7ca0587ba5'
+          PY
+          mkdir src && unzip -q source.zip -d src
+          unzip -q -o development/0.28.7/VOLVE_0287_PRECHECK_RESCATE_OVERLAY_NO_INSTALAR.zip -d src
+          unzip -q -o development/0.28.7/VOLVE_0287_RECUPERACION_INTERRUPCION_FORZADA_NO_INSTALAR_v3.zip -d src
+      - name: Print targeted updater sources (no user data, no secrets)
+        shell: bash
+        run: |
+          for file in motorupdate/manifest.go motorupdate/stage.go motorupdate/transaction.go panel_windows.go main_windows.go; do
+            echo "===== SOURCE FILE $file ====="
+            case "$file" in
+              panel_windows.go) sed -n '130,225p;395,475p' "src/codigo/$file";;
+              main_windows.go) sed -n '490,560p' "src/codigo/$file";;
+              *) sed -n '1,245p' "src/codigo/$file";;
+            esac
+          done
