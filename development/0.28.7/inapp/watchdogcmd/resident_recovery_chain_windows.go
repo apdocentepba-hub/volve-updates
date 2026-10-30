@@ -16,7 +16,6 @@ import (
     "os"
     "path/filepath"
 
-    "volve-browser-protection/motorupdate"
 )
 
 const chainLegacyMax = 80 << 20
@@ -90,6 +89,3 @@ func auditPendingResidentChain(ctx context.Context,root string)(residentChainEvi
     },nil
 }
 
-// Compile-time guard: the audited record is a fact to compare, not permission
-// to construct or run a SignedLegacySwitchDriver.
-var _ motorupdate.ResidentRecoveryJournalState
