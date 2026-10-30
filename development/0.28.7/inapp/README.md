@@ -64,6 +64,16 @@ Se incorporó `motorupdate.VerifyInternetTLS`, que usa el resolvedor de Windows 
 
 Se extrajeron a `native_task_switch_windows.go` primitivas reales de Windows que verifican el paquete Ed25519 y la tarea SYSTEM original antes de cambiar su acción, y restauran únicamente un respaldo XML cuya huella SHA-256 y propiedad SYSTEM coinciden. Las pruebas de Windows ejercitan esas funciones **sobre tareas SYSTEM desechables**; no son simples simuladores. El cambio de la tarea **productiva** continúa bloqueado por código hasta que exista un watchdog independiente probado que recupere el motor anterior ante interrupciones.
 
+## Recuperador independiente ejecutado por SYSTEM — piloto aprobado
+
+Se añadió `cmd/volve-managed-watchdog`, un ejecutable Windows **separado** del Centro y del actualizador. Lee un journal de fases, comprueba que el respaldo XML sea un archivo regular íntegro mediante SHA-256, exige tarea SYSTEM y ejecutable original permitidos, restaura la tarea desde otro proceso y verifica el resultado. Si la fase es `committed` o `restored`, no vuelve a modificarla. Rechaza JSON adicional, caminos sospechosos, tareas ajenas al laboratorio y respaldos alterados.
+
+La recuperación se ensayó con tareas temporales reales en Windows de dos maneras: como un proceso independiente del actualizador y **dentro de una tarea programada que se ejecuta bajo la cuenta SYSTEM**. El ensayo comprueba que el XML original se restauró y que el journal quedó en fase `restored`. Se corrigió una falsa alarma causada por la salida de progreso CLIXML de PowerShell en STDERR, que contaminaba la confirmación de recuperación. El watchdog ahora lee por separado STDOUT y STDERR.
+
+**Resultado verificado:** [GitHub Actions 40986185615](https://github.com/apdocentepba-hub/volve-updates/actions/runs/40986185615): 3 de 3 jobs aprobados, incluidos tests de rollback, controlador Windows y compilación del Centro de desarrollo.
+
+**Límites importantes:** este recuperador tiene un filtro de seguridad estricto que **solo permite tareas de laboratorio `VOLVE-CI-ManagedMotor-*`** y no puede restaurar ni cambiar `VOLVE-DNS-SERVER-0270`. Todavía no se realizó una actualización real del motor DNS, ni se verificó la recuperación frente a un corte de energía de una VM real. Falta adaptar el mecanismo al servicio productivo con ACLs de SYSTEM, journal duradero independiente, verificación de inicio efectivo y una prueba real de reinicio durante actualización antes de permitir el despliegue.
+
 ## Lo que falta para una actualización del motor sin reinstalar
 
 - Registrar y verificar la versión/identidad real del motor que está instalado (no deducir de nombre de archivo).
