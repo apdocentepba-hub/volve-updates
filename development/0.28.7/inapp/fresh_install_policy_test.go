@@ -44,3 +44,37 @@ func TestFreshMotorPolicyCancelledWithoutSideEffects(t *testing.T){
   t.Fatalf("cancelled preflight accepted: %v",err)
  }
 }
+
+// Regression: the user's 0.28.6 installation has a catalog task but NO DNS motor.
+// It may be preserved only after independent action/principal verification.
+func verifiedCatalogFixture() *VerifiedFreshCatalogTask {
+ return &VerifiedFreshCatalogTask{
+  Name:"VOLVE-CATALOGO-0230", TaskPath:`\\`, ActionCount:1,
+  ActionVerified:true, PrincipalVerified:true, DefinitionSHA256:"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+ }
+}
+func TestFreshMotorPolicyPartialProtectionCatalogIsNotDNSMotor(t *testing.T) {
+ e:=FreshMotorInstallEvidence{InspectedAsAdministrator:true,VOLVETaskCount:1,VerifiedCatalogTask:verifiedCatalogFixture()}
+ if err:=CheckFreshMotorInstallReadiness(context.Background(),e);err!=nil{t.Fatal(err)}
+}
+func TestFreshMotorPolicyRejectsUntrustedCatalogEvidence(t *testing.T) {
+ cases:=[]struct{name string;mutate func(*FreshMotorInstallEvidence)}{
+  {"missing-proof",func(e *FreshMotorInstallEvidence){e.VerifiedCatalogTask=nil}},
+  {"unknown-task",func(e *FreshMotorInstallEvidence){e.VerifiedCatalogTask.Name="VOLVE-DNS-SERVER-0270"}},
+  {"wrong-path",func(e *FreshMotorInstallEvidence){e.VerifiedCatalogTask.TaskPath=`\\Other\\`}},
+  {"wrong-action-count",func(e *FreshMotorInstallEvidence){e.VerifiedCatalogTask.ActionCount=2}},
+  {"unverified-action",func(e *FreshMotorInstallEvidence){e.VerifiedCatalogTask.ActionVerified=false}},
+  {"unverified-principal",func(e *FreshMotorInstallEvidence){e.VerifiedCatalogTask.PrincipalVerified=false}},
+  {"unsigned-definition",func(e *FreshMotorInstallEvidence){e.VerifiedCatalogTask.DefinitionSHA256=""}},
+  {"other-volve-tasks",func(e *FreshMotorInstallEvidence){e.VOLVETaskCount=2}},
+ }
+ for _,tc:=range cases {t.Run(tc.name,func(t *testing.T){
+  e:=FreshMotorInstallEvidence{InspectedAsAdministrator:true,VOLVETaskCount:1,VerifiedCatalogTask:verifiedCatalogFixture()}
+  tc.mutate(&e)
+  if err:=CheckFreshMotorInstallReadiness(context.Background(),e);err==nil{t.Fatal("unsafe task accepted")}
+ })}
+}
+func TestFreshMotorPolicyContradictoryInventoryRejected(t *testing.T){
+ e:=FreshMotorInstallEvidence{InspectedAsAdministrator:true,VerifiedCatalogTask:verifiedCatalogFixture()}
+ if err:=CheckFreshMotorInstallReadiness(context.Background(),e);err==nil{t.Fatal("task count contradiction accepted")}
+}
