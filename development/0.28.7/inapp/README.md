@@ -166,6 +166,18 @@ El test comparte `runDNSServiceAt()` con la ruta productiva `--dns-service`. Con
 
 **Límite:** lo probado es la rutina real del servicio ejecutada dentro del proceso de pruebas en una VM Windows efímera, **no** la tarea SYSTEM productiva con su ejecutable instalado, el catálogo real del usuario ni una recuperación después de reiniciar. La instalación 0.28.6 del usuario no se ha modificado y el cambio de la tarea productiva sigue bloqueado. Siguiente objetivo: ensayo de instalación, conmutación de motor y watchdog tras un **reinicio real de VM**, con constancia firmada auténtica del motor heredado.
 
+## PASO 2 — Ejecución del candidato firmado como SYSTEM y recuperación independiente
+
+Se añadió `real_binary_system_execution_and_rollback_windows_test.go`: una integración real bajo Windows del **EXE completo del Centro VOLVÉ 0.28.7 compilado**, empaquetado como candidato con manifiesto SHA-256 y firma Ed25519 **efímeros de laboratorio**. No es un release ni utiliza una firma de publicación.
+
+En una VM efímera de GitHub, el ensayo prepara primero la tarea SYSTEM de recuperación independiente, un journal persistente con ACL protegida para SYSTEM/Administradores y el XML del motor anterior. Luego instala el ejecutable candidato en carpeta versionada, verifica su firma e integridad, cambia **solo** la acción de una tarea temporal `VOLVE-CI-ManagedMotor-*` para invocar `--motor-dns-isolated-loopback` y la **ejecuta realmente como SYSTEM**. Exige un `LastTaskResult=0` y un `LastRunTime` posterior al inicio del ensayo; la autoprueba de ese ejecutable procesa cinco consultas DNS por loopback en puertos efímeros, sin instalar ni cambiar DNS.
+
+Después, el ensayo activa la tarea separada `VOLVE-CI-ManagedWatchdog-*` bajo SYSTEM y exige que restaure el XML original del Programador de tareas con sus argumentos, dejando el journal en `restored`. Verifica asimismo que el ejecutable firmado siga íntegro. El ensayo **no** toca la tarea productiva, no usa el puerto 53 ni configura los adaptadores DNS de Windows.
+
+**Evidencia:** [GitHub Actions #41057083973](https://github.com/apdocentepba-hub/volve-updates/actions/runs/41057083973), **3 de 3 trabajos aprobados** (Linux, Windows, reversión). `TestSignedRealVOLVECandidateRunsDNSAsSYSTEMThenRecovers` **PASS (14,34 s)**. El log confirma: `full signed VOLVE EXE actually ran real isolated DNS UDP selftest as SYSTEM; separate SYSTEM watchdog restored original task`.
+
+**Límites:** esto prueba cambio, ejecución y reversión en el **mismo arranque** de Windows, no la recuperación tras un reinicio real ni el servicio DNS productivo escuchando en el puerto 53 como SYSTEM. La 0.28.6 instalada no se modificó. Continúan pendientes: ejecutar y validar `vm_reboot_proof.ps1` en una VM desechable que efectivamente reinicie, probar el motor residente completo y su conectividad, publicar atestación firmada legítima del motor heredado y completar el actualizador de producción. **No eliminar** el bloqueo que impide sustituir `VOLVE-DNS-SERVER-0270` hasta cerrar esos puntos.
+
 ## Lo que falta para una actualización del motor sin reinstalar
 
 - Registrar y verificar la versión/identidad real del motor que está instalado (no deducir de nombre de archivo).
