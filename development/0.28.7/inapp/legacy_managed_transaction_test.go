@@ -27,6 +27,10 @@ func (d *signedLegacyDriverLab) IndependentRecoveryReady(_ context.Context, _ Ve
     if d.failWatchdogAt==d.watchdogCount{return errors.New("independent recovery agent unavailable")}
     return nil
 }
+func (d *signedLegacyDriverLab) VerifyPreparedTarget(_ context.Context, m Manifest) error {
+    if m.Version!="0.28.7" {return errors.New("invalid signed prepared version")}
+    return d.tick("prepared")
+}
 func (d *signedLegacyDriverLab) InstallVersionedCandidate(ctx context.Context,candidate string) error {
     if err:=d.managedDriverTest.InstallVersionedCandidate(ctx,candidate);err!=nil{return err}
     if d.replaceCandidate{
@@ -48,7 +52,7 @@ func TestSignedLegacyTransactionRequiresRevalidationAndIndependentWatchdog(t *te
     err:=runSignedLegacyLab(context.Background(),f,d,testSecureLabFolderBridge,
         func()error{checks++;return nil})
     if err!=nil {t.Fatal(err)}
-    want:=[]string{"preflight","watchdog","snapshot","install","watchdog","switch","probe","connectivity","commit"}
+    want:=[]string{"preflight","watchdog","snapshot","install","prepared","watchdog","switch","probe","connectivity","commit"}
     if !reflect.DeepEqual(d.calls,want){t.Fatalf("unexpected signed migration order: %v",d.calls)}
     if checks!=2 || d.watchdogCount!=2{t.Fatalf("expected proof+watchdog rechecks before switch, got %d/%d",checks,d.watchdogCount)}
 }
@@ -83,7 +87,7 @@ func TestSignedLegacyTransactionBlocksBeforeSnapshotWithoutPermissionOrWatchdog(
     }
 }
 func TestSignedLegacyTransactionFailsClosedOnRecheckAndRestores(t *testing.T){
-    for _,kind:=range []string{"candidate-tamper","legacy-tamper","watchdog-down"}{
+    for _,kind:=range []string{"candidate-tamper","legacy-tamper","watchdog-down","prepared-copy-invalid"}{
         t.Run(kind,func(t *testing.T){
             f:=newSignedBridge(t)
             d:=newSignedLegacyDriverLab()
@@ -91,6 +95,7 @@ func TestSignedLegacyTransactionFailsClosedOnRecheckAndRestores(t *testing.T){
             case "candidate-tamper":d.replaceCandidate=true
             case "legacy-tamper":d.replaceOldMotor=f.live
             case "watchdog-down":d.failWatchdogAt=2
+            case "prepared-copy-invalid":d.fail="prepared"
             }
             err:=runSignedLegacyLab(context.Background(),f,d,testSecureLabFolderBridge,func()error{return nil})
             if err==nil || !strings.Contains(err.Error(),"revertida"){
@@ -108,7 +113,7 @@ func TestSignedLegacyTransactionFailsClosedOnRecheckAndRestores(t *testing.T){
 }
 func TestSignedLegacyTransactionNeverCommitsAfterSwitchFailure(t *testing.T){
     f:=newSignedBridge(t)
-    for _,step:=range []string{"install","switch","probe","connectivity","commit"}{
+    for _,step:=range []string{"install","prepared","switch","probe","connectivity","commit"}{
         t.Run(step,func(t *testing.T){
             d:=newSignedLegacyDriverLab()
             d.fail=step
