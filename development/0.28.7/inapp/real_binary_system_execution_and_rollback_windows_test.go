@@ -86,7 +86,7 @@ func TestSignedRealVOLVECandidateRunsDNSAsSYSTEMThenRecovers(t *testing.T) {
     for time.Now().Before(deadline) {
         query:=`$ErrorActionPreference='Stop';$t=Get-ScheduledTask -TaskName `+labQuote(name)+` -ErrorAction Stop;`+
           `$i=Get-ScheduledTaskInfo -TaskName `+labQuote(name)+` -ErrorAction Stop;`+
-          `Write-Output ($t.State.ToString()+'|'+$i.LastTaskResult+'|'+$i.LastRunTime.ToString('o')+'|'+$t.Principal.UserId)`
+          `Write-Output ($t.State.ToString()+'|'+$i.LastTaskResult+'|'+$i.LastRunTime.ToUniversalTime().ToString('o')+'|'+$t.Principal.UserId)`
         reply,err:=labPS(query)
         if err!=nil{t.Fatal(err)}
         fields:=strings.Split(strings.TrimSpace(reply),"|")
