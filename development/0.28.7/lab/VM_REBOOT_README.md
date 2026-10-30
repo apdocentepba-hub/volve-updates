@@ -12,6 +12,7 @@ Demostrar que una tarea `SYSTEM` con disparador `AtStartup`, registrada antes de
 - Archivo `vm_reboot_proof.ps1` de este directorio.
 - Archivo `boot_recovery_lab.ps1` de este directorio, y `volve-journal-lab.exe` compilado en la **VM de pruebas** desde `build/codigo/cmd/volve-journal-lab` de las fuentes 0.28.7. **No distribuir esos binarios ni instalarlos en la PC del usuario.**
 - La VM no debe ser un equipo de trabajo ni contener datos importantes. El script identifica el hipervisor y **rechaza equipos físicos**; no inicia el reinicio automáticamente.
+- **Historial del Programador de tareas habilitado ANTES de preparar el ensayo**, solo dentro de la VM desechable: abrir el Programador de tareas y seleccionar **Habilitar el historial de todas las tareas**. El script se niega a preparar la prueba si el registro `Microsoft-Windows-TaskScheduler/Operational` no está habilitado.
 
 ## Procedimiento para un operador de laboratorio
 
@@ -29,7 +30,7 @@ Demostrar que una tarea `SYSTEM` con disparador `AtStartup`, registrada antes de
    ```powershell
    .\vm_reboot_proof.ps1 -Mode Verify -RunId <RunId>
    ```
-   La verificación exige nuevo tiempo de arranque, ejecución exitosa de la tarea `SYSTEM` tras ese arranque, estado `restored` del journal y restauración exacta de `cmd.exe /C exit 0`.
+   La verificación exige nuevo tiempo de arranque, un **evento 118** del historial `Microsoft-Windows-TaskScheduler/Operational` para la tarea específica (disparo **automático por inicio de Windows**), ejecución exitosa de la tarea `SYSTEM` tras ese arranque, estado `restored` del journal y restauración exacta de `cmd.exe /C exit 0`. Un arranque nuevo seguido de una ejecución manual de la tarea **no** cumple la prueba.
 5. Conservar la evidencia y retirar exclusivamente las tareas de prueba:
    ```powershell
    .\vm_reboot_proof.ps1 -Mode Cleanup -RunId <RunId>
@@ -39,4 +40,5 @@ Demostrar que una tarea `SYSTEM` con disparador `AtStartup`, registrada antes de
 
 - Pasar este protocolo en una VM con reinicio real **no demostraría todavía la recuperación del DNS real**. Para ello hará falta integrar un controlador de actualización del motor, con permisos verificados, copias versionadas, motor DNS de prueba en el puerto 53 dentro de un laboratorio y restauración comprobada de IPv4/IPv6.
 - Si la VM falla en volver a iniciar, restaurar su snapshot; nunca hacer el ensayo sobre la computadora personal.
-- Las comprobaciones de GitHub Actions para este script sólo prueban **sintaxis y guardas de laboratorio**; no se consideran un reinicio real.
+- Las comprobaciones de GitHub Actions para este script prueban **sintaxis, guardas de laboratorio y que una recuperación `SYSTEM` disparada manualmente no se confunda con un reinicio real**; no se consideran un reinicio real.
+- El resultado positivo deja `vm-proof-success.txt` con hora de arranque y número de registro del evento 118 para auditoría. Esa evidencia debe examinarse en una VM real; no representa una certificación independiente ni equivale a probar el motor DNS de producción.
