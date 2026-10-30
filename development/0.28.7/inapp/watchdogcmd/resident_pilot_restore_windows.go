@@ -31,6 +31,15 @@ func residentPilotTargetPath(root,version string) (string,error) {
 // The recovery journal stays PENDING until a separate trusted health checker
 // confirms the restored motor and writes a protected terminal receipt.
 func restoreResidentPilotSYSTEMTask(ctx context.Context,root,pilotTask string) error {
+ // The independent recovery executor must never run concurrently with a
+ // second process restoring the same disposable SYSTEM task.
+ if !pilotTaskPattern.MatchString(pilotTask){
+  return errors.New("production or unrelated tasks forbidden by rehearsal")
+ }
+ suffix:=strings.TrimPrefix(pilotTask,"VOLVE-CI-ManagedMotor-")
+ release,err:=acquireCIBootMutex(ctx,"VOLVE-CI-BootLock-"+suffix)
+ if err!=nil{return fmt.Errorf("resident recovery exclusive Windows lock unavailable: %w",err)}
+ defer release()
  return restoreResidentPilotSYSTEMTaskWithRunner(ctx,root,pilotTask,ps)
 }
 
