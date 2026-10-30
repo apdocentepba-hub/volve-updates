@@ -50,12 +50,19 @@ func readResidentRunningEvidenceWithQuery(
   `$proc=$candidates[0];`+
   `$owner=Invoke-CimMethod -InputObject $proc -MethodName GetOwnerSid -ErrorAction Stop;`+
   `if($owner.ReturnValue -ne 0){throw 'Cannot attest process owner SID'};`+
+  `$ipv4=@(Get-NetUDPEndpoint -LocalAddress '127.0.0.1' -LocalPort 53 -ErrorAction Stop);`+
+  `$ipv6=@(Get-NetUDPEndpoint -LocalAddress '::1' -LocalPort 53 -ErrorAction Stop);`+
+  `if($ipv4.Count -ne 1 -or $ipv6.Count -ne 1){throw 'DNS listener ownership ambiguous'};`+
   `$digest=(Get-FileHash -LiteralPath $exe -Algorithm SHA256 -ErrorAction Stop).Hash.ToLowerInvariant();`+
   `$result=[ordered]@{task_name=[string]$task.TaskName;task_folder=[string]$task.TaskPath;`+
   `task_principal=[string]$task.Principal.UserId;task_state=[string]$task.State;`+
+  `task_action_count=[int]@($task.Actions).Count;`+
   `task_action_execute=[string]$task.Actions[0].Execute;`+
   `task_action_arguments=[string]$task.Actions[0].Arguments;`+
-  `process_count=[int]$candidates.Count;process_path=[string]$proc.ExecutablePath;`+
+  `process_count=[int]$candidates.Count;process_id=[int]$proc.ProcessId;`+
+  `dns_ipv4_owner_pid=[int]$ipv4[0].OwningProcess;`+
+  `dns_ipv6_owner_pid=[int]$ipv6[0].OwningProcess;`+
+  `process_path=[string]$proc.ExecutablePath;`+
   `process_command_line=[string]$proc.CommandLine;`+
   `process_owner_sid=[string]$owner.Sid;disk_sha256=[string]$digest};`+
   `$result|ConvertTo-Json -Compress -Depth 3`
