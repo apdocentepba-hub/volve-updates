@@ -2,6 +2,7 @@ import { Link } from "@tanstack/react-router";
 import { Instagram, Phone, HeartHandshake } from "lucide-react";
 import { siteConfig, isLive } from "@/config/site";
 import { Logo } from "./Logo";
+import { VisitCounter } from "./VisitCounter";
 
 export function SiteFooter() {
   const { help, instagramUrl } = siteConfig;
@@ -37,10 +38,11 @@ export function SiteFooter() {
               {isLive(instagramUrl) ? <a href={instagramUrl} target="_blank" rel="noopener noreferrer" className="hover:underline">Instagram</a> : <span className="opacity-75">Instagram del proyecto: próximamente</span>}
             </li>
           </ul>
+          <div className="mt-7"><VisitCounter /></div>
         </div>
       </div>
       <div className="border-t border-deep-foreground/15">
-        <p className="container-v py-5 text-xs opacity-60">© 2026 VOLVÉ · Este sitio no usa formularios ni recolecta datos personales.</p>
+        <p className="container-v py-5 text-xs opacity-60">© 2026 VOLVÉ · No solicitamos datos personales ni registramos tu navegación. El contador de visitas utiliza el servicio externo CounterAPI, que aplica medidas de anonimización. </p>
       </div>
     </footer>
   );
