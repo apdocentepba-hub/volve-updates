@@ -97,9 +97,21 @@ func TestWindowsBootMutexContendedLeaseRespectsCancellation(t *testing.T){
  ctx,cancel:=context.WithTimeout(context.Background(),250*time.Millisecond)
  defer cancel()
  start:=time.Now()
- if unlock,err:=acquireCIBootMutex(ctx,name);!errors.Is(err,context.DeadlineExceeded) {
+ // A Windows mutex is reentrant on the same OS thread; use a separate
+ // goroutine pinned to a different thread to exercise actual contention.
+ done:=make(chan error,1)
+ go func(){
+  unlock,err:=acquireCIBootMutex(ctx,name)
   if unlock!=nil{unlock()}
-  t.Fatalf("contended recovery lock did not fail closed: %v",err)
+  done<-err
+ }()
+ select {
+ case err:=<-done:
+  if !errors.Is(err,context.DeadlineExceeded){
+   t.Fatalf("contended recovery lock did not fail closed: %v",err)
+  }
+ case <-time.After(3*time.Second):
+  t.Fatal("contended recovery mutex did not respect cancellation")
  }
  if time.Since(start)>3*time.Second{t.Fatal("contended recovery lock ignored bounded wait")}
 }
