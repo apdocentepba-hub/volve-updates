@@ -31,6 +31,13 @@ func residentPilotTargetPath(root,version string) (string,error) {
 // The recovery journal stays PENDING until a separate trusted health checker
 // confirms the restored motor and writes a protected terminal receipt.
 func restoreResidentPilotSYSTEMTask(ctx context.Context,root,pilotTask string) error {
+ return restoreResidentPilotSYSTEMTaskWithRunner(ctx,root,pilotTask,ps)
+}
+
+// The injected runner is only for tests that must not touch Task Scheduler.
+func restoreResidentPilotSYSTEMTaskWithRunner(ctx context.Context,root,pilotTask string,
+ runPS func(context.Context,string)(string,error)) error {
+ if runPS==nil{return errors.New("missing SYSTEM recovery executor")}
  if !pilotTaskPattern.MatchString(pilotTask){
   return errors.New("production or unrelated tasks forbidden by rehearsal")
  }
@@ -79,7 +86,7 @@ func restoreResidentPilotSYSTEMTask(ctx context.Context,root,pilotTask string) e
    `[string]$restored.Actions[0].Execute -ine $original -or `+
    `[string]$restored.Actions[0].Arguments -cne '--dns-service'){throw 'Restored task identity mismatch'};`+
   `Write-Output 'VOLVE_CI_RESIDENT_RESTORED'`
- out,err:=ps(ctx,script)
+ out,err:=runPS(ctx,script)
  if err!=nil{return fmt.Errorf("pilot SYSTEM recovery failed: %w (%s)",err,out)}
  if out!="VOLVE_CI_RESIDENT_RESTORED" {return fmt.Errorf("ambiguous pilot recovery result: %q",out)}
  // No journal finalization here: the DNS/Internet health criteria are NOT
