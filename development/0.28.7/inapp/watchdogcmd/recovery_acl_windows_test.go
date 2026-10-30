@@ -24,7 +24,7 @@ func hardenedTestACL(t *testing.T, journalPath, snapshotPath string) {
     `if([IO.Directory]::Exists($p)){`+
       `$acl=New-Object Security.AccessControl.DirectorySecurity;`+
       `foreach($sid in @($system,$admins)){`+
-        `$rule=New-Object Security.AccessControl.FileSystemAccessRule($sid,[Security.AccessControl.FileSystemRights]::FullControl,`+
+        `$rule=[Security.AccessControl.FileSystemAccessRule]::new($sid,[Security.AccessControl.FileSystemRights]::FullControl,`+
           `[Security.AccessControl.InheritanceFlags]'ContainerInherit,ObjectInherit',`+
           `[Security.AccessControl.PropagationFlags]::None,[Security.AccessControl.AccessControlType]::Allow);`+
         `$acl.AddAccessRule($rule)};`+
@@ -33,7 +33,7 @@ func hardenedTestACL(t *testing.T, journalPath, snapshotPath string) {
     `}else{`+
       `$acl=New-Object Security.AccessControl.FileSecurity;`+
       `foreach($sid in @($system,$admins)){`+
-        `$rule=New-Object Security.AccessControl.FileSystemAccessRule($sid,[Security.AccessControl.FileSystemRights]::FullControl,`+
+        `$rule=[Security.AccessControl.FileSystemAccessRule]::new($sid,[Security.AccessControl.FileSystemRights]::FullControl,`+
           `[Security.AccessControl.AccessControlType]::Allow);`+
         `$acl.AddAccessRule($rule)};`+
       `$acl.SetAccessRuleProtection($true,$false);$acl.SetOwner($admins);`+
