@@ -8,6 +8,11 @@ on:
   workflow_dispatch:
 permissions:
   contents: read
+# Only the most recent pilot commit needs the expensive Windows VM tests.
+# This branch never publishes binaries or changes the release channel.
+concurrency:
+  group: volve-0287-pilot-${{ github.ref }}
+  cancel-in-progress: true
 jobs:
   linux-tests:
     runs-on: ubuntu-latest
@@ -150,6 +155,19 @@ jobs:
           if($LASTEXITCODE -ne 0){throw "Unit tests failed"}
           go test . -run 'TestMotorJournalReadOnlyRejectsUnsafeStates|TestMotorPreflightOnlyReadsKnownFiles|TestMergeUpdateReports' -count=1
           if($LASTEXITCODE -ne 0){throw "Read-only preflight tests failed"}
+      - name: Compile and test standalone Windows watchdog (CI-only tasks)
+        shell: pwsh
+        working-directory: build/codigo
+        run: |
+          $ErrorActionPreference='Stop'
+          go test ./cmd/volve-managed-watchdog -count=1 -v
+          if($LASTEXITCODE -ne 0){throw 'Independent watchdog validation failed'}
+          $watchdog=Join-Path $env:RUNNER_TEMP 'VOLVE_CI_Standalone_Motor_Watchdog.exe'
+          go build -trimpath -o $watchdog ./cmd/volve-managed-watchdog
+          if($LASTEXITCODE -ne 0){throw 'Independent watchdog compilation failed'}
+          if(-not (Test-Path -LiteralPath $watchdog -PathType Leaf)){throw 'Separate watchdog executable missing'}
+          Add-Content -LiteralPath $env:GITHUB_ENV -Value ('VOLVE_CI_MANAGED_WATCHDOG_EXE='+$watchdog)
+          Write-Host 'PASS: separate CI-only Windows motor watchdog compiled; no production task access'
       - name: Step 2 - Prove production Full DNS catalog loader with 400k rules on loopback
         shell: pwsh
         working-directory: build/codigo
@@ -192,19 +210,6 @@ jobs:
           go test . -run '^TestResidentMotor' -count=1 -timeout 2m -v
           if($LASTEXITCODE -ne 0){throw 'Signed legacy motor provenance verification failed'}
           Write-Host 'PASS: both signed motor identities and the read-only rescue gate are enforced'
-      - name: Compile and test standalone Windows watchdog (CI-only tasks)
-        shell: pwsh
-        working-directory: build/codigo
-        run: |
-          $ErrorActionPreference='Stop'
-          go test ./cmd/volve-managed-watchdog -count=1 -v
-          if($LASTEXITCODE -ne 0){throw 'Independent watchdog validation failed'}
-          $watchdog=Join-Path $env:RUNNER_TEMP 'VOLVE_CI_Standalone_Motor_Watchdog.exe'
-          go build -trimpath -o $watchdog ./cmd/volve-managed-watchdog
-          if($LASTEXITCODE -ne 0){throw 'Independent watchdog compilation failed'}
-          if(-not (Test-Path -LiteralPath $watchdog -PathType Leaf)){throw 'Separate watchdog executable missing'}
-          Add-Content -LiteralPath $env:GITHUB_ENV -Value ('VOLVE_CI_MANAGED_WATCHDOG_EXE='+$watchdog)
-          Write-Host 'PASS: separate CI-only Windows motor watchdog compiled; no production task access'
       - name: Exercise independent watchdog as a fresh process after switching a temporary SYSTEM task
         shell: pwsh
         working-directory: build/codigo
