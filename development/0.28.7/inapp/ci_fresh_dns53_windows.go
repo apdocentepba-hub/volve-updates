@@ -7,6 +7,8 @@ package main
 // on a disposable Windows VM. Never alters adapters, hosts or policy.
 import (
  "bufio"
+ "crypto/sha256"
+ "io"
  "context"
  "errors"
  "fmt"
@@ -46,11 +48,47 @@ func assertCIFreshVM(root, token string)error{
   !strings.Contains(identity,"qemu") && !strings.Contains(identity,"virtualbox"){
   return errors.New("machine is not attested as a virtual machine")
  }
- if _,err:=os.Lstat(root);err==nil{
-  return errors.New("existing test root: refusing overwrite")
- }else if !os.IsNotExist(err){
-  return fmt.Errorf("cannot verify test root: %w",err)
+ return nil
+}
+
+// The fixture is deterministic. Reusing a prior test installation is allowed
+// ONLY with byte-for-byte equality to the expected catalog; no mutable
+// installer receipt or stale "installed" flag can authorize running it.
+func expectedCIFreshCatalogSHA()([32]byte,error){
+ h:=sha256.New()
+ if err:=streamCIFreshCatalog(h);err!=nil{return [32]byte{},err}
+ var digest [32]byte
+ copy(digest[:],h.Sum(nil))
+ return digest,nil
+}
+func streamCIFreshCatalog(writer io.Writer)error{
+ w:=bufio.NewWriterSize(writer,1<<20)
+ for i:=0;i<400002;i++{
+  if _,err:=fmt.Fprintf(w,"vm-ci-dns-%06d.bet.ar\n",i);err!=nil{return err}
  }
+ for _,host:=range []string{"stake.com","betwarrior.bet.ar","www.betwarrior.bet.ar"}{
+  if _,err:=fmt.Fprintln(w,host);err!=nil{return err}
+ }
+ return w.Flush()
+}
+func verifyCIFreshCatalog(root string)error{
+ info,err:=os.Lstat(root)
+ if err!=nil || !info.IsDir() || info.Mode()&os.ModeSymlink!=0{
+  return errors.New("existing test installation root is not a normal directory")
+ }
+ file:=filepath.Join(root,"catalog","feeds","hagezi_gambling_full.txt")
+ fi,err:=os.Lstat(file)
+ if err!=nil || !fi.Mode().IsRegular() || fi.Size()<1000000 || fi.Size()>30000000{
+  return errors.New("existing catalog missing, linked or wrong size")
+ }
+ fd,err:=os.Open(file);if err!=nil{return err}
+ defer fd.Close()
+ h:=sha256.New()
+ if _,err=io.Copy(h,fd);err!=nil{return err}
+ expected,err:=expectedCIFreshCatalogSHA();if err!=nil{return err}
+ var actual [32]byte
+ copy(actual[:],h.Sum(nil))
+ if actual!=expected{return errors.New("test catalog modified: DNS service refused")}
  return nil
 }
 
@@ -61,20 +99,22 @@ func writeCIFreshCatalog(root string)error{
   os.O_CREATE|os.O_EXCL|os.O_WRONLY,0600)
  if err!=nil{return err}
  defer f.Close()
- w:=bufio.NewWriterSize(f,1<<20)
- for i:=0;i<400002;i++{
-  if _,err:=fmt.Fprintf(w,"vm-ci-dns-%06d.bet.ar\n",i);err!=nil{return err}
- }
- for _,host:=range []string{"stake.com","betwarrior.bet.ar","www.betwarrior.bet.ar"}{
-  if _,err:=fmt.Fprintln(w,host);err!=nil{return err}
- }
- if err:=w.Flush();err!=nil{return err}
- return f.Sync()
+ if err:=streamCIFreshCatalog(f);err!=nil{return err}
+ if err:=f.Sync();err!=nil{return err}
+ return verifyCIFreshCatalog(root)
 }
 
 func runCIFreshDNS53(root,token string)error{
  if err:=assertCIFreshVM(root,token);err!=nil{return err}
- if err:=writeCIFreshCatalog(root);err!=nil{return err}
+ // The scheduled task is intentionally restartable, like a real resident
+ // installation. First launch prepares the full catalog; later starts verify
+ // the exact same bytes and refuse any corruption before binding UDP/53.
+ if info,err:=os.Lstat(root);err==nil {
+  if !info.IsDir() || info.Mode()&os.ModeSymlink!=0{return errors.New("invalid existing lab root")}
+  if err:=verifyCIFreshCatalog(root);err!=nil{return err}
+ }else if os.IsNotExist(err) {
+  if err:=writeCIFreshCatalog(root);err!=nil{return err}
+ }else{return fmt.Errorf("cannot inspect lab root: %w",err)}
  upstream,err:=net.ListenPacket("udp4","127.0.0.1:0")
  if err!=nil{return err}
  defer upstream.Close()
