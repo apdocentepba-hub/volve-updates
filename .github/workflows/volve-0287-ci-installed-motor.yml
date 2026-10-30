@@ -1,0 +1,126 @@
+name: VOLVE 0.28.7 CI transactional installed motor (NO RELEASE)
+on:
+  push:
+    branches: [feature/motor-updater-0287-pilot]
+    paths:
+      - 'development/0.28.7/lab/VOLVE_CI_MotorInstall.ps1'
+      - 'development/0.28.7/inapp/ci_fresh_dns53_windows.go'
+      - 'development/0.28.7/inapp/ci_fresh_dns53_windows_test.go'
+      - 'development/0.28.7/inapp/apply_overlay.go'
+      - '.github/workflows/volve-0287-ci-installed-motor.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  lab-installed-motor:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.x'
+      - name: Reconstruct exact source and compile special CI-only executable
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $parts=@(Get-ChildItem development/0.28.7/complete-source-parts -Filter 'part-*.bin' | Sort-Object Name)
+          if($parts.Count -ne 10){throw 'Missing source parts'}
+          $dest=[IO.File]::Create((Join-Path (Get-Location) 'source.zip'))
+          try{
+            for($i=0;$i -lt 10;$i++){
+              if($parts[$i].Name -ne ('part-{0:D2}.bin' -f $i)){throw 'Source archive order'}
+              $src=[IO.File]::OpenRead($parts[$i].FullName)
+              try{$src.CopyTo($dest)}finally{$src.Dispose()}
+            }
+          }finally{$dest.Dispose()}
+          if((Get-FileHash source.zip -Algorithm SHA256).Hash.ToLowerInvariant() -ne '92b3536559151260375b17a64eedd009df8399e45460637208027b7ca0587ba5'){throw 'Base source hash mismatch'}
+          Expand-Archive source.zip -DestinationPath build -Force
+          $pre='development/0.28.7/VOLVE_0287_PRECHECK_RESCATE_OVERLAY_NO_INSTALAR.zip'
+          if((Get-FileHash $pre -Algorithm SHA256).Hash.ToLowerInvariant() -ne 'fdfd31f21df81fe6da6075bfd442354297874576b6dc2c38f19bd35a681d95cd'){throw 'Preflight overlay hash mismatch'}
+          Expand-Archive $pre -DestinationPath build -Force
+          Copy-Item development/0.28.7/journal/*.go build/codigo/motorupdate/ -Force
+          $rec='development/0.28.7/VOLVE_0287_RECUPERACION_INTERRUPCION_FORZADA_NO_INSTALAR_v3.zip'
+          if((Get-FileHash $rec -Algorithm SHA256).Hash.ToLowerInvariant() -ne '773bd5eb5f1c4883021cc321856636354e964d3605dba9017e2fb5d1a7401b40'){throw 'Recovery overlay hash mismatch'}
+          Expand-Archive $rec -DestinationPath build -Force
+          go run development/0.28.7/inapp/apply_overlay.go build/codigo
+          if($LASTEXITCODE -ne 0){throw 'Overlay failed'}
+          Push-Location build/codigo
+          try{
+            go test ./motorupdate -run '^TestFreshMotor' -count=1 -timeout 2m
+            if($LASTEXITCODE -ne 0){throw 'Fresh motor gate failed'}
+            go build -tags volveci -trimpath -o "$env:RUNNER_TEMP\VOLVE_CI_FreshDNS53.exe" .
+            if($LASTEXITCODE -ne 0){throw 'Lab motor build failed'}
+          }finally{Pop-Location}
+      - name: Execute transactional install, independent verify, real DNS53 and exact rollback
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          if($env:GITHUB_ACTIONS -ne 'true' -or $env:RUNNER_ENVIRONMENT -ne 'github-hosted'){throw 'Disposable Windows VM only'}
+          $vm=Get-CimInstance Win32_ComputerSystem -ErrorAction Stop
+          if(($vm.Manufacturer+' '+$vm.Model) -notmatch '(?i:virtual machine|vmware|hyper-v|kvm|qemu|virtualbox)'){throw 'Not a VM'}
+          $script=Join-Path (Get-Location) 'development/0.28.7/lab/VOLVE_CI_MotorInstall.ps1'
+          $parserTokens=$null
+          $parseErrors=$null
+          [Management.Automation.Language.Parser]::ParseFile($script,[ref]$parserTokens,[ref]$parseErrors)|Out-Null
+          if($parseErrors.Count -gt 0){$parseErrors|Format-List;throw 'PowerShell installer syntax invalid'}
+          $labId=$env:GITHUB_RUN_ID
+          $source=Join-Path $env:RUNNER_TEMP 'VOLVE_CI_FreshDNS53.exe'
+          $hash=(Get-FileHash -LiteralPath $source -Algorithm SHA256).Hash.ToLowerInvariant()
+          $task='VOLVE-CI-FreshMotor-'+$labId
+          $dataRoot=Join-Path $env:ProgramData ('VOLVE-CI-FreshDNS53-'+$labId)
+          $root=Join-Path $env:ProgramData ('VOLVE-CI-MotorInstall-'+$labId)
+          $exe=Join-Path $root 'VOLVE_CI_FreshDNS53.exe'
+          $dnsBefore=Get-DnsClientServerAddress|Sort-Object InterfaceIndex,AddressFamily|Select-Object InterfaceIndex,AddressFamily,ServerAddresses|ConvertTo-Json -Compress -Depth 6
+          $hostsBefore=(Get-FileHash -LiteralPath "$env:WINDIR\System32\drivers\etc\hosts" -Algorithm SHA256).Hash
+          $installed=$false
+          try{
+            & $script -Mode Install -LabId $labId -SourceExe $source -ExpectedSHA256 $hash
+            $installed=$true
+            & $script -Mode Verify -LabId $labId -ExpectedSHA256 $hash
+            $taskInfo=Get-ScheduledTask -TaskName $task -ErrorAction Stop
+            if([string]$taskInfo.Actions[0].Execute -ine $exe){throw 'Task not running installed ProgramData EXE'}
+            $taskXML=[xml](Export-ScheduledTask -TaskName $task -ErrorAction Stop)
+            if(@($taskXML.SelectNodes("//*[local-name()='BootTrigger']")).Count -ne 1){throw 'No startup trigger'}
+            Start-ScheduledTask -TaskName $task -ErrorAction Stop
+            $env:VOLVE_CI_FRESH_DNS53_PROBE='GITHUB-HOSTED-VM-ONLY'
+            Push-Location build/codigo
+            try{
+              go test . -run '^TestCIFreshResidentSYSTEMPort53$' -count=1 -timeout 1m -v
+              if($LASTEXITCODE -ne 0){throw 'Installed motor DNS53 test failed'}
+            }finally{Pop-Location}
+            $bound=@(Get-NetUDPEndpoint -LocalAddress '127.0.0.1' -LocalPort 53 -ErrorAction Stop)
+            $process=@(Get-CimInstance Win32_Process -Filter "Name='VOLVE_CI_FreshDNS53.exe'" -ErrorAction Stop|Where-Object { [string]$_.ExecutablePath -ieq $exe })
+            if($process.Count -ne 1 -or $bound.Count -ne 1 -or $bound[0].OwningProcess -ne $process[0].ProcessId){throw 'DNS53 was not owned by installed motor'}
+            $owner=Invoke-CimMethod -InputObject $process[0] -MethodName GetOwnerSid -ErrorAction Stop
+            if($owner.ReturnValue -ne 0 -or $owner.Sid -ne 'S-1-5-18'){throw 'Installed process not SYSTEM'}
+            Write-Host 'PASS: transactional ProgramData installer; verified real SYSTEM DNS53 and BetWarrior external block'
+            Stop-ScheduledTask -TaskName $task -ErrorAction Stop
+            $deadline=(Get-Date).AddSeconds(20)
+            do{
+              Start-Sleep -Milliseconds 400
+              $running=@(Get-CimInstance Win32_Process -Filter "Name='VOLVE_CI_FreshDNS53.exe'" -ErrorAction SilentlyContinue|Where-Object { [string]$_.ExecutablePath -ieq $exe })
+            }until($running.Count -eq 0 -or (Get-Date) -ge $deadline)
+            if($running.Count -ne 0){throw 'Lab motor did not stop before restart'}
+            & $script -Mode Verify -LabId $labId -ExpectedSHA256 $hash
+            Start-ScheduledTask -TaskName $task -ErrorAction Stop
+            Push-Location build/codigo
+            try{
+              go test . -run '^TestCIFreshResidentSYSTEMPort53$' -count=1 -timeout 1m -v
+              if($LASTEXITCODE -ne 0){throw 'Same installed motor failed on restart'}
+            }finally{Pop-Location}
+            Write-Host 'PASS: installed ProgramData motor restarted without copying or re-registering'
+          }finally{
+            Remove-Item Env:\VOLVE_CI_FRESH_DNS53_PROBE -ErrorAction SilentlyContinue
+            if($installed){
+              & $script -Mode Remove -LabId $labId -ExpectedSHA256 $hash
+              if((Test-Path -LiteralPath $root) -or (Test-Path -LiteralPath $dataRoot) -or (Get-ScheduledTask -TaskName $task -ErrorAction SilentlyContinue)){
+                throw 'Exact rollback incomplete'
+              }
+              Write-Host 'PASS: isolated versioned installation and task removed with no remnants'
+            }
+            $dnsAfter=Get-DnsClientServerAddress|Sort-Object InterfaceIndex,AddressFamily|Select-Object InterfaceIndex,AddressFamily,ServerAddresses|ConvertTo-Json -Compress -Depth 6
+            $hostsAfter=(Get-FileHash -LiteralPath "$env:WINDIR\System32\drivers\etc\hosts" -Algorithm SHA256).Hash
+            if($dnsBefore -cne $dnsAfter -or $hostsBefore -ne $hostsAfter){throw 'FATAL: adapter DNS or hosts changed'}
+            Write-Host 'PASS: Windows adapter DNS and hosts unchanged'
+          }
