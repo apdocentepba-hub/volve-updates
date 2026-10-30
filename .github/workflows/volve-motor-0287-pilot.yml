@@ -181,9 +181,9 @@ jobs:
         working-directory: build/codigo
         run: |
           $ErrorActionPreference='Stop'
-          go test . -run '^TestMotorMigrationStatus' -count=1 -timeout 2m -v
+          go test . -run '^(TestMotorMigrationStatus|TestPreparedSignedMigration)' -count=1 -timeout 2m -v
           if($LASTEXITCODE -ne 0){throw 'In-app motor migration status accepted unsigned, altered or incomplete legacy motor'}
-          Write-Host 'PASS: update button can explain signed migration prerequisites without claiming installation or touching DNS'
+          Write-Host 'PASS: signed legacy migration permit, corrupted/incomplete authorization, ACL, preflight, and update button status checked; no DNS changes'
       - name: Verify signed legacy resident and candidate engine evidence (READ ONLY)
         shell: pwsh
         working-directory: build/codigo
