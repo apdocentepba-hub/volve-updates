@@ -12,9 +12,7 @@ import (
  "strings"
 )
 
-// VerifiedFreshCatalogTask must originate from a separate, privileged,
-// read-only identity inspector; an installer-supplied claim is not trusted.
-// Name alone can never approve an existing SYSTEM/task action.
+// Independent task identity evidence, not an installer-controlled flag.
 type VerifiedFreshCatalogTask struct {
  Name string
  TaskPath string
@@ -23,24 +21,10 @@ type VerifiedFreshCatalogTask struct {
  PrincipalVerified bool
  DefinitionSHA256 string
 }
-var freshTaskSHA256 = regexp.MustCompile(`^[a-f0-9]{64}package motorupdate
-
-// A CLEAN installation is NOT a migration from a protected legacy DNS task.
-// This policy distinguishes the two paths without disabling the legacy signed
-// migration and rollback requirements. It is a preflight only; it never writes
-// DNS, tasks, files, registry or a product inventory.
-import (
- "context"
- "errors"
- "fmt"
- "regexp"
- "strings"
-)
-
-)
+var freshTaskSHA256 = regexp.MustCompile("^[a-f0-9]{64}$")
 
 func allowedFreshAuxiliaryTask(t *VerifiedFreshCatalogTask) bool {
- return t!=nil && t.Name=="VOLVE-CATALOGO-0230" && t.TaskPath==`\` &&
+ return t!=nil && t.Name=="VOLVE-CATALOGO-0230" && t.TaskPath=="\\" &&
   t.ActionCount==1 && t.ActionVerified && t.PrincipalVerified &&
   freshTaskSHA256.MatchString(strings.ToLower(t.DefinitionSHA256))
 }
@@ -53,7 +37,6 @@ type FreshMotorInstallEvidence struct {
  VersionedMotorPresent bool
  InstalledEngineInventoryPresent bool
  VOLVETaskCount int
- // Only ONE independently inspected catalog task may exist without DNS motor.
  VerifiedCatalogTask *VerifiedFreshCatalogTask
  VOLVEServiceCount int
  LocalIPv4DNSConfigured bool
@@ -79,7 +62,7 @@ func CheckFreshMotorInstallReadiness(ctx context.Context, e FreshMotorInstallEvi
  }
  if e.VOLVETaskCount<0 || e.VOLVEServiceCount!=0 ||
     e.UDP53IPv4OwnerCount!=0 || e.UDP53IPv6OwnerCount!=0 {
-  return fmt.Errorf("existing/unknown service or occupied DNS/53 prevents clean installation")
+  return errors.New("existing/unknown service or occupied DNS/53 prevents clean installation")
  }
  switch e.VOLVETaskCount {
  case 0:
