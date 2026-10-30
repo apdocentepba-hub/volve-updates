@@ -72,6 +72,7 @@ func checkLegacyRecoveryACL(dir string) error {
       ` if(($attr -band [IO.FileAttributes]::ReparsePoint) -ne 0){throw ('Unsafe rollback reparse point: '+$p)};`+
       ` if([IO.Directory]::Exists($p)){$a=[IO.Directory]::GetAccessControl($p)}`+
       ` else{$a=[IO.File]::GetAccessControl($p)};`+
+      ` if($p -eq $paths[0] -and [IO.Path]::GetFileName($p) -eq 'legacy-engine-recovery' -and -not $a.AreAccessRulesProtected){throw 'Recovery parent DACL must be protected'};`+
       ` foreach($ace in $a.GetAccessRules($true,$true,[Security.Principal.SecurityIdentifier])){`+
       `  if($ace.AccessControlType -ne [Security.AccessControl.AccessControlType]::Allow){continue};`+
       `  if($ace.IdentityReference.Value -notin $allowed){throw ('Unsafe rollback ACL: '+$ace.IdentityReference.Value+' on '+$p)}`+
@@ -175,7 +176,11 @@ func printLegacyRecoveryPreparation() error {
 func verifyInstalledLegacyRecovery() error {
     if !isAdmin(){return errors.New("backup verification requires administrator")}
     root,err:=installRoot();if err!=nil{return err}
-    target:=filepath.Join(root,localRecoveryFolder,localRecoverySnapshot)
+    parent:=filepath.Join(root,localRecoveryFolder)
+    if err:=checkLegacyRecoveryACL(parent);err!=nil{
+        return fmt.Errorf("recovery parent directory insecure: %w",err)
+    }
+    target:=filepath.Join(parent,localRecoverySnapshot)
     r,err:=motorupdate.VerifyUnversionedLegacyRecovery(target,checkLegacyRecoveryACL)
     if err!=nil{return err}
     fmt.Printf("VOLVÉ: RESPALDO LOCAL INTACTO\nSHA-256: %s\nTarea: %s\n"+
