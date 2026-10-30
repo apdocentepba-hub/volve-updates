@@ -219,6 +219,15 @@ jobs:
           $ErrorActionPreference='Stop'
           go test . -run 'TestIndependentMotorWatchdog(RunsAsSYSTEM|SYSTEMLeavesCommittedUpgradeIntact)' -count=1 -timeout 3m -v
           if($LASTEXITCODE -ne 0){throw 'Independent SYSTEM recovery verification failed'}
+      - name: Step 2 - Signed legacy permit to isolated Windows SYSTEM switch and independent recovery
+        shell: pwsh
+        working-directory: build/codigo
+        run: |
+          $ErrorActionPreference='Stop'
+          if(-not $env:VOLVE_CI_MANAGED_WATCHDOG_EXE){throw 'Separate signed recovery watchdog not compiled'}
+          go test . -run '^TestWindowsSignedUnversionedMigrationWithActualSYSTEMRecovery$' -count=1 -timeout 4m -v
+          if($LASTEXITCODE -ne 0){throw 'Signed unversioned legacy migration with independent SYSTEM watcher failed'}
+          Write-Host 'PASS: signed unversioned bridge -> disposable Windows SYSTEM task, independent boot watchdog, verified rollback and commit; no production DNS'
       - name: Exercise signed managed transaction against disposable SYSTEM task
         shell: pwsh
         working-directory: build/codigo
