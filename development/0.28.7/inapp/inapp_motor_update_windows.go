@@ -70,6 +70,35 @@ func checkAndStageMotorUpdate() string {
         return "MOTOR DNS: la versión anunciada requiere primero actualizar el Centro a " +
             m.MinPanelVersion + ". No se descargó el motor."
     }
+    // Do not infer the installed DNS engine version from the panel version,
+    // legacy file name, or a mutable unsigned receipt. Future installations
+    // have a separate signed, hash-verified engine inventory under ProgramData.
+    engineVersion := ""
+    engineLabel := "motor heredado sin versión registrada"
+    if systemRoot, rootErr := installRoot(); rootErr == nil {
+        inventoryRoot := filepath.Join(systemRoot, "installed-engines")
+        if _, statErr := os.Lstat(inventoryRoot); statErr == nil {
+            known, inspectErr := motorupdate.InspectInstalledEngine(inventoryRoot, ed25519.PublicKey(key))
+            if inspectErr == nil {
+                engineVersion = known
+                engineLabel = "motor instalado verificado: " + known
+            } else if !errors.Is(inspectErr, motorupdate.ErrUnregisteredEngine) {
+                return "MOTOR DNS: inventario del motor instalado inválido o alterado (" +
+                    inspectErr.Error() + "). Por seguridad no se preparó una actualización."
+            }
+        } else if !errors.Is(statErr, os.ErrNotExist) {
+            return "MOTOR DNS: no se pudo comprobar el inventario instalado. Descarga rechazada."
+        }
+    }
+    if engineVersion != "" {
+        eligible, eligibleErr := motorupdate.IsEligible(engineVersion, version, m)
+        if eligibleErr != nil {
+            return "MOTOR DNS: actualización rechazada (" + eligibleErr.Error() + ")."
+        }
+        if !eligible {
+            return fmt.Sprintf("MOTOR DNS: ya está actualizado. Instalado y verificado: %s; publicado: %s.", engineVersion, m.Version)
+        }
+    }
     cache, err := os.UserCacheDir()
     if err != nil || !filepath.IsAbs(cache) {
         return "MOTOR DNS: no se pudo identificar una carpeta de descargas segura."
@@ -102,5 +131,5 @@ func checkAndStageMotorUpdate() string {
             "Ubicación de preparación: %s\n"+
             "No se instaló: la identidad/versionado del motor heredado y la reversión independiente deben validarse antes de cambiar el servicio DNS.",
         m.Version, candidate,
-    )
+    ) + "\nInventario: " + engineLabel
 }
