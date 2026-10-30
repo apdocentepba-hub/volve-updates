@@ -116,11 +116,11 @@ func restore(ctx context.Context,j journal) error {
       `if($owner -notin @('SYSTEM','S-1-5-18') -or $execs.Count -ne 1 -or `+
         `[string]$execs[0].Command -ine $expected -or [string]$execs[0].Arguments -ne $args){throw 'Backup task identity mismatch'};`+
       `$current=Get-ScheduledTask -TaskName $n -ErrorAction Stop;`+
-      `if($current.TaskPath -ne '\\' -or $current.Principal.UserId -notin @('SYSTEM','S-1-5-18') `+
+      `if($current.TaskPath -ne '\' -or $current.Principal.UserId -notin @('SYSTEM','S-1-5-18') `+
         `-or @($current.Actions).Count -ne 1){throw 'Live task identity mismatch'};`+
       `Register-ScheduledTask -TaskName $n -Xml $saved -Force -ErrorAction Stop | Out-Null;`+
       `$restored=Get-ScheduledTask -TaskName $n -ErrorAction Stop;`+
-      `if($restored.TaskPath -ne '\\' -or $restored.Principal.UserId -notin @('SYSTEM','S-1-5-18') -or `+
+      `if($restored.TaskPath -ne '\' -or $restored.Principal.UserId -notin @('SYSTEM','S-1-5-18') -or `+
         `@($restored.Actions).Count -ne 1 -or $restored.Actions[0].Execute -ine $expected `+
         `-or $restored.Actions[0].Arguments -ne $args){throw 'Task not restored after import'};`+
       `Write-Output 'RECOVERED'`
