@@ -32,9 +32,17 @@ func createSYSTEMWatchdogLabTask(taskName, helper, journal string) error{
   `if($task.TaskPath -ne '\' -or $task.Principal.UserId -notin @('SYSTEM','S-1-5-18') -or @($task.Actions).Count -ne 1){throw 'Unexpected watchdog task ownership'};`+
   `$boots=@($task.Triggers | Where-Object { $_.CimClass.CimClassName -eq 'MSFT_TaskBootTrigger' });`+
   `if($boots.Count -ne 1){throw 'Independent watchdog lacks exactly one boot trigger'};`+
-  `if($task.Actions[0].Execute -ine `+labQuote(helper)+`){throw 'Watchdog executable mismatch'};`+
-  `Start-ScheduledTask -TaskName `+labQuote(taskName)+` -ErrorAction Stop;`
+  `if($task.Actions[0].Execute -ine `+labQuote(helper)+`){throw 'Watchdog executable mismatch'};`
  _,err:=labPS(script);return err
+}
+
+// Arm recovery BEFORE changing the motor. The Task Scheduler boot trigger
+// must exist and be inspected before the risky switch. Only the CI trial
+// explicitly starts it now, rather than waiting for an OS boot.
+func startSYSTEMWatchdogLabTask(taskName string) error {
+ if !watchdogLabName.MatchString(taskName){return fmt.Errorf("not a disposable watchdog task")}
+ _,err:=labPS(`$ErrorActionPreference='Stop';Start-ScheduledTask -TaskName `+labQuote(taskName)+` -ErrorAction Stop`)
+ return err
 }
 
 func removeSYSTEMWatchdogLabTask(taskName string) error{
@@ -58,14 +66,17 @@ func TestIndependentMotorWatchdogRunsAsSYSTEM(t *testing.T){
  d:=&managedWindowsTaskLab{name:oldName,root:filepath.Join(root,"transaction"),
   backup:filepath.Join(root,"transaction","original-task.xml"),original:original,publicKey:key}
  if err:=d.Snapshot(context.Background());err!=nil{t.Fatal(err)}
- if err:=d.InstallVersionedCandidate(context.Background(),candidate);err!=nil{t.Fatal(err)}
- if err:=switchVerifiedMotorTaskAction(context.Background(),oldName,original,"/C exit 0",d.installedExe,"",key);err!=nil{t.Fatal(err)}
  jpath:=filepath.Join(root,"watchdog-system.json")
  writeCIWatchdogJournal(t,jpath,ciWatchdogJournal{Schema:1,Phase:"pending",TaskName:oldName,
   OriginalExe:original,OriginalArgs:"/C exit 0",SnapshotFile:d.backup,SnapshotSHA256:d.originalHash})
  watcherName:=fmt.Sprintf("VOLVE-CI-ManagedWatchdog-%d",time.Now().UnixNano())
+ // Crucial ordering: the durable pending journal and the SYSTEM boot-recovery
+ // task must exist BEFORE the candidate is installed or the task is switched.
  if err:=createSYSTEMWatchdogLabTask(watcherName,helper,jpath);err!=nil{t.Fatal(err)}
  t.Cleanup(func(){if err:=removeSYSTEMWatchdogLabTask(watcherName);err!=nil{t.Errorf("cleanup watchdog task: %v",err)}})
+ if err:=d.InstallVersionedCandidate(context.Background(),candidate);err!=nil{t.Fatal(err)}
+ if err:=switchVerifiedMotorTaskAction(context.Background(),oldName,original,"/C exit 0",d.installedExe,"",key);err!=nil{t.Fatal(err)}
+ if err:=startSYSTEMWatchdogLabTask(watcherName);err!=nil{t.Fatal(err)}
  deadline:=time.Now().Add(35*time.Second)
  for time.Now().Before(deadline){
   data,err:=os.ReadFile(jpath)
