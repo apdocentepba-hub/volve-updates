@@ -61,7 +61,7 @@ function Read-Metadata([string]$dir) {
     $data = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json
     if($data.schema -ne 1 -or $data.runId -ne $RunId -or $data.computer -ne $env:COMPUTERNAME) {throw 'VM trial metadata mismatch'}
     foreach($member in @('bootBeforeUtc','labSha256','journalSha256')) {
-        if(-not ($data.$member -is [string]) -or [string]::IsNullOrWhiteSpace($data.$member)){throw ('Missing '+$member)}
+        if($null -eq $data.$member -or [string]::IsNullOrWhiteSpace([string]$data.$member)){throw ('Missing '+$member)}
     }
     return $data
 }
@@ -131,7 +131,11 @@ $meta=Read-Metadata $kit
 Assert-LabIdentity $kit $meta
 
 if($Mode -eq 'Verify') {
-    $before=[DateTime]::Parse($meta.bootBeforeUtc,[Globalization.CultureInfo]::InvariantCulture,[Globalization.DateTimeStyles]::RoundtripKind)
+    $before=$meta.bootBeforeUtc
+    if($before -isnot [datetime]) {
+        $before=[DateTime]::Parse([string]$before,[Globalization.CultureInfo]::InvariantCulture,[Globalization.DateTimeStyles]::RoundtripKind)
+    }
+    $before=$before.ToUniversalTime()
     $now=BootTimeUTC
     if($now -le $before.AddSeconds(5)) {throw 'NOT VERIFIED: VM has not undergone a new boot since the trial was prepared'}
     $watch=Get-ScheduledTask -TaskName $bootTask -ErrorAction Stop
