@@ -107,3 +107,34 @@ func TestWindowsResidentJournalPathRestricted(t *testing.T){
   t.Fatal("correctly scoped journal path refused")
  }
 }
+
+
+// A separate process must be able to read the pending intent after the
+// process that wrote it has exited. This child does NOT switch tasks or DNS.
+func TestWatchdogResidentJournalAuditChild(t *testing.T){
+ if os.Getenv("VOLVE_CI_RESIDENT_JOURNAL_CHILD")!="yes"{return}
+ dir:=os.Getenv("VOLVE_CI_RESIDENT_JOURNAL_PATH")
+ if dir==""{t.Fatal("missing disposable journal location")}
+ os.Args=[]string{os.Args[0],"--audit-resident-journal",dir}
+ main()
+}
+
+func TestWindowsResidentJournalAuditSeparateProcess(t *testing.T){
+ dir,seal,protect:=journalAuditFixture(t)
+ if _,err:=motorupdate.ArmResidentRecoveryIntent(context.Background(),dir,
+     journalAuditIdentity(),seal,protect);err!=nil{t.Fatal(err)}
+ invoke:=func(want string){
+  t.Helper()
+  cmd:=exec.Command(os.Args[0],"-test.run=^TestWatchdogResidentJournalAuditChild$","-test.v")
+  cmd.Env=append(os.Environ(),"VOLVE_CI_RESIDENT_JOURNAL_CHILD=yes",
+   "VOLVE_CI_RESIDENT_JOURNAL_PATH="+dir)
+  output,err:=cmd.CombinedOutput()
+  if err!=nil||!strings.Contains(string(output),"Estado: "+want){
+   t.Fatalf("independent read-only watchdog journal audit failed: %v %s",err,string(output))
+  }
+ }
+ invoke("recovery-required")
+ if err:=motorupdate.FinishResidentRecoveryIntent(context.Background(),dir,
+    "restored",seal,protect);err!=nil{t.Fatal(err)}
+ invoke("restored")
+}
