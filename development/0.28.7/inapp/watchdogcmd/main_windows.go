@@ -74,6 +74,34 @@ func safeConfig(j journal) error {
     }
     return nil
 }
+// Recovery may read only a snapshot inside the directory containing this
+// transaction journal. This rejects arbitrary external task XML paths and
+// symlinked ancestor directories without confusing valid DOS 8.3 paths
+// with junctions (EvalSymlinks can change short-name spelling on Windows).
+func guardedSnapshotPath(journalPath,snapshotPath string) error {
+ if !filepath.IsAbs(journalPath) || !filepath.IsAbs(snapshotPath) {
+  return errors.New("journal/snapshot paths must be absolute")
+ }
+ root:=filepath.Clean(filepath.Dir(journalPath))
+ rel,err:=filepath.Rel(root,filepath.Clean(snapshotPath))
+ if err!=nil || rel=="." || rel==".." || filepath.IsAbs(rel) ||
+    strings.HasPrefix(rel,".."+string(os.PathSeparator)) {
+    return errors.New("snapshot escapes transaction journal directory")
+ }
+ current:=root
+ parts:=strings.Split(rel,string(os.PathSeparator))
+ for i,part:=range parts {
+   if part=="" || part=="." || part==".." {return errors.New("snapshot path component invalid")}
+   current=filepath.Join(current,part)
+   info,err:=os.Lstat(current)
+   if err!=nil{return err}
+   if info.Mode()&os.ModeSymlink!=0 {return errors.New("snapshot path contains link/reparse point")}
+   if i<len(parts)-1 && !info.IsDir() {return errors.New("snapshot parent is not a directory")}
+   if i==len(parts)-1 && !info.Mode().IsRegular(){return errors.New("snapshot is not a regular file")}
+ }
+ return nil
+}
+
 func readJournal(path string) (journal,error) {
     var j journal
     if !filepath.IsAbs(path) {return j,errors.New("journal path must be absolute")}
@@ -81,6 +109,7 @@ func readJournal(path string) (journal,error) {
     raw,err:=os.ReadFile(path);if err!=nil{return j,err}
     if err:=exactJSON(raw,&j);err!=nil{return journal{},err}
     if err:=safeConfig(j);err!=nil{return journal{},err}
+    if err:=guardedSnapshotPath(path,j.SnapshotFile);err!=nil{return journal{},err}
     return j,nil
 }
 func q(s string) string {return "'"+strings.ReplaceAll(s,"'","''")+"'"}
@@ -119,7 +148,12 @@ func restore(ctx context.Context,j journal) error {
     script:=`$ErrorActionPreference='Stop';$ProgressPreference='SilentlyContinue';`+
       `$n=`+q(j.TaskName)+`;$snap=`+q(j.SnapshotFile)+`;`+
       `$expected=`+q(j.OriginalExe)+`;$args=`+q(j.OriginalArgs)+`;`+
-      `$saved=[IO.File]::ReadAllText($snap);`+
+      `$expectedHash=`+q(j.SnapshotSHA256)+`;`+
+      `$snapshotBytes=[IO.File]::ReadAllBytes($snap);`+
+      `$hasher=[Security.Cryptography.SHA256]::Create();`+
+      `try{$actualHash=[BitConverter]::ToString($hasher.ComputeHash($snapshotBytes)).Replace('-','').ToLowerInvariant()}finally{$hasher.Dispose()};`+
+      `if($actualHash -cne $expectedHash){throw 'Snapshot changed since Go verification'};`+
+      `$saved=[Text.UTF8Encoding]::new($false,$true).GetString($snapshotBytes);`+
       `$parsed=[xml]$saved;`+
       `$owner=[string]$parsed.Task.Principals.Principal.UserId;`+
       `$execs=@($parsed.Task.Actions.Exec);`+
