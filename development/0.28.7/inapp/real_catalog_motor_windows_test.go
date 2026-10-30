@@ -56,24 +56,29 @@ func TestActualFullCatalogLoadsAndBlocksOnLiveWindowsUDP(t *testing.T) {
     putLabFullCatalog(t,root,400002)
     eng,err:=fullEngineAt(root)
     if err!=nil{t.Fatalf("real Full catalog loader rejected valid fixture: %v",err)}
-    // The production DNS server binds BOTH TCP and UDP. Selecting a free
-    // UDP port alone was flaky on Windows runners: the same port can be
-    // disallowed for TCP (WSAEACCES 10013). Require both protocols to bind
-    // during discovery, and retry excluded/occupied ephemeral ports.
+    // The production DNS server binds BOTH TCP and UDP on one port. On
+    // Windows, choosing TCP :0 first can consistently select ports excluded
+    // for UDP. Choose an OS-allocated UDP port first, then validate TCP.
+    // The test still MUST run real DNS over both protocols; it never skips.
     port:=0
-    for attempt:=0;attempt<32;attempt++{
-        probeTCP,tcpErr:=net.Listen("tcp","127.0.0.1:0")
-        if tcpErr!=nil{t.Fatalf("cannot probe local TCP: %v",tcpErr)}
-        proposed:=probeTCP.Addr().(*net.TCPAddr).Port
-        probeUDP,udpErr:=net.ListenPacket("udp",fmt.Sprintf("127.0.0.1:%d",proposed))
-        if udpErr==nil{
-            probeUDP.Close()
+    var lastPortFailure error
+    for attempt:=0;attempt<128;attempt++{
+        probeUDP,udpErr:=net.ListenPacket("udp4","127.0.0.1:0")
+        if udpErr!=nil{t.Fatalf("Windows cannot allocate local UDP4: %v",udpErr)}
+        proposed:=probeUDP.LocalAddr().(*net.UDPAddr).Port
+        probeTCP,tcpErr:=net.Listen("tcp4",fmt.Sprintf("127.0.0.1:%d",proposed))
+        if tcpErr==nil{
             port=proposed
+            probeTCP.Close()
+        }else{
+            lastPortFailure=tcpErr
         }
-        probeTCP.Close()
+        probeUDP.Close()
         if port!=0{break}
     }
-    if port==0{t.Fatal("no shared TCP/UDP localhost port available for isolated DNS test")}
+    if port==0{
+        t.Fatalf("no shared TCP/UDP localhost port after 128 UDP-first attempts (last TCP: %v)",lastPortFailure)
+    }
     ctx,cancel:=context.WithCancel(context.Background())
     defer cancel()
     srv:=dnsproxy.New(eng,nil)
