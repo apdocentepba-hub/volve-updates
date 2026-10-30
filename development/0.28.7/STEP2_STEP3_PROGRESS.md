@@ -71,3 +71,13 @@ Ver [CI actual de la política](https://github.com/apdocentepba-hub/volve-update
 - Se corrigió el test de catálogo DNS en Windows que falló en #41109879360 al elegir 32 puertos TCP temporales no válidos para UDP en el runner. Ahora elige un puerto UDP temporal primero, comprueba TCP en ese mismo puerto y reintenta hasta 128 veces; el test no fue omitido ni se alteró el DNS real. Evidencia pendiente de CI de la corrección.
 - Ejecución con el nuevo auditor: https://github.com/apdocentepba-hub/volve-updates/actions/runs/41110541483. Al registrar este avance, Windows y Linux estaban en progreso; no se declaró aprobado el nuevo código.
 - Marcadores: paso 2 **40%** y paso 3 **30%** hasta que exista nueva evidencia integral. Lo siguiente prioritario es instalar y verificar un watchdog SYSTEM genuino sobre una VM persistente, con exclusión de procesos y restauración de tarea+motor limitada y autorizada. La tarea productiva continúa bloqueada.
+
+
+## Avance de auditoría de arranque: corrección de Windows y pruebas adversas (30/10/2026)
+
+- GitHub Actions #41110661239, #41110541483 y #41110512059 identificaron un problema de compilación limitado al nuevo auditor independiente: importación `motorupdate` no utilizada después de copiarlo al paquete watchdog. Causa confirmada en logs `windows-build`. Se eliminó con commit `ff4b809e73f2`.
+- El nuevo `auditResidentBootPlan` sigue siendo **solo lectura** y se limita a estados journal auténticos: pendiente → recuperar original (únicamente tras verificar la cadena completa); confirmado/restaurado → no intervenir. No ejecuta rollback ni modifica el DNS productivo.
+- Tests adicionales commit `2f0b812d88e1`: rechazar el XML de la tarea SYSTEM adulterado y un `resident-result.json` con `committed` falso o no ligado a la intención original.
+- Última validación CI de código nuevo: https://github.com/apdocentepba-hub/volve-updates/actions/runs/41111279348. Al registrar esta entrada está **queued**, sin resultado aprobado; la compilación corregida anterior https://github.com/apdocentepba-hub/volve-updates/actions/runs/41110975418 está **in_progress**.
+- Afirmaciones permitidas: código subido y causa del fallo anterior verificada. Afirmaciones NO permitidas: watchdog productivo funcionando, restauración real después de un reinicio, actualización automática instalada en 0.28.6, o CI nuevo aprobado antes de completarse.
+- Porcentajes verificados **sin cambios**: paso 2 **40%** y paso 3 **30%**. Siguiente bloqueo prioritario: controlador SYSTEM persistente con rollback real, acompañado por prueba de misma VM Windows tras reinicio y firma editorial legítima.
