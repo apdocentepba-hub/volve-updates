@@ -39,6 +39,11 @@ func acquireCIBootMutex(ctx context.Context,name string)(func(),error) {
  if !ciBootMutexName.MatchString(name){
   return nil,errors.New("non-CI Windows recovery mutex name forbidden")
  }
+ // Windows mutex ownership is per OS THREAD, not per Go goroutine.
+ // Keep the acquiring goroutine pinned until its release callback runs.
+ runtime.LockOSThread()
+ unlockThreadOnReturn:=true
+ defer func(){if unlockThreadOnReturn{runtime.UnlockOSThread()}}()
  wide,err:=syscall.UTF16PtrFromString("Global\\"+name)
  if err!=nil{return nil,err}
  h,_,e:=procCreateBootMutex.Call(0,0,uintptr(unsafe.Pointer(wide)))
@@ -55,10 +60,12 @@ func acquireCIBootMutex(ctx context.Context,name string)(func(),error) {
   switch uint32(result){
   case windowsWaitObject0,windowsWaitAbandoned:
    acquired=true
+   unlockThreadOnReturn=false
    var once sync.Once
    return func(){once.Do(func(){
     procReleaseBootMutex.Call(h)
     procCloseBootHandle.Call(h)
+    runtime.UnlockOSThread()
    })},nil
   case windowsWaitTimeout:
    continue
