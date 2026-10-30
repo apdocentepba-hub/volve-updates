@@ -42,6 +42,13 @@ func main() {
         formatted, err := format.Source(data); if err != nil { panic(err) }
         if err := os.WriteFile(filepath.Join(target, "motorupdate", name), formatted, 0600); err != nil { panic(err) }
     }
+    watchdogTarget := filepath.Join(target, "cmd", "volve-managed-watchdog")
+    if err := os.MkdirAll(watchdogTarget, 0700); err != nil { panic(err) }
+    for _, name := range []string{"main_windows.go", "main_windows_test.go"} {
+        data, err := os.ReadFile(filepath.Join(srcDir, "watchdogcmd", name)); if err != nil { panic(err) }
+        formatted, err := format.Source(data); if err != nil { panic(err) }
+        if err := os.WriteFile(filepath.Join(watchdogTarget, name), formatted, 0600); err != nil { panic(err) }
+    }
     const oldMain = "if len(os.Args) == 2 && os.Args[1] == \"--check-app-updates\" {"
     const newMain = `if len(os.Args) == 2 && os.Args[1] == "--check-all-updates" {
         result, err := checkAllUpdates()
