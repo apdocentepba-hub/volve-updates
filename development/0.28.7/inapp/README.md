@@ -31,6 +31,19 @@ El nuevo `motorupdate.ApplyManagedWithRollback` exige que el futuro controlador 
 
 Incluye pruebas de orden correcto, candidato adulterado, versión heredada no identificada, errores en cada fase y cancelación que no debe cancelar el rollback. Es un **contrato con controladores simulados**, no un controlador real de Windows; por tanto no habilita todavía el botón para reemplazar el motor en una PC.
 
+## Windows Task Scheduler: integración del controlador de laboratorio
+
+Se añadió `managed_windows_task_lab_test.go`, una prueba Windows que ejercita `motorupdate.ApplyManagedWithRollback` contra una tarea **SYSTEM real pero temporal e inocua** (`VOLVE-CI-ManagedMotor-<id>`):
+
+- Guarda y sincroniza a disco el XML original del Programador de tareas con SHA-256.
+- Copia el candidato **de prueba** firmado con clave efímera a una ruta versionada y modifica únicamente la acción de esa tarea desechable.
+- En el caso nominal confirma la operación solo después de las verificaciones; en una falla simulada de conectividad, restaura la acción original y comprueba la recuperación.
+- En ambos casos elimina la tarea de laboratorio sin tocar tareas de producción ni puertos, adaptadores o parámetros DNS.
+
+**GitHub Actions aprobado:** [ejecución 40982068789](https://github.com/apdocentepba-hub/volve-updates/actions/runs/40982068789) (Windows, Linux, recuperación en laboratorio). La primera ejecución de este ensayo identificó un problema real de `FlushFileBuffers` al abrir el respaldo en modo lectura; se corrigió usando un descriptor de escritura antes de repetir y aprobar la prueba.
+
+**Límite:** es una prueba del controlador transaccional con tareas reales de Windows, pero **no ejecuta el motor DNS real, no mide conectividad externa real ni valida recuperación tras un corte eléctrico**. No está habilitado el reemplazo del DNS desde la aplicación instalada.
+
 ## Lo que falta para una actualización del motor sin reinstalar
 
 - Registrar y verificar la versión/identidad real del motor que está instalado (no deducir de nombre de archivo).
