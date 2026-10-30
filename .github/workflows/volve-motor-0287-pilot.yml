@@ -138,6 +138,14 @@ jobs:
           if($LASTEXITCODE -ne 0){throw "Unit tests failed"}
           go test . -run 'TestMotorJournalReadOnlyRejectsUnsafeStates|TestMotorPreflightOnlyReadsKnownFiles|TestMergeUpdateReports' -count=1
           if($LASTEXITCODE -ne 0){throw "Read-only preflight tests failed"}
+      - name: Verify signed legacy resident and candidate engine evidence (READ ONLY)
+        shell: pwsh
+        working-directory: build/codigo
+        run: |
+          $ErrorActionPreference='Stop'
+          go test . -run '^TestResidentMotor' -count=1 -timeout 2m -v
+          if($LASTEXITCODE -ne 0){throw 'Signed legacy motor provenance verification failed'}
+          Write-Host 'PASS: both signed motor identities and the read-only rescue gate are enforced'
       - name: Compile and test standalone Windows watchdog (CI-only tasks)
         shell: pwsh
         working-directory: build/codigo
