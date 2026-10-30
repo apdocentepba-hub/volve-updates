@@ -108,10 +108,17 @@ func VerifySignedUnversionedLegacyMigration(
         !filepath.IsAbs(backupDir) || !filepath.IsAbs(candidate) {
         return empty,errors.New("legacy path or destination invalid")
     }
-    // Installed managed motors must NEVER reenter the one-time legacy bridge.
-    if _,err:=os.Lstat(filepath.Join(filepath.Dir(liveExe),installedReceiptName));err==nil{
-        return empty,errors.New("managed motor already registered; legacy migration forbidden")
-    }else if !errors.Is(err,os.ErrNotExist){return empty,err}
+    // The native updater keeps the managed engine receipt in
+    // <installRoot>/installed-engines; refuse both that real location and
+    // older layouts. A managed installation must never reenter this bridge.
+    for _,path:=range []string{
+        filepath.Join(filepath.Dir(liveExe),"installed-engines",installedReceiptName),
+        filepath.Join(filepath.Dir(liveExe),installedReceiptName),
+    } {
+        if _,err:=os.Lstat(path);err==nil {
+            return empty,errors.New("managed motor already registered; legacy migration forbidden")
+        }else if !errors.Is(err,os.ErrNotExist){return empty,err}
+    }
     permit,err:=parseSignedMigrationPermit(permitJSON,permitSignature,publisherKey)
     if err!=nil{return empty,err}
     candidateManifest,err:=VerifyStaged(candidate,publisherKey)
