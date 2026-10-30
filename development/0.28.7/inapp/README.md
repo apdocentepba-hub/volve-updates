@@ -104,6 +104,18 @@ El primer conjunto integrado superó [GitHub Actions 40990488696](https://github
 
 **Límites pendientes:** el recuperador sigue restringido a tareas `VOLVE-CI-ManagedMotor-*`. Falta definir un árbol de instalación y journal productivo persistente con ACLs y propiedad confiables desde sus directorios padres, verificar el arranque y salud del servicio DNS anterior después de la restauración, y realizar un reinicio auténtico de máquina virtual durante la conmutación. Ninguno de estos pilotos autoriza publicar una actualización del motor DNS real.
 
+## PASO 2 — Evidencia de identidad del motor DNS existente (solo lectura)
+
+Se añadió `legacy_upgrade_readiness_windows.go` y el diagnóstico CLI `--motor-upgrade-evidence <ruta-absoluta-candidato>`. **No cambia tareas SYSTEM, adaptadores DNS, ejecutables, motor residente ni journal de rescate.** En la futura versión del Centro esta comprobación exige simultáneamente:
+
+1. Ejecución como administrador y `preflightMotorUpgradeReadOnly` aprobado para el **motor real**: identidad exacta de la tarea `VOLVE-DNS-SERVER-0270`, scripts y tarea de rescate SYSTEM originales, registro DNS activo y pruebas locales IPv4/IPv6.
+2. Atestación de procedencia de publicación `VOLVE_DNS_Legacy_Attestation.json` junto con `.sig`, firmada Ed25519 por la **misma clave de publicación fijada**. Comprueba que la declaración identifica la ruta/nombre/argumentos exactos del ejecutable heredado, y coincide con el tamaño y SHA-256 de los bytes realmente instalados. **La versión heredada jamás se infiere del nombre del EXE ni de la versión del Centro.**
+3. Paquete candidato `VOLVE_DNS_Motor_<versión>.exe` con manifiesto/firma Ed25519, tamaño y huella exacta, versión superior a la heredada y compatibilidad con la versión del Centro.
+
+Las pruebas Windows generan atestaciones y candidatos **de laboratorio** con una clave efímera común. Rechazan identidad o firma falsa, motor heredado alterado, candidato alterado, Centro demasiado antiguo, errores del preflight y cancelaciones. Ninguna prueba invoca la tarea DNS de producción.
+
+**Limitación para avanzar al cambio real:** la atestación firmada para el motor heredado concreto de 0.28.6 **todavía no está publicada**. Por diseño este nuevo diagnóstico debe negarse a declarar elegible una instalación sin esa evidencia. También sigue activo el bloqueo expreso de `switchVerifiedMotorTaskAction` para `VOLVE-DNS-SERVER-0270`: no se ha habilitado el motor nuevo ni hay prueba de recuperación en un reinicio real de VM. El siguiente paso es generar/probar la atestación con el proceso legítimo del editor, enlazar el watchdog transaccional a una tarea productiva de prueba aislada y probar el arranque efectivo del motor.
+
 ## Lo que falta para una actualización del motor sin reinstalar
 
 - Registrar y verificar la versión/identidad real del motor que está instalado (no deducir de nombre de archivo).
