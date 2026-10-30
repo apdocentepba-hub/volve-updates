@@ -77,3 +77,24 @@ func TestIndependentBootAuditDeniedForUnsafeJournal(t *testing.T){
   t.Fatal("invalid pending boot journal returned a recovery plan")
  }
 }
+
+
+func TestIndependentBootAuditRejectsAlteredSnapshotBeforeAnyPlan(t *testing.T){
+ root,_,_,_:=chainFixture(t,false)
+ taskXML:=filepath.Join(root,residentRecoveryParent,residentRecoveryFolder,residentRecoveryTask)
+ if err:=os.WriteFile(taskXML,[]byte("MALFORMED SYSTEM TASK XML"),0600);err!=nil{t.Fatal(err)}
+ if plan,err:=auditResidentBootPlan(context.Background(),root);err==nil{
+  t.Fatalf("tampered protected recovery XML was accepted: %+v",plan)
+ }
+}
+
+func TestIndependentBootAuditRejectsForgedTerminalReceipt(t *testing.T){
+ root,dir,seal,protect:=chainFixture(t,false)
+ if err:=motorupdate.FinishResidentRecoveryIntent(context.Background(),dir,
+  "committed",seal,protect);err!=nil{t.Fatal(err)}
+ result:=filepath.Join(dir,motorupdate.ResidentResultFile)
+ if err:=os.WriteFile(result,[]byte(`{"schema":1,"component":"dns-engine-recovery-result","outcome":"committed"}`),0600);err!=nil{t.Fatal(err)}
+ if plan,err:=auditResidentBootPlan(context.Background(),root);err==nil{
+  t.Fatalf("forged success receipt caused a false no-op plan: %+v",plan)
+ }
+}
