@@ -173,7 +173,7 @@ jobs:
           $ErrorActionPreference='Stop'
           go test ./motorupdate -run '^TestUnversionedRecovery' -count=1 -timeout 2m -v
           if($LASTEXITCODE -ne 0){throw 'Engine backup integrity and anti-overwrite tests failed'}
-          go test . -run '^(TestSealedRecoveryPathAllowlist|TestWindows(ProtectedLocalLegacyRollbackBackup|LegacyRollbackRejectsUnexpectedExistingDestination|LegacyRollbackRejectsUnsafeChildFileACL))
+          go test . -run '^(TestSealedRecoveryPathAllowlist|TestWindows(ProtectedLocalLegacyRollbackBackup|LegacyRollbackRejectsUnexpectedExistingDestination|LegacyRollbackRejectsUnsafeChildFileACL))$' -count=1 -timeout 2m -v
           if($LASTEXITCODE -ne 0){throw 'Windows SYSTEM/Admin ACL protected backup test failed'}
           Write-Host 'PASS: protected legacy engine/Task XML snapshot, file-level NTFS DACL checks and rejection of Everyone writable EXE/XML/receipt; no DNS change'
       - name: Verify in-app motor readiness tells real blockers without altering production
@@ -210,7 +210,7 @@ jobs:
         working-directory: build/codigo
         run: |
           $ErrorActionPreference='Stop'
-          go test . -run '^(TestIndependentWatchdogRestoresAfterUpdaterExit|TestWindowsSealedLegacyBackupAcceptedByIndependentWatchdog)
+          go test . -run '^(TestIndependentWatchdogRestoresAfterUpdaterExit|TestWindowsSealedLegacyBackupAcceptedByIndependentWatchdog)$' -count=1 -timeout 3m -v
           if($LASTEXITCODE -ne 0){throw 'Independent watchdog integration failed'}
       - name: Prove separate watchdog runs under actual SYSTEM identity (pilot task only)
         shell: pwsh
