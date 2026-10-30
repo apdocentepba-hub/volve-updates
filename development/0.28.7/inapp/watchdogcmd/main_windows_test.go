@@ -76,3 +76,26 @@ func TestSymlinkedJournalRejected(t *testing.T){
  if err:=os.Symlink(path,symlink);err!=nil{t.Skipf("Windows symlink requires developer privileges: %v",err)}
  if _,err:=readJournal(symlink);err==nil{t.Fatal("symlink journal accepted")}
 }
+
+func TestIndependentWatchdogRejectsExternalSnapshotPath(t *testing.T){
+    journalPath,j:=fixtureJournal(t,"pending")
+    outside:=t.TempDir()
+    other:=filepath.Join(outside,"external-task.xml")
+    if err:=os.WriteFile(other,[]byte("<Task>external</Task>"),0600);err!=nil{t.Fatal(err)}
+    j.SnapshotFile=other
+    raw,err:=json.Marshal(j);if err!=nil{t.Fatal(err)}
+    if err:=os.WriteFile(journalPath,raw,0600);err!=nil{t.Fatal(err)}
+    if _,err:=readJournal(journalPath);err==nil{t.Fatal("external recovery snapshot accepted")}
+}
+func TestIndependentWatchdogRejectsLinkedSnapshotParent(t *testing.T){
+    journalPath,j:=fixtureJournal(t,"pending")
+    elsewhere:=t.TempDir()
+    outsideFile:=filepath.Join(elsewhere,"linked-task.xml")
+    if err:=os.WriteFile(outsideFile,[]byte("<Task>test</Task>"),0600);err!=nil{t.Fatal(err)}
+    linkDir:=filepath.Join(filepath.Dir(journalPath),"linked-parent")
+    if err:=os.Symlink(elsewhere,linkDir);err!=nil{t.Skipf("Windows symlink permission unavailable: %v",err)}
+    j.SnapshotFile=filepath.Join(linkDir,"linked-task.xml")
+    raw,err:=json.Marshal(j);if err!=nil{t.Fatal(err)}
+    if err:=os.WriteFile(journalPath,raw,0600);err!=nil{t.Fatal(err)}
+    if _,err:=readJournal(journalPath);err==nil{t.Fatal("symlinked snapshot parent accepted")}
+}
