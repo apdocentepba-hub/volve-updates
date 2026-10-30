@@ -49,7 +49,7 @@ func TestFreshMotorPolicyCancelledWithoutSideEffects(t *testing.T){
 // It may be preserved only after independent action/principal verification.
 func verifiedCatalogFixture() *VerifiedFreshCatalogTask {
  return &VerifiedFreshCatalogTask{
-  Name:"VOLVE-CATALOGO-0230", TaskPath:`\\`, ActionCount:1,
+  Name:"VOLVE-CATALOGO-0230", TaskPath:"\\", ActionCount:1,
   ActionVerified:true, PrincipalVerified:true, DefinitionSHA256:"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
  }
 }
@@ -61,7 +61,7 @@ func TestFreshMotorPolicyRejectsUntrustedCatalogEvidence(t *testing.T) {
  cases:=[]struct{name string;mutate func(*FreshMotorInstallEvidence)}{
   {"missing-proof",func(e *FreshMotorInstallEvidence){e.VerifiedCatalogTask=nil}},
   {"unknown-task",func(e *FreshMotorInstallEvidence){e.VerifiedCatalogTask.Name="VOLVE-DNS-SERVER-0270"}},
-  {"wrong-path",func(e *FreshMotorInstallEvidence){e.VerifiedCatalogTask.TaskPath=`\\Other\\`}},
+  {"wrong-path",func(e *FreshMotorInstallEvidence){e.VerifiedCatalogTask.TaskPath="\\Other\\"}},
   {"wrong-action-count",func(e *FreshMotorInstallEvidence){e.VerifiedCatalogTask.ActionCount=2}},
   {"unverified-action",func(e *FreshMotorInstallEvidence){e.VerifiedCatalogTask.ActionVerified=false}},
   {"unverified-principal",func(e *FreshMotorInstallEvidence){e.VerifiedCatalogTask.PrincipalVerified=false}},
