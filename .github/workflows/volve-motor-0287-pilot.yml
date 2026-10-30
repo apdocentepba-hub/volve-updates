@@ -443,6 +443,17 @@ jobs:
               Unregister-ScheduledTask -TaskName $task -Confirm:$false -ErrorAction SilentlyContinue
             }
           }
+      - name: Step 2 - Reject forged or manual boot recovery with same-instance Task Scheduler event-chain verifier
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          foreach($script in @('development/0.28.7/lab/reboot_event_chain.ps1','development/0.28.7/lab/test_reboot_event_chain.ps1')){
+            $tokens=$null; $parseErrors=$null
+            [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path $script).Path,[ref]$tokens,[ref]$parseErrors) | Out-Null
+            if($parseErrors.Count -gt 0){$parseErrors | Format-List;throw ('Invalid boot-evidence verifier script: '+$script)}
+          }
+          & 'development/0.28.7/lab/test_reboot_event_chain.ps1'
+          Write-Host 'PASS: boot proof requires correlated event IDs 118+100+201(exit0)+102 for SAME instance, rejected all forged/stale/manual cases'
       - name: Validate VM-only reboot proof parser and platform gate
         shell: pwsh
         run: |
