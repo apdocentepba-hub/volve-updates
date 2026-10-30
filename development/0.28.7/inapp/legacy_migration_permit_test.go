@@ -108,7 +108,10 @@ func TestSignedUnversionedBridgeRejectsForgeryTamperingAndInvalidTask(t *testing
             case "altered-backup":if err:=os.WriteFile(filepath.Join(f.backup,legacyBackupExe),[]byte("MZ_MODIFIED"),0600);err!=nil{t.Fatal(err)}
             case "missing-backup":if err:=os.Remove(filepath.Join(f.backup,legacyBackupReceipt));err!=nil{t.Fatal(err)}
             case "missing-manifest":if err:=os.Remove(f.candidate+".json");err!=nil{t.Fatal(err)}
-            case "existing-managed-receipt":if err:=os.WriteFile(filepath.Join(f.root,installedReceiptName),[]byte("{}"),0600);err!=nil{t.Fatal(err)}
+            case "existing-managed-receipt":
+                inventoryDir:=filepath.Join(f.root,"installed-engines")
+                if err:=os.Mkdir(inventoryDir,0700);err!=nil{t.Fatal(err)}
+                if err:=os.WriteFile(filepath.Join(inventoryDir,installedReceiptName),[]byte("{}"),0600);err!=nil{t.Fatal(err)}
             case "expired":f.permit.ExpiresUTC=time.Now().UTC().Add(-time.Second).Format(time.RFC3339);f.resign(t)
             case "future-issued":f.permit.IssuedUTC=time.Now().UTC().Add(time.Hour).Format(time.RFC3339);f.resign(t)
             case "too-long-validity":f.permit.ExpiresUTC=time.Now().UTC().Add(400*24*time.Hour).Format(time.RFC3339);f.resign(t)
