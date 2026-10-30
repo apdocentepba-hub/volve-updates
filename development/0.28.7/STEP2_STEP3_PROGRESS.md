@@ -6,17 +6,17 @@ Fecha de corte inicial: 30/10/2026. Rama de desarrollo: feature/motor-updater-02
 
 Las cifras son **estimaciones conservadoras de ingeniería por entregables ponderados**, no una medición del tiempo, ni una cantidad de líneas, ni un porcentaje de protección. Se acumula crédito parcial por código efectivamente integrado y verificable; aprobar CI no reemplaza los ensayos sobre un equipo Windows persistente. Nunca publicar como cerrado un paso que no haya aprobado todos sus criterios obligatorios.
 
-### Paso 2 — Actualización del motor DNS: 43/100 (43%)
+### Paso 2 — Actualización del motor DNS: 47/100 (47%)
 
 | Subentregable | Peso | Puntos reconocidos | Estado |
 | --- | ---: | ---: | --- |
 | Permiso editorial exacto, autenticidad y pinning | 15 | 8 | Validación criptográfica en CI; falta emisión legítima para el motor instalado |
 | Respaldo anterior y journal protegido | 15 | 15 | Código y auditorías NTFS probados |
 | Watchdog de recuperación SYSTEM independiente | 25 | 5 | Lab descartable; NO hay watchdog productivo |
-| Controlador Windows real que cambia y revierte el motor | 20 | 0 | Bloqueado expresamente |
+| Controlador Windows real que cambia y revierte el motor | 20 | 4 | Instalación y retirada versionada de laboratorio desde ProgramData con tarea SYSTEM, hash, ACL, DNS/53 real y rollback aprobados; faltan conmutación de producción, rescate persistente y DNS de adaptador |
 | Tests adversos, DNS dual-stack, identidad, rollback en CI | 15 | 15 | Motor compilado ejecutado bajo SYSTEM en DNS/53 real y sondeado externamente en VM descartable; faltan escenarios productivos |
 | Reinicio real repetible de VM persistente | 10 | 0 | Sin ejecutar |
-| **TOTAL** | **100** | **43** | **Paso abierto** |
+| **TOTAL** | **100** | **47** | **Paso abierto** |
 
 Los seis criterios A–F de STEP2_EXIT_CRITERIA.md siguen sin aprobarse **como condiciones de cierre completas**, aunque hay subtrabajos de esos criterios realizados.
 
@@ -99,3 +99,12 @@ Ver [CI actual de la política](https://github.com/apdocentepba-hub/volve-update
 **Código incorporado:** `inapp/ci_fresh_dns53_windows.go` permite reusar la instalación **solo** si el catálogo determinista completo conserva la huella SHA-256 esperada; `.github/workflows/volve-0287-fresh-system-dns53.yml` verifica tareas de inicio, reinicio y archivo adulterado. La prueba no usa la clave editorial ni instala componentes permanentes en una PC de usuario. La tarea de test se elimina en el mismo flujo. Este avance **NO** prueba recuperación tras reboot real, watchdog residente instalado ni autoactualización del motor; no se expone el flag de prueba en distribución normal.
 
 **Progreso conservador sin duplicar créditos:** paso 2 sigue **43/100** y paso 3 **30/100**. El subentregable de CI ya tiene 15/15 y el driver productivo sigue sin habilitarse. Siguiente desarrollo obligatorio: controlador de instalación permanente firmado con recuperador SYSTEM previamente armado, recuperación comprobada con corte/reinicio de VM persistente y transición segura de DNS de adaptador. No publicar release integral hasta aprobarlo.
+
+
+## Instalador de laboratorio transaccional — evidencia CI aprobada (30/10/2026)
+
+- Implementación **real y ejecutada**, exclusiva de pruebas Windows GitHub-hosted: `development/0.28.7/lab/VOLVE_CI_MotorInstall.ps1`. Permite **Install/Verify/Remove** de un ejecutable CI versionado en `C:\\ProgramData\\VOLVE-CI-MotorInstall-<runid>`, con comprobación SHA-256 frente al valor del orquestador, manifiesto de inventario local, tarea SYSTEM `AtStartup`, ACL NTFS sin herencia y retirada selectiva de tareas y archivos propios. No usa tareas de producción ni modifica DNS de adaptadores, `hosts` o políticas de navegadores.
+- Se instala una variante de compilación `-tags volveci` **no distribuible** y se demuestra bloqueo DNS real IPv4+IPv6 puerto 53 de BetWarrior desde un **segundo proceso**, con motor ejecutándose desde su nueva carpeta versionada en ProgramData; la misma instalación se reinicia, verifica de nuevo y se desinstala comprobando cero residuos.
+- **GitHub Actions [#41146854522](https://github.com/apdocentepba-hub/volve-updates/actions/runs/41146854522) SUCCESS:** instalación, ejecución, reinicio, retirada y conservación de red/hosts.
+- **GitHub Actions [#41147054321](https://github.com/apdocentepba-hub/volve-updates/actions/runs/41147054321) SUCCESS:** además rechaza hash de motor incorrecto, intento de sobrescritura y ACL de carpeta heredada/insegura. No equivale a firma editorial de la release ni constituye un driver productivo.
+- **Crédito nuevo:** dentro de los 20 puntos reservados al controlador Windows, se reconocen **4 puntos** por instalación/retirada funcional en Windows real aislado. Faltan 16: driver productivo autorizado, conmutación reversible de motor activo, watchdog y rollback ante falla, DNS del adaptador, y verificación de recuperación en arranque real. **Paso 2: 47/100; paso 3: 30/100.** Esta valoración es una estimación ingeniería por entregables; no es un porcentaje de protección ni de pruebas finales superadas.
