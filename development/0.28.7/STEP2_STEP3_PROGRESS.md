@@ -43,3 +43,12 @@ Ver [CI actual de la política](https://github.com/apdocentepba-hub/volve-update
 - Un journal "pendiente" **no** es una autorización editorial para conmutar el DNS.
 - No declarar 100% hasta verificar con criterios de aceptación, reproducir fallos, reiniciar una misma VM real y documentar reversión.
 - No tocar \`main\`, \`stable.json\`, \`motor-stable.json\`, las credenciales, el servidor DNS productivo ni la instalación VOLVÉ 0.28.6 del usuario sin los controles y autorizaciones correspondientes.
+
+
+## Avance nuevo: exclusión de procesos Windows para recuperación — 30/10/2026
+
+- Se incorporó a la rama piloto un mutex nativo de Windows (`Global\\VOLVE-CI-BootLock-<id>`) para que un watchdog de laboratorio obtenga un bloqueo **entre procesos** antes de restaurar una tarea descartable. El mutex está restringido por nombre a la familia `VOLVE-CI-*` y sigue existiendo un rechazo expreso de la tarea productiva.
+- El contrato de recuperación al arrancar (`ResidentBootRecoveryDriver.AcquireExclusive`) exige una exclusión antes de leer el journal, restaurar y confirmar el resultado. El restaurador independiente de tareas descartables ahora utiliza el mutex en su ruta de ejecución. La tarea productiva NO está habilitada ni registrada.
+- Se corrigió un detalle de concurrencia fundamental: un mutex nativo pertenece a un **hilo de Windows**, de modo que su propietario Go queda fijado al mismo hilo hasta liberarlo; `sync.Once` evita cerrar o soltar dos veces el manejador.
+- Pruebas nuevas de Windows: dos procesos independientes disputan el mutex, el segundo espera; el propietario termina abruptamente y el mutex abandonado debe recuperarse; cancelación bajo contención; nombre ajeno/productivo rechazado; desalojo seguro sin journal. Estas pruebas NO alteran tareas SYSTEM ni la red.
+- CI de integración actual: https://github.com/apdocentepba-hub/volve-updates/actions/runs/41109499297. **Pendiente resultado Windows definitivo.** El marcador continúa en paso 2 **40%**, paso 3 **30%**. Esta mejora aún no suma puntos porque no implica watchdog productivo ni reinicio real.
