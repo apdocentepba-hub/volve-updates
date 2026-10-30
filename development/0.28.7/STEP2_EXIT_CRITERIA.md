@@ -49,3 +49,14 @@ La **brecha principal** es B+C: todavía **no existe** el driver que efectivamen
 **CI PENDIENTE:** [Actions #41102094866](https://github.com/apdocentepba-hub/volve-updates/actions/runs/41102094866). En el último control figuraba `queued` por espera de GitHub Actions. No presentar esta versión como compilada, ensayada o aprobada en Windows hasta recibir conclusión definitiva. La anterior [#41097414505](https://github.com/apdocentepba-hub/volve-updates/actions/runs/41097414505) sí figura exitosa.
 
 **BLOQUEOS NO RESUELTOS:** permisos editoriales reales, tarea SYSTEM del watchdog PRODUCTIVA y persistente, recuperación efectiva del motor/tarea, driver Windows de conmutación, sondeos reales post-cambio y prueba de reinicio de VM persistente. `VOLVE-DNS-SERVER-0270` sigue bloqueada por diseño; no modificar `main`, el canal estable ni la instalación 0.28.6.
+
+
+## Avance: sondeos activos DNS/Internet y enlace al cierre de recuperación (30/10/2026)
+
+**CÓDIGO SUBIDO:** `resident_health_probe.go` implementa consultas DNS **reales** A por 127.0.0.1 y AAAA por ::1 (puertos 53 en la configuración productiva propuesta, efímeros en CI), con ID aleatorio, coincidencia de pregunta, RCODE y RR de respuesta completa; rechazo de respuestas truncadas, identificadores falsos, registros de dirección incompletos y destinos que no sean loopback. `ProbeResidentInternetAt` comprueba alcance TCP por direcciones IP sin resolver nombres; el perfil de destino propuesto usa 1.1.1.1:443 y 9.9.9.9:443. No se altera la red, se envía solo la consulta DNS necesaria.
+
+**CI PRUEBA:** `resident_health_probe_test.go` crea servidores DNS IPv4/IPv6 y un listener TCP **descartables**, comprueba respuestas efectivas y casos adversos. `resident_active_health.go` implementa `ResidentCompletionChecks` utilizando esos sondeos activos, pero exige callback separado de identidad SYSTEM, deliberadamente **ausente del driver productivo actual**. El test integrador confirma que un journal solo termina tras pruebas reales DNS+TCP y doble chequeo de identidad simulado, y que un DNS falso deja `recovery-required`.
+
+**EVIDENCIA LOCAL:** `go test -race -count=1 ./...`, `go vet ./...` y compilación cruzada GOOS=windows/amd64 del módulo aislado de sondeos completaron sin errores en Linux, con IPv4/IPv6 y TCP reales *de loopback*. Esto **no** es ejecución real en Windows ni prueba post-reinicio; GitHub Actions del commit integrado [#41103624036](https://github.com/apdocentepba-hub/volve-updates/actions/runs/41103624036) estaba `queued` al registrar el avance.
+
+**PRÓXIMO BLOQUEO TÉCNICO:** conectar `ResidentActiveHealthChecks.VerifyIdentity` a la tarea SYSTEM y al ejecutable firmado que efectivamente esté ejecutándose (no solo a la acción configurada), montar un watchdog persistente independiente con permisos restringidos, probar restauración en Windows y reinicio real sobre la misma VM. Mantener prohibido `VOLVE-DNS-SERVER-0270` hasta aprobar los criterios B-E.
