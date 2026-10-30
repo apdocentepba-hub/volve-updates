@@ -37,7 +37,7 @@ func main() {
         formatted, err := format.Source(data); if err != nil { panic(err) }
         if err := os.WriteFile(filepath.Join(target, name), formatted, 0600); err != nil { panic(err) }
     }
-    for _, name := range []string{"managed_transaction.go", "managed_transaction_test.go", "verified_inventory.go", "verified_inventory_test.go", "internet_proof.go", "internet_proof_test.go"} {
+    for _, name := range []string{"managed_transaction.go", "managed_transaction_test.go", "verified_inventory.go", "verified_inventory_test.go", "internet_proof.go", "internet_proof_test.go", "legacy_motor_attestation.go", "legacy_motor_attestation_test.go"} {
         data, err := os.ReadFile(filepath.Join(srcDir, name)); if err != nil { panic(err) }
         formatted, err := format.Source(data); if err != nil { panic(err) }
         if err := os.WriteFile(filepath.Join(target, "motorupdate", name), formatted, 0600); err != nil { panic(err) }
