@@ -92,9 +92,19 @@ func ps(ctx context.Context, script string) (string,error) {
     arg:=base64.StdEncoding.EncodeToString(buf)
     cmd:=exec.CommandContext(ctx,"powershell.exe","-NoProfile","-NonInteractive","-EncodedCommand",arg)
     cmd.SysProcAttr=&syscall.SysProcAttr{HideWindow:true}
-    out,err:=cmd.CombinedOutput()
+    // PowerShell writes harmless progress XML to STDERR while importing
+    // ScheduledTasks. CombinedOutput would corrupt the strict success token
+    // and falsely report failure after a successful rollback.
+    var stderr bytes.Buffer
+    cmd.Stderr=&stderr
+    out,err:=cmd.Output()
     if len(out)>8192 {out=out[:8192]}
-    return strings.TrimSpace(string(out)),err
+    if err!=nil {
+        reason:=stderr.String()
+        if len(reason)>4096{reason=reason[:4096]}
+        return strings.TrimSpace(string(out)),fmt.Errorf("PowerShell: %w: %s",err,reason)
+    }
+    return strings.TrimSpace(string(out)),nil
 }
 func restore(ctx context.Context,j journal) error {
     if err:=normalFile(j.SnapshotFile,maxXML);err!=nil{return fmt.Errorf("snapshot invalid: %w",err)}
@@ -106,7 +116,7 @@ func restore(ctx context.Context,j journal) error {
     // Verify both the backed-up task and the live task are SYSTEM-owned,
     // single-action pilot tasks before changing the Task Scheduler. Never
     // unregister or touch any other task.
-    script:=`$ErrorActionPreference='Stop';`+
+    script:=`$ErrorActionPreference='Stop';$ProgressPreference='SilentlyContinue';`+
       `$n=`+q(j.TaskName)+`;$snap=`+q(j.SnapshotFile)+`;`+
       `$expected=`+q(j.OriginalExe)+`;$args=`+q(j.OriginalArgs)+`;`+
       `$saved=[IO.File]::ReadAllText($snap);`+
