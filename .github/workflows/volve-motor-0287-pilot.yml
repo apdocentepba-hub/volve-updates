@@ -227,6 +227,28 @@ jobs:
           $after=Get-DnsClientServerAddress | Sort-Object InterfaceIndex,AddressFamily | Select-Object InterfaceIndex,AddressFamily,ServerAddresses | ConvertTo-Json -Compress -Depth 5
           if($before -cne $after){throw 'Windows DNS adapter configuration changed during isolated dual-stack test'}
           Write-Host 'PASS: same resident dual-stack service code, 400k Full catalog, live IPv4 and IPv6 UDP, no DNS adapter mutations'
+      - name: Step 2 - Real DNS port 53 on GitHub-hosted disposable Windows VM only
+        shell: pwsh
+        working-directory: build/codigo
+        run: |
+          $ErrorActionPreference='Stop'
+          if($env:GITHUB_ACTIONS -ne 'true' -or $env:RUNNER_ENVIRONMENT -ne 'github-hosted'){throw 'REFUSED: port 53 requires GitHub-hosted disposable runner'}
+          $machine=Get-CimInstance -ClassName Win32_ComputerSystem -ErrorAction Stop
+          $vm=($machine.Manufacturer+' '+$machine.Model)
+          if($vm -notmatch '(?i:virtual machine|vmware|qemu|kvm|virtualbox|hyper-v|parallels|hvm)'){throw ('REFUSED: Windows not positively identified as a disposable VM: '+$vm)}
+          if(Get-ScheduledTask -TaskName 'VOLVE-DNS-SERVER-0270' -ErrorAction SilentlyContinue){throw 'REFUSED: VOLVE production motor task is present'}
+          if(Get-ScheduledTask -TaskName 'VOLVE-DNS-RESCUE-0270' -ErrorAction SilentlyContinue){throw 'REFUSED: VOLVE production rescue task is present'}
+          $dnsBefore=Get-DnsClientServerAddress | Sort-Object InterfaceIndex,AddressFamily | Select-Object InterfaceIndex,AddressFamily,ServerAddresses | ConvertTo-Json -Compress -Depth 6
+          $env:VOLVE_CI_PORT53_VM_APPROVED='VOLVE-CI-GITHUB-HOSTED-VM-PORT53-ONLY'
+          try {
+            go test . -run TestResidentDNSPort53GitHubHostedVM -count=1 -timeout 2m -v
+            if($LASTEXITCODE -ne 0){throw 'Real port53 dual-stack DNS lab did not pass'}
+          } finally {
+            Remove-Item Env:\VOLVE_CI_PORT53_VM_APPROVED -ErrorAction SilentlyContinue
+            $dnsAfter=Get-DnsClientServerAddress | Sort-Object InterfaceIndex,AddressFamily | Select-Object InterfaceIndex,AddressFamily,ServerAddresses | ConvertTo-Json -Compress -Depth 6
+            if($dnsBefore -cne $dnsAfter){throw 'FATAL: Windows DNS adapter settings changed during hosted VM port53 trial'}
+          }
+          Write-Host 'PASS: same resident motor on real localhost port53 IPv4+IPv6 with 400k Full rules; no Windows DNS adapter/task changes'
       - name: Step 2 - Run actual DNS core on isolated Windows loopback (NO PORT 53)
         shell: pwsh
         working-directory: build/codigo
