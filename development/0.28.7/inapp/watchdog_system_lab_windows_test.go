@@ -28,7 +28,7 @@ func createSYSTEMWatchdogLabTask(taskName, helper, journal string) error{
   `$trigger=New-ScheduledTaskTrigger -Once -At ((Get-Date).AddYears(1));`+
   `Register-ScheduledTask -TaskName `+labQuote(taskName)+` -Action $action -Trigger $trigger -User 'SYSTEM' -RunLevel Highest -ErrorAction Stop | Out-Null;`+
   `$task=Get-ScheduledTask -TaskName `+labQuote(taskName)+` -ErrorAction Stop;`+
-  `if($task.TaskPath -ne '\\' -or $task.Principal.UserId -notin @('SYSTEM','S-1-5-18') -or @($task.Actions).Count -ne 1){throw 'Unexpected watchdog task ownership'};`+
+  `if($task.TaskPath -ne '\' -or $task.Principal.UserId -notin @('SYSTEM','S-1-5-18') -or @($task.Actions).Count -ne 1){throw 'Unexpected watchdog task ownership'};`+
   `Start-ScheduledTask -TaskName `+labQuote(taskName)+` -ErrorAction Stop;`
  _,err:=labPS(script);return err
 }
@@ -37,7 +37,7 @@ func removeSYSTEMWatchdogLabTask(taskName string) error{
  if !watchdogLabName.MatchString(taskName){return fmt.Errorf("not a disposable watchdog task")}
  script:=`$task=Get-ScheduledTask -TaskName `+labQuote(taskName)+` -ErrorAction SilentlyContinue;`+
   `if($null -ne $task){`+
-  `if($task.TaskPath -ne '\\' -or $task.Principal.UserId -notin @('SYSTEM','S-1-5-18')){throw 'Refuse unrelated task removal'};`+
+  `if($task.TaskPath -ne '\' -or $task.Principal.UserId -notin @('SYSTEM','S-1-5-18')){throw 'Refuse unrelated task removal'};`+
   `Unregister-ScheduledTask -TaskName `+labQuote(taskName)+` -Confirm:$false -ErrorAction Stop}`
  _,err:=labPS(script);return err
 }
