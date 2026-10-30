@@ -11,6 +11,9 @@ import (
  "os"
  "path/filepath"
  "os/exec"
+ "runtime"
+ "syscall"
+ "unsafe"
  "strings"
  "testing"
  "time"
@@ -79,6 +82,14 @@ func TestWindowsBootMutexInvalidNamesAndCancel(t *testing.T){
 
 func TestWindowsBootMutexRecoveredAfterOwnerProcessCrash(t *testing.T) {
  name:=fmt.Sprintf("VOLVE-CI-BootLock-%d",time.Now().UnixNano())
+ // Preserve an unlocked kernel handle while the child exits: otherwise the
+ // mutex object would be destroyed and this would not test abandonment.
+ wide,err:=syscall.UTF16PtrFromString("Global\\"+name)
+ if err!=nil{t.Fatal(err)}
+ handle,_,callErr:=procCreateBootMutex.Call(0,0,uintptr(unsafe.Pointer(wide)))
+ runtime.KeepAlive(wide)
+ if handle==0{t.Fatalf("cannot keep abandoned recovery mutex alive: %v",callErr)}
+ defer procCloseBootHandle.Call(handle)
  command:=exec.Command(os.Args[0],"-test.run=^TestWindowsBootMutexAcrossProcesses$")
  command.Env=append(os.Environ(),
   "VOLVE_CI_BOOT_MUTEX_CHILD=crash","VOLVE_CI_BOOT_MUTEX_NAME="+name)
