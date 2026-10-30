@@ -52,3 +52,13 @@ Ver [CI actual de la política](https://github.com/apdocentepba-hub/volve-update
 - Se corrigió un detalle de concurrencia fundamental: un mutex nativo pertenece a un **hilo de Windows**, de modo que su propietario Go queda fijado al mismo hilo hasta liberarlo; `sync.Once` evita cerrar o soltar dos veces el manejador.
 - Pruebas nuevas de Windows: dos procesos independientes disputan el mutex, el segundo espera; el propietario termina abruptamente y el mutex abandonado debe recuperarse; cancelación bajo contención; nombre ajeno/productivo rechazado; desalojo seguro sin journal. Estas pruebas NO alteran tareas SYSTEM ni la red.
 - CI de integración actual: https://github.com/apdocentepba-hub/volve-updates/actions/runs/41109499297. **Pendiente resultado Windows definitivo.** El marcador continúa en paso 2 **40%**, paso 3 **30%**. Esta mejora aún no suma puntos porque no implica watchdog productivo ni reinicio real.
+
+
+## Corrección y prueba de cierre del mutex de Windows — 30/10/2026
+
+- GitHub CI #41109134435 detectó un fallo de la prueba de contención de mutex: el test reentraba desde el mismo hilo del propietario. Windows permite reentrar a un mutex desde su hilo dueño; **no** demostraba competencia real. Se corrigió para ejecutar la segunda adquisición desde otra goroutine/hilo del sistema operativo.
+- La implementación del mutex ahora inmoviliza el goroutine propietario con runtime.LockOSThread hasta ReleaseMutex y usa sync.Once para cerrar el handle una sola vez. Esta exigencia es crítica porque el mutex de Windows pertenece al hilo, no al proceso Go.
+- Para verificar que un mutex abandonado realmente se recupera, el test conserva un handle de kernel en el padre mientras el hijo termina abruptamente; así no se confunde el rescate de un objeto abandonado con crear un objeto nuevo.
+- El restaurador de tarea CI usa ahora el mutex nativo antes de leer journal/restaurar y rechaza de entrada la tarea VOLVE-DNS-SERVER-0270. Este cambio es exclusivamente de laboratorio y no habilita producción.
+- CI definitivo pendiente: https://github.com/apdocentepba-hub/volve-updates/actions/runs/41109704800. **No** acreditar puntos adicionales antes del resultado verde 3/3.
+- Todavía faltan una ACL propia para el objeto mutex de producción, un SYSTEM watchdog registrado con disparador de inicio, recuperación efectiva y prueba de reinicio persistente en la misma VM. Por seguridad **no** aplicar este mutex experimental a la tarea real.
