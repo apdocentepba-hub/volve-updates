@@ -95,3 +95,45 @@ func TestIndependentMotorWatchdogRunsAsSYSTEM(t *testing.T){
  details,_:=labPS(`$t=Get-ScheduledTaskInfo -TaskName `+labQuote(watcherName)+` -ErrorAction SilentlyContinue; if($t){Write-Output ("last_task_result="+$t.LastTaskResult)}`)
  t.Fatalf("SYSTEM watchdog did not restore temporary task; %s",details)
 }
+
+func TestIndependentMotorWatchdogSYSTEMLeavesCommittedUpgradeIntact(t *testing.T){
+ helper:=os.Getenv("VOLVE_CI_MANAGED_WATCHDOG_EXE")
+ if helper==""{t.Fatal("separate CI watchdog not available")}
+ name:=fmt.Sprintf("VOLVE-CI-ManagedMotor-%d",time.Now().UnixNano())
+ original:=filepath.Join(os.Getenv("WINDIR"),"System32","cmd.exe")
+ if err:=createDisposableTask(name,original);err!=nil{t.Fatal(err)}
+ t.Cleanup(func(){if err:=removeDisposableTask(name);err!=nil{t.Errorf("cleanup original task: %v",err)}})
+ root:=t.TempDir()
+ candidate,key:=prepareSignedLabCandidate(t,root)
+ d:=&managedWindowsTaskLab{name:name,root:filepath.Join(root,"transaction"),
+   backup:filepath.Join(root,"transaction","original-task.xml"),original:original,publicKey:key}
+ if err:=d.Snapshot(context.Background());err!=nil{t.Fatal(err)}
+ journalPath:=filepath.Join(root,"watchdog-committed.json")
+ writeCIWatchdogJournal(t,journalPath,ciWatchdogJournal{Schema:1,Phase:"committed",TaskName:name,
+   OriginalExe:original,OriginalArgs:"/C exit 0",SnapshotFile:d.backup,SnapshotSHA256:d.originalHash})
+ watcherName:=fmt.Sprintf("VOLVE-CI-ManagedWatchdog-%d",time.Now().UnixNano())
+ if err:=createSYSTEMWatchdogLabTask(watcherName,helper,journalPath);err!=nil{t.Fatal(err)}
+ t.Cleanup(func(){if err:=removeSYSTEMWatchdogLabTask(watcherName);err!=nil{t.Errorf("cleanup watchdog task: %v",err)}})
+ if err:=d.InstallVersionedCandidate(context.Background(),candidate);err!=nil{t.Fatal(err)}
+ if err:=switchVerifiedMotorTaskAction(context.Background(),name,original,"/C exit 0",d.installedExe,"",key);err!=nil{t.Fatal(err)}
+ if err:=startSYSTEMWatchdogLabTask(watcherName);err!=nil{t.Fatal(err)}
+ // A completed transaction must NEVER be rolled back by an otherwise valid
+ // watchdog trigger on Windows startup or via manual recovery invocation.
+ deadline:=time.Now().Add(30*time.Second)
+ completed:=false
+ for time.Now().Before(deadline) {
+   output,err:=labPS(`$r=Get-ScheduledTaskInfo -TaskName `+labQuote(watcherName)+` -ErrorAction Stop; `+
+      `if($r.LastRunTime.Year -ge 2026 -and $r.LastTaskResult -eq 0){Write-Output 'DONE'}else{Write-Output 'PENDING'}`)
+   if err==nil && output=="DONE"{completed=true;break}
+   time.Sleep(450*time.Millisecond)
+ }
+ if !completed {t.Fatal("committed SYSTEM watchdog never completed")}
+ exe,args,err:=d.currentAction()
+ if err!=nil || !strings.EqualFold(filepath.Clean(exe),filepath.Clean(d.installedExe)) || args!="" {
+    t.Fatalf("committed new engine task reverted unexpectedly: %q %q %v",exe,args,err)
+ }
+ raw,err:=os.ReadFile(journalPath);if err!=nil{t.Fatal(err)}
+ var current ciWatchdogJournal
+ if err:=json.Unmarshal(raw,&current);err!=nil{t.Fatal(err)}
+ if current.Phase!="committed"{t.Fatalf("committed journal changed: %q",current.Phase)}
+}
