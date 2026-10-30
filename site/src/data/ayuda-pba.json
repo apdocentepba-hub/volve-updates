@@ -577,7 +577,9 @@
       }
     ],
     "telefono": "",
-    "fuente": "https://jugadoresanonimos.org.ar/buenos-aires-zona-oeste/"
+    "fuente": "https://jugadoresanonimos.org.ar/buenos-aires-zona-oeste/",
+    "nota": "Atención: hay horarios contradictorios en dos páginas oficiales de Jugadores Anónimos. El listado de Zona Oeste indica miércoles y viernes de 20:00 a 22:00, pero la ficha individual de San Justo indica martes y viernes de 20:00 a 22:00. Confirmá directamente con JA antes de concurrir.",
+    "fuenteAlternativa": "https://jugadoresanonimos.org.ar/location/san-justo/"
   },
   {
     "tipo": "ja",
