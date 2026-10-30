@@ -12,7 +12,6 @@ import (
  "os"
  "path/filepath"
 
- "volve-browser-protection/motorupdate"
 )
 
 type residentBootAudit struct{
