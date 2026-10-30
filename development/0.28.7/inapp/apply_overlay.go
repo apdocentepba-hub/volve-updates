@@ -86,7 +86,7 @@ func main() {
     }
     watchdogTarget := filepath.Join(target, "cmd", "volve-managed-watchdog")
     if err := os.MkdirAll(watchdogTarget, 0700); err != nil { panic(err) }
-    for _, name := range []string{"main_windows.go", "main_windows_test.go", "recovery_acl_windows.go", "recovery_acl_windows_test.go", "programdata_lab_windows_test.go", "resident_recovery_audit_windows.go", "resident_recovery_audit_windows_test.go", "resident_journal_audit_windows.go", "resident_journal_audit_windows_test.go"} {
+    for _, name := range []string{"main_windows.go", "main_windows_test.go", "recovery_acl_windows.go", "recovery_acl_windows_test.go", "programdata_lab_windows_test.go", "resident_recovery_audit_windows.go", "resident_recovery_audit_windows_test.go", "resident_journal_audit_windows.go", "resident_journal_audit_windows_test.go", "resident_recovery_chain_windows.go", "resident_recovery_chain_windows_test.go"} {
         data, err := os.ReadFile(filepath.Join(srcDir, "watchdogcmd", name)); if err != nil { panic(err) }
         formatted, err := format.Source(data); if err != nil { panic(err) }
         if err := os.WriteFile(filepath.Join(watchdogTarget, name), formatted, 0600); err != nil { panic(err) }
