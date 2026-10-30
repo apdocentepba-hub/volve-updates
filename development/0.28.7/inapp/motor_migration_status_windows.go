@@ -37,6 +37,13 @@ func motorMigrationStatus(
     if info,err:=os.Lstat(exe);err!=nil || !info.Mode().IsRegular() {
         return "no se pudo verificar el ejecutable DNS instalado; no se instalará"
     }
+    // Prefer an explicitly published signed migration permission when present.
+    // A partial/invalid permit fails closed; it cannot silently fall back
+    // to a less constrained legacy identity path.
+    if result, found := preparedSignedLegacyMigrationStatus(
+        ctx, installDir, candidate, panelVersion, key, elevated, preflight,
+        checkLegacyRecoveryACL,
+    ); found { return result }
     statement,err:=readBoundedProvenance(filepath.Join(installDir,legacyUpgradeStatement),4096)
     if errors.Is(err,os.ErrNotExist) {
         return "falta la constancia firmada del motor heredado; se requiere migración certificada por el editor, sin reinstalar"
