@@ -136,6 +136,16 @@ La CI de Windows **ejecuta el .exe completo compilado** con ese comando (no sola
 
 **Límites decisivos:** este es el **código DNS real ejecutado desde la aplicación completa**, pero **NO** es la ejecución del servicio productivo `runDNSService()` en el puerto 53 ni una prueba del servicio con el adaptador del sistema apuntando al DNS propio. No se instalaron tareas ni se ensayó un reinicio real de Windows. El futuro reemplazo del motor residente permanece bloqueado. Para cerrar el paso 2 aún falta ejecutar y revertir el servicio real en una VM aislada con la atestación legítima del motor 0.28.6 y un watchdog de recuperación.
 
+## PASO 2 — Catálogo Full real: 400.002 reglas y consultas DNS en Windows
+
+Se separó el cargador `fullEngineAt(root)` del acceso a `installRoot()` **sin cambiar la carga de producción**: `fullEngine()` sigue resolviendo la ubicación de instalación y utiliza el mismo parser de Hagezi Full, con su mínimo de 400.000 entradas y listas complementarias opcionales. Esto permite probar el comportamiento real desde `t.TempDir()` en lugar de leer o alterar un catálogo instalado.
+
+La prueba `real_catalog_motor_windows_test.go` construye un catálogo sintético **solo de prueba** con 400.002 dominios, verifica la carga con `fullEngineAt(root)`, inicia `dnsproxy.New(engine,...).Run()` sobre un puerto IPv4 UDP local temporal y comprueba tres respuestas NXDOMAIN por socket real. Además exige que se rechace tanto la ausencia del catálogo como un archivo con 300 registros. Nunca utiliza el puerto 53, modifica adaptadores, registra tareas ni cambia las reglas instaladas del usuario.
+
+**CI confirmado:** [GitHub Actions #41044219957](https://github.com/apdocentepba-hub/volve-updates/actions/runs/41044219957): **3 de 3 trabajos aprobados** (Linux, Windows y reversión). Pruebas de catálogo: `TestActualFullCatalogRejectsMissingFileAndShortCatalog` OK y `TestActualFullCatalogLoadsAndBlocksOnLiveWindowsUDP` OK (400.002 reglas, tres respuestas bloqueadas).
+
+**Límite:** no se ha probado todavía `runDNSService()` completo escuchando IPv4/IPv6 en puerto 53, cargando un catálogo real de producción en una máquina virtual desechable ni sobreviviendo a un reinicio de Windows. El reemplazo de la tarea productiva sigue mecánicamente bloqueado. Siguiente objetivo: ensayo aislado del servicio residente con el catálogo real y reversión independiente del proceso.
+
 ## Lo que falta para una actualización del motor sin reinstalar
 
 - Registrar y verificar la versión/identidad real del motor que está instalado (no deducir de nombre de archivo).
