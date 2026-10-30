@@ -63,7 +63,46 @@ func probeResidentDNS(ctx context.Context,network,address string,qtype uint16)er
   binary.BigEndian.Uint16(response[6:8])==0 || !bytes.Equal(response[12:len(request)],request[12:]) {
   return errors.New("DNS reply truncated, mismatched, failed or without any answer")
  }
+ if !hasResidentDNSAddress(response,len(request),qtype) {
+  return errors.New("DNS reply has no valid matching A/AAAA resource record")
+ }
  return nil
+}
+
+// Verify an actual address RR, not just an ANCOUNT field with no RDATA.
+// Safely skip compressed or uncompressed owner names without dereferencing
+// compression pointers. Reject truncated or malformed resource records.
+func hasResidentDNSAddress(reply []byte, off int, qtype uint16) bool {
+ answers:=int(binary.BigEndian.Uint16(reply[6:8]))
+ if answers<1||answers>64{return false}
+ for n:=0;n<answers;n++ {
+  if off>=len(reply){return false}
+  for labels:=0;labels<128;labels++{
+   if off>=len(reply){return false}
+   size:=reply[off]
+   if size&0xc0==0xc0{
+    if off+2>len(reply){return false}
+    pointer:=int(size&0x3f)<<8|int(reply[off+1])
+    if pointer>=off{return false}
+    off+=2;break
+   }
+   if size&0xc0!=0{return false}
+   off++
+   if size==0{break}
+   if size>63||off+int(size)>len(reply){return false}
+   off+=int(size)
+   if labels==127{return false}
+  }
+  if off+10>len(reply){return false}
+  recordType:=binary.BigEndian.Uint16(reply[off:off+2])
+  recordClass:=binary.BigEndian.Uint16(reply[off+2:off+4])
+  dataLen:=int(binary.BigEndian.Uint16(reply[off+8:off+10]))
+  off+=10
+  if off+dataLen>len(reply){return false}
+  if recordType==qtype&&recordClass==1&&((qtype==1&&dataLen==4)||(qtype==28&&dataLen==16)){return true}
+  off+=dataLen
+ }
+ return false
 }
 
 // ProbeResidentInternetAt checks direct external TCP reachability, independent
