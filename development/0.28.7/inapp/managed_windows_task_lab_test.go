@@ -252,3 +252,17 @@ func TestNativeMotorTaskRestoreRejectsTamperedBackup(t *testing.T) {
         t.Fatalf("tampered snapshot changed the SYSTEM task: %q %q %v",exe,args,err)
     }
 }
+
+func TestNativeMotorTaskProductionSwitchBlockedWithoutWatchdog(t *testing.T) {
+    // This intentionally does not query or modify the resident Windows task.
+    // It enforces that no future panel caller can accidentally activate a
+    // signed candidate before independent motor recovery has been proved.
+    err:=switchVerifiedMotorTaskAction(
+        context.Background(),dnsServiceTask,
+        filepath.Join(os.Getenv("WINDIR"),"System32","not-a-motor.exe"),
+        "--dns-service","C:\\invalid\\untrusted.exe","--dns-service",nil,
+    )
+    if err==nil || !strings.Contains(err.Error(),"watchdog") {
+        t.Fatalf("production switch should be mechanically disabled: %v",err)
+    }
+}
