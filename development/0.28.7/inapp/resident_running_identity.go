@@ -17,9 +17,13 @@ type ResidentRunningEvidence struct {
  TaskFolder string `json:"task_folder"`
  TaskPrincipal string `json:"task_principal"`
  TaskState string `json:"task_state"`
+ TaskActionCount int `json:"task_action_count"`
  TaskActionExecute string `json:"task_action_execute"`
  TaskActionArguments string `json:"task_action_arguments"`
  ProcessCount int `json:"process_count"`
+ ProcessID int `json:"process_id"`
+ DNSIPv4OwnerPID int `json:"dns_ipv4_owner_pid"`
+ DNSIPv6OwnerPID int `json:"dns_ipv6_owner_pid"`
  ProcessPath string `json:"process_path"`
  ProcessCommandLine string `json:"process_command_line"`
  ProcessOwnerSID string `json:"process_owner_sid"`
@@ -44,7 +48,10 @@ func CheckResidentRunningEvidence(observed ResidentRunningEvidence, expectedPath
  }
  if observed.TaskActionArguments!="--dns-service" ||
     !strings.EqualFold(observed.TaskActionExecute,expectedPath) ||
-    observed.ProcessCount!=1 || observed.ProcessOwnerSID!="S-1-5-18" ||
+    observed.TaskActionCount!=1 || observed.ProcessCount!=1 ||
+    observed.ProcessID<=0 || observed.DNSIPv4OwnerPID!=observed.ProcessID ||
+    observed.DNSIPv6OwnerPID!=observed.ProcessID ||
+    observed.ProcessOwnerSID!="S-1-5-18" ||
     !strings.EqualFold(observed.ProcessPath,expectedPath) ||
     observed.DiskSHA256!=expectedSHA {
   return errors.New("running motor task/process/path/disk SHA-256 mismatch")
