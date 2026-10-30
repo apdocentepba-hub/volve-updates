@@ -15,6 +15,8 @@ import (
     "os"
     "path/filepath"
     "strings"
+    "unicode/utf16"
+    "unicode/utf8"
 
     "volve-browser-protection/motorupdate"
 )
@@ -40,12 +42,56 @@ type residentTaskXML struct {
     } `xml:"Actions"`
 }
 
+// Task Scheduler commonly exports XML declared as UTF-16 even when the
+// PowerShell wrapper serializes its returned string as UTF-8. Accept both
+// canonical UTF-16 BOM bytes and valid UTF-8 text with that declaration,
+// WITHOUT changing the original bytes whose SHA-256 was already checked.
+func normalizeResidentXML(data []byte)([]byte,error) {
+    if len(data)<100 || len(data)>maxXML {
+        return nil,errors.New("resident XML outside bounded size")
+    }
+    var s string
+    if len(data)>=2 && ((data[0]==0xff && data[1]==0xfe) || (data[0]==0xfe && data[1]==0xff)) {
+        if (len(data)-2)%2!=0{return nil,errors.New("truncated resident UTF-16 XML")}
+        little:=data[0]==0xff
+        units:=make([]uint16,(len(data)-2)/2)
+        for i:=range units {
+            a,b:=data[2+i*2],data[3+i*2]
+            if little {units[i]=uint16(a)|uint16(b)<<8} else {units[i]=uint16(b)|uint16(a)<<8}
+        }
+        s=string(utf16.Decode(units))
+        if strings.ContainsRune(s,'\uFFFD'){return nil,errors.New("malformed resident UTF-16 XML")}
+    }else{
+        if !utf8.Valid(data) || bytes.IndexByte(data,0)>=0 {
+            return nil,errors.New("resident XML is not valid UTF-8 or BOM-marked UTF-16")
+        }
+        s=string(data)
+        s=strings.TrimPrefix(s,"\uFEFF")
+    }
+    if strings.HasPrefix(s,"<?xml") {
+        end:=strings.Index(s,"?>")
+        if end<0 || end>200{return nil,errors.New("resident XML declaration invalid")}
+        upper:=strings.ToUpper(s[:end])
+        for _,encoding:=range []string{"UTF-16LE","UTF-16BE","UTF-16"} {
+            i:=strings.Index(upper,encoding)
+            if i>=0 {
+                s=s[:i]+"UTF-8"+s[i+len(encoding):]
+                break
+            }
+        }
+    }
+    if len(s)>maxXML {return nil,errors.New("normalized resident XML oversized")}
+    return []byte(s),nil
+}
+
 func validateResidentTaskXML(data []byte, expectedExe string) error {
     if len(data)<100 || len(data)>maxXML || !filepath.IsAbs(expectedExe) {
         return errors.New("resident SYSTEM XML or executable path invalid")
     }
+    normalized,err:=normalizeResidentXML(data)
+    if err!=nil{return err}
     var task residentTaskXML
-    if err:=xml.Unmarshal(data,&task);err!=nil{return fmt.Errorf("resident task XML invalid: %w",err)}
+    if err:=xml.Unmarshal(normalized,&task);err!=nil{return fmt.Errorf("resident task XML invalid: %w",err)}
     if task.XMLName.Local!="Task" || len(task.Principals)!=1 ||
        len(task.Principals[0].Principal)!=1 || len(task.Actions)!=1 ||
        len(task.Actions[0].Exec)!=1 {
