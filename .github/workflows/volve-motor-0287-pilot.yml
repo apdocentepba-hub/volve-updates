@@ -129,6 +129,17 @@ jobs:
         run: |
           go run development/0.28.7/inapp/apply_overlay.go build/codigo
           if($LASTEXITCODE -ne 0){throw 'Unified updater source overlay failed'}
+      - name: Inspect isolated DNS service entrypoints for safe native loopback tests
+        shell: pwsh
+        working-directory: build/codigo
+        run: |
+          $ErrorActionPreference='Stop'
+          Write-Host 'DNS SERVICE ENTRYPOINTS'
+          Get-ChildItem -Recurse -Filter '*.go' -File | Where-Object {$_.FullName -match 'dnsprod|dnsproxy|dnsactivation|dnspreflight'} | Select-Object -ExpandProperty FullName
+          Write-Host 'DNS ENTRYPOINT DEFINITIONS'
+          Get-ChildItem -Recurse -Filter '*.go' -File | Where-Object {$_.FullName -match 'dnsprod|dnsproxy'} | ForEach-Object { Select-String -LiteralPath $_.FullName -Pattern '^func ','^type ','net.Listen','ListenPacket','127.0.0.1','dns-service' | Select-Object -First 60 | ForEach-Object { Write-Host ($_.Path+':'+$_.LineNumber+' '+$_.Line.Trim()) } }
+          Write-Host 'DNSPROXY TEST API'
+          Get-ChildItem dnsproxy -Filter '*test.go' | ForEach-Object { Get-Content $_.FullName -TotalCount 135 }
       - name: Run updater tests on Windows
         working-directory: build/codigo
         shell: pwsh
