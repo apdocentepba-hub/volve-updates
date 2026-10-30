@@ -158,6 +158,13 @@ jobs:
           $ErrorActionPreference='Stop'
           go test . -run TestIndependentWatchdogRestoresAfterUpdaterExit -count=1 -timeout 3m -v
           if($LASTEXITCODE -ne 0){throw 'Independent watchdog integration failed'}
+      - name: Prove separate watchdog runs under actual SYSTEM identity (pilot task only)
+        shell: pwsh
+        working-directory: build/codigo
+        run: |
+          $ErrorActionPreference='Stop'
+          go test . -run TestIndependentMotorWatchdogRunsAsSYSTEM -count=1 -timeout 2m -v
+          if($LASTEXITCODE -ne 0){throw 'Independent SYSTEM recovery verification failed'}
       - name: Exercise signed managed transaction against disposable SYSTEM task
         shell: pwsh
         working-directory: build/codigo
