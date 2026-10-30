@@ -32,27 +32,60 @@ func hasStandaloneRollbackToken(output, token string) bool {
     return false
 }
 
+// checkLegacyRecoveryACL inspects the recovery directory AND each immediate
+// file/subdirectory. A directory-only DACL check is insufficient: a standard
+// account may gain write access to a recovery executable, XML or receipt via
+// an explicit file ACE without changing the containing directory's DACL.
+//
+// This verifier is read-only. It does not repair permissions or grant access.
+// Recovery snapshot integrity hashes are checked separately by motorupdate.
 func checkLegacyRecoveryACL(dir string) error {
-    if !filepath.IsAbs(dir){return errors.New("rollback path must be absolute")}
-    info,err:=os.Lstat(dir);if err!=nil{return err}
+    if !filepath.IsAbs(dir) { return errors.New("rollback path must be absolute") }
+    info,err:=os.Lstat(dir)
+    if err!=nil { return err }
     if !info.IsDir() || info.Mode()&os.ModeSymlink!=0 {
         return errors.New("rollback directory cannot be a junction or file")
     }
-    script:=`$ErrorActionPreference='Stop';$p=`+psQuote(dir)+`;`+
-      `$a=[System.IO.Directory]::GetAccessControl($p);`+
+    entries,err:=os.ReadDir(dir)
+    if err!=nil { return err }
+    // Recovery has exactly three data files; the parent has one snapshot
+    // directory. Fail closed on surprising extra entries instead of accepting
+    // an unlimited untrusted directory enumeration.
+    if len(entries)>8 { return errors.New("unexpected number of rollback entries") }
+    paths:=[]string{dir}
+    for _,entry:=range entries {
+        path:=filepath.Join(dir,entry.Name())
+        fi,statErr:=os.Lstat(path)
+        if statErr!=nil { return statErr }
+        if fi.Mode()&os.ModeSymlink!=0 || (!fi.IsDir() && !fi.Mode().IsRegular()) {
+            return errors.New("rollback entry cannot be a link or special file")
+        }
+        paths=append(paths,path)
+    }
+    quoted:=make([]string,0,len(paths))
+    for _,path:=range paths { quoted=append(quoted,psQuote(path)) }
+    script:=`$ErrorActionPreference='Stop';$ProgressPreference='SilentlyContinue';`+
+      `$paths=@(`+strings.Join(quoted,",")+`);`+
       `$allowed=@('S-1-5-18','S-1-5-32-544');`+
-      `foreach($entry in $a.Access){`+
-      ` if($entry.AccessControlType -ne [Security.AccessControl.AccessControlType]::Allow){continue};`+
-      ` $sid=$entry.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value;`+
-      ` if($sid -notin $allowed){throw ('Unsafe rollback ACL: '+$sid)}`+
-      `};`+
-      `$granted=@($a.Access|Where-Object{$_.AccessControlType -eq 'Allow'}|`+
-      `ForEach-Object{$_.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value});`+
-      `foreach($sid in $allowed){if($sid -notin $granted){throw ('Missing rollback ACL: '+$sid)}};`+
-      `Write-Output 'ROLLBACK_ACL_OK'`
+      `foreach($p in $paths){`+
+      ` $attr=[IO.File]::GetAttributes($p);`+
+      ` if(($attr -band [IO.FileAttributes]::ReparsePoint) -ne 0){throw ('Unsafe rollback reparse point: '+$p)};`+
+      ` if([IO.Directory]::Exists($p)){$a=[IO.Directory]::GetAccessControl($p)}`+
+      ` else{$a=[IO.File]::GetAccessControl($p)};`+
+      ` foreach($ace in $a.GetAccessRules($true,$true,[Security.Principal.SecurityIdentifier])){`+
+      `  if($ace.AccessControlType -ne [Security.AccessControl.AccessControlType]::Allow){continue};`+
+      `  if($ace.IdentityReference.Value -notin $allowed){throw ('Unsafe rollback ACL: '+$ace.IdentityReference.Value+' on '+$p)}`+
+      ` };`+
+      ` $granted=@($a.GetAccessRules($true,$true,[Security.Principal.SecurityIdentifier])|`+
+      `  Where-Object{$_.AccessControlType -eq [Security.AccessControl.AccessControlType]::Allow}|`+
+      `  ForEach-Object{$_.IdentityReference.Value});`+
+      ` foreach($sid in $allowed){if($sid -notin $granted){throw ('Missing rollback ACL: '+$sid+' on '+$p)}};`+
+      `};Write-Output 'ROLLBACK_ACL_OK'`
     out,err:=runPS(script)
-    if err!=nil{return fmt.Errorf("rollback ACL not trusted: %w",err)}
-    if !hasStandaloneRollbackToken(out,"ROLLBACK_ACL_OK"){return fmt.Errorf("ambiguous ACL verification: %q",out)}
+    if err!=nil { return fmt.Errorf("rollback ACL not trusted: %w",err) }
+    if !hasStandaloneRollbackToken(out,"ROLLBACK_ACL_OK") {
+        return fmt.Errorf("ambiguous ACL verification: %q",out)
+    }
     return nil
 }
 
