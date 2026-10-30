@@ -283,6 +283,26 @@ jobs:
           if(-not $env:VOLVE_CI_MANAGED_WATCHDOG_EXE){throw 'Independent watchdog is absent'}
           go test . -run TestCompleteApplicationCandidateSystemTaskRecovery -count=1 -timeout 3m -v
           if($LASTEXITCODE -ne 0){throw 'Compiled binary and isolated SYSTEM rollback test failed'}
+      - name: Step 2 - Execute full signed VOLVE DNS engine as disposable SYSTEM task and independently recover
+        shell: pwsh
+        working-directory: build/codigo
+        run: |
+          $ErrorActionPreference='Stop'
+          if($env:GITHUB_ACTIONS -ne 'true' -or $env:RUNNER_ENVIRONMENT -ne 'github-hosted'){throw 'Refusing non-ephemeral runner'}
+          $vm=Get-CimInstance -ClassName Win32_ComputerSystem -ErrorAction Stop
+          if(($vm.Manufacturer+' '+$vm.Model) -notmatch '(?i:virtual machine|vmware|qemu|kvm|virtualbox|hyper-v|parallels|hvm)'){throw 'Refusing non-VM environment'}
+          if(Get-ScheduledTask -TaskName 'VOLVE-DNS-SERVER-0270' -ErrorAction SilentlyContinue){throw 'Production DNS task present'}
+          if(-not $env:VOLVE_CI_MANAGED_WATCHDOG_EXE){throw 'Independent SYSTEM watchdog not compiled'}
+          $env:VOLVE_CI_REAL_CENTRO_EXE=(Resolve-Path 'VOLVE_0287_PILOT_NO_INSTALL.exe').Path
+          $dnsBefore=Get-DnsClientServerAddress | Sort-Object InterfaceIndex,AddressFamily | Select-Object InterfaceIndex,AddressFamily,ServerAddresses | ConvertTo-Json -Compress -Depth 6
+          try {
+            go test . -run '^TestSignedRealVOLVECandidateRunsDNSAsSYSTEMThenRecovers$' -count=1 -timeout 3m -v
+            if($LASTEXITCODE -ne 0){throw 'Signed real candidate SYSTEM execution and recovery did not pass'}
+          } finally {
+            $dnsAfter=Get-DnsClientServerAddress | Sort-Object InterfaceIndex,AddressFamily | Select-Object InterfaceIndex,AddressFamily,ServerAddresses | ConvertTo-Json -Compress -Depth 6
+            if($dnsBefore -cne $dnsAfter){throw 'DNS adapter configuration changed during disposable SYSTEM test'}
+          }
+          Write-Host 'PASS: real signed VOLVE binary performed loopback DNS checks under SYSTEM and independent watchdog restored task'
       - name: Build isolated recovery journal helper
         shell: pwsh
         working-directory: build/codigo
