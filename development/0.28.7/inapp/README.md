@@ -156,6 +156,16 @@ Prueba `TestResidentDualStackDNSFullCatalogFromRealRunner`: desde una carpeta te
 
 **NO equivale a una actualización productiva probada.** Este ensayo no abrió el puerto 53, no actualizó ni arrancó la tarea `VOLVE-DNS-SERVER-0270`, no utilizó el catálogo real del usuario, no configuró Windows para consumir el DNS propio, no reinició una VM y no probó que el motor instalado sobreviva a la actualización. El paso 2 sigue pendiente de un laboratorio VM desechable con el motor real, puente de versión firmado y recuperación independiente verificable tras reinicio, antes de desbloquear el actualizador productivo.
 
+## PASO 2 — Primer ensayo en puerto DNS real 53, Windows VM alojada en GitHub
+
+Se añadió `dns_port53_hosted_vm_windows_test.go`, que **solo permite** abrir `127.0.0.1:53` y `[::1]:53` en una **máquina virtual Windows efímera alojada por GitHub**. Se exige además una autorización de CI explícita, comprobación del entorno virtual, ausencia de las tareas productivas `VOLVE-DNS-SERVER-0270` y `VOLVE-DNS-RESCUE-0270` y disponibilidad de los cuatro listeners locales (UDP/TCP de ambas familias) ANTES de la prueba. Fuera de ese entorno, el ensayo se niega a ejecutarse.
+
+El test comparte `runDNSServiceAt()` con la ruta productiva `--dns-service`. Construye 400.002 reglas de laboratorio en carpeta temporal, usa un upstream ficticio local y levanta el DNS residente en el **puerto 53 real**. Ejecuta por UDP consultas en IPv4 e IPv6: **cuatro NXDOMAIN y dos respuestas permitidas**. Al finalizar cancela el proceso y comprueba que el servidor deja de ejecutarse. GitHub Actions compara antes y después los servidores DNS configurados en los adaptadores de Windows y rechaza cualquier diferencia. No instala ni modifica tareas, ni configura Windows para usar ese DNS.
+
+**Resultado comprobado:** [GitHub Actions #41049825576](https://github.com/apdocentepba-hub/volve-updates/actions/runs/41049825576), **3/3 trabajos aprobados**. El log Windows incluye `TestResidentDNSPort53GitHubHostedVM PASS (0.48s)`: `real resident DNS loopback 53, IPv4 + IPv6, Full 400002, 4 NXDOMAIN, 2 forwarded`.
+
+**Límite:** lo probado es la rutina real del servicio ejecutada dentro del proceso de pruebas en una VM Windows efímera, **no** la tarea SYSTEM productiva con su ejecutable instalado, el catálogo real del usuario ni una recuperación después de reiniciar. La instalación 0.28.6 del usuario no se ha modificado y el cambio de la tarea productiva sigue bloqueado. Siguiente objetivo: ensayo de instalación, conmutación de motor y watchdog tras un **reinicio real de VM**, con constancia firmada auténtica del motor heredado.
+
 ## Lo que falta para una actualización del motor sin reinstalar
 
 - Registrar y verificar la versión/identidad real del motor que está instalado (no deducir de nombre de archivo).
