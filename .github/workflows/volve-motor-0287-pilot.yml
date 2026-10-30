@@ -292,6 +292,9 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference='Stop'
+          # Enable TaskScheduler history only on the disposable GitHub runner.
+          & wevtutil.exe sl 'Microsoft-Windows-TaskScheduler/Operational' /e:true
+          if($LASTEXITCODE -ne 0){throw 'Unable to enable disposable runner Task Scheduler history'}
           $script=Join-Path $env:GITHUB_WORKSPACE 'development/0.28.7/lab/vm_reboot_proof.ps1'
           $lab=Join-Path $env:GITHUB_WORKSPACE 'development/0.28.7/lab/boot_recovery_lab.ps1'
           $helper=Join-Path $env:RUNNER_TEMP 'volve-journal-lab.exe'
@@ -299,6 +302,20 @@ jobs:
           $kit=Join-Path $env:ProgramData ('VOLVE-VM-RebootLab-'+$trialId)
           try {
             & $script -Mode Prepare -RunId $trialId -LabScript $lab -JournalExe $helper
+            # Deliberately trigger the watchdog by hand. It must NOT be counted
+            # as a real reboot even when recovery itself succeeds under SYSTEM.
+            $bootTask='VOLVE-CI-BootRecovery-'+$trialId
+            $root=Join-Path $kit ('VOLVE-CI-BOOT-'+$trialId)
+            $success=Join-Path $root 'boot-recovery-success.marker'
+            $failure=Join-Path $root 'boot-recovery-failed.marker'
+            Start-ScheduledTask -TaskName $bootTask
+            $deadline=[DateTime]::UtcNow.AddSeconds(60)
+            while([DateTime]::UtcNow -lt $deadline) {
+              if(Test-Path -LiteralPath $failure -PathType Leaf){throw ('Manual recovery failed: '+[IO.File]::ReadAllText($failure))}
+              if(Test-Path -LiteralPath $success -PathType Leaf){break}
+              Start-Sleep -Milliseconds 500
+            }
+            if(-not (Test-Path -LiteralPath $success -PathType Leaf)){throw 'Manual SYSTEM recovery did not complete'}
             $rejected=$false
             try { & $script -Mode Verify -RunId $trialId }
             catch {
@@ -306,7 +323,7 @@ jobs:
               else {throw}
             }
             if(-not $rejected){throw 'Security regression: VM rehearsal passed without a reboot'}
-            Write-Host 'PASS: VM proof requires an actual new boot and rejects same-boot verification.'
+            Write-Host 'PASS: manual SYSTEM watchdog recovery cannot masquerade as a real VM reboot.'
           } finally {
             if(Test-Path -LiteralPath $kit -PathType Container){
               & $script -Mode Cleanup -RunId $trialId
