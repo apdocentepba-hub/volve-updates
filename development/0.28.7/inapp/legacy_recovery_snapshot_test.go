@@ -118,3 +118,51 @@ func TestUnversionedRecoveryRequiresProtectedDestinationOnRead(t *testing.T){
         t.Fatal("weak ACL accepted for restore")
     }
 }
+
+
+// A failed OS sealing callback must not publish a partially trusted fallback.
+func TestUnversionedRecoverySealingFailureNeverPublishesBackup(t *testing.T) {
+    exe,xml,dest:=legacyRecoveryFixture(t)
+    calls:=[]string{}
+    failOnReceipt:=func(path string) error {
+        calls=append(calls,filepath.Base(path))
+        if filepath.Base(path)==legacyBackupReceipt {
+            return errors.New("synthetic NTFS owner/DACL seal failure")
+        }
+        return nil
+    }
+    _,err:=PrepareUnversionedLegacyRecoveryWithSealing(context.Background(),
+        exe,xml,dest,testSecureLabFolder,failOnReceipt)
+    if err==nil || !strings.Contains(err.Error(),"seal") {
+        t.Fatalf("failed seal was accepted: %v",err)
+    }
+    if _,statErr:=os.Lstat(dest);!errors.Is(statErr,os.ErrNotExist) {
+        t.Fatalf("unsealed recovery was published: %v",statErr)
+    }
+    if len(calls)!=4 || calls[0]==legacyBackupReceipt {
+        t.Fatalf("unexpected sealing order: %#v",calls)
+    }
+    if original,e:=os.ReadFile(exe);e!=nil || string(original)!="MZ_ci_known_running_legacy_engine_fixed_bytes" {
+        t.Fatalf("sealing failure changed the resident motor: %v",e)
+    }
+}
+
+func TestUnversionedRecoverySealingCallsAllFourNewNodes(t *testing.T) {
+    exe,xml,dest:=legacyRecoveryFixture(t)
+    calls:=map[string]int{}
+    seal:=func(path string)error{
+        calls[filepath.Base(path)]++
+        if _,err:=os.Lstat(path);err!=nil{return err}
+        return nil
+    }
+    got,err:=PrepareUnversionedLegacyRecoveryWithSealing(context.Background(),
+        exe,xml,dest,testSecureLabFolder,seal)
+    if err!=nil{t.Fatal(err)}
+    if len(calls)!=4 || calls[legacyBackupExe]!=1 ||
+       calls[legacyBackupXML]!=1 || calls[legacyBackupReceipt]!=1 {
+        t.Fatalf("missing or repeated sealing callback: %#v",calls)
+    }
+    if saved,err:=VerifyUnversionedLegacyRecovery(dest,testSecureLabFolder);err!=nil || saved!=got {
+        t.Fatalf("sealed recovery integrity not preserved: %v",err)
+    }
+}
