@@ -42,7 +42,7 @@ export function SiteFooter() {
         </div>
       </div>
       <div className="border-t border-deep-foreground/15">
-        <p className="container-v py-5 text-xs opacity-60">© 2026 VOLVÉ · No solicitamos datos personales ni registramos tu navegación. El contador de visitas utiliza el servicio externo CounterAPI, que aplica medidas de anonimización. </p>
+        <p className="container-v py-5 text-xs opacity-60">© 2026 VOLVÉ · No solicitamos datos personales ni registramos tu navegación. El contador usa el servicio externo Visitor Badge; solo mostramos la cantidad agregada de visitas. </p>
       </div>
     </footer>
   );
