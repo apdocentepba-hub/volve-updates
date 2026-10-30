@@ -70,14 +70,21 @@ func restoreResidentPilotSYSTEMTaskWithRunner(ctx context.Context,root,pilotTask
   `if(-not [IO.File]::Exists($original)){throw 'Legacy motor missing'};`+
   `$motorDigest=(Get-FileHash -LiteralPath $original -Algorithm SHA256).Hash.ToLowerInvariant();`+
   `if($motorDigest -cne $oldHash){throw 'Legacy motor changed before restore'};`+
-  `$xmlDigest=(Get-FileHash -LiteralPath $xmlFile -Algorithm SHA256).Hash.ToLowerInvariant();`+
-  `if($xmlDigest -cne $xmlHash){throw 'Original task XML changed before import'};`+
+  // Hash the exact XML byte array being imported; two separate file reads
+  // would leave a change-between-check-and-use window.
   `$xmlBytes=[IO.File]::ReadAllBytes($xmlFile);`+
+  `$hasher=[Security.Cryptography.SHA256]::Create();`+
+  `try{$xmlDigest=[BitConverter]::ToString($hasher.ComputeHash($xmlBytes)).Replace('-','').ToLowerInvariant()}`+
+  `finally{$hasher.Dispose()};`+
+  `if($xmlDigest -cne $xmlHash){throw 'Original task XML changed before import'};`+
   `$bom16=($xmlBytes.Length -ge 2 -and `+
    `(($xmlBytes[0] -eq 255 -and $xmlBytes[1] -eq 254) -or `+
    `($xmlBytes[0] -eq 254 -and $xmlBytes[1] -eq 255)));`+
-  `if($bom16){$saved=[IO.File]::ReadAllText($xmlFile)}else{`+
-   `$utf8=[Text.UTF8Encoding]::new($false,$true);$saved=$utf8.GetString($xmlBytes)};`+
+  `if($bom16){`+
+  `if($xmlBytes[0] -eq 255){$enc=[Text.Encoding]::Unicode}`+
+  `else{$enc=[Text.Encoding]::BigEndianUnicode};`+
+  `$saved=$enc.GetString($xmlBytes,2,$xmlBytes.Length-2)`+
+  `}else{$utf8=[Text.UTF8Encoding]::new($false,$true);$saved=$utf8.GetString($xmlBytes)};`+
   `$saved=[regex]::Replace($saved,'(?i)(encoding\s*=\s*["''])(UTF-16LE|UTF-16BE|UTF-16)(["''])','$1UTF-8$3');`+
   `Register-ScheduledTask -TaskName $taskName -TaskPath '\' -Xml $saved -Force -ErrorAction Stop|Out-Null;`+
   `$restored=Get-ScheduledTask -TaskName $taskName -TaskPath '\' -ErrorAction Stop;`+
