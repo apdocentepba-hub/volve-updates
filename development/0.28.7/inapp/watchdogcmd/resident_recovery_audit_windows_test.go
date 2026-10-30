@@ -71,6 +71,11 @@ func TestResidentTaskXMLRequiresExactSYSTEMAction(t *testing.T) {
     if err:=validateResidentTaskXML(residentTestXML(exe,"S-1-5-18","--dns-service",false),exe);err!=nil{
         t.Fatalf("valid exported task XML rejected: %v",err)
     }
+    hidden:=string(residentTestXML(exe,"SYSTEM","--dns-service",false))
+    hidden=strings.Replace(hidden,"</Actions>","<ComHandler><ClassId>{00000000-0000-0000-0000-000000000000}</ClassId></ComHandler></Actions>",1)
+    if err:=validateResidentTaskXML([]byte(hidden),exe);err==nil{
+        t.Fatal("extra ComHandler task action accepted beside DNS Exec")
+    }
     for _,tc:=range []struct{name,principal,args,exe string;extra bool}{
         {"user-principal","S-1-5-21-1234","--dns-service",exe,false},
         {"wrong-argument","SYSTEM","--disable-protection",exe,false},
