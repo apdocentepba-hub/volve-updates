@@ -116,6 +116,16 @@ Las pruebas Windows generan atestaciones y candidatos **de laboratorio** con una
 
 **Limitación para avanzar al cambio real:** la atestación firmada para el motor heredado concreto de 0.28.6 **todavía no está publicada**. Por diseño este nuevo diagnóstico debe negarse a declarar elegible una instalación sin esa evidencia. También sigue activo el bloqueo expreso de `switchVerifiedMotorTaskAction` para `VOLVE-DNS-SERVER-0270`: no se ha habilitado el motor nuevo ni hay prueba de recuperación en un reinicio real de VM. El siguiente paso es generar/probar la atestación con el proceso legítimo del editor, enlazar el watchdog transaccional a una tarea productiva de prueba aislada y probar el arranque efectivo del motor.
 
+## PASO 2 — Ensayo con el ejecutable completo de VOLVÉ, sin ejecutar DNS
+
+Se agregó `complete_binary_action_recovery_windows_test.go` a las pruebas Windows. A diferencia del ensayo preliminar con Notepad, usa el **EXE completo del Centro VOLVÉ 0.28.7 compilado en CI** como paquete candidato, calcula su SHA-256, crea un manifiesto y firma **efímeros de laboratorio**, comprueba integridad Ed25519 y lo copia a una ubicación versionada. Esta firma **no es una firma de publicación**.
+
+El ensayo arma primero un journal de recuperación protegido con ACL para SYSTEM/Administradores, su respaldo XML y una tarea SYSTEM con disparador de arranque. Luego cambia **solamente** la acción de una tarea desechable `VOLVE-CI-ManagedMotor-*` para apuntar al ejecutable real compilado, verifica su firma y acción, activa el recuperador independiente en una segunda tarea SYSTEM, y comprueba que restaura la acción original y el journal `restored`.
+
+**Prueba real:** [GitHub Actions #41038998848](https://github.com/apdocentepba-hub/volve-updates/actions/runs/41038998848), **3/3 jobs exitosos**. El ensayo `TestCompleteApplicationCandidateSystemTaskRecovery` pasó en Windows en 9,11 segundos.
+
+**Límites:** el ejecutable compilado **NO se arrancó** en modo `--dns-service`, no se comprobó resolución real de DNS con él, no hubo cambio del adaptador ni reinicio de VM. El motor original del ensayo es `cmd.exe`, no el motor DNS real. El motor productivo `VOLVE-DNS-SERVER-0270` continúa mecánicamente bloqueado para el cambio. Aún falta la constancia firmada auténtica para el motor heredado instalado, un arranque real en VM aislada con recuperación del servicio DNS y pruebas de salud, antes de desplegar.
+
 ## Lo que falta para una actualización del motor sin reinstalar
 
 - Registrar y verificar la versión/identidad real del motor que está instalado (no deducir de nombre de archivo).
