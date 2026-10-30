@@ -74,6 +74,16 @@ La recuperación se ensayó con tareas temporales reales en Windows de dos maner
 
 **Límites importantes:** este recuperador tiene un filtro de seguridad estricto que **solo permite tareas de laboratorio `VOLVE-CI-ManagedMotor-*`** y no puede restaurar ni cambiar `VOLVE-DNS-SERVER-0270`. Todavía no se realizó una actualización real del motor DNS, ni se verificó la recuperación frente a un corte de energía de una VM real. Falta adaptar el mecanismo al servicio productivo con ACLs de SYSTEM, journal duradero independiente, verificación de inicio efectivo y una prueba real de reinicio durante actualización antes de permitir el despliegue.
 
+## Watchdog preparado antes de la conmutación y arranque de Windows
+
+- El laboratorio arma **primero** el respaldo XML duradero, el journal en fase `pending` y una tarea SYSTEM independiente con disparador `AtStartup`. Verifica identidad SYSTEM, ruta del recuperador y presencia de exactamente un disparador de arranque, **antes de conmutar** la tarea temporal del motor.
+- Luego conmuta una tarea exclusivamente `VOLVE-CI-ManagedMotor-*` y activa el watchdog como proceso independiente bajo SYSTEM. Confirma que recupera la tarea original y que el journal pasa a `restored`.
+- Una segunda prueba deja el journal en `committed` y comprueba que, aunque el watchdog SYSTEM se ejecute, **no restaura por error** la versión anterior.
+- El recuperador rechaza XML fuera de la carpeta de la transacción, directorios enlazados y respaldos modificados. Verifica SHA-256 en Go y de nuevo **en PowerShell sobre los bytes usados para importar** el XML, evitando reemplazos entre comprobación e importación.
+- **GitHub Actions aprobado:** [40987247654](https://github.com/apdocentepba-hub/volve-updates/actions/runs/40987247654), 3/3 trabajos (Windows, Linux y ensayo de recuperación del Programador de tareas).
+
+**Alcance real:** la tarea de laboratorio tiene disparador de arranque válido, pero **no se reinició físicamente ninguna máquina o VM durante esta batería**; el disparador se accionó manualmente en Windows para comprobar su funcionamiento. El watchdog sigue rechazando `VOLVE-DNS-SERVER-0270` y el botón de actualización **no puede reemplazar todavía el motor DNS de producción**. Antes de liberar la actualización falta probar la interrupción/reinicio real, controlar ACL de los respaldos persistentes, conservar y arrancar efectivamente el motor original y validar DNS/Internet después de la recuperación.
+
 ## Lo que falta para una actualización del motor sin reinstalar
 
 - Registrar y verificar la versión/identidad real del motor que está instalado (no deducir de nombre de archivo).
