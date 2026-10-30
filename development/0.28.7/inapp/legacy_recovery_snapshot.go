@@ -67,6 +67,19 @@ func PrepareUnversionedLegacyRecovery(
     ctx context.Context, liveExe string, validatedTaskXML []byte,
     dest string, protect func(string)error,
 ) (LegacyRecoveryRecord,error) {
+    return PrepareUnversionedLegacyRecoveryWithSealing(ctx,liveExe,validatedTaskXML,dest,protect,nil)
+}
+
+// PrepareUnversionedLegacyRecoveryWithSealing uses an optional OS-specific
+// one-way ACL/owner sealer on ONLY the newly-created staging directory and
+// files. It runs before the protected, no-overwrite rename into the final
+// backup location. Production Windows callers must supply a sealer AND a
+// strict verifier; legacy callers remain compatible but their output is not
+// sufficient evidence for the independent production watchdog.
+func PrepareUnversionedLegacyRecoveryWithSealing(
+    ctx context.Context, liveExe string, validatedTaskXML []byte,
+    dest string, protect func(string)error, sealNew func(string)error,
+) (LegacyRecoveryRecord,error) {
     var empty LegacyRecoveryRecord
     if err:=ctx.Err();err!=nil{return empty,err}
     if protect==nil{return empty,errors.New("no ACL verifier supplied")}
@@ -88,6 +101,9 @@ func PrepareUnversionedLegacyRecovery(
     tmp,err:=os.MkdirTemp(parent,".legacy-recovery-*")
     if err!=nil{return empty,err}
     defer os.RemoveAll(tmp)
+    if sealNew!=nil {
+        if err:=sealNew(tmp);err!=nil{return empty,fmt.Errorf("could not seal new staging directory: %w",err)}
+    }
     if err:=protect(tmp);err!=nil{return empty,fmt.Errorf("unsafe staging ACL: %w",err)}
     copyPath:=filepath.Join(tmp,legacyBackupExe)
     in,err:=os.Open(liveExe);if err!=nil{return empty,err}
@@ -119,6 +135,19 @@ func PrepareUnversionedLegacyRecovery(
     }
     raw,err:=json.Marshal(r);if err!=nil{return empty,err}
     if err:=writeSnapshotFile(filepath.Join(tmp,legacyBackupReceipt),append(raw,'\n'));err!=nil{return empty,err}
+    if sealNew!=nil {
+        // Never seal or replace the installed motor or an existing backup.
+        // All three files were created with O_EXCL in this private staging
+        // directory; refuse publication unless every descriptor is trusted.
+        for _,name:=range []string{legacyBackupExe,legacyBackupXML,legacyBackupReceipt}{
+            if err:=sealNew(filepath.Join(tmp,name));err!=nil{
+                return empty,fmt.Errorf("could not seal new recovery artifact %s: %w",name,err)
+            }
+        }
+        if err:=protect(tmp);err!=nil{
+            return empty,fmt.Errorf("new snapshot ownership/DACL not trusted: %w",err)
+        }
+    }
     if err:=ctx.Err();err!=nil{return empty,err}
     if _,err:=os.Lstat(dest);err==nil{return empty,errors.New("another backup exists; refusing overwrite")
     }else if !errors.Is(err,os.ErrNotExist){return empty,err}
