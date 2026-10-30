@@ -158,6 +158,14 @@ jobs:
           go test . -run '^TestActualFullCatalog' -count=1 -timeout 3m -v
           if($LASTEXITCODE -ne 0){throw 'Production DNS feed reader or live UDP block proof failed'}
           Write-Host 'PASS: real Full feed parser rejects missing/truncated catalog and processes >400k-rule DNS fixture'
+      - name: Prove publisher-signed one-time legacy SHA256 migration permit (NO production switch)
+        shell: pwsh
+        working-directory: build/codigo
+        run: |
+          $ErrorActionPreference='Stop'
+          go test ./motorupdate -run '^TestSignedUnversionedBridge' -count=1 -timeout 2m -v
+          if($LASTEXITCODE -ne 0){throw 'Signed legacy migration authorization or anti-tamper tests failed'}
+          Write-Host 'PASS: exact old engine and task XML, signed target and bounded permit; Windows production tasks/DNS unchanged'
       - name: Step 2 - Verify real Windows ACL and immutable local legacy DNS engine recovery snapshot
         shell: pwsh
         working-directory: build/codigo
