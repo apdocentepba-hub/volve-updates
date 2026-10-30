@@ -44,7 +44,7 @@ func journalAuditIdentity()motorupdate.ResidentRecoveryIntent{
  }
 }
 func TestWindowsResidentJournalAuditIsReadOnlyAndConservative(t *testing.T){
- if !isAdmin(){t.Skip("elevated Windows CI runner required")}
+ // Elevated Windows CI is required by hardenedTestACL; no application helper dependency.
  dir,seal,protect:=journalAuditFixture(t)
  original,err:=motorupdate.ArmResidentRecoveryIntent(context.Background(),dir,
   journalAuditIdentity(),seal,protect)
@@ -68,7 +68,7 @@ func TestWindowsResidentJournalAuditIsReadOnlyAndConservative(t *testing.T){
 }
 
 func TestWindowsResidentJournalAuditRejectsUnprotectedPathsAndTornWrites(t *testing.T){
- if !isAdmin(){t.Skip("elevated Windows CI runner required")}
+ // Elevated Windows CI is required by hardenedTestACL; no application helper dependency.
  root:=t.TempDir()
  if _,err:=auditResidentJournal(context.Background(),root);err==nil{
   t.Fatal("unrecognized journal path accepted")
