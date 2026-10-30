@@ -9,6 +9,7 @@ import (
     "context"
     "crypto/sha256"
     "encoding/hex"
+    "fmt"
     "os"
     "os/exec"
     "path/filepath"
@@ -31,6 +32,29 @@ func residentWindowsIntent() motorupdate.ResidentRecoveryIntent {
         TargetSHA256:digest("disposable candidate"),
         TargetVersion:"0.28.7",
     }
+}
+
+
+// Test-only protected original executable and original SYSTEM-task snapshot.
+// It uses bytes, not a real task or DNS engine.
+func prepareDisposableResidentFallback(t *testing.T,root string) motorupdate.ResidentRecoveryIntent {
+    t.Helper()
+    parent,err:=ensureSecureLegacyRecoveryParent(root)
+    if err!=nil{t.Fatal(err)}
+    oldExe:=filepath.Join(root,dnsServiceFile)
+    if err:=os.WriteFile(oldExe,[]byte("MZ-WINDOWS-CI-ORIGINAL-DNS-MOTOR-BYTES"),0600);err!=nil{t.Fatal(err)}
+    xml:=[]byte(fmt.Sprintf("<?xml version=\"1.0\" encoding=\"UTF-16\"?>"+
+        "<Task xmlns=\"http://schemas.microsoft.com/windows/2004/02/mit/task\">"+
+        "<Principals><Principal><UserId>S-1-5-18</UserId></Principal></Principals>"+
+        "<Actions><Exec><Command>%s</Command><Arguments>--dns-service</Arguments></Exec></Actions></Task>",oldExe))
+    record,err:=motorupdate.PrepareUnversionedLegacyRecoveryWithSealing(
+        context.Background(),oldExe,xml,filepath.Join(parent,localRecoverySnapshot),
+        checkSealedLegacyRecoveryACL,sealNewLegacyRecoveryNode)
+    if err!=nil{t.Fatal(err)}
+    intent:=residentWindowsIntent()
+    intent.LegacySHA256=record.ExeSHA256
+    intent.TaskXMLSHA256=record.XMLSHA256
+    return intent
 }
 
 func TestWindowsResidentJournalPathAllowlist(t *testing.T) {
@@ -66,12 +90,13 @@ func TestWindowsResidentJournalSetupAcceptedByIndependentWatchdog(t *testing.T) 
         t.Fatalf("compiled Windows watchdog not found: %v",err)
     }
     root:=t.TempDir()
+    intent:=prepareDisposableResidentFallback(t,root)
     dir,err:=ensureSecureResidentRecoveryJournalDir(root)
     if err!=nil{t.Fatal(err)}
     // Reopening an existing trusted directory never resets ownership/ACL.
     reopened,err:=ensureSecureResidentRecoveryJournalDir(root)
     if err!=nil || reopened!=dir{t.Fatalf("reopen of protected directory rejected: %v",err)}
-    intended,err:=armPreparedResidentJournal(context.Background(),root,residentWindowsIntent())
+    intended,err:=armPreparedResidentJournal(context.Background(),root,intent)
     if err!=nil{t.Fatal(err)}
     if intended.Nonce==""{t.Fatal("fresh intent has no nonce")}
     if err:=checkSealedResidentJournalACL(filepath.Join(dir,motorupdate.ResidentIntentFile));err!=nil{
@@ -114,7 +139,8 @@ func TestWindowsResidentJournalRejectsInsecureExistingDirectory(t *testing.T) {
 func TestWindowsResidentJournalRejectsWeakenedIntentACL(t *testing.T) {
     if !isAdmin(){t.Skip("elevated Windows CI required")}
     root:=t.TempDir()
-    if _,err:=armPreparedResidentJournal(context.Background(),root,residentWindowsIntent());err!=nil{
+    intent:=prepareDisposableResidentFallback(t,root)
+    if _,err:=armPreparedResidentJournal(context.Background(),root,intent);err!=nil{
         t.Fatal(err)
     }
     dir:=filepath.Join(root,localRecoveryFolder,localRecoveryJournal)
@@ -130,5 +156,29 @@ func TestWindowsResidentJournalRejectsWeakenedIntentACL(t *testing.T) {
     }
     if _,err:=os.Lstat(filepath.Join(dir,motorupdate.ResidentResultFile));!os.IsNotExist(err){
         t.Fatalf("unsafe journal published committed result: %v",err)
+    }
+}
+
+func TestWindowsResidentJournalRequiresMatchingSealedBackupBeforeArming(t *testing.T){
+    if !isAdmin(){t.Skip("elevated Windows CI required")}
+    root:=t.TempDir()
+    // Missing protected fallback must fail without creating a journal.
+    if _,err:=armPreparedResidentJournal(context.Background(),root,residentWindowsIntent());err==nil{
+        t.Fatal("journal armed without an original recovery snapshot")
+    }
+    intent:=prepareDisposableResidentFallback(t,root)
+    for _,kind:=range []string{"wrong-old-exe","wrong-system-task"}{
+        t.Run(kind,func(t *testing.T){
+            invalid:=intent
+            if kind=="wrong-old-exe"{invalid.LegacySHA256=strings.Repeat("0",64)
+            }else{invalid.TaskXMLSHA256=strings.Repeat("0",64)}
+            if _,err:=armPreparedResidentJournal(context.Background(),root,invalid);err==nil{
+                t.Fatalf("journal for mismatched %s armed",kind)
+            }
+            dir:=filepath.Join(root,localRecoveryFolder,localRecoveryJournal)
+            if _,err:=os.Lstat(dir);!os.IsNotExist(err){
+                t.Fatalf("invalid journal created directory: %v",err)
+            }
+        })
     }
 }
