@@ -18,7 +18,17 @@ func TestWindowsProtectedLocalLegacyRollbackBackup(t *testing.T) {
     if !isAdmin(){t.Skip("requires CI elevated Windows runner")}
     root:=t.TempDir()
     parent,err:=ensureSecureLegacyRecoveryParent(root)
-    if err!=nil{t.Fatal(err)}
+    if err!=nil{
+        inspected:=filepath.Join(root,localRecoveryFolder)
+        check:=`$ErrorActionPreference='Stop';$p=`+labQuote(inspected)+`;
+            & icacls.exe $p;
+            $a=Get-Acl -LiteralPath $p;
+            foreach($entry in $a.Access){Write-Output ('ACL '+$entry.IdentityReference+'; '+$entry.FileSystemRights+'; '+$entry.AccessControlType+'; inherited='+$entry.IsInherited)};
+            Write-Output ('Owner='+$a.Owner)`
+        details,detailErr:=labPS(check)
+        t.Logf("SAFE ACL diagnosis of disposable folder only: details=%s diagnostic_error=%v",details,detailErr)
+        t.Fatal(err)
+    }
     if err:=checkLegacyRecoveryACL(parent);err!=nil{t.Fatal(err)}
     oldExe:=filepath.Join(root,dnsServiceFile)
     if err:=os.WriteFile(oldExe,[]byte("MZ-CI-only-DNS-legacy-fixed-image"),0600);err!=nil{t.Fatal(err)}
