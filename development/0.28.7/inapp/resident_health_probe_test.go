@@ -54,3 +54,21 @@ func TestResidentHealthRealTCPAndDeniedTargets(t *testing.T){
   t.Fatalf("cancelled probe accepted: %v",err)
  }
 }
+
+func TestResidentHealthRejectsFakeAnswerCountWithoutAddress(t *testing.T) {
+ question:=[]byte{7,'e','x','a','m','p','l','e',3,'c','o','m',0,0,1,0,1}
+ reply:=append(make([]byte,12),question...)
+ reply[6]=0;reply[7]=1
+ header:=[]byte{0xc0,0x0c,0,1,0,1,0,0,0,30,0,4}
+ if hasResidentDNSAddress(append(append([]byte{},reply...),header...),len(reply),1) {
+  t.Fatal("header with ANCOUNT=1 but no actual A address was accepted")
+ }
+ complete:=append(append(append([]byte{},reply...),header...),1,2,3,4)
+ if !hasResidentDNSAddress(complete,len(reply),1) {
+  t.Fatal("complete and well-formed A answer rejected")
+ }
+ complete[len(reply)+11]=16
+ if hasResidentDNSAddress(complete,len(reply),1) {
+  t.Fatal("false RDLEN claiming extra bytes was trusted")
+ }
+}
