@@ -21,6 +21,17 @@ const localRecoverySnapshot="original-before-upgrade"
 // directory. An administrator-owned backup isn't a publisher attestation.
 // Its purpose is to remain a durable source of bytes for an independent
 // recovery transaction. No task or DNS state is changed.
+// Native Windows PowerShell may emit a CLIXML progress prelude while first
+// loading modules. Accept only an entire standalone success-token line,
+// never a substring embedded inside an error or diagnostic message.
+func hasStandaloneRollbackToken(output, token string) bool {
+    lines:=strings.Split(strings.ReplaceAll(output,"\r","\n"),"\n")
+    for _,line:=range lines {
+        if strings.TrimSpace(line)==token {return true}
+    }
+    return false
+}
+
 func checkLegacyRecoveryACL(dir string) error {
     if !filepath.IsAbs(dir){return errors.New("rollback path must be absolute")}
     info,err:=os.Lstat(dir);if err!=nil{return err}
@@ -41,7 +52,7 @@ func checkLegacyRecoveryACL(dir string) error {
       `Write-Output 'ROLLBACK_ACL_OK'`
     out,err:=runPS(script)
     if err!=nil{return fmt.Errorf("rollback ACL not trusted: %w",err)}
-    if strings.TrimSpace(out)!="ROLLBACK_ACL_OK"{return fmt.Errorf("ambiguous ACL verification: %q",out)}
+    if !hasStandaloneRollbackToken(out,"ROLLBACK_ACL_OK"){return fmt.Errorf("ambiguous ACL verification: %q",out)}
     return nil
 }
 
@@ -67,7 +78,7 @@ func ensureSecureLegacyRecoveryParent(root string)(string,error){
           `if($LASTEXITCODE -ne 0){throw 'Cannot protect legacy rollback directory'};`+
           `Write-Output 'ROLLBACK_ACL_CREATED'`
         out,e:=runPS(script)
-        if e!=nil || strings.TrimSpace(out)!="ROLLBACK_ACL_CREATED"{
+        if e!=nil || !hasStandaloneRollbackToken(out,"ROLLBACK_ACL_CREATED"){
             return "",fmt.Errorf("failed protecting rollback folder: %v, output %q",e,out)
         }
     }
