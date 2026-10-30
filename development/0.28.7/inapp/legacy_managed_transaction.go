@@ -16,6 +16,10 @@ import (
 type SignedLegacySwitchDriver interface {
     ManagedSwitchDriver
     IndependentRecoveryReady(context.Context, VerifiedLegacyMigrationProof) error
+    // Recheck the INSTALLED copy, not just the staged download. This call
+    // must validate signed manifest, SHA-256 and size under the versioned
+    // destination immediately before the last authorization/watchdog gate.
+    VerifyPreparedTarget(context.Context, Manifest) error
 }
 
 // ApplySignedLegacyWithRollback is transaction LOGIC only; it does not select
@@ -72,6 +76,9 @@ func ApplySignedLegacyWithRollback(
         return restoreManagedAndVerify(driver,fmt.Errorf("motor versionado no preparado: %w",err))
     }
     if err := ctx.Err(); err != nil { return restoreManagedAndVerify(driver,err) }
+    if err := driver.VerifyPreparedTarget(ctx,manifest); err != nil {
+        return restoreManagedAndVerify(driver,fmt.Errorf("copia instalada no auténtica o incompleta: %w",err))
+    }
     if err := protectBackup(filepath.Dir(backupDir)); err != nil {
         return restoreManagedAndVerify(driver,fmt.Errorf("directorio de recuperación cambió: %w",err))
     }
