@@ -42,3 +42,16 @@ jobs:
               *) sed -n '1,245p' "src/codigo/$file";;
             esac
           done
+
+      - name: Inspect read-only Windows motor service definitions for driver design
+        shell: bash
+        run: |
+          echo '=== Preflight and DNS engine task references (filtered) ==='
+          grep -RnE --include='*.go' 'MotorUpgrade|motorUpgrade|VOLVE.*Motor|VOLVE.*DNS|TaskName|ServiceName|taskName|taskname' src/codigo | head -115 || true
+          echo '=== Preflight file ==='
+          find src/codigo -iname '*motor*preflight*' -o -iname 'motor_update_preflight_windows.go' | while read -r f; do
+            echo "==== $f ===="
+            sed -n '1,280p' "$f"
+          done
+          echo '=== Existing engine installation references ==='
+          grep -RnE --include='*.go' 'schtasks|Register-ScheduledTask|New-ScheduledTask|VOLVE_DNS|dnsMotor|motorDNS' src/codigo | head -95 || true
