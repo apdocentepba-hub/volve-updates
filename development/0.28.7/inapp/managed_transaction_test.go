@@ -126,3 +126,26 @@ func TestManagedUpgradeRollbackUsesIndependentContextAfterCancellation(t *testin
     for _,call:=range d.calls { if call=="restore" {found=true} }
     if !found {t.Fatalf("no rollback on cancellation: %#v",d.calls)}
 }
+
+func TestManagedUpgradeCannotClaimRecoveryWhenInternetStillFails(t *testing.T) {
+    path,pub:=signedManagedFixture(t)
+    d:=&managedDriverTest{fail:"connectivity"}
+    err:=ApplyManagedWithRollback(context.Background(),path,pub,"0.27.0","0.28.7",d)
+    if err==nil || !strings.Contains(err.Error(),"CRÍTICO") {
+        t.Fatalf("must report unverified rollback connectivity as critical, got %v",err)
+    }
+    if len(d.calls)<3 || d.calls[len(d.calls)-1]!="connectivity" {
+        t.Fatalf("rollback must recheck Internet separately: %#v",d.calls)
+    }
+}
+func TestManagedUpgradeRechecksInternetAfterSuccessfulRollback(t *testing.T) {
+    path,pub:=signedManagedFixture(t)
+    d:=&managedDriverTest{fail:"switch"}
+    err:=ApplyManagedWithRollback(context.Background(),path,pub,"0.27.0","0.28.7",d)
+    if err==nil || !strings.Contains(err.Error(),"conectividad recuperados") {
+        t.Fatalf("rollback must report verified DNS and Internet recovery: %v",err)
+    }
+    if got:=d.calls[len(d.calls)-1];got!="connectivity"{
+        t.Fatalf("last rollback verification was %s, want connectivity",got)
+    }
+}
