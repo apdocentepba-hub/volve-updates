@@ -53,7 +53,11 @@ jobs:
           echo '=== updater source files ==='
           find build/codigo -name '*.go' | sort | grep -E '(releaseupdate|motorupdate|update|main\.go|panel)' | head -75
           echo '=== GUI and signed-update entrypoints ==='
-          rg -n 'check-app-updates|install-app-update|HighestInstalledPanel|EnsureNoInstalledDowngrade|DownloadVerified|Motor.*Upgrade|Actualiza|Updater|update.*panel|InstallPanel' build/codigo -g '*.go' | head -180 || true
+          grep -RnEi --include='*.go' 'check-app-updates|install-app-update|HighestInstalledPanel|EnsureNoInstalledDowngrade|DownloadVerified|Motor.*Upgrade|Actualiza|Updater|update.*panel|InstallPanel' build/codigo | head -160 || true
+          for file in panel_update_windows.go update_windows.go motor_update_windows.go motor_update_preflight_windows.go; do
+            echo "=== SOURCE: $file ==="
+            sed -n '1,240p' "build/codigo/$file"
+          done
       - name: Full unit tests and race detector
         working-directory: build/codigo
         run: |
