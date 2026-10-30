@@ -39,7 +39,7 @@ func checkLegacyRecoveryACL(dir string) error {
         return errors.New("rollback directory cannot be a junction or file")
     }
     script:=`$ErrorActionPreference='Stop';$p=`+psQuote(dir)+`;`+
-      `$a=Get-Acl -LiteralPath $p -ErrorAction Stop;`+
+      `$a=[System.IO.Directory]::GetAccessControl($p);`+
       `$allowed=@('S-1-5-18','S-1-5-32-544');`+
       `foreach($entry in $a.Access){`+
       ` if($entry.AccessControlType -ne [Security.AccessControl.AccessControlType]::Allow){continue};`+
@@ -73,9 +73,19 @@ func ensureSecureLegacyRecoveryParent(root string)(string,error){
     }else{return "",err}
     // Never rewrite ACLs on an existing folder. Reject it instead.
     if newFolder {
+        // Replace the DACL rather than adding ACEs to an inherited or
+        // explicit runner/user entry. .NET Framework Directory APIs are used:
+        // Get-Acl module autoload is unreliable in WindowsPowerShell 5 CI.
         script:=`$ErrorActionPreference='Stop';$p=`+psQuote(parent)+`;`+
-          `& icacls.exe $p '/inheritance:r' '/grant:r' '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F'|Out-Null;`+
-          `if($LASTEXITCODE -ne 0){throw 'Cannot protect legacy rollback directory'};`+
+          `$a=[System.IO.Directory]::GetAccessControl($p);`+
+          `$a.SetAccessRuleProtection($true,$false);`+
+          `foreach($existing in @($a.Access)){$a.RemoveAccessRuleSpecific($existing)|Out-Null};`+
+          `$inherit=[Security.AccessControl.InheritanceFlags]::ContainerInherit -bor [Security.AccessControl.InheritanceFlags]::ObjectInherit;`+
+          `foreach($name in @('S-1-5-18','S-1-5-32-544')){`+
+          `$identity=[Security.Principal.SecurityIdentifier]::new($name);`+
+          `$rule=[Security.AccessControl.FileSystemAccessRule]::new($identity,[Security.AccessControl.FileSystemRights]::FullControl,$inherit,[Security.AccessControl.PropagationFlags]::None,[Security.AccessControl.AccessControlType]::Allow);`+
+          `$a.AddAccessRule($rule)`+
+          `};[System.IO.Directory]::SetAccessControl($p,$a);`+
           `Write-Output 'ROLLBACK_ACL_CREATED'`
         out,e:=runPS(script)
         if e!=nil || !hasStandaloneRollbackToken(out,"ROLLBACK_ACL_CREATED"){
