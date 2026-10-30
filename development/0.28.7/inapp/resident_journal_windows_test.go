@@ -127,7 +127,11 @@ func TestWindowsResidentJournalRejectsInsecureExistingDirectory(t *testing.T) {
     if err!=nil{t.Fatal(err)}
     untrusted:=filepath.Join(parent,localRecoveryJournal)
     if err:=os.Mkdir(untrusted,0700);err!=nil{t.Fatal(err)}
-    // User-owned or inheriting NTFS folder is not repaired or adopted.
+    // Force a deterministic untrusted WRITE ACE, regardless of the current
+    // elevated runner's default Windows owner or inheritance policy.
+    aclOutput,aclErr:=exec.Command("icacls.exe",untrusted,"/grant","*S-1-1-0:W").CombinedOutput()
+    if aclErr!=nil{t.Fatalf("cannot create unsafe disposable ACL fixture: %v %s",aclErr,aclOutput)}
+    // Existing unsafe NTFS directories must be rejected, not repaired.
     if _,err:=ensureSecureResidentRecoveryJournalDir(root);err==nil{
         t.Fatal("existing non-sealed recovery directory accepted")
     }
