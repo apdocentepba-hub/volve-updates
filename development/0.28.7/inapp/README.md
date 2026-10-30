@@ -54,6 +54,16 @@ El comprobador del botón `Actualizar VOLVÉ` consulta ese inventario para evita
 
 Este avance **no habilita la actualización del DNS real**; se debe conectar el inventario a un controlador administrativo real con respaldo, aislamiento de acceso y recuperación ante interrupción antes de publicar un release del motor.
 
+## Cambio de tarea SYSTEM real y procedencia del motor anterior
+
+Se comprobó en el código original que el servicio existente es la tarea `VOLVE-DNS-SERVER-0270`, con acción `VOLVE_DNS_Server_0270.exe --dns-service`, y que `VOLVE-DNS-RESCUE-0270` es un mecanismo de rescate separado. El motor heredado se instala como copia del ejecutable del Centro: **no se puede deducir su versión a partir del Centro actual**.
+
+Se incorporó `motorupdate.VerifyLegacyMotorAttestation`: identifica un motor heredado solo si una declaración de procedencia firmada por el publicador (Ed25519) coincide exactamente con la tarea, nombre, argumentos, tamaño y SHA-256 del ejecutable real. Rechaza declaraciones manipuladas, binarios alterados, tareas suplantadas y JSON con datos extra. **Todavía no se ha publicado una declaración firmada para las instalaciones antiguas**.
+
+Se incorporó `motorupdate.VerifyInternetTLS`, que usa el resolvedor de Windows para comprobar DNS + negociación TLS con certificados válidos en dos destinos externos, con tiempo límite. Incluye pruebas con servidores TLS locales confiables/no confiables, nombre incorrecto y cancelación.
+
+Se extrajeron a `native_task_switch_windows.go` primitivas reales de Windows que verifican el paquete Ed25519 y la tarea SYSTEM original antes de cambiar su acción, y restauran únicamente un respaldo XML cuya huella SHA-256 y propiedad SYSTEM coinciden. Las pruebas de Windows ejercitan esas funciones **sobre tareas SYSTEM desechables**; no son simples simuladores. El cambio de la tarea **productiva** continúa bloqueado por código hasta que exista un watchdog independiente probado que recupere el motor anterior ante interrupciones.
+
 ## Lo que falta para una actualización del motor sin reinstalar
 
 - Registrar y verificar la versión/identidad real del motor que está instalado (no deducir de nombre de archivo).
