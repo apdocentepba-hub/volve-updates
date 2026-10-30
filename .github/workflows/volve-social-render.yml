@@ -3,6 +3,7 @@ on:
   push:
     paths:
       - social/launch.svg
+      - social/que-es-volve.svg
       - .github/workflows/volve-social-render.yml
   workflow_dispatch:
 permissions:
@@ -18,12 +19,13 @@ jobs:
           sudo apt-get install -y librsvg2-bin
           mkdir -p social
           rsvg-convert --width=1080 --height=1080 --format=png --output=social/launch.png social/launch.svg
+          rsvg-convert --width=1080 --height=1080 --format=png --output=social/que-es-volve.png social/que-es-volve.svg
       - name: Save generated image
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add social/launch.png
+          git add social/launch.png social/que-es-volve.png
           if ! git diff --cached --quiet; then
-            git commit -m "Render VOLVE Instagram launch card"
+            git commit -m "Render VOLVÉ social cards"
             git push
           fi
