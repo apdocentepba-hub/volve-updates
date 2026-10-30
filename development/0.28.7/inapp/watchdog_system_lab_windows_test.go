@@ -25,10 +25,14 @@ func createSYSTEMWatchdogLabTask(taskName, helper, journal string) error{
  arguments:=`--recover-pilot-journal "`+journal+`"`
  script:=`$ErrorActionPreference='Stop';`+
   `$action=New-ScheduledTaskAction -Execute `+labQuote(helper)+` -Argument `+labQuote(arguments)+`;`+
-  `$trigger=New-ScheduledTaskTrigger -Once -At ((Get-Date).AddYears(1));`+
-  `Register-ScheduledTask -TaskName `+labQuote(taskName)+` -Action $action -Trigger $trigger -User 'SYSTEM' -RunLevel Highest -ErrorAction Stop | Out-Null;`+
+  `$startup=New-ScheduledTaskTrigger -AtStartup;`+
+  `$manual=New-ScheduledTaskTrigger -Once -At ((Get-Date).AddYears(1));`+
+  `Register-ScheduledTask -TaskName `+labQuote(taskName)+` -Action $action -Trigger @($startup,$manual) -User 'SYSTEM' -RunLevel Highest -ErrorAction Stop | Out-Null;`+
   `$task=Get-ScheduledTask -TaskName `+labQuote(taskName)+` -ErrorAction Stop;`+
   `if($task.TaskPath -ne '\' -or $task.Principal.UserId -notin @('SYSTEM','S-1-5-18') -or @($task.Actions).Count -ne 1){throw 'Unexpected watchdog task ownership'};`+
+  `$boots=@($task.Triggers | Where-Object { $_.CimClass.CimClassName -eq 'MSFT_TaskBootTrigger' });`+
+  `if($boots.Count -ne 1){throw 'Independent watchdog lacks exactly one boot trigger'};`+
+  `if($task.Actions[0].Execute -ine `+labQuote(helper)+`){throw 'Watchdog executable mismatch'};`+
   `Start-ScheduledTask -TaskName `+labQuote(taskName)+` -ErrorAction Stop;`
  _,err:=labPS(script);return err
 }
