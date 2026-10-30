@@ -32,7 +32,7 @@ func main() {
     if _, err := os.Stat(filepath.Join(target, "main_windows.go")); err != nil { panic(err) }
     if _, err := os.Stat(filepath.Join(target, "panel_windows.go")); err != nil { panic(err) }
     srcDir := "development/0.28.7/inapp"
-    for _, name := range []string{"inapp_motor_update_windows.go", "inapp_motor_update_windows_test.go", "managed_windows_task_lab_test.go", "native_task_switch_windows.go", "independent_watchdog_windows_test.go", "watchdog_system_lab_windows_test.go", "ci_hardened_recovery_windows_test.go", "legacy_upgrade_readiness_windows.go", "legacy_upgrade_readiness_windows_test.go", "complete_binary_action_recovery_windows_test.go", "motor_dns_isolated_probe_windows.go", "motor_dns_isolated_probe_windows_test.go"} {
+    for _, name := range []string{"inapp_motor_update_windows.go", "inapp_motor_update_windows_test.go", "managed_windows_task_lab_test.go", "native_task_switch_windows.go", "independent_watchdog_windows_test.go", "watchdog_system_lab_windows_test.go", "ci_hardened_recovery_windows_test.go", "legacy_upgrade_readiness_windows.go", "legacy_upgrade_readiness_windows_test.go", "complete_binary_action_recovery_windows_test.go", "motor_dns_isolated_probe_windows.go", "motor_dns_isolated_probe_windows_test.go, "real_catalog_motor_windows_test.go"} {
         data, err := os.ReadFile(filepath.Join(srcDir, name)); if err != nil { panic(err) }
         formatted, err := format.Source(data); if err != nil { panic(err) }
         if err := os.WriteFile(filepath.Join(target, name), formatted, 0600); err != nil { panic(err) }
@@ -49,6 +49,15 @@ func main() {
         formatted, err := format.Source(data); if err != nil { panic(err) }
         if err := os.WriteFile(filepath.Join(watchdogTarget, name), formatted, 0600); err != nil { panic(err) }
     }
+    // Preserve production behavior byte-for-byte except for extracting the
+    // same catalog parser into a root-injected helper, so Windows CI can load
+    // a 400k+ feed under t.TempDir rather than touching real ProgramData.
+    const fullCatalogMarker = "// Use the downloaded Full list, not a status counter."
+    const fullCatalogReplacement = `return fullEngineAt(root)
+}
+func fullEngineAt(root string) (*blocker.Engine, error) {
+    // Use the downloaded Full list, not a status counter.`
+    if err := patch(filepath.Join(target, "dnsprod_windows.go"), fullCatalogMarker, fullCatalogReplacement); err != nil { panic(err) }
     const oldMain = "if len(os.Args) == 2 && os.Args[1] == \"--check-app-updates\" {"
     const newMain = `if len(os.Args) == 2 && os.Args[1] == "--motor-dns-isolated-loopback" {
         result, err := runMotorDNSIsolatedLoopbackProof()
