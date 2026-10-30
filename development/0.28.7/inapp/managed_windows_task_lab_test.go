@@ -123,13 +123,8 @@ func (d *managedWindowsTaskLab) InstallVersionedCandidate(ctx context.Context, c
 }
 
 func (d *managedWindowsTaskLab) Switch(ctx context.Context) error {
-    if err:=ctx.Err();err!=nil{return err}
-    if d.installedExe=="" {return errors.New("candidate not installed")}
-    script:="Set-ScheduledTask -TaskName "+labQuote(d.name)+" -Action (New-ScheduledTaskAction -Execute "+labQuote(d.installedExe)+") -ErrorAction Stop | Out-Null"
-    if _,err:=labPS(script);err!=nil{return err}
-    exe,args,err:=d.currentAction();if err!=nil{return err}
-    if !strings.EqualFold(filepath.Clean(exe),filepath.Clean(d.installedExe)) || args!="" {return errors.New("candidate task action not installed")}
-    return nil
+    if d.installedExe=="" {return errors.New("signed candidate not installed")}
+    return switchVerifiedMotorTaskAction(ctx,d.name,d.original,"/C exit 0",d.installedExe,"",d.publicKey)
 }
 
 func (d *managedWindowsTaskLab) Probe(ctx context.Context) error {
@@ -164,16 +159,7 @@ func (d *managedWindowsTaskLab) Commit(ctx context.Context, m motorupdate.Manife
 }
 
 func (d *managedWindowsTaskLab) Restore(ctx context.Context) error {
-    if err:=ctx.Err();err!=nil{return err}
-    data,err:=os.ReadFile(d.backup);if err!=nil{return err}
-    h:=sha256.Sum256(data)
-    if d.originalHash=="" || hex.EncodeToString(h[:])!=d.originalHash {
-        return errors.New("original task snapshot tampered: rollback refused")
-    }
-    // Restore ONLY the exact disposable task; no other SYSTEM tasks targeted.
-    script:="$saved=[IO.File]::ReadAllText("+labQuote(d.backup)+");"+
-        "Register-ScheduledTask -TaskName "+labQuote(d.name)+" -Xml $saved -Force -ErrorAction Stop | Out-Null"
-    if _,err:=labPS(script);err!=nil{return err}
+    if err:=restoreVerifiedMotorTaskXML(ctx,d.name,d.backup,d.originalHash,d.original,"/C exit 0");err!=nil{return err}
     d.restored=true
     return nil
 }
