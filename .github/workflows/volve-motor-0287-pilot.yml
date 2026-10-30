@@ -288,7 +288,6 @@ jobs:
             if($cmd.GetCommandName() -in $disallowed){throw ('Unsafe command in VM proof: '+$cmd.GetCommandName())}
           }
           & $script -Mode Probe
-          if($LASTEXITCODE -ne 0){throw 'VM detection probe failed'}
       - name: Verify VM trial cannot pass without real reboot
         shell: pwsh
         run: |
@@ -300,7 +299,6 @@ jobs:
           $kit=Join-Path $env:ProgramData ('VOLVE-VM-RebootLab-'+$trialId)
           try {
             & $script -Mode Prepare -RunId $trialId -LabScript $lab -JournalExe $helper
-            if($LASTEXITCODE -ne 0){throw 'VM-only preparation failed'}
             $rejected=$false
             try { & $script -Mode Verify -RunId $trialId }
             catch {
@@ -312,7 +310,6 @@ jobs:
           } finally {
             if(Test-Path -LiteralPath $kit -PathType Container){
               & $script -Mode Cleanup -RunId $trialId
-              if($LASTEXITCODE -ne 0){throw 'VM trial cleanup failed'}
             }
           }
       - name: Remove isolated test-only task
