@@ -163,7 +163,7 @@ jobs:
         working-directory: build/codigo
         run: |
           $ErrorActionPreference='Stop'
-          go test . -run TestIndependentMotorWatchdogRunsAsSYSTEM -count=1 -timeout 2m -v
+          go test . -run 'TestIndependentMotorWatchdog(RunsAsSYSTEM|SYSTEMLeavesCommittedUpgradeIntact)' -count=1 -timeout 3m -v
           if($LASTEXITCODE -ne 0){throw 'Independent SYSTEM recovery verification failed'}
       - name: Exercise signed managed transaction against disposable SYSTEM task
         shell: pwsh
