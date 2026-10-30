@@ -21,8 +21,8 @@ func TestWindowsResidentProcessEvidenceUsesReadOnlySystemCommands(t *testing.T){
  if err:=os.WriteFile(exe,[]byte("CI motor process fixture"),0600);err!=nil{t.Fatal(err)}
  ev:=motorupdate.ResidentRunningEvidence{
   TaskName:"VOLVE-DNS-SERVER-0270",TaskFolder:`\`,TaskPrincipal:"S-1-5-18",
-  TaskState:"Running",TaskActionExecute:exe,TaskActionArguments:"--dns-service",
-  ProcessCount:1,ProcessPath:exe,ProcessCommandLine:`"`+exe+`" --dns-service`,
+  TaskState:"Running",TaskActionCount:1,TaskActionExecute:exe,TaskActionArguments:"--dns-service",
+  ProcessCount:1,ProcessID:4242,DNSIPv4OwnerPID:4242,DNSIPv6OwnerPID:4242,ProcessPath:exe,ProcessCommandLine:`"`+exe+`" --dns-service`,
   ProcessOwnerSID:"S-1-5-18",DiskSHA256:strings.Repeat("a",64),
  }
  raw,_:=json.Marshal(ev)
@@ -30,7 +30,7 @@ func TestWindowsResidentProcessEvidenceUsesReadOnlySystemCommands(t *testing.T){
  query:=func(_ context.Context,script string)(string,error){
   called++
   for _,need:=range []string{
-   "Get-ScheduledTask","Win32_Process","GetOwnerSid","Get-FileHash",
+   "Get-ScheduledTask","Win32_Process","GetOwnerSid","Get-FileHash","Get-NetUDPEndpoint",
    "ConvertTo-Json","VOLVE-DNS-SERVER-0270",
   }{
    if !strings.Contains(script,need){t.Fatalf("read-only observation lacks %s",need)}
