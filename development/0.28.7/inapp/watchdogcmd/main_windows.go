@@ -204,6 +204,17 @@ func run(ctx context.Context,path string) error {
     }
 }
 func main(){
+    if len(os.Args)==3 && os.Args[1]=="--audit-resident-boot-plan" {
+        ctx,cancel:=context.WithTimeout(context.Background(),90*time.Second);defer cancel()
+        plan,err:=auditResidentBootPlan(ctx,os.Args[2])
+        if err!=nil{
+            fmt.Fprintln(os.Stderr,"VOLVÉ: PLAN DE RESCATE NO VERIFICADO; ninguna tarea, DNS ni archivo modificado:",err)
+            os.Exit(1)
+        }
+        fmt.Printf("VOLVÉ: PLAN DE ARRANQUE (SOLO LECTURA)\nEstado: %s\nAcción verificada: %s\nMotor original SHA-256: %s\nNo realiza ni autoriza recuperación productiva.\n",
+            plan.Status,plan.Action,plan.LegacySHA256)
+        return
+    }
     if len(os.Args)==3 && os.Args[1]=="--audit-resident-chain" {
         ctx,cancel:=context.WithTimeout(context.Background(),90*time.Second);defer cancel()
         evidence,err:=auditPendingResidentChain(ctx,os.Args[2])
