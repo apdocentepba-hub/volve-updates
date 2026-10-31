@@ -9,6 +9,8 @@ on:
       - 'development/0.28.7/inapp/fresh_task_inventory_windows_test.go'
       - 'development/0.28.7/inapp/fresh_service_inventory_windows.go'
       - 'development/0.28.7/inapp/fresh_service_inventory_windows_test.go'
+      - 'development/0.28.7/inapp/fresh_dns_adapter_inventory_windows.go'
+      - 'development/0.28.7/inapp/fresh_dns_adapter_inventory_windows_test.go'
       - 'development/0.28.7/inapp/fresh_install_policy.go'
       - 'development/0.28.7/inapp/fresh_install_policy_test.go'
       - '.github/workflows/volve-0287-fresh-partial-host-readonly.yml'
@@ -24,7 +26,7 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: '1.23.x'
-      - name: Validate admin token plus real Windows task/service inventories; all installation gates remain closed
+      - name: Validate token, tasks, services and DNS adapters on Windows; install gate remains closed
         shell: pwsh
         run: |
           $ErrorActionPreference='Stop'
@@ -36,6 +38,8 @@ jobs:
             'development/0.28.7/inapp/fresh_task_inventory_windows_test.go',
             'development/0.28.7/inapp/fresh_service_inventory_windows.go',
             'development/0.28.7/inapp/fresh_service_inventory_windows_test.go',
+            'development/0.28.7/inapp/fresh_dns_adapter_inventory_windows.go',
+            'development/0.28.7/inapp/fresh_dns_adapter_inventory_windows_test.go',
             'development/0.28.7/inapp/fresh_partial_host_probe_windows.go',
             'development/0.28.7/inapp/fresh_partial_host_probe_windows_test.go'
           )
@@ -46,4 +50,4 @@ jobs:
           }
           go test -count=1 -timeout 6m -v @files
           if($LASTEXITCODE -ne 0){throw 'Windows partial host census did NOT satisfy fail-closed acceptance tests'}
-          Write-Host 'PASS: live Windows token, service, scheduler inspections + partial 2-of-6 host census; installation blocked until four other OS inventories are verified. No system modifications.'
+          Write-Host 'PASS: live Windows token, service, scheduler inspections + partial 3-of-6 host census; installation blocked until the other three OS inventories are verified. No system modifications.'
