@@ -1,0 +1,62 @@
+name: VOLVE 0.28.7 DNS restore contract CI (NO ADAPTER WRITES)
+on:
+  push:
+    branches: [feature/motor-updater-0287-pilot]
+    paths:
+      - 'development/0.28.7/inapp/dns_restore_transaction.go'
+      - 'development/0.28.7/inapp/dns_restore_transaction_test.go'
+      - 'development/0.28.7/inapp/dns_restore_netsh_plan.go'
+      - 'development/0.28.7/inapp/dns_restore_netsh_plan_test.go'
+      - '.github/workflows/volve-0287-dns-restore-contract.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  restore-contract:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: \${{ matrix.os }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.x'
+      - name: Isolate only DNS recovery contract and run its tests
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $source='development/0.28.7/inapp'
+          $folder=Join-Path $env:RUNNER_TEMP 'volve-dns-restore-ci'
+          New-Item -ItemType Directory -Path $folder -Force|Out-Null
+          foreach($name in @('dns_restore_transaction.go','dns_restore_transaction_test.go','dns_restore_netsh_plan.go','dns_restore_netsh_plan_test.go')){
+            Copy-Item -LiteralPath (Join-Path $source $name) -Destination (Join-Path $folder $name) -ErrorAction Stop
+          }
+          Push-Location $folder
+          try{
+            go mod init volve-dns-restore-contract
+            if($LASTEXITCODE -ne 0){throw 'Go module setup failed'}
+            go test ./... -count=1 -v
+            if($LASTEXITCODE -ne 0){throw 'DNS restore rollback contract tests failed'}
+            go vet ./...
+            if($LASTEXITCODE -ne 0){throw 'DNS restore vet failed'}
+          }finally{Pop-Location}
+      - name: On Windows prove real DNS adapter settings remain untouched
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $before=Get-DnsClientServerAddress | Sort-Object InterfaceIndex,AddressFamily |
+            Select-Object InterfaceIndex,AddressFamily,ServerAddresses | ConvertTo-Json -Compress -Depth 7
+          $folder=Join-Path $env:RUNNER_TEMP 'volve-dns-restore-ci'
+          Push-Location $folder
+          try{
+            go test ./... -count=1
+            if($LASTEXITCODE -ne 0){throw 'Windows DNS restore contract failed'}
+          }finally{Pop-Location}
+          $after=Get-DnsClientServerAddress | Sort-Object InterfaceIndex,AddressFamily |
+            Select-Object InterfaceIndex,AddressFamily,ServerAddresses | ConvertTo-Json -Compress -Depth 7
+          if($before -cne $after){throw 'FATAL: test changed real DNS adapters'}
+          Write-Host 'PASS: DNS restore contract validated, live Windows DNS settings remain unchanged'
