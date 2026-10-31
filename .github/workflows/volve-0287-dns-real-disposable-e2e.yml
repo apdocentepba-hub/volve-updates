@@ -55,6 +55,7 @@ jobs:
               Start-Sleep -Seconds 1
             }
             if(-not $adapter){throw 'Hyper-V did not create the expected internal vNIC'}
+            Write-Host "Observed internal vNIC: name=$($adapter.Name); description=$($adapter.InterfaceDescription); hardware=$($adapter.HardwareInterface); ifindex=$($adapter.InterfaceIndex)"
             if($adapter.InterfaceDescription -ne 'Hyper-V Virtual Ethernet Adapter' -or
                [bool]$adapter.HardwareInterface){
               throw 'Hyper-V device did not have expected virtual-only identity'
