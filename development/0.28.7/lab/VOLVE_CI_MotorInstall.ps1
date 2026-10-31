@@ -54,7 +54,7 @@ function VerifiedRescueTask(){
  $one=$tasks[0]
  if($one.TaskPath -ne '\' -or $one.Principal.UserId -notin @('SYSTEM','S-1-5-18')){throw 'Recovery SYSTEM task identity mismatch'}
  if(@($one.Actions).Count -ne 1 -or [string]$one.Actions[0].Execute -ine $powershellExe -or [string]$one.Actions[0].Arguments -cne $rescueArgs){throw 'Recovery action changed'}
- $rescueXML=[xml](Export-ScheduledTask -TaskName $rescueTask -TaskPath '\\' -ErrorAction Stop)
+ $rescueXML=[xml](Export-ScheduledTask -TaskName $rescueTask -TaskPath '\' -ErrorAction Stop)
  $watchTick=$rescueXML.SelectSingleNode("//*[local-name()='TimeTrigger']/*[local-name()='Repetition']/*[local-name()='Interval']")
  if($null -eq $watchTick -or $watchTick.InnerText -ne 'PT1M'){throw 'Independent SYSTEM watchdog is not scheduled every minute'}
  return $one
