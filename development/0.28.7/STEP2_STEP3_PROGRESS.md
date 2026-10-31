@@ -13,24 +13,24 @@ Las cifras son **estimaciones conservadoras de ingeniería por entregables ponde
 | Permiso editorial exacto, autenticidad y pinning | 15 | 8 | Validación criptográfica en CI; falta emisión legítima para el motor instalado |
 | Respaldo anterior y journal protegido | 15 | 15 | Código y auditorías NTFS probados |
 | Watchdog de recuperación SYSTEM independiente | 25 | 10 | Recuperador separado prearmado como tarea SYSTEM recurrente cada minuto en VM descartable; detectó caída real sin disparo manual; falta watchdog productivo |
-| Controlador Windows real que cambia y revierte el motor | 20 | 12 | Instalación/retirada versionada de motor SYSTEM y recuperador en VM; ahora lectura Windows real de GUID/InterfaceIndex y DNS IPv4/IPv6 sin cambios de red, con rechazos de identidad concurrente; falta ejecutar restauración autenticada de adaptador |
+| Controlador Windows real que cambia y revierte el motor | 20 | 12 | Restore DNS IPv4/IPv6 real probado en interfaz Hyper-V descartable, con watchdog entre procesos; falta integrarlo al cambio de motor productivo, con firma/ACL/SYSTEM legítimos |
 | Tests adversos, DNS dual-stack, identidad, rollback en CI | 15 | 15 | Motor compilado ejecutado bajo SYSTEM en DNS/53 real y sondeado externamente en VM descartable; faltan escenarios productivos |
 | Reinicio real repetible de VM persistente | 10 | 0 | Sin ejecutar |
 | **TOTAL** | **100** | **60** | **Paso abierto** |
 
 Los seis criterios A–F de STEP2_EXIT_CRITERIA.md siguen sin aprobarse **como condiciones de cierre completas**, aunque hay subtrabajos de esos criterios realizados.
 
-### Paso 3 — Recuperación automática: 42/100 (42%) — restauración DNS real tras caída del actualizador en VM aislada aprobada
+### Paso 3 — Recuperación automática: 44/100 (44%) — recuperación DNS real con journal durable y autorización firmada de laboratorio
 
 | Subentregable | Peso | Puntos reconocidos | Estado |
 | --- | ---: | ---: | --- |
-| Journal durable y estado recuperable | 15 | 10 | Probado; terminal create-only |
+| Journal durable y estado recuperable | 15 | 12 | Journal create-only y snapshot vinculados por nonce/hash revalidados en cada escritura; recibo terminal tras recuperación DNS real en CI |
 | Recuperación independiente de prueba | 20 | 20 | Laboratorio Windows: watchdog en proceso independiente observa salida anómala del actualizador y RESTAURA DNS IPv4/IPv6 reales en vNIC Hyper-V aislada; no es servicio productivo |
-| Política de recuperación al iniciar, bloqueo de concurrencia, reintentos | 15 | 12 | **CI 3/3 aprobada; integración de mutex Windows y watchdog productivo pendiente** |
+| Política de recuperación al iniciar, bloqueo de concurrencia, reintentos | 15 | 12 | Mutex Windows probado entre procesos en CI; pendiente driver SYSTEM persistente y recuperación tras reinicio real |
 | Watchdog SYSTEM persistente con arranque Windows | 25 | 0 | Ausente |
 | Restitución productiva y comprobación de motor/DNS/Internet | 15 | 0 | Ausente |
 | Pruebas de reinicio real en VM persistente | 10 | 0 | Ausente |
-| **TOTAL VERIFICADO** | **100** | **42** | **Paso abierto** |
+| **TOTAL VERIFICADO** | **100** | **44** | **Paso abierto** |
 
 **Trabajo de esta intervención:** \`resident_boot_recovery.go\` y \`resident_boot_recovery_test.go\` agregan una política repetible y no mutante de recuperación al arranque: exige bloqueo exclusivo, respaldo íntegro, journal pendiente, restaurador inyectado y comprobación de identidad/DNS/Internet antes de cerrar el journal. Los tests incluyen fallo del restaurador, caída de red, reintento tras interrupción, concurrencia, corrupción del journal y no repetición de tareas terminadas. Es exclusivamente lógica reutilizable, **NO** un watchdog SYSTEM instalado. La ejecución [#41107808258](https://github.com/apdocentepba-hub/volve-updates/actions/runs/41107808258) terminó **3/3 success** (Windows, Linux, recuperación aislada). Se acreditan **10 de 15 puntos** del subentregable "política de recuperación": el paso 3 se actualiza al **30%**. Los 5 puntos restantes dependen de integrar un controlador persistente real. La prueba de mutex entre procesos es una nueva subetapa aún pendiente de CI, por lo que no agrega puntos.
 
@@ -200,3 +200,14 @@ Ver [CI actual de la política](https://github.com/apdocentepba-hub/volve-update
 **Acreditación sin duplicados:** subentregable 'Recuperación independiente de prueba' pasa **18→20 de 20**, por demostración de restauración DNS REAL tras caída anómala observada desde proceso independiente. **Paso 3: 40→42% (+2)**, **Paso 2: 60% (sin cambios)**. No contabilizar los 25 puntos de watchdog SYSTEM persistente ni 10 de reboot por esta prueba: son bloqueos separados y aún no ejecutados. La cifra mide entregables de laboratorio, no capacidad antiapuestas efectiva.
 
 **RESTRICCIONES:** aunque la interfaz y DNS fueron reales, el proceso watchdog de esta prueba corrió como usuario CI, no como un servicio SYSTEM productivo; el plan usó SHA-256 fijada por el coordinador y NO un permiso editorial legítimo firmado + snapshot NTFS sellado completo; tampoco se comprobó cierre durable de journal productivo, recuperación después de reinicio del MISMO Windows, ni una actualización automática efectiva en el VOLVÉ 0.28.6 instalado. Conservamos barreras del switch productivo, rama `main` y canales estables.
+
+
+## 31/10/2026 — Journal persistente y prueba REAL de recuperación supervisada mediante autorización
+
+**Entregable concreto:** `dns_restore_crash_lab_attestation_windows_test.go` crea antes de la caída un `ResidentRecoveryIntent` auténtico del esquema del proyecto en un directorio CI aislado, usando `O_EXCL`/fsync y nonce de 128 bits; crea un snapshot DNS canónico asociado a ese nonce, los hashes del motor antiguo/candidato de **laboratorio**, y un SHA-256 fijado antes del cambio. Se genera una clave Ed25519 **efímera para CI**, firma exacta de nonce+huella, y el watchdog la verifica junto con el journal **antes, después y entre las escrituras reales**, mediante `WindowsSealedDNSRecoveryAttestor`. Un handle real del proceso Windows original permanece abierto durante toda la restauración para no confundir PID reciclados; cada paso exige su estado de terminación con código 83. Tras lecturas independientes del DNS IPv4/IPv6 restaurado, se escribe y verifica el recibo durable `resident-result.json` **restored**. Sin prueba favorable, la transacción queda pendiente. La restauración sigue restringida a una interfaz Hyper-V interna descartable, independiente de las placas del runner.
+
+**Resultados comprobados:** [GitHub Actions recuperación real #41214813441](https://github.com/apdocentepba-hub/volve-updates/actions/runs/41214813441) **SUCCESS**, `TestWindowsRealDNSWatchdogAfterUpdaterCrash` **PASS (46,33 s)**; hubo crash 83, recuperación DNS v4/v6 con revisiones de journal/permiso/proceso antes de cada `netsh`, recibo duradero final y eliminación del switch; DNS/rutas originales no cambiaron. [Pruebas de contrato #41214730651](https://github.com/apdocentepba-hub/volve-updates/actions/runs/41214730651) **SUCCESS** Windows y Ubuntu, incluidos rechazo de nonce manipulado, snapshot alterado y journal ya finalizado. La batería del motor integrado se evalúa por separado y no se declara aprobada hasta su resultado.
+
+**Puntos de progreso:** se reconocen **2 puntos nuevos** al subentregable 'Journal durable y estado recuperable', 10→12 de 15, por haberlo usado y cerrado efectivamente tras una recuperación DNS REAL posterior a crash. **Paso 3: 42→44/100**; **Paso 2: 60/100 sin cambio**. La prueba es un hito de laboratorio; no acredita defensa antiapuestas ni publicación.
+
+**Límites de seguridad explícitos:** la firma Ed25519 es CI, no la clave editorial real; los hashes de los motores del registro son de una instancia sintética; el verificador de archivos CI rechaza cambios de ruta/enlaces pero NO certifica DACL/propietarios NTFS; el watchdog de esta prueba no trabaja como SYSTEM y no sobrevive a un reinicio de máquina persistente. NO está unido al instalador ni a `VOLVE-DNS-SERVER-0270` de producción. Faltan los criterios A–F (firma editorial real, token SYSTEM, control de motor, ACL protegidas, persistencia/reinicio y recuperación del sistema instalado). No tocar `main` ni canales estables.
