@@ -1,0 +1,95 @@
+name: VOLVE 0.28.7 real SYSTEM SID read-only gate (NO RELEASE)
+on:
+  push:
+    branches: [feature/motor-updater-0287-pilot]
+    paths:
+      - '.github/workflows/volve-0287-system-sid-readonly.yml'
+      - 'development/0.28.7/inapp/dns_system_probe_ci/main_windows.go'
+      - 'development/0.28.7/inapp/dns_restore_sealed_attestor_windows.go'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  real-local-system-token:
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.x'
+      - name: Reject interactive admin; accept true SYSTEM task token; remove CI task
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $name='VOLVE-CI-SystemSID-'+$env:GITHUB_RUN_ID
+          if($name -notmatch '^VOLVE-CI-SystemSID-[0-9]{8,15}$'){
+            throw 'Unexpected CI-only Task Scheduler object name'
+          }
+          if(Get-ScheduledTask -TaskName $name -ErrorAction SilentlyContinue){
+            throw 'Collision: refusing to modify an existing scheduled task'
+          }
+          $folder=Join-Path $env:RUNNER_TEMP 'volve-ci-system-sid'
+          New-Item -ItemType Directory -Path $folder -Force | Out-Null
+          $source='development/0.28.7/inapp'
+          Copy-Item -Path (Join-Path $source 'dns_restore*.go') -Destination $folder -ErrorAction Stop
+          Copy-Item -LiteralPath (Join-Path $source 'resident_journal.go') -Destination $folder -ErrorAction Stop
+          $target=Join-Path $folder 'cmd/systemprobe'
+          New-Item -ItemType Directory -Path $target -Force | Out-Null
+          Copy-Item -LiteralPath (Join-Path $source 'dns_system_probe_ci/main_windows.go') -Destination $target -ErrorAction Stop
+          $exe=Join-Path $folder 'volve-ci-system-probe.exe'
+          $receipt=Join-Path $folder 'system-token-evidence.txt'
+          Push-Location $folder
+          try {
+            go mod init volve-ci-system-dns-readonly
+            if($LASTEXITCODE -ne 0){throw 'CI module setup failed'}
+            go build -o $exe ./cmd/systemprobe
+            if($LASTEXITCODE -ne 0){throw 'CI identity-only executable failed to compile'}
+            $interactive=Start-Process -FilePath $exe -ArgumentList @("''"+"$receipt"+"''") -NoNewWindow -PassThru -Wait
+            if($interactive.ExitCode -ne 83 -or (Test-Path $receipt)){
+              throw 'Interactive admin was incorrectly accepted as SYSTEM'
+            }
+            Write-Host 'PASS: interactive Windows admin rejected (SID != S-1-5-18)'
+            $principal=New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest
+            $action=New-ScheduledTaskAction -Execute $exe -Argument ('"'+$receipt+'"')
+            $trigger=New-ScheduledTaskTrigger -Once -At ((Get-Date).AddDays(5))
+            $registered=$false
+            try {
+              Register-ScheduledTask -TaskName $name -Principal $principal -Action $action -Trigger $trigger -ErrorAction Stop | Out-Null
+              $registered=$true
+              $task=Get-ScheduledTask -TaskName $name -ErrorAction Stop
+              if($task.TaskPath -ne '\' -or $task.Principal.UserId -notin @('SYSTEM','S-1-5-18') -or
+                 @($task.Actions).Count -ne 1 -or $task.Actions[0].Execute -ine $exe){
+                throw 'Disposable SYSTEM task identity not pinned'
+              }
+              Start-ScheduledTask -TaskName $name -ErrorAction Stop
+              $matched=$false
+              for($i=0;$i -lt 80;$i++){
+                if(Test-Path -LiteralPath $receipt){
+                  $evidence=Get-Content -LiteralPath $receipt -Raw -ErrorAction Stop
+                  if($evidence -ne 'VOLVE_CI_WINDOWS_SYSTEM_SID_S-1-5-18'){
+                    throw 'SYSTEM task returned unexpected identity evidence'
+                  }
+                  $matched=$true
+                  break
+                }
+                Start-Sleep -Milliseconds 500
+              }
+              if(-not $matched){
+                $info=Get-ScheduledTaskInfo -TaskName $name -ErrorAction SilentlyContinue
+                throw "SYSTEM-only process did not attest its token; LastTaskResult=$($info.LastTaskResult)"
+              }
+              Write-Host 'PASS: actual Scheduled Task ran with Windows LocalSystem SID S-1-5-18'
+            } finally {
+              if($registered){
+                $task=Get-ScheduledTask -TaskName $name -ErrorAction SilentlyContinue
+                if($null -ne $task){
+                  if($task.TaskPath -ne '\' -or $task.Principal.UserId -notin @('SYSTEM','S-1-5-18')){
+                    throw 'Refusing to remove unexpected task identity'
+                  }
+                  Unregister-ScheduledTask -TaskName $name -Confirm:$false -ErrorAction Stop
+                }
+                Write-Host 'PASS: disposable SYSTEM task removed'
+              }
+            }
+          } finally { Pop-Location }
