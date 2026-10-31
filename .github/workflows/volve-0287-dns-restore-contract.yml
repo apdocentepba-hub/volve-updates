@@ -31,11 +31,12 @@ jobs:
           $source='development/0.28.7/inapp'
           $folder=Join-Path $env:RUNNER_TEMP 'volve-dns-restore-ci'
           New-Item -ItemType Directory -Path $folder -Force|Out-Null
-          foreach($name in @('dns_restore_transaction.go','dns_restore_transaction_test.go','dns_restore_netsh_plan.go','dns_restore_netsh_plan_test.go')){
+          foreach($name in @('dns_restore_transaction.go','dns_restore_transaction_test.go','dns_restore_netsh_plan.go','dns_restore_netsh_plan_test.go','dns_restore_adapter_inventory_windows.go','dns_restore_adapter_inventory_windows_test.go')){
             Copy-Item -LiteralPath (Join-Path $source $name) -Destination (Join-Path $folder $name) -ErrorAction Stop
           }
           Push-Location $folder
           try{
+            if($IsWindows){$env:VOLVE_CI_READONLY_ADAPTER_INSPECTION='1'}
             go mod init volve-dns-restore-contract
             if($LASTEXITCODE -ne 0){throw 'Go module setup failed'}
             go test ./... -count=1 -v
