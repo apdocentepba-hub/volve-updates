@@ -94,52 +94,16 @@ jobs:
             try {
               go mod init volve-disposable-dns-real-e2e
               if($LASTEXITCODE -ne 0){throw 'Go lab module setup failed'}
-              go test -count=1 -timeout 6m -v -run '^TestWindowsRealDNSSYSTEMWatchdogAfterUpdaterCrash
+              go test -count=1 -timeout 6m -v -run '^TestWindowsRealDNSSYSTEMWatchdogAfterUpdaterCrash$' ./...
               if($LASTEXITCODE -ne 0){throw 'Real LocalSystem watchdog / NTFS lab DNS recovery FAILED'}
             }finally{Pop-Location}
           }finally{
             Remove-Item Env:\VOLVE_CI_DNS_REAL_DISPOSABLE -ErrorAction SilentlyContinue
             Remove-Item Env:\VOLVE_CI_DNS_LAB_ALIAS -ErrorAction SilentlyContinue
             Remove-Item Env:\VOLVE_CI_DNS_LAB_GUID -ErrorAction SilentlyContinue
-            # Defense in depth if Go test crashed before cleanup.
+            # Safety net if the Go test terminated before removing its task.
             $sysTask='VOLVE-CI-DNS-SYSTEM-'+$env:GITHUB_RUN_ID+'00000'
-            if($sysTask -match '^VOLVE-CI-DNS-SYSTEM-[0-9]{12,20}
-              Write-Host "PASS: disposable internal Hyper-V switch removed: $alias"
-              Start-Sleep -Seconds 2
-            }
-            $after=Get-DnsClientServerAddress | Sort-Object InterfaceIndex,AddressFamily |
-              Select-Object InterfaceIndex,AddressFamily,ServerAddresses |
-              ConvertTo-Json -Compress -Depth 7
-            $afterRoutes=Get-NetRoute -DestinationPrefix '0.0.0.0/0' |
-              Sort-Object InterfaceIndex,NextHop | Select-Object InterfaceIndex,DestinationPrefix,NextHop |
-              ConvertTo-Json -Compress -Depth 5
-            if($prior -cne $after){throw 'FATAL: preexisting Windows DNS adapters changed in disposable laboratory'}
-            if($originalRoutes -cne $afterRoutes){throw 'FATAL: host default routes changed in disposable laboratory'}
-            Write-Host 'PASS: all preexisting Windows DNS adapters and default routes remained unchanged'
-          }
- ./...
-              if($LASTEXITCODE -ne 0){throw 'Independent watchdog crash/recovery on internal vNIC FAILED'}
-            }finally{Pop-Location}
-          }finally{
-            Remove-Item Env:\VOLVE_CI_DNS_REAL_DISPOSABLE -ErrorAction SilentlyContinue
-            Remove-Item Env:\VOLVE_CI_DNS_LAB_ALIAS -ErrorAction SilentlyContinue
-            Remove-Item Env:\VOLVE_CI_DNS_LAB_GUID -ErrorAction SilentlyContinue
-            if($created){
-              Remove-VMSwitch -Name $alias -Force -ErrorAction Stop
-              Write-Host "PASS: disposable internal Hyper-V switch removed: $alias"
-              Start-Sleep -Seconds 2
-            }
-            $after=Get-DnsClientServerAddress | Sort-Object InterfaceIndex,AddressFamily |
-              Select-Object InterfaceIndex,AddressFamily,ServerAddresses |
-              ConvertTo-Json -Compress -Depth 7
-            $afterRoutes=Get-NetRoute -DestinationPrefix '0.0.0.0/0' |
-              Sort-Object InterfaceIndex,NextHop | Select-Object InterfaceIndex,DestinationPrefix,NextHop |
-              ConvertTo-Json -Compress -Depth 5
-            if($prior -cne $after){throw 'FATAL: preexisting Windows DNS adapters changed in disposable laboratory'}
-            if($originalRoutes -cne $afterRoutes){throw 'FATAL: host default routes changed in disposable laboratory'}
-            Write-Host 'PASS: all preexisting Windows DNS adapters and default routes remained unchanged'
-          }
-){
+            if($sysTask -match '^VOLVE-CI-DNS-SYSTEM-[0-9]{12,20}$'){
               $existing=Get-ScheduledTask -TaskName $sysTask -ErrorAction SilentlyContinue
               if($null -ne $existing){
                 if($existing.TaskPath -ne '\' -or $existing.Principal.UserId -notin @('SYSTEM','S-1-5-18')){
@@ -150,28 +114,6 @@ jobs:
                 Write-Host 'PASS: safety cleanup removed disposable SYSTEM watchdog task'
               }
             }
-            if($created){
-              Remove-VMSwitch -Name $alias -Force -ErrorAction Stop
-              Write-Host "PASS: disposable internal Hyper-V switch removed: $alias"
-              Start-Sleep -Seconds 2
-            }
-            $after=Get-DnsClientServerAddress | Sort-Object InterfaceIndex,AddressFamily |
-              Select-Object InterfaceIndex,AddressFamily,ServerAddresses |
-              ConvertTo-Json -Compress -Depth 7
-            $afterRoutes=Get-NetRoute -DestinationPrefix '0.0.0.0/0' |
-              Sort-Object InterfaceIndex,NextHop | Select-Object InterfaceIndex,DestinationPrefix,NextHop |
-              ConvertTo-Json -Compress -Depth 5
-            if($prior -cne $after){throw 'FATAL: preexisting Windows DNS adapters changed in disposable laboratory'}
-            if($originalRoutes -cne $afterRoutes){throw 'FATAL: host default routes changed in disposable laboratory'}
-            Write-Host 'PASS: all preexisting Windows DNS adapters and default routes remained unchanged'
-          }
- ./...
-              if($LASTEXITCODE -ne 0){throw 'Independent watchdog crash/recovery on internal vNIC FAILED'}
-            }finally{Pop-Location}
-          }finally{
-            Remove-Item Env:\VOLVE_CI_DNS_REAL_DISPOSABLE -ErrorAction SilentlyContinue
-            Remove-Item Env:\VOLVE_CI_DNS_LAB_ALIAS -ErrorAction SilentlyContinue
-            Remove-Item Env:\VOLVE_CI_DNS_LAB_GUID -ErrorAction SilentlyContinue
             if($created){
               Remove-VMSwitch -Name $alias -Force -ErrorAction Stop
               Write-Host "PASS: disposable internal Hyper-V switch removed: $alias"
