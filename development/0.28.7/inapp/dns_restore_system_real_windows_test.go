@@ -144,10 +144,11 @@ func windowsSYSDNSWatchdog(t *testing.T){
  if err:=VerifyWindowsCurrentSystemSIDReadOnly();err!=nil{t.Fatal(err)}
  cfg,err:=windowsSYSDNSReadConfig(*windowsSYSDNSConfigFlag)
  if err!=nil{t.Fatal(err)}
+ stage:="system-init"
  defer func(){
   if t.Failed(){
    _=os.WriteFile(filepath.Join(filepath.Dir(cfg.Recovered),"watchdog-failure"),
-    []byte("Real SYSTEM watchdog rejected recovery; inspect scheduler logs"),0600)
+    []byte("LocalSystem watchdog refused at stage: "+stage),0600)
   }
  }()
  ctx,cancel:=context.WithTimeout(context.Background(),110*time.Second)
@@ -165,24 +166,31 @@ func windowsSYSDNSWatchdog(t *testing.T){
   "VOLVE_CI_DNS_LAB_PUBKEY":cfg.Pubkey,
   "VOLVE_CI_DNS_LAB_SIGNATURE":cfg.Signature,
  }{if err:=os.Setenv(k,v);err!=nil{t.Fatal(err)}}
+ stage="read-pinned-plan"
  plan,err:=windowsDNSCrashPlanFromDisk()
  if err!=nil{t.Fatal(err)}
  if cfg.Alias!=plan.Alias||cfg.GUID!=plan.GUID{
   t.Fatal("SYSTEM task points to another disposable vNIC")
  }
+ stage="open-pinned-updater-handle"
  observed,err:=newWindowsCrashExitHandle(cfg.PID)
  if err!=nil{t.Fatal(err)}
  defer observed.Close()
  if err:=os.WriteFile(cfg.WatchdogReady,[]byte("SYSTEM has opened original updater process handle"),0600);err!=nil{t.Fatal(err)}
+ stage="await-updater-crash-exit-83"
  if err:=observed.Wait(ctx);err!=nil{t.Fatal(err)}
+ stage="inspect-live-hyperv-localhost-state"
  adapter,err:=VerifyWindowsDisposableDNSAdapterWithLocalDNSReadOnly(
   ctx,cfg.Alias,cfg.GUID,DefaultWindowsDisposableDNSInspect)
  if err!=nil{t.Fatal(err)}
+ stage="pin-network-interface"
  pinned,err:=FindWindowsAdapterIndex(ctx,cfg.GUID,DefaultWindowsReadOnlyPowerShell)
  if err!=nil||pinned!=adapter.InterfaceIndex{t.Fatal("disposable adapter GUID/index mismatch")}
+ stage="create-real-ntfs-acl-verifier"
  acl,err:=NewWindowsDNSProtectedACLVerifier(ctx,cfg.JournalDir,cfg.SnapshotPath,
   DefaultWindowsDNSProtectedACLInspect)
  if err!=nil{t.Fatal(err)}
+ stage="create-signed-journal-attestor"
  attestor,err:=windowsCrashLabAttestor(observed)
  if err!=nil{t.Fatal(err)}
  attestor.Protect=acl
@@ -193,10 +201,12 @@ func windowsSYSDNSWatchdog(t *testing.T){
  }
  // Mandatory independent SYSTEM + DACL + publisher (ephemeral CI) + crash
  // attestation under the same Windows OS-wide mutex AND before each command.
+ stage="execute-attested-real-dns-batch"
  if err:=runAttestedWindowsStaticDNSRecovery(ctx,plan.Records,
   DefaultWindowsReadOnlyPowerShell,attestor,runPinnedWindowsNativeDNS,cfg.Lock);err!=nil{
   t.Fatalf("true SYSTEM attested real IPv4/IPv6 recovery failed: %v",err)
  }
+ stage="verify-restored-dns"
  for _,r:=range plan.Records{
   raw,err:=DefaultWindowsReadOnlyPowerShell(ctx,windowsEffectiveDNSQuery)
   if err!=nil{t.Fatal(err)}
@@ -205,6 +215,7 @@ func windowsSYSDNSWatchdog(t *testing.T){
    t.Fatalf("SYSTEM restore DNS mismatch %s %v %v",r.Original.Family,actual,err)
   }
  }
+ stage="finalize-durable-recovery-receipt"
  if err:=FinishResidentRecoveryIntent(ctx,cfg.JournalDir,"restored",
   func(p string)error{
    if p!=filepath.Join(cfg.JournalDir,ResidentResultFile){
@@ -212,6 +223,7 @@ func windowsSYSDNSWatchdog(t *testing.T){
    }
    return windowsSYSDNSSealNewReceipt(ctx,cfg.JournalDir)
   },acl);err!=nil{t.Fatalf("true SYSTEM recovery receipt failed: %v",err)}
+ stage="write-real-system-success-evidence"
  if err:=os.WriteFile(cfg.Recovered,
   []byte("REAL SYSTEM DNS v4/v6 restored + signed CI journal + NTFS ACL + crash exit 83"),
   0600);err!=nil{t.Fatal(err)}
