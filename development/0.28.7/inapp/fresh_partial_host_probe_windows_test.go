@@ -92,6 +92,25 @@ func TestWindowsPartialHostNeverGrantsFreshInstall(t *testing.T) {
 	}
 }
 
+func TestWindowsPartialHostRetainsBothLocalDNSWarnings(t *testing.T) {
+	inspectors := partialHostInspectors(t, true, []windowsVOLVETaskRecord{}, []windowsVOLVEServiceRecord{})
+	inspectors.DNS = func(_ context.Context, query string) ([]byte, error) {
+		if query != WindowsFreshDNSAdapterQuery { t.Fatal("unapproved DNS query") }
+		return freshDNSRows(t, []windowsFreshDNSAdapterRow{
+			{InterfaceIndex: 7, Family: "IPv4", Servers: []string{"127.0.0.2"}},
+			{InterfaceIndex: 7, Family: "IPv6", Servers: []string{"::1"}},
+		}), nil
+	}
+	result, err := InspectWindowsFreshPartialHostReadOnly(context.Background(), "", "", inspectors)
+	if err != nil { t.Fatal(err) }
+	if !result.Evidence.LocalIPv4DNSConfigured || !result.Evidence.LocalIPv6DNSConfigured {
+		t.Fatal("partial host census lost DNS loopback evidence")
+	}
+	if err := CheckFreshMotorInstallReadiness(context.Background(), result.Evidence); err == nil {
+		t.Fatal("loopback adapter observation incorrectly authorized install")
+	}
+}
+
 func TestWindowsPartialHostFailClosedOnNonAdminOrFailure(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
