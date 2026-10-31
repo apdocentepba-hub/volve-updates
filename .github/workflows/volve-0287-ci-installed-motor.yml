@@ -118,6 +118,26 @@ jobs:
             $owner=Invoke-CimMethod -InputObject $process[0] -MethodName GetOwnerSid -ErrorAction Stop
             if($owner.ReturnValue -ne 0 -or $owner.Sid -ne 'S-1-5-18'){throw 'Installed process not SYSTEM'}
             Write-Host 'PASS: transactional ProgramData installer; verified real SYSTEM DNS53 and BetWarrior external block'
+            # Negative watchdog safety: a healthy live motor MUST NEVER be
+            # disabled, even if its independent recovery task is started.
+            $motorHealthy=Get-ScheduledTask -TaskName $task -ErrorAction Stop
+            if($motorHealthy.State -ne 'Running'){throw 'Motor unexpectedly not running before negative rescue'}
+            $oldRescueInfo=Get-ScheduledTaskInfo -TaskName $rescueTask -ErrorAction Stop
+            $started=(Get-Date).AddSeconds(-2)
+            Start-ScheduledTask -TaskName $rescueTask -ErrorAction Stop
+            $negativeDeadline=(Get-Date).AddSeconds(15)
+            do{
+              Start-Sleep -Milliseconds 450
+              $negative=Get-ScheduledTaskInfo -TaskName $rescueTask -ErrorAction Stop
+              $negativeState=Get-ScheduledTask -TaskName $rescueTask -ErrorAction Stop
+            }until(($negative.LastRunTime -gt $started -and $negativeState.State -ne 'Running' -and $negative.LastTaskResult -ne 0) -or (Get-Date) -ge $negativeDeadline)
+            if($negative.LastRunTime -le $started -or $negativeState.State -eq 'Running' -or $negative.LastTaskResult -eq 0){
+              throw 'Recovery did not explicitly reject healthy motor'
+            }
+            if(Test-Path -LiteralPath $rescueProof){throw 'Healthy motor was falsely marked recovered'}
+            if((Get-ScheduledTask -TaskName $task -ErrorAction Stop).State -ne 'Running'){throw 'Rescue disabled a healthy motor'}
+            Write-Host 'PASS: independent SYSTEM rescue refuses to disable a healthy running motor'
+
             Stop-ScheduledTask -TaskName $task -ErrorAction Stop
             $deadline=(Get-Date).AddSeconds(20)
             do{
