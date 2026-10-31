@@ -84,11 +84,11 @@ func windowsSYSDNSSealFixture(ctx context.Context,dir,snapshot string)error {
   `$acl=New-Object Security.AccessControl.DirectorySecurity;`+
   `$flags=[Security.AccessControl.InheritanceFlags]::ContainerInherit -bor [Security.AccessControl.InheritanceFlags]::ObjectInherit;`+
   `foreach($sid in @($s,$a)){$rule=[Security.AccessControl.FileSystemAccessRule]::new($sid,$full,$flags,[Security.AccessControl.PropagationFlags]::None,$allow);$acl.AddAccessRule($rule)};`+
-  `$acl.SetAccessRuleProtection($true,$false);$acl.SetOwner($a);Set-Acl -LiteralPath $p -AclObject $acl -ErrorAction Stop`+
+  `$acl.SetAccessRuleProtection($true,$false);$acl.SetOwner($a);[IO.Directory]::SetAccessControl($p,$acl)`+
   `}else{`+
   `$acl=New-Object Security.AccessControl.FileSecurity;`+
   `foreach($sid in @($s,$a)){$rule=[Security.AccessControl.FileSystemAccessRule]::new($sid,$full,$allow);$acl.AddAccessRule($rule)};`+
-  `$acl.SetAccessRuleProtection($true,$false);$acl.SetOwner($a);Set-Acl -LiteralPath $p -AclObject $acl -ErrorAction Stop`+
+  `$acl.SetAccessRuleProtection($true,$false);$acl.SetOwner($a);[IO.File]::SetAccessControl($p,$acl)`+
   `}`+
   `}`
  return windowsSYSDNSShell(ctx,script)
@@ -108,7 +108,7 @@ func windowsSYSDNSSealNewReceipt(ctx context.Context,dir string)error{
   `$target=`+windowsSYSDNSQuote(result)+`;`+
   `if(-not [IO.File]::Exists($source) -or -not [IO.File]::Exists($target)){throw 'Missing receipt/intent'};`+
   `$acl=Get-Acl -LiteralPath $source -ErrorAction Stop;`+
-  `Set-Acl -LiteralPath $target -AclObject $acl -ErrorAction Stop`
+  `[IO.File]::SetAccessControl($target,$acl)`
  return windowsSYSDNSShell(ctx,script)
 }
 
