@@ -71,7 +71,7 @@ func TestWindowsDNSNTFSVerifierPathsAndMissingSecurity(t *testing.T){
  }
  if count!=4{t.Fatalf("inspector not invoked for every expected path, got %d",count)}
  for _,bad:=range []string{filepath.Join(dir,"not-allowed"),filepath.Dir(filepath.Dir(dir)),
-  filepath.Join(dir,"..","dns-restore-snapshot.json"),""}{
+  dir+string(filepath.Separator)+".."+string(filepath.Separator)+"dns-restore-snapshot.json",""}{
   if err:=gate(bad);err==nil{t.Fatalf("unrelated NTFS path allowed: %q",bad)}
  }
  if err:=gate(filepath.Join(dir,ResidentResultFile));!errors.Is(err,os.ErrNotExist){
