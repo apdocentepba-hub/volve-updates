@@ -251,10 +251,10 @@ func windowsSYSDNSCreateTask(ctx context.Context,name,exe,config string)error {
   `$principal=New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest;`+
   `$action=New-ScheduledTaskAction -Execute `+windowsSYSDNSQuote(exe)+
     ` -Argument `+windowsSYSDNSQuote(args)+`;`+
-  `$trigger=New-ScheduledTaskTrigger -Once -At ((Get-Date).AddDays(7));`+
+  `$trigger=New-ScheduledTaskTrigger -AtStartup;`+
   `Register-ScheduledTask -TaskName $name -Principal $principal -Action $action -Trigger $trigger -ErrorAction Stop | Out-Null;`+
   `$task=Get-ScheduledTask -TaskName $name -ErrorAction Stop;`+
-  `if($task.TaskPath -ne '\' -or $task.Principal.UserId -notin @('SYSTEM','S-1-5-18') -or @($task.Actions).Count -ne 1 -or $task.Actions[0].Execute -ine `+windowsSYSDNSQuote(exe)+`){throw 'CI task identity mismatch'};`+
+  `if($task.TaskPath -ne '\' -or $task.Principal.UserId -notin @('SYSTEM','S-1-5-18') -or @($task.Actions).Count -ne 1 -or @($task.Triggers).Count -ne 1 -or $task.Triggers[0].CimClass.CimClassName -ne 'MSFT_TaskBootTrigger' -or $task.Actions[0].Execute -ine `+windowsSYSDNSQuote(exe)+`){throw 'CI task identity mismatch'};`+
   `Start-ScheduledTask -TaskName $name -ErrorAction Stop`
  return windowsSYSDNSShell(ctx,script)
 }
@@ -335,6 +335,7 @@ func TestWindowsRealDNSSYSTEMWatchdogAfterUpdaterCrash(t *testing.T){
   "VOLVE_CI_DNS_CRASH_SHA256="+hex.EncodeToString(digest[:]),
   "VOLVE_CI_DNS_CRASH_ARMED="+filepath.Join(root,"armed"),
   "VOLVE_CI_DNS_CRASH_TRIGGER="+filepath.Join(root,"trigger"),
+  "VOLVE_CI_DNS_WAIT_FOR_SYSTEM_WATCHDOG="+filepath.Join(root,"system-prearmed"),
  )
  updater:=exec.CommandContext(ctx,os.Args[0],"-test.run=^TestWindowsRealDNSSYSTEMWatchdogAfterUpdaterCrash$")
  updater.Env=append(common,"VOLVE_CI_DNS_RECOVERY_CHILD=updater")
@@ -342,10 +343,8 @@ func TestWindowsRealDNSSYSTEMWatchdogAfterUpdaterCrash(t *testing.T){
  updater.Stdout=&updaterOutput
  updater.Stderr=&updaterOutput
  if err:=updater.Start();err!=nil{t.Fatal(err)}
- if err:=windowsDNSCrashAwaitFile(ctx,filepath.Join(root,"armed"));err!=nil{
-  updater.Process.Kill()
-  t.Fatalf("isolated updater did not prove localhost DNS before crash: %v; %s",err,updaterOutput.String())
- }
+ // The updater is running for process-handle pinning, but blocked
+ // BEFORE changing any network state. Prearm the SYSTEM watchdog first.
  cfg:=windowsSYSDNSLabConfig{
   Schema:1,Task:taskName,Alias:alias,GUID:guid,PID:updater.Process.Pid,
   PlanPath:planPath,PlanSHA256:hex.EncodeToString(digest[:]),
@@ -379,7 +378,22 @@ func TestWindowsRealDNSSYSTEMWatchdogAfterUpdaterCrash(t *testing.T){
  }
  taskCreated=true
  if err:=windowsDNSCrashAwaitFile(ctx,cfg.WatchdogReady);err!=nil{
-  updater.Process.Kill();t.Fatalf("SYSTEM watchdog did not open updater handle: %v",err)
+  updater.Process.Kill();t.Fatalf("SYSTEM watchdog did not open updater handle before DNS writes: %v",err)
+ }
+ // Reject prearm unless the separately registered boot-triggered SYSTEM
+ // watchdog already pinned the updater AND no DNS settings changed.
+ if _,err:=VerifyWindowsDisposableDNSAdapterReadOnly(ctx,alias,guid,
+  DefaultWindowsDisposableDNSInspect);err!=nil{
+  updater.Process.Kill()
+  t.Fatalf("isolated vNIC changed before SYSTEM watchdog was armed: %v",err)
+ }
+ if err:=os.WriteFile(filepath.Join(root,"system-prearmed"),
+  []byte("SYSTEM boot-triggered task has pinned updater before DNS changes"),0600);err!=nil{
+  updater.Process.Kill();t.Fatal(err)
+ }
+ if err:=windowsDNSCrashAwaitFile(ctx,filepath.Join(root,"armed"));err!=nil{
+  updater.Process.Kill()
+  t.Fatalf("updater failed to set isolated loopback DNS after SYSTEM prearm: %v; %s",err,updaterOutput.String())
  }
  if err:=os.WriteFile(filepath.Join(root,"trigger"),[]byte("crash-now"),0600);err!=nil{
   updater.Process.Kill();t.Fatal(err)
@@ -403,5 +417,5 @@ func TestWindowsRealDNSSYSTEMWatchdogAfterUpdaterCrash(t *testing.T){
    t.Fatalf("third-party verification of SYSTEM-restored DNS %s failed: %v %v",record.Original.Family,got,err)
   }
  }
- t.Log("PASS: Windows LocalSystem SYSTEM watchdog restored REAL DNS IPv4/IPv6 after updater crash using sealed NTFS DACL, ephemeral signed journal and pinned process handle")
+ t.Log("PASS: SYSTEM watchdog with genuine at-startup trigger prearmed BEFORE first DNS write, restored REAL IPv4/IPv6 after crash with sealed NTFS CI permit and durable receipt")
 }
