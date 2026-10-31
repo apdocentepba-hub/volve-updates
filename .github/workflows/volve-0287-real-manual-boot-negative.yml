@@ -1,0 +1,63 @@
+name: VOLVE 0.28.7 real Windows manual-start boot-proof NEGATIVE (NO RELEASE)
+on:
+  push:
+    branches: [feature/motor-updater-0287-pilot]
+    paths:
+      - '.github/workflows/volve-0287-real-manual-boot-negative.yml'
+      - 'development/0.28.7/lab/test_actual_manual_boot_event_rejection.ps1'
+      - 'development/0.28.7/lab/reboot_event_chain.ps1'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  read-real-task-scheduler-events:
+    runs-on: windows-latest
+    timeout-minutes: 7
+    steps:
+      - uses: actions/checkout@v4
+      - name: Manual LocalSystem boot-trigger task must fail real-reboot event proof
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $name='VOLVE-CI-BootRecovery-'+$env:GITHUB_RUN_ID+'000'
+          if($name -cnotmatch '^VOLVE-CI-BootRecovery-[0-9]{14,18}$'){
+            throw 'Refusing non-disposable Task Scheduler identity'
+          }
+          if(Get-ScheduledTask -TaskName $name -ErrorAction SilentlyContinue){
+            throw 'Disposable CI task already exists; refusing replacement'
+          }
+          $registered=$false
+          try {
+            & wevtutil.exe sl 'Microsoft-Windows-TaskScheduler/Operational' /e:true
+            if($LASTEXITCODE -ne 0){throw 'Windows TaskScheduler history not available'}
+            $exe=Join-Path $env:SystemRoot 'System32/cmd.exe'
+            $action=New-ScheduledTaskAction -Execute $exe -Argument '/C exit 0'
+            $principal=New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest
+            $trigger=New-ScheduledTaskTrigger -AtStartup
+            Register-ScheduledTask -TaskName $name -Action $action -Principal $principal -Trigger $trigger -ErrorAction Stop | Out-Null
+            $registered=$true
+            $task=Get-ScheduledTask -TaskName $name -ErrorAction Stop
+            if($task.TaskPath -ne '\' -or $task.Principal.UserId -notin @('SYSTEM','S-1-5-18') -or
+               @($task.Actions).Count -ne 1 -or $task.Actions[0].Execute -ine $exe -or
+               @($task.Triggers).Count -ne 1 -or $task.Triggers[0].CimClass.CimClassName -ne 'MSFT_TaskBootTrigger'){
+              throw 'Task identity or genuine AtStartup trigger not verified'
+            }
+            $manualStartUTC=[DateTime]::UtcNow
+            Start-ScheduledTask -TaskName $name -ErrorAction Stop
+            & 'development/0.28.7/lab/test_actual_manual_boot_event_rejection.ps1' -TaskName ('\'+$name) -ManualStartUTC $manualStartUTC
+            Write-Host 'PASS: live Windows Scheduler emitted actual SYSTEM task events; reboot attestor rejected manual start'
+          } finally {
+            if($registered){
+              $task=Get-ScheduledTask -TaskName $name -ErrorAction SilentlyContinue
+              if($null -ne $task){
+                if($task.TaskPath -ne '\' -or $task.Principal.UserId -notin @('SYSTEM','S-1-5-18')){
+                  throw 'SECURITY: refusing to delete unexpected scheduled task'
+                }
+                if($task.State -eq 'Running'){
+                  Stop-ScheduledTask -TaskName $name -ErrorAction Stop
+                }
+                Unregister-ScheduledTask -TaskName $name -Confirm:$false -ErrorAction Stop
+              }
+              Write-Host 'PASS: disposable SYSTEM task cleaned up'
+            }
+          }
