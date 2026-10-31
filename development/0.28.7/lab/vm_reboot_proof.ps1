@@ -70,6 +70,39 @@ function Assert-ProtectedDir([string]$dir) {
         }
     }
 }
+# Read-only trust check for every file used to attest a real reboot.
+# Files may inherit the ALREADY VERIFIED protected parent DACL; however an
+# explicit file-level foreign ACE, untrusted owner, or reparse point is fatal.
+function Assert-ProtectedEvidenceFile([string]$path) {
+    if(-not [IO.File]::Exists($path)){throw ('Missing protected VM evidence file: '+$path)}
+    $attributes=[IO.File]::GetAttributes($path)
+    if(($attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0){
+        throw 'VM evidence file is a reparse point'
+    }
+    $acl=Get-Acl -LiteralPath $path -ErrorAction Stop
+    $allowed=@('S-1-5-18','S-1-5-32-544')
+    $owner=$acl.GetOwner([Security.Principal.SecurityIdentifier]).Value
+    if($owner -notin $allowed){throw ('Untrusted VM evidence file owner: '+$owner)}
+    $full=[int][Security.AccessControl.FileSystemRights]::FullControl
+    $confirmed=@{}
+    foreach($ace in @($acl.Access)){
+        $sid=$null
+        try{$sid=$ace.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value}
+        catch{throw 'Unresolved VM evidence file trustee'}
+        if($ace.AccessControlType -ne [Security.AccessControl.AccessControlType]::Allow -or
+           $sid -notin $allowed){
+            throw ('Foreign or DENY VM evidence file DACL entry: '+$sid)
+        }
+        if((([int]$ace.FileSystemRights -band $full) -eq $full)){
+            $confirmed[$sid]=$true
+        }
+    }
+    foreach($sid in $allowed){
+        if(-not $confirmed.ContainsKey($sid)){
+            throw ('Missing SYSTEM/Administrators full access to VM evidence file: '+$sid)
+        }
+    }
+}
 function Protect-Kit([string]$dir) {
     # icacls numerical SID operands require a leading * (Microsoft syntax).
     & icacls.exe $dir '/inheritance:r' '/grant:r' '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F' | Out-Null
@@ -80,7 +113,8 @@ function Protect-Kit([string]$dir) {
 }
 function Read-Metadata([string]$dir) {
     $path = Join-Path $dir 'vm-trial.json'
-    if(-not (Test-Path -LiteralPath $path -PathType Leaf)) {throw 'No prepared VM trial metadata'}
+    Assert-ProtectedDir $dir
+    Assert-ProtectedEvidenceFile $path
     $data = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json
     if($data.schema -ne 1 -or $data.runId -ne $RunId -or $data.computer -ne $env:COMPUTERNAME) {throw 'VM trial metadata mismatch'}
     foreach($member in @('bootBeforeUtc','labSha256','journalSha256','evidenceLibSha256')) {
@@ -92,11 +126,12 @@ function Assert-LabIdentity([string]$dir,[object]$meta) {
     Assert-ProtectedDir $dir
     $lab=Join-Path $dir 'boot_recovery_lab.ps1'
     $helper=Join-Path $dir 'volve-journal-lab.exe'
-    if(-not (Test-Path -LiteralPath $lab -PathType Leaf) -or -not (Test-Path -LiteralPath $helper -PathType Leaf)) {throw 'Missing protected VM test tools'}
+    Assert-ProtectedEvidenceFile $lab
+    Assert-ProtectedEvidenceFile $helper
     if((Get-FileHash -Algorithm SHA256 -LiteralPath $lab).Hash -ne $meta.labSha256) {throw 'VM lab script was changed'}
     if((Get-FileHash -Algorithm SHA256 -LiteralPath $helper).Hash -ne $meta.journalSha256) {throw 'VM journal tool was changed'}
     $evidenceLib=Join-Path $dir 'reboot_event_chain.ps1'
-    if(-not (Test-Path -LiteralPath $evidenceLib -PathType Leaf)){throw 'Missing protected boot-event verification helper'}
+    Assert-ProtectedEvidenceFile $evidenceLib
     if((Get-FileHash -Algorithm SHA256 -LiteralPath $evidenceLib).Hash -ne $meta.evidenceLibSha256){
         throw 'Boot-event verification helper was changed after preparing the VM trial'
     }
@@ -191,7 +226,10 @@ if($Mode -eq 'Verify') {
     $task=Assert-LabTask $labTask $cmd
     if($task.Actions[0].Arguments -ne '/C exit 0') {throw 'Original harmless task arguments not recovered'}
     $mark=Join-Path $root 'boot-recovery-success.marker'
-    if(-not (Test-Path -LiteralPath $mark -PathType Leaf) -or [IO.File]::ReadAllText($mark) -ne 'RESTORED_BY_SYSTEM_STARTUP_TASK'){throw 'No verified SYSTEM recovery marker'}
+    Assert-ProtectedEvidenceFile $mark
+    Assert-ProtectedEvidenceFile (Join-Path $root 'old-task.xml')
+    Assert-ProtectedEvidenceFile (Join-Path $root 'recovery.json')
+    if([IO.File]::ReadAllText($mark) -ne 'RESTORED_BY_SYSTEM_STARTUP_TASK'){throw 'No verified SYSTEM recovery marker'}
     if(Test-Path -LiteralPath (Join-Path $root 'boot-recovery-failed.marker')){throw 'Watchdog reported recovery failure'}
     $helper=Join-Path $kit 'volve-journal-lab.exe'
     $journal=Join-Path $root 'recovery.json'
