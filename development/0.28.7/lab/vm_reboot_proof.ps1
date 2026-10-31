@@ -39,20 +39,43 @@ function Get-KitPath([string]$id) {
     return (Join-Path $env:ProgramData ('VOLVE-VM-RebootLab-'+$id))
 }
 function Assert-ProtectedDir([string]$dir) {
-    $acl = Get-Acl -LiteralPath $dir
-    $allowed = @('S-1-5-18','S-1-5-32-544')
-    foreach ($ace in $acl.Access) {
-        $sid = $null
-        try { $sid = $ace.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value }
-        catch { throw 'Unresolved identity in laboratory ACL' }
-        if($ace.AccessControlType -eq [Security.AccessControl.AccessControlType]::Allow -and $sid -notin $allowed) {
-            throw ('Unsafe lab directory ACL allows '+$sid)
+    if(-not [IO.Directory]::Exists($dir)){throw 'Protected VM trial directory is missing'}
+    $attributes=[IO.File]::GetAttributes($dir)
+    if(($attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0){
+        throw 'Protected VM trial directory is a Windows reparse point'
+    }
+    $acl=Get-Acl -LiteralPath $dir -ErrorAction Stop
+    $allowed=@('S-1-5-18','S-1-5-32-544')
+    $owner=$acl.GetOwner([Security.Principal.SecurityIdentifier]).Value
+    if($owner -notin $allowed){throw ('Untrusted VM trial directory owner: '+$owner)}
+    if(-not $acl.AreAccessRulesProtected){throw 'VM trial directory DACL inherits untrusted parent permissions'}
+    $full=[int][Security.AccessControl.FileSystemRights]::FullControl
+    $confirmed=@{}
+    foreach($ace in @($acl.Access)){
+        $sid=$null
+        try{$sid=$ace.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value}
+        catch{throw 'Unresolved identity in VM trial directory ACL'}
+        if($ace.IsInherited -or
+           $ace.AccessControlType -ne [Security.AccessControl.AccessControlType]::Allow -or
+           $sid -notin $allowed){
+            throw ('Foreign, inherited or DENY VM trial DACL entry: '+$sid)
+        }
+        if((([int]$ace.FileSystemRights -band $full) -eq $full)){
+            $confirmed[$sid]=$true
+        }
+    }
+    foreach($sid in $allowed){
+        if(-not $confirmed.ContainsKey($sid)){
+            throw ('Missing explicit SYSTEM/Administrators FullControl for '+$sid)
         }
     }
 }
 function Protect-Kit([string]$dir) {
+    # icacls numerical SID operands require a leading * (Microsoft syntax).
     & icacls.exe $dir '/inheritance:r' '/grant:r' '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F' | Out-Null
-    if($LASTEXITCODE -ne 0){throw 'Cannot protect the VM trial folder; refusing to proceed'}
+    if($LASTEXITCODE -ne 0){throw 'Cannot protect the VM trial folder DACL; refusing to proceed'}
+    & icacls.exe $dir '/setowner' '*S-1-5-32-544' | Out-Null
+    if($LASTEXITCODE -ne 0){throw 'Cannot set protected VM trial owner; refusing to proceed'}
     Assert-ProtectedDir $dir
 }
 function Read-Metadata([string]$dir) {
