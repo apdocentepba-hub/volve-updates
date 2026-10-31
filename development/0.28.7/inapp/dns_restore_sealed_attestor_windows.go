@@ -77,7 +77,7 @@ func (a WindowsSealedDNSRecoveryAttestor) Verify(ctx context.Context, proposed [
   return errors.New("DNS recovery snapshot not at protected sibling path")
  }
  if len(a.PinnedSnapshotSHA256)!=64||
-    !isResidentLowerSHA(a.PinnedSnapshotSHA256){
+    !residentSHA.MatchString(a.PinnedSnapshotSHA256){
   return errors.New("no trusted snapshot SHA-256 pin")
  }
  if len(proposed)==0||len(proposed)>16 {
