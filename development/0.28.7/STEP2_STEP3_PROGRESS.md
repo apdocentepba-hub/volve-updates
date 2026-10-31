@@ -6,17 +6,17 @@ Fecha de corte inicial: 30/10/2026. Rama de desarrollo: feature/motor-updater-02
 
 Las cifras son **estimaciones conservadoras de ingeniería por entregables ponderados**, no una medición del tiempo, ni una cantidad de líneas, ni un porcentaje de protección. Se acumula crédito parcial por código efectivamente integrado y verificable; aprobar CI no reemplaza los ensayos sobre un equipo Windows persistente. Nunca publicar como cerrado un paso que no haya aprobado todos sus criterios obligatorios.
 
-### Paso 2 — Actualización del motor DNS: 54/100 (54%)
+### Paso 2 — Actualización del motor DNS: 56/100 (56%)
 
 | Subentregable | Peso | Puntos reconocidos | Estado |
 | --- | ---: | ---: | --- |
 | Permiso editorial exacto, autenticidad y pinning | 15 | 8 | Validación criptográfica en CI; falta emisión legítima para el motor instalado |
 | Respaldo anterior y journal protegido | 15 | 15 | Código y auditorías NTFS probados |
 | Watchdog de recuperación SYSTEM independiente | 25 | 10 | Recuperador separado prearmado como tarea SYSTEM recurrente cada minuto en VM descartable; detectó caída real sin disparo manual; falta watchdog productivo |
-| Controlador Windows real que cambia y revierte el motor | 20 | 6 | Instalación/retirada versionada de motor SYSTEM y recuperador en VM; ahora lectura Windows real de GUID/InterfaceIndex y DNS IPv4/IPv6 sin cambios de red, con rechazos de identidad concurrente; falta ejecutar restauración autenticada de adaptador |
+| Controlador Windows real que cambia y revierte el motor | 20 | 8 | Instalación/retirada versionada de motor SYSTEM y recuperador en VM; ahora lectura Windows real de GUID/InterfaceIndex y DNS IPv4/IPv6 sin cambios de red, con rechazos de identidad concurrente; falta ejecutar restauración autenticada de adaptador |
 | Tests adversos, DNS dual-stack, identidad, rollback en CI | 15 | 15 | Motor compilado ejecutado bajo SYSTEM en DNS/53 real y sondeado externamente en VM descartable; faltan escenarios productivos |
 | Reinicio real repetible de VM persistente | 10 | 0 | Sin ejecutar |
-| **TOTAL** | **100** | **54** | **Paso abierto** |
+| **TOTAL** | **100** | **56** | **Paso abierto** |
 
 Los seis criterios A–F de STEP2_EXIT_CRITERIA.md siguen sin aprobarse **como condiciones de cierre completas**, aunque hay subtrabajos de esos criterios realizados.
 
@@ -145,3 +145,14 @@ Ver [CI actual de la política](https://github.com/apdocentepba-hub/volve-update
 **EVIDENCIA:** [CI de contrato DNS #41204995398](https://github.com/apdocentepba-hub/volve-updates/actions/runs/41204995398) finalizó **SUCCESS en Windows y Ubuntu**, con pruebas de doble familia, cambios externos, reanudación, exclusión de adaptadores ambiguos y conservación del estado DNS del runner. El conjunto anterior [#41204974495](https://github.com/apdocentepba-hub/volve-updates/actions/runs/41204974495) también terminó SUCCESS. El CI general del último commit debe verificarse separadamente: [#41204995403](https://github.com/apdocentepba-hub/volve-updates/actions/runs/41204995403).
 
 **NO equivale a restauración de DNS real en un adaptador descartable:** el ejecutor `netsh` usa doble simulado y las lecturas reales del runner son de solo lectura. Falta: escritor privilegiado con attestation de tarea SYSTEM y journal firmado, bloqueo interproceso, prueba de aplicación/reversión de DNS real en adaptador VM descartable, fuente exacta DHCP/estático por familia, reboot de VM persistente, comprobaciones posrecuperación, firma editorial y actualización desde VOLVÉ 0.28.6. La tarea `VOLVE-DNS-SERVER-0270` y `main` siguen intactas. **Sin puntos nuevos de entregable: paso 2 = 54/100; paso 3 = 38/100.**
+
+
+## 31/10/2026 — Cierre de invocación nativa y verificación de autorización
+
+**Entregable nuevo:** `dns_restore_native_runner_windows.go` restringe su función pública `DefaultWindowsDNSNativeInvoke` a `netsh interface ipv4/ipv6 show interfaces`; rechaza intentos de ejecutar DNS `set/add` directamente. La ejecución nativa interna exige un vector exacto de argumentos estáticos, sin shells ni parámetros extra. `dns_restore_authorized_windows.go` agrega un ejecutor transaccional experimental, que exige un verificador de autorización independiente antes de empezar, después de fijar los índices, antes y después de **cada** escritura DNS y al finalizar el conjunto IPv4/IPv6. Si el verificador deja de autorizar, no continúa con la siguiente escritura; el journal debe permanecer pendiente. No se permite instalarlo en producción sin implementar el verificador real del SYSTEM, ACL, respaldo sellado, tarea detenida, mutex interproceso y firma del permiso.
+
+**Pruebas:** los tests verifican rechazo de la API pública ante mutación, gramática cerrada, rollback parcial simulado cuando la autorización vence, reanudación segura, rechazo de respaldos distintos y ausencia de escrituras no autorizadas. [Contrato DNS Windows+Ubuntu #41207111463](https://github.com/apdocentepba-hub/volve-updates/actions/runs/41207111463): **SUCCESS**. [Motor instalado transaccional #41207107742](https://github.com/apdocentepba-hub/volve-updates/actions/runs/41207107742): **SUCCESS**. [Motor SYSTEM/DNS53 #41207107716](https://github.com/apdocentepba-hub/volve-updates/actions/runs/41207107716): **SUCCESS**. La compilación integrada [#41207107724](https://github.com/apdocentepba-hub/volve-updates/actions/runs/41207107724) seguía ejecutándose en la última inspección al registrar esta nota; NO se afirma su aprobación.
+
+**Crédito conservador:** dentro del controlador Windows de 20 puntos, se reconocen **2 adicionales (6→8)** por el canal nativo restringido y el límite de autorización de laboratorio probado. Así **Paso 2: 56/100** y **Paso 3: 38/100 SIN CAMBIOS**. Son estimaciones técnicas por entregables, NO un porcentaje de protección contra apuestas.
+
+**PENDIENTES BLOQUEANTES:** el verificador Windows real aún no existe; el canal experimental usa un doble del invocador y no modifica DNS real de ningún adaptador; faltan ensayo reversible sobre interfaz descartable, prueba de recuperación después de reiniciar una VM persistente, emisión firmada legítima, liberación del instalador y actualización desde VOLVÉ instalado. `main` y `0.28.6` intactos.
