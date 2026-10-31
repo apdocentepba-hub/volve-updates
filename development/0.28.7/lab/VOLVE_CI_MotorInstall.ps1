@@ -5,7 +5,9 @@ param(
  [Parameter(Mandatory=$true)][ValidateSet('Install','Verify','Remove')][string]$Mode,
  [Parameter(Mandatory=$true)][ValidatePattern('^[0-9]{6,20}$')][string]$LabId,
  [string]$SourceExe='',
- [Parameter(Mandatory=$true)][ValidatePattern('^[a-fA-F0-9]{64}$')][string]$ExpectedSHA256
+ [string]$SourceRescue='',
+ [Parameter(Mandatory=$true)][ValidatePattern('^[a-fA-F0-9]{64}$')][string]$ExpectedSHA256,
+ [Parameter(Mandatory=$true)][ValidatePattern('^[a-fA-F0-9]{64}$')][string]$ExpectedRescueSHA256
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference='Stop'
@@ -21,9 +23,15 @@ foreach($prod in @('VOLVE-DNS-SERVER-0270','VOLVE-DNS-RESCUE-0270')){
 $root=Join-Path $env:ProgramData ('VOLVE-CI-MotorInstall-'+$LabId)
 $dataRoot=Join-Path $env:ProgramData ('VOLVE-CI-FreshDNS53-'+$LabId)
 $task='VOLVE-CI-FreshMotor-'+$LabId
+$rescueTask='VOLVE-CI-FreshRescue-'+$LabId
 $exe=Join-Path $root 'VOLVE_CI_FreshDNS53.exe'
+$rescue=Join-Path $root 'VOLVE_CI_MotorRescue.ps1'
+$proof=Join-Path $root 'ci-rescue-result.json'
+$powershellExe=Join-Path $env:WINDIR 'System32\WindowsPowerShell\v1.0\powershell.exe'
 $receipt=Join-Path $root 'ci-install-receipt.json'
 $sha=$ExpectedSHA256.ToLowerInvariant()
+$rescueSHA=$ExpectedRescueSHA256.ToLowerInvariant()
+$rescueArgs='-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "'+$rescue+'" -LabId '+$LabId+' -ExpectedSHA256 '+$sha+' -ExpectedRescueSHA256 '+$rescueSHA
 $argsText='--ci-fresh-dns53 "'+$dataRoot+'" VOLVE-CI-GITHUB-HOSTED-VM-DNS53-ONLY'
 function RegularNode([string]$path){
  $node=Get-Item -LiteralPath $path -Force -ErrorAction Stop
@@ -40,18 +48,31 @@ function VerifiedTask(){
  if(@($xml.SelectNodes("//*[local-name()='BootTrigger']")).Count -ne 1){throw 'Task lacks boot trigger'}
  return $one
 }
+function VerifiedRescueTask(){
+ $tasks=@(Get-ScheduledTask -TaskName $rescueTask -ErrorAction SilentlyContinue)
+ if($tasks.Count -ne 1){throw 'Recovery task missing or duplicated'}
+ $one=$tasks[0]
+ if($one.TaskPath -ne '\' -or $one.Principal.UserId -notin @('SYSTEM','S-1-5-18')){throw 'Recovery SYSTEM task identity mismatch'}
+ if(@($one.Actions).Count -ne 1 -or [string]$one.Actions[0].Execute -ine $powershellExe -or [string]$one.Actions[0].Arguments -cne $rescueArgs){throw 'Recovery action changed'}
+ return $one
+}
 function VerifyInstall(){
  if(-not (RegularNode $root).PSIsContainer){throw 'Invalid install root'}
  $node=RegularNode $exe
  if($node.PSIsContainer -or $node.Length -lt 1000000 -or $node.Length -gt 80000000){throw 'Invalid installed executable'}
  if((Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash.ToLowerInvariant() -cne $sha){throw 'Installed EXE SHA256 mismatch'}
+ $node=RegularNode $rescue
+ if($node.PSIsContainer -or $node.Length -lt 1000 -or $node.Length -gt 100000){throw 'Invalid independent recovery'}
+ if((Get-FileHash -LiteralPath $rescue -Algorithm SHA256).Hash.ToLowerInvariant() -cne $rescueSHA){throw 'Recovery code hash mismatch'}
  $node=RegularNode $receipt
  if($node.PSIsContainer -or $node.Length -gt 2048){throw 'Malformed install receipt'}
  $saved=Get-Content -LiteralPath $receipt -Encoding UTF8 -Raw | ConvertFrom-Json -ErrorAction Stop
- if($saved.schema -ne 1 -or $saved.version -ne '0.28.7-CI' -or $saved.sha256 -cne $sha -or $saved.exe -cne $exe -or $saved.task -cne $task -or $saved.dataRoot -cne $dataRoot){throw 'Receipt inconsistent with independently supplied parameters'}
+ if($saved.schema -ne 1 -or $saved.version -ne '0.28.7-CI' -or $saved.sha256 -cne $sha -or $saved.exe -cne $exe -or $saved.task -cne $task -or $saved.dataRoot -cne $dataRoot -or $saved.rescueSHA256 -cne $rescueSHA -or $saved.rescueScript -cne $rescue -or $saved.rescueTask -cne $rescueTask){throw 'Receipt inconsistent with independently supplied parameters'}
  $children=@(Get-ChildItem -LiteralPath $root -Force)
- if($children.Count -ne 2 -or @($children | Where-Object Name -NotIn @('VOLVE_CI_FreshDNS53.exe','ci-install-receipt.json')).Count -ne 0){throw 'Unknown install files'}
+ if($children.Count -lt 3 -or $children.Count -gt 4 -or @($children | Where-Object Name -NotIn @('VOLVE_CI_FreshDNS53.exe','ci-install-receipt.json','VOLVE_CI_MotorRescue.ps1','ci-rescue-result.json')).Count -ne 0){throw 'Unknown install files'}
+ if($children.Count -eq 4 -and -not (Test-Path -LiteralPath $proof -PathType Leaf)){throw 'Unknown fourth install file'}
  $null=VerifiedTask
+ $null=VerifiedRescueTask
 }
 function VerifyDataSubtree(){
  if(-not (Test-Path -LiteralPath $dataRoot)){return}
@@ -66,16 +87,20 @@ function VerifyDataSubtree(){
  if($node.PSIsContainer -or $node.Length -gt 30000000){throw 'Invalid catalog data'}
 }
 if($Mode -eq 'Install'){
- if(-not $SourceExe){throw 'SourceExe required'}
+ if(-not $SourceExe -or -not $SourceRescue){throw 'SourceExe and SourceRescue required'}
+ $rescueSource=RegularNode $SourceRescue
+ if($rescueSource.PSIsContainer -or $rescueSource.Length -lt 1000 -or $rescueSource.Length -gt 100000){throw 'Invalid source recovery'}
+ if((Get-FileHash -LiteralPath $SourceRescue -Algorithm SHA256).Hash.ToLowerInvariant() -cne $rescueSHA){throw 'Recovery source SHA256 mismatch'}
  $source=RegularNode $SourceExe
  if($source.PSIsContainer -or $source.Length -lt 1000000 -or $source.Length -gt 80000000){throw 'Invalid source binary'}
  if((Get-FileHash -LiteralPath $SourceExe -Algorithm SHA256).Hash.ToLowerInvariant() -cne $sha){throw 'Source SHA256 mismatch'}
  if((Test-Path -LiteralPath $root) -or (Test-Path -LiteralPath $dataRoot)){throw 'Existing lab installation: no overwrite'}
  if(Get-ScheduledTask -TaskName $task -ErrorAction SilentlyContinue){throw 'Existing lab task: no overwrite'}
+ if(Get-ScheduledTask -TaskName $rescueTask -ErrorAction SilentlyContinue){throw 'Existing recovery task: no overwrite'}
  foreach($ip in @('127.0.0.1','::1')){
   if(@(Get-NetUDPEndpoint -LocalAddress $ip -LocalPort 53 -ErrorAction SilentlyContinue).Count -gt 0){throw ('Local port 53 occupied: '+$ip)}
  }
- $created=$false;$registered=$false
+ $created=$false;$registered=$false;$rescueRegistered=$false
  try{
   $null=New-Item -ItemType Directory -Path $root -ErrorAction Stop
   $created=$true
@@ -83,8 +108,17 @@ if($Mode -eq 'Install'){
   if($LASTEXITCODE -ne 0){throw 'Cannot secure install root ACL'}
   Copy-Item -LiteralPath $SourceExe -Destination $exe -ErrorAction Stop
   if((Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash.ToLowerInvariant() -cne $sha){throw 'Copy SHA256 mismatch'}
-  $info=[ordered]@{schema=1;version='0.28.7-CI';sha256=$sha;exe=$exe;task=$task;dataRoot=$dataRoot}
+  Copy-Item -LiteralPath $SourceRescue -Destination $rescue -ErrorAction Stop
+  if((Get-FileHash -LiteralPath $rescue -Algorithm SHA256).Hash.ToLowerInvariant() -cne $rescueSHA){throw 'Copied recovery SHA256 mismatch'}
+  $info=[ordered]@{schema=1;version='0.28.7-CI';sha256=$sha;exe=$exe;task=$task;dataRoot=$dataRoot;rescueSHA256=$rescueSHA;rescueScript=$rescue;rescueTask=$rescueTask}
   [IO.File]::WriteAllText($receipt,($info|ConvertTo-Json -Compress),[Text.UTF8Encoding]::new($false))
+  # Independent recovery is registered BEFORE the motor startup task.
+  $rescueAction=New-ScheduledTaskAction -Execute $powershellExe -Argument $rescueArgs
+  $rescueTrigger=New-ScheduledTaskTrigger -Once -At (Get-Date).AddYears(1)
+  $rescueSettings=New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Minutes 2)
+  Register-ScheduledTask -TaskName $rescueTask -Action $rescueAction -Trigger $rescueTrigger -Settings $rescueSettings -User SYSTEM -RunLevel Highest -ErrorAction Stop | Out-Null
+  $rescueRegistered=$true
+  $null=VerifiedRescueTask
   $action=New-ScheduledTaskAction -Execute $exe -Argument $argsText
   $trigger=New-ScheduledTaskTrigger -AtStartup
   $settings=New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Minutes 3)
@@ -95,9 +129,11 @@ if($Mode -eq 'Install'){
  }catch{
   $reason=$_
   if($registered){Unregister-ScheduledTask -TaskName $task -Confirm:$false -ErrorAction SilentlyContinue}
+  if($rescueRegistered){Unregister-ScheduledTask -TaskName $rescueTask -Confirm:$false -ErrorAction SilentlyContinue}
   if($created){
    if(Test-Path -LiteralPath $exe){Remove-Item -LiteralPath $exe -Force -ErrorAction SilentlyContinue}
    if(Test-Path -LiteralPath $receipt){Remove-Item -LiteralPath $receipt -Force -ErrorAction SilentlyContinue}
+   if(Test-Path -LiteralPath $rescue){Remove-Item -LiteralPath $rescue -Force -ErrorAction SilentlyContinue}
    Remove-Item -LiteralPath $root -ErrorAction SilentlyContinue
   }
   throw $reason
@@ -118,10 +154,14 @@ if($Mode -eq 'Install'){
   }until($t.State -ne 'Running' -or (Get-Date) -ge $until)
   if($t.State -eq 'Running'){throw 'Engine still running; installation retained'}
  }
+ Unregister-ScheduledTask -TaskName $rescueTask -Confirm:$false -ErrorAction Stop
+ if(Get-ScheduledTask -TaskName $rescueTask -ErrorAction SilentlyContinue){throw 'Recovery task removal not confirmed'}
  Unregister-ScheduledTask -TaskName $task -Confirm:$false -ErrorAction Stop
  if(Get-ScheduledTask -TaskName $task -ErrorAction SilentlyContinue){throw 'Task removal not confirmed'}
  Remove-Item -LiteralPath $exe -Force -ErrorAction Stop
  Remove-Item -LiteralPath $receipt -Force -ErrorAction Stop
+ Remove-Item -LiteralPath $rescue -Force -ErrorAction Stop
+ if(Test-Path -LiteralPath $proof){Remove-Item -LiteralPath $proof -Force -ErrorAction Stop}
  Remove-Item -LiteralPath $root -ErrorAction Stop
  if(Test-Path -LiteralPath $dataRoot){
   $feed=Join-Path $dataRoot 'catalog\feeds\hagezi_gambling_full.txt'
