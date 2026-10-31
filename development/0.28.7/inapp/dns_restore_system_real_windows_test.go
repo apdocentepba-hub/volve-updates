@@ -107,7 +107,15 @@ func windowsSYSDNSSealNewReceipt(ctx context.Context,dir string)error{
   `$source=`+windowsSYSDNSQuote(source)+`;`+
   `$target=`+windowsSYSDNSQuote(result)+`;`+
   `if(-not [IO.File]::Exists($source) -or -not [IO.File]::Exists($target)){throw 'Missing receipt/intent'};`+
-  `$acl=[IO.File]::GetAccessControl($source);`+
+  `$admins=[Security.Principal.SecurityIdentifier]::new('S-1-5-32-544');`+
+  `$system=[Security.Principal.SecurityIdentifier]::new('S-1-5-18');`+
+  `$full=[Security.AccessControl.FileSystemRights]::FullControl;`+
+  `$allow=[Security.AccessControl.AccessControlType]::Allow;`+
+  `$acl=New-Object Security.AccessControl.FileSecurity;`+
+  `foreach($sid in @($system,$admins)){`+
+  `$rule=[Security.AccessControl.FileSystemAccessRule]::new($sid,$full,$allow);`+
+  `$acl.AddAccessRule($rule)};`+
+  `$acl.SetAccessRuleProtection($true,$false);$acl.SetOwner($admins);`+
   `[IO.File]::SetAccessControl($target,$acl)`
  return windowsSYSDNSShell(ctx,script)
 }
