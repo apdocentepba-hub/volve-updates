@@ -104,6 +104,10 @@ func DefaultWindowsDNSProtectedACLInspect(ctx context.Context,path string)(strin
   `};Write-Output '`+windowsDNSProtectedACLToken+`'`
  out,err:=exec.CommandContext(ctx,ps,"-NoLogo","-NoProfile","-NonInteractive",
   "-ExecutionPolicy","Bypass","-Command",script).CombinedOutput()
- if err!=nil{return "",fmt.Errorf("Windows NTFS DACL inspection failed: %w",err)}
+ if err!=nil{
+  diagnostic:=strings.TrimSpace(string(out))
+  if len(diagnostic)>600{diagnostic=diagnostic[:600]}
+  return "",fmt.Errorf("Windows NTFS DACL inspection failed: %w: %s",err,diagnostic)
+ }
  return strings.TrimSpace(string(out)),nil
 }
