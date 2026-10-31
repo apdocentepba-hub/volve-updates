@@ -16,7 +16,7 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: '1.23.x'
-      - name: Prove real SYSTEM DNS crash restore with WindowsPowerShell native NTFS descriptor sealing
+      - name: Diagnose true SYSTEM signed-journal DNS recovery stage on sacrificial Hyper-V vNIC
         shell: pwsh
         run: |
           $ErrorActionPreference='Stop'
