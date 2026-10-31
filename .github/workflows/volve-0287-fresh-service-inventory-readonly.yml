@@ -1,0 +1,41 @@
+name: VOLVE 0.28.7 Windows service inventory READ ONLY (NO RELEASE)
+on:
+  push:
+    branches: [feature/motor-updater-0287-pilot]
+    paths:
+      - 'development/0.28.7/inapp/fresh_service_inventory_windows.go'
+      - 'development/0.28.7/inapp/fresh_service_inventory_windows_test.go'
+      - 'development/0.28.7/inapp/fresh_install_policy.go'
+      - 'development/0.28.7/inapp/fresh_install_policy_test.go'
+      - '.github/workflows/volve-0287-fresh-service-inventory-readonly.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  windows-service-inventory:
+    runs-on: windows-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.x'
+      - name: Run native read-only Windows service inspection and conservative policy tests
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $env:GO111MODULE='off'
+          $files=@(
+            'development/0.28.7/inapp/fresh_install_policy.go',
+            'development/0.28.7/inapp/fresh_install_policy_test.go',
+            'development/0.28.7/inapp/fresh_service_inventory_windows.go',
+            'development/0.28.7/inapp/fresh_service_inventory_windows_test.go'
+          )
+          foreach($file in $files){
+            if(-not (Test-Path -LiteralPath $file -PathType Leaf)){
+              throw ('Missing required Windows service inventory source: '+$file)
+            }
+          }
+          go test -count=1 -timeout 4m -v @files
+          if($LASTEXITCODE -ne 0){throw 'Windows read-only services census or strict fresh-motor classification FAILED'}
+          Write-Host 'PASS: real native Windows Win32_Service census; renamed, STOPPED, invalid and partial VOLVE services never authorize a fresh install. NO DNS, tasks, services or registry changes.'
