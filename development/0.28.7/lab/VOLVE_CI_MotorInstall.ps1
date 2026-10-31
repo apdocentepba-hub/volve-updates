@@ -114,7 +114,10 @@ if($Mode -eq 'Install'){
   [IO.File]::WriteAllText($receipt,($info|ConvertTo-Json -Compress),[Text.UTF8Encoding]::new($false))
   # Independent recovery is registered BEFORE the motor startup task.
   $rescueAction=New-ScheduledTaskAction -Execute $powershellExe -Argument $rescueArgs
-  $rescueTrigger=New-ScheduledTaskTrigger -Once -At (Get-Date).AddYears(1)
+  # A genuine scheduled watchdog: independent SYSTEM process every minute.
+  # Initial scan is delayed to allow the installer to finish and record state.
+  # The CI watchdog is intentionally bounded to a 12-hour disposable VM window.
+  $rescueTrigger=New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(2) -RepetitionInterval (New-TimeSpan -Minutes 1) -RepetitionDuration (New-TimeSpan -Hours 12)
   $rescueSettings=New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Minutes 2)
   Register-ScheduledTask -TaskName $rescueTask -Action $rescueAction -Trigger $rescueTrigger -Settings $rescueSettings -User SYSTEM -RunLevel Highest -ErrorAction Stop | Out-Null
   $rescueRegistered=$true
