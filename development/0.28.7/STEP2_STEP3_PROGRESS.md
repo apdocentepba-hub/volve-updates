@@ -6,31 +6,31 @@ Fecha de corte inicial: 30/10/2026. Rama de desarrollo: feature/motor-updater-02
 
 Las cifras son **estimaciones conservadoras de ingeniería por entregables ponderados**, no una medición del tiempo, ni una cantidad de líneas, ni un porcentaje de protección. Se acumula crédito parcial por código efectivamente integrado y verificable; aprobar CI no reemplaza los ensayos sobre un equipo Windows persistente. Nunca publicar como cerrado un paso que no haya aprobado todos sus criterios obligatorios.
 
-### Paso 2 — Actualización del motor DNS: 49/100 (49%)
+### Paso 2 — Actualización del motor DNS: 52/100 (52%)
 
 | Subentregable | Peso | Puntos reconocidos | Estado |
 | --- | ---: | ---: | --- |
 | Permiso editorial exacto, autenticidad y pinning | 15 | 8 | Validación criptográfica en CI; falta emisión legítima para el motor instalado |
 | Respaldo anterior y journal protegido | 15 | 15 | Código y auditorías NTFS probados |
-| Watchdog de recuperación SYSTEM independiente | 25 | 7 | Recuperador separado, verificado por SHA y prearmado ANTES del motor en instalación de laboratorio; recuperación tras caída real CI; NO hay watchdog productivo automático |
+| Watchdog de recuperación SYSTEM independiente | 25 | 10 | Recuperador separado prearmado como tarea SYSTEM recurrente cada minuto en VM descartable; detectó caída real sin disparo manual; falta watchdog productivo |
 | Controlador Windows real que cambia y revierte el motor | 20 | 4 | Instalación y retirada versionada de laboratorio desde ProgramData con tarea SYSTEM, hash, ACL, DNS/53 real y rollback aprobados; faltan conmutación de producción, rescate persistente y DNS de adaptador |
 | Tests adversos, DNS dual-stack, identidad, rollback en CI | 15 | 15 | Motor compilado ejecutado bajo SYSTEM en DNS/53 real y sondeado externamente en VM descartable; faltan escenarios productivos |
 | Reinicio real repetible de VM persistente | 10 | 0 | Sin ejecutar |
-| **TOTAL** | **100** | **49** | **Paso abierto** |
+| **TOTAL** | **100** | **52** | **Paso abierto** |
 
 Los seis criterios A–F de STEP2_EXIT_CRITERIA.md siguen sin aprobarse **como condiciones de cierre completas**, aunque hay subtrabajos de esos criterios realizados.
 
-### Paso 3 — Recuperación automática: 33/100 (33%) — recuperación SYSTEM independiente ante falla provocada aprobada en CI
+### Paso 3 — Recuperación automática: 38/100 (38%) — detección periódica y recuperación autónoma ante falla provocada aprobadas en CI
 
 | Subentregable | Peso | Puntos reconocidos | Estado |
 | --- | ---: | ---: | --- |
 | Journal durable y estado recuperable | 15 | 10 | Probado; terminal create-only |
-| Recuperación independiente de prueba | 20 | 13 | Laboratorio Windows: segunda tarea SYSTEM prearmada deshabilitó motor realmente caído; se verificó identidad e inventario y no hubo cambios DNS/hosts |
+| Recuperación independiente de prueba | 20 | 18 | Laboratorio Windows: tarea SYSTEM prearmada y repetida cada minuto detecta caída real SIN intervención y deshabilita motor; rechaza falso positivo sano |
 | Política de recuperación al iniciar, bloqueo de concurrencia, reintentos | 15 | 10 | **CI 3/3 aprobada; integración de mutex Windows y watchdog productivo pendiente** |
 | Watchdog SYSTEM persistente con arranque Windows | 25 | 0 | Ausente |
 | Restitución productiva y comprobación de motor/DNS/Internet | 15 | 0 | Ausente |
 | Pruebas de reinicio real en VM persistente | 10 | 0 | Ausente |
-| **TOTAL VERIFICADO** | **100** | **33** | **Paso abierto** |
+| **TOTAL VERIFICADO** | **100** | **38** | **Paso abierto** |
 
 **Trabajo de esta intervención:** \`resident_boot_recovery.go\` y \`resident_boot_recovery_test.go\` agregan una política repetible y no mutante de recuperación al arranque: exige bloqueo exclusivo, respaldo íntegro, journal pendiente, restaurador inyectado y comprobación de identidad/DNS/Internet antes de cerrar el journal. Los tests incluyen fallo del restaurador, caída de red, reintento tras interrupción, concurrencia, corrupción del journal y no repetición de tareas terminadas. Es exclusivamente lógica reutilizable, **NO** un watchdog SYSTEM instalado. La ejecución [#41107808258](https://github.com/apdocentepba-hub/volve-updates/actions/runs/41107808258) terminó **3/3 success** (Windows, Linux, recuperación aislada). Se acreditan **10 de 15 puntos** del subentregable "política de recuperación": el paso 3 se actualiza al **30%**. Los 5 puntos restantes dependen de integrar un controlador persistente real. La prueba de mutex entre procesos es una nueva subetapa aún pendiente de CI, por lo que no agrega puntos.
 
@@ -117,3 +117,12 @@ Ver [CI actual de la política](https://github.com/apdocentepba-hub/volve-update
 - Código: `development/0.28.7/lab/VOLVE_CI_MotorInstall.ps1`, `development/0.28.7/lab/VOLVE_CI_MotorRescue.ps1` y prueba `.github/workflows/volve-0287-ci-installed-motor.yml`.
 - **Crédito de ingeniería:** paso 2 +2 por el watchdog de laboratorio ahora prearmado dentro del instalador (47→**49%**); paso 3 +3 por el recuperador **independiente ejecutado realmente tras la caída** (30→**33%**). No es prueba de producción, reinicio de Windows, detección automática, restitución de DNS de un adaptador ni actualización de motor activo. Los puntos restantes de watchdog y recuperación dependen de esas pruebas.
 - **Prueba adversa aprobada:** [CI #41150944870](https://github.com/apdocentepba-hub/volve-updates/actions/runs/41150944870) terminó SUCCESS. El mismo recuperador SYSTEM fue iniciado con el motor saludable y **se negó a deshabilitarlo**; tras una caída real provocada, el recuperador independiente sí deshabilitó la tarea específica. DNS y hosts quedaron intactos y la retirada fue completa. **Sin puntos adicionales**: se considera validación adversa del mismo hito, no duplicación de crédito.
+
+
+## Watchdog periódico SYSTEM: recuperación sin intervención humana (30/10/2026 Argentina)
+
+- **Evidencia primaria: [GitHub Actions #41151911450](https://github.com/apdocentepba-hub/volve-updates/actions/runs/41151911450), job Windows completo SUCCESS**, commit `57038e6d05dff29631a72e2d26047b943afab692`. La instalación temporal CI en ProgramData registró **antes del motor** una tarea recuperadora SYSTEM con repetición de un minuto. El instalador valida el intervalo en XML, identity, script por SHA-256 y ACL.
+- La prueba accionó manualmente el recuperador SOLO mientras el motor estaba sano, comprobando rechazo seguro sin deshabilitarlo. Luego inició el motor de nuevo, ejecutó sondeos DNS reales a BetWarrior en IPv4/IPv6 puerto 53, forzó terminación del proceso SYSTEM y **no llamó** a `Start-ScheduledTask` ni al recuperador después de ese momento. El workflow imprimió `AUTOMATIC_RESCUE_WAIT` el **2026-10-31 00:47:06 UTC** y luego `PASS: automatically scheduled SYSTEM rescue detected real crash without manual trigger and disabled its own motor task` el **2026-10-31 00:48:04 UTC**. Comprobó tarea motor deshabilitada, puerto DNS/53 libre, ambos componentes retirados, sin modificar DNS/hosts del sistema.
+- Fallo de validación corregido: el primer ensayo confundía `LastTaskResult=1` correspondiente a la comprobación de motor sano con un error tras el crash; el criterio pasó a exigir un intento posterior a `crashAt`. También se adelantó el primer tick del laboratorio a los 75 segundos para reducir duración del ensayo sin cambiar el intervalo recurrente de un minuto. El ensayo corregido terminó **SUCCESS**; no se ocultan los intentos fallidos.
+- Progreso por entregables ponderados: **paso 2 sube de 49 a 52%** (+3 en watchdog SYSTEM independiente de laboratorio) y **paso 3 sube de 33 a 38%** (+5 en prueba de recuperación independiente ahora automática). No computar puntos de arranque persistente real de Windows ni de recuperación productiva, que continúan pendientes.
+- **No aprobado:** watchdog de producción, instalación autoconfigurada en PC real, transición de DNS de adaptadores/rollback, reinicio completo de la misma VM persistente, actualización de motor desde Centro instalado, firma editorial y escenarios VPN/DoH.
