@@ -16,7 +16,7 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: '1.23.x'
-      - name: Diagnose true SYSTEM signed-journal DNS recovery stage on sacrificial Hyper-V vNIC
+      - name: Finish real SYSTEM crash rollback and seal durable recovery receipt using native Windows ACLs
         shell: pwsh
         run: |
           $ErrorActionPreference='Stop'
