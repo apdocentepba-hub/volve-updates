@@ -20,17 +20,17 @@ Las cifras son **estimaciones conservadoras de ingeniería por entregables ponde
 
 Los seis criterios A–F de STEP2_EXIT_CRITERIA.md siguen sin aprobarse **como condiciones de cierre completas**, aunque hay subtrabajos de esos criterios realizados.
 
-### Paso 3 — Recuperación automática: 38/100 (38%) — detección periódica y recuperación autónoma ante falla provocada aprobadas en CI
+### Paso 3 — Recuperación automática: 40/100 (40%) — detección periódica y recuperación autónoma ante falla provocada aprobadas en CI
 
 | Subentregable | Peso | Puntos reconocidos | Estado |
 | --- | ---: | ---: | --- |
 | Journal durable y estado recuperable | 15 | 10 | Probado; terminal create-only |
 | Recuperación independiente de prueba | 20 | 18 | Laboratorio Windows: tarea SYSTEM prearmada y repetida cada minuto detecta caída real SIN intervención y deshabilita motor; rechaza falso positivo sano |
-| Política de recuperación al iniciar, bloqueo de concurrencia, reintentos | 15 | 10 | **CI 3/3 aprobada; integración de mutex Windows y watchdog productivo pendiente** |
+| Política de recuperación al iniciar, bloqueo de concurrencia, reintentos | 15 | 12 | **CI 3/3 aprobada; integración de mutex Windows y watchdog productivo pendiente** |
 | Watchdog SYSTEM persistente con arranque Windows | 25 | 0 | Ausente |
 | Restitución productiva y comprobación de motor/DNS/Internet | 15 | 0 | Ausente |
 | Pruebas de reinicio real en VM persistente | 10 | 0 | Ausente |
-| **TOTAL VERIFICADO** | **100** | **38** | **Paso abierto** |
+| **TOTAL VERIFICADO** | **100** | **40** | **Paso abierto** |
 
 **Trabajo de esta intervención:** \`resident_boot_recovery.go\` y \`resident_boot_recovery_test.go\` agregan una política repetible y no mutante de recuperación al arranque: exige bloqueo exclusivo, respaldo íntegro, journal pendiente, restaurador inyectado y comprobación de identidad/DNS/Internet antes de cerrar el journal. Los tests incluyen fallo del restaurador, caída de red, reintento tras interrupción, concurrencia, corrupción del journal y no repetición de tareas terminadas. Es exclusivamente lógica reutilizable, **NO** un watchdog SYSTEM instalado. La ejecución [#41107808258](https://github.com/apdocentepba-hub/volve-updates/actions/runs/41107808258) terminó **3/3 success** (Windows, Linux, recuperación aislada). Se acreditan **10 de 15 puntos** del subentregable "política de recuperación": el paso 3 se actualiza al **30%**. Los 5 puntos restantes dependen de integrar un controlador persistente real. La prueba de mutex entre procesos es una nueva subetapa aún pendiente de CI, por lo que no agrega puntos.
 
@@ -156,3 +156,14 @@ Ver [CI actual de la política](https://github.com/apdocentepba-hub/volve-update
 **Crédito conservador:** dentro del controlador Windows de 20 puntos, se reconocen **2 adicionales (6→8)** por el canal nativo restringido y el límite de autorización de laboratorio probado. Así **Paso 2: 56/100** y **Paso 3: 38/100 SIN CAMBIOS**. Son estimaciones técnicas por entregables, NO un porcentaje de protección contra apuestas.
 
 **PENDIENTES BLOQUEANTES:** el verificador Windows real aún no existe; el canal experimental usa un doble del invocador y no modifica DNS real de ningún adaptador; faltan ensayo reversible sobre interfaz descartable, prueba de recuperación después de reiniciar una VM persistente, emisión firmada legítima, liberación del instalador y actualización desde VOLVÉ instalado. `main` y `0.28.6` intactos.
+
+
+## 31/10/2026 — Mutex real entre procesos en la recuperación DNS de laboratorio
+
+**Entregable concreto:** `dns_restore_lab_mutex_windows.go` ahora usa un mutex de Windows `Global\\VOLVE-CI-DNSLock-<nonce>` (solo nombres de CI descartables) que se mantiene desde la primera comprobación de autorización, a lo largo de todo el tratamiento IPv4/IPv6 y hasta finalizar la verificación del resultado. No se entrega el motor ni se modifica la red en producción. El uso de `runtime.LockOSThread` evita perder la titularidad del mutex al cambiar de hilo en Go. La adquisición contempla espera cancelable, cese después de fallo de otro proceso y liberación idempotente. La ruta experimental `runAttestedWindowsStaticDNSRecovery` falla cerrada si no consigue esta exclusión; sigue requiriendo un atestador inyectado que NO corresponde al futuro atestador productivo.
+
+**Pruebas reales:** [GitHub Actions contrato DNS #41207748209](https://github.com/apdocentepba-hub/volve-updates/actions/runs/41207748209) aprobó Windows y Ubuntu, incluida prueba con proceso hijo Windows bloqueado por mutex del padre y posterior readquisición, cancelación en contención, rechazo de nombres peligrosos y reintento de restauración simulada tras liberar la exclusión. Se verificó además que el DNS real del runner Windows permaneció idéntico antes/después. El CI integral para esta rama se comprueba por separado: [#41207745272](https://github.com/apdocentepba-hub/volve-updates/actions/runs/41207745272); el ensayo del motor instalado en VM descartable está en [#41207745042](https://github.com/apdocentepba-hub/volve-updates/actions/runs/41207745042). No atribuir aprobación a estos dos hasta conocer su conclusión.
+
+**Crédito incremental sin duplicar:** +2 dentro de los 15 puntos de política de recuperación, por bloqueo Windows interproceso realmente integrado al contrato experimental y ensayado entre procesos. **Paso 2 permanece en 56/100; Paso 3 sube 38→40/100.** No computar los 3 puntos restantes de política ni los 25 de watchdog persistente hasta que exista un conductor autorizado de Windows y pruebas posreinicio.
+
+**Barreras todavía pendientes:** este mutex acepta ÚNICAMENTE namespace de CI; no hay protección de objeto global con DACL SYSTEM del entorno productivo, ni atestador Windows productivo del respaldo/journal y proceso original, ni prueba de escrituras DNS reales en adaptador descartable, ni recuperación tras reboot en VM persistente. La ruta de instalación del usuario y `main` quedan inalteradas.
