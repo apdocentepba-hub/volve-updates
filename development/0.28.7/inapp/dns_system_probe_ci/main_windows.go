@@ -7,6 +7,8 @@ package main
 // invokes it both interactively (must reject) and as LocalSystem (must pass).
 import (
  "errors"
+ "context"
+ "time"
  "fmt"
  "os"
  "os/user"
@@ -16,8 +18,8 @@ import (
 )
 
 func run()error{
- if len(os.Args)!=2||!filepath.IsAbs(os.Args[1]){
-  return errors.New("CI witness path must be absolute")
+ if (len(os.Args)!=2&&len(os.Args)!=4)||!filepath.IsAbs(os.Args[1]){
+  return errors.New("CI witness requires absolute path and optional sealed journal/snapshot")
  }
  if err:=motorupdate.VerifyWindowsCurrentSystemSIDReadOnly();err!=nil{
   return fmt.Errorf("real Windows access token is not LocalSystem: %w",err)
@@ -25,9 +27,26 @@ func run()error{
  current,err:=user.Current()
  if err!=nil{return err}
  if current.Uid!="S-1-5-18" {return errors.New("Windows SID changed unexpectedly")}
- // The security witness is only written after the *actual process token*
- // was independently resolved to SID S-1-5-18.
- return os.WriteFile(os.Args[1],[]byte("VOLVE_CI_WINDOWS_SYSTEM_SID_S-1-5-18"),0600)
+ // Security evidence is only written after the ACTUAL process token
+ // was resolved to SID S-1-5-18 and, when requested, every filesystem
+ // security descriptor passed the strict read-only Windows NTFS audit.
+ marker:="VOLVE_CI_WINDOWS_SYSTEM_SID_S-1-5-18"
+ if len(os.Args)==4 {
+  ctx,cancel:=context.WithTimeout(context.Background(),30*time.Second)
+  defer cancel()
+  journal,snapshot:=os.Args[2],os.Args[3]
+  verify,err:=motorupdate.NewWindowsDNSProtectedACLVerifier(
+   ctx,journal,snapshot,motorupdate.DefaultWindowsDNSProtectedACLInspect)
+  if err!=nil{return fmt.Errorf("NTFS journal gate refused: %w",err)}
+  for _,path:=range []string{
+   filepath.Dir(journal),journal,
+   filepath.Join(journal,motorupdate.ResidentIntentFile),snapshot,
+  }{
+   if err:=verify(path);err!=nil{return fmt.Errorf("real SYSTEM NTFS ACL rejected %s: %w",filepath.Base(path),err)}
+  }
+  marker="VOLVE_CI_WINDOWS_SYSTEM_SID_AND_SEALED_NTFS"
+ }
+ return os.WriteFile(os.Args[1],[]byte(marker),0600)
 }
 
 func main(){
