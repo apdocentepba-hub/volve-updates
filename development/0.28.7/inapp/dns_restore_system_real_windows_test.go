@@ -107,7 +107,7 @@ func windowsSYSDNSSealNewReceipt(ctx context.Context,dir string)error{
   `$source=`+windowsSYSDNSQuote(source)+`;`+
   `$target=`+windowsSYSDNSQuote(result)+`;`+
   `if(-not [IO.File]::Exists($source) -or -not [IO.File]::Exists($target)){throw 'Missing receipt/intent'};`+
-  `$acl=Get-Acl -LiteralPath $source -ErrorAction Stop;`+
+  `$acl=[IO.File]::GetAccessControl($source);`+
   `[IO.File]::SetAccessControl($target,$acl)`
  return windowsSYSDNSShell(ctx,script)
 }
@@ -222,7 +222,10 @@ func windowsSYSDNSWatchdog(t *testing.T){
     return errors.New("CI SYSTEM can only seal its just-created result")
    }
    return windowsSYSDNSSealNewReceipt(ctx,cfg.JournalDir)
-  },acl);err!=nil{t.Fatalf("true SYSTEM recovery receipt failed: %v",err)}
+  },acl);err!=nil{
+  stage="finalize-durable-recovery-receipt: "+err.Error()
+  t.Fatalf("true SYSTEM recovery receipt failed: %v",err)
+ }
  stage="write-real-system-success-evidence"
  if err:=os.WriteFile(cfg.Recovered,
   []byte("REAL SYSTEM DNS v4/v6 restored + signed CI journal + NTFS ACL + crash exit 83"),
