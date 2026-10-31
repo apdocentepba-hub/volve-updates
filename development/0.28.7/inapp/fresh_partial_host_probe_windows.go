@@ -3,7 +3,7 @@
 package motorupdate
 
 // A fail-closed read-only partial host census. This is intentionally NOT the
-// production installer and never marks the remaining four OS inventories as
+// production installer and never marks the remaining three OS inventories as
 // inspected. Nothing here can authorize a fresh DNS motor installation.
 import (
 	"bytes"
@@ -76,17 +76,19 @@ type WindowsFreshPartialHostInspectors struct {
 	Admin    WindowsFreshAdminInspect
 	Tasks    WindowsFreshTaskInspect
 	Services WindowsFreshServiceInspect
+	DNS      WindowsFreshDNSAdapterInspect
 }
 
 type WindowsFreshPartialHostEvidence struct {
 	Evidence       FreshMotorInstallEvidence
 	TaskNames      []string
 	ServiceNames   []string
+	DNSAdapterRecords int
 }
 
 // InspectWindowsFreshPartialHostReadOnly binds the current elevated token,
-// Task Scheduler inventory and Win32_Service inventory. It returns a PARTIAL
-// evidence record: motor files, network DNS, port53 and rollback state remain
+// Task Scheduler, Win32_Service and DNS adapter inventories. It returns a PARTIAL
+// evidence record: motor files, port53 listeners and rollback state remain
 // explicitly UNKNOWN and must be independently collected under a later
 // privileged transaction lock immediately before any installation.
 // Injection is for tests; the production caller must supply Default* inspectors.
@@ -98,8 +100,8 @@ func InspectWindowsFreshPartialHostReadOnly(
 	if err := ctx.Err(); err != nil {
 		return zero, err
 	}
-	if inspect.Admin == nil || inspect.Tasks == nil || inspect.Services == nil {
-		return zero, errors.New("all three independent Windows inspectors required")
+	if inspect.Admin == nil || inspect.Tasks == nil || inspect.Services == nil || inspect.DNS == nil {
+		return zero, errors.New("all four independent Windows inspectors required")
 	}
 	admin, err := InspectWindowsElevatedTokenReadOnly(ctx, inspect.Admin)
 	if err != nil {
@@ -122,17 +124,28 @@ func InspectWindowsFreshPartialHostReadOnly(
 	if err := ctx.Err(); err != nil {
 		return zero, err
 	}
+	dns, err := InspectWindowsFreshDNSAdaptersReadOnly(ctx, inspect.DNS)
+	if err != nil {
+		return zero, fmt.Errorf("Windows DNS adapter evidence incomplete: %w", err)
+	}
+	if err := ctx.Err(); err != nil {
+		return zero, err
+	}
 	return WindowsFreshPartialHostEvidence{
 		Evidence: FreshMotorInstallEvidence{
 			InspectedAsAdministrator: true,
 			InspectedTaskScheduler:     true,
 			InspectedServices:          true,
+			InspectedDNSAdapters:       true,
 			VOLVETaskCount:            tasks.VOLVETaskCount,
 			VerifiedCatalogTask:       tasks.VerifiedCatalogTask,
 			VOLVEServiceCount:         services.VOLVEServiceCount,
-			// All four remaining required inventories MUST remain false.
+			LocalIPv4DNSConfigured:     dns.LocalIPv4DNSConfigured,
+			LocalIPv6DNSConfigured:     dns.LocalIPv6DNSConfigured,
+			// All three remaining required inventories MUST remain false.
 		},
 		TaskNames:    append([]string(nil), tasks.UnknownTaskNames...),
 		ServiceNames: append([]string(nil), services.ServiceNames...),
+		DNSAdapterRecords: dns.AdapterFamilyRecords,
 	}, nil
 }
