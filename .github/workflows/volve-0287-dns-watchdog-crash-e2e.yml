@@ -94,30 +94,8 @@ jobs:
             try {
               go mod init volve-disposable-dns-real-e2e
               if($LASTEXITCODE -ne 0){throw 'Go lab module setup failed'}
-              go test -count=1 -timeout 4m -v -run '^TestWindowsRealDNSWatchdogAfterUpdaterCrash
-              if($LASTEXITCODE -ne 0){throw 'Independent Windows watchdog crash-recovery E2E FAILED'}
-            }finally{Pop-Location}
-          }finally{
-            Remove-Item Env:\VOLVE_CI_DNS_REAL_DISPOSABLE -ErrorAction SilentlyContinue
-            Remove-Item Env:\VOLVE_CI_DNS_LAB_ALIAS -ErrorAction SilentlyContinue
-            Remove-Item Env:\VOLVE_CI_DNS_LAB_GUID -ErrorAction SilentlyContinue
-            if($created){
-              Remove-VMSwitch -Name $alias -Force -ErrorAction Stop
-              Write-Host "PASS: disposable internal Hyper-V switch removed: $alias"
-              Start-Sleep -Seconds 2
-            }
-            $after=Get-DnsClientServerAddress | Sort-Object InterfaceIndex,AddressFamily |
-              Select-Object InterfaceIndex,AddressFamily,ServerAddresses |
-              ConvertTo-Json -Compress -Depth 7
-            $afterRoutes=Get-NetRoute -DestinationPrefix '0.0.0.0/0' |
-              Sort-Object InterfaceIndex,NextHop | Select-Object InterfaceIndex,DestinationPrefix,NextHop |
-              ConvertTo-Json -Compress -Depth 5
-            if($prior -cne $after){throw 'FATAL: preexisting Windows DNS adapters changed in disposable laboratory'}
-            if($originalRoutes -cne $afterRoutes){throw 'FATAL: host default routes changed in disposable laboratory'}
-            Write-Host 'PASS: all preexisting Windows DNS adapters and default routes remained unchanged'
-          }
- ./...
-              if($LASTEXITCODE -ne 0){throw 'Real DNS restoration on Hyper-V internal vNIC FAILED'}
+              go test -count=1 -timeout 4m -v -run '^TestWindowsRealDNSWatchdogAfterUpdaterCrash$' ./...
+              if($LASTEXITCODE -ne 0){throw 'Independent watchdog crash/recovery on internal vNIC FAILED'}
             }finally{Pop-Location}
           }finally{
             Remove-Item Env:\VOLVE_CI_DNS_REAL_DISPOSABLE -ErrorAction SilentlyContinue
