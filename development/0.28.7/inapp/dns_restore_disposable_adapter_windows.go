@@ -15,6 +15,7 @@ import (
  "net"
  "os/exec"
  "regexp"
+ "strconv"
  "strings"
 )
 
@@ -69,7 +70,13 @@ func DefaultWindowsDisposableDNSInspect(ctx context.Context,query string)([]byte
  return out,nil
 }
 
-func windowsLabLinkLocalOnly(s string)bool{
+func windowsLabLinkLocalOnly(s string,index uint32)bool{
+ // Windows returns scoped IPv6 link-local addresses as fe80::...%<index>.
+ // Accept ONLY the exact numeric zone of the pinned disposable adapter.
+ if zone:=strings.IndexByte(s,'%');zone>=0 {
+  if s[zone+1:]!=strconv.FormatUint(uint64(index),10){return false}
+  s=s[:zone]
+ }
  ip:=net.ParseIP(s)
  if ip==nil{return false}
  if ip.To4()!=nil{
@@ -80,6 +87,11 @@ func windowsLabLinkLocalOnly(s string)bool{
 }
 
 func windowsLabNonRoutingPrefix(s string)bool{
+ // Only the OS-generated local broadcast/multicast routes are accepted.
+ // Any default gateway, LAN prefix, host route or foreign subnet fails.
+ if s=="224.0.0.0/4"||s=="255.255.255.255/32"||s=="ff00::/8"{
+  return true
+ }
  _,ipnet,err:=net.ParseCIDR(s)
  if err!=nil{return false}
  // Entire advertised route must be link-local, not a wider prefix that
@@ -136,11 +148,17 @@ func VerifyWindowsDisposableDNSAdapterReadOnly(
  if selected.NetworkCategory=="DomainAuthenticated"||selected.NetworkCategory=="Private"{
   return zero,errors.New("disposable DNS adapter is attached to a trusted live network")
  }
- if len(selected.DNSIPv4)!=0||len(selected.DNSIPv6)!=0{
-  return zero,errors.New("disposable DNS adapter already has DNS servers; no mutation permitted")
+ // Windows may attach exactly these three built-in IPv6 DNS fallback
+ // placeholders to a newly created disconnected Hyper-V internal vNIC.
+ // They are not evidence of a manually configured DNS resolver.
+ // Reject EVERY other pre-existing DNS value, including any IPv4 server.
+ ipv6Fallback:=[]string{"fec0:0:0:ffff::1","fec0:0:0:ffff::2","fec0:0:0:ffff::3"}
+ if len(selected.DNSIPv4)!=0 ||
+    (len(selected.DNSIPv6)!=0 && !sameDNSAddresses(selected.DNSIPv6,ipv6Fallback)){
+  return zero,errors.New("disposable DNS adapter has unknown configured DNS servers")
  }
  for _,addr:=range selected.IPAddresses {
-  if !windowsLabLinkLocalOnly(addr){return zero,errors.New("disposable DNS adapter has non-linklocal IP")}
+  if !windowsLabLinkLocalOnly(addr,selected.InterfaceIndex){return zero,errors.New("disposable DNS adapter has non-linklocal IP")}
  }
  for _,route:=range selected.Routes {
   if !windowsLabNonRoutingPrefix(route){return zero,errors.New("disposable DNS adapter has routable network route")}
