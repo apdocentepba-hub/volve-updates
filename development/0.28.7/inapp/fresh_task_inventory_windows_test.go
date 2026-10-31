@@ -17,7 +17,7 @@ func freshWindowsTaskJSON(t *testing.T,rows []windowsVOLVETaskRecord)[]byte{
 func freshTaskFixture()windowsVOLVETaskRecord{
  return windowsVOLVETaskRecord{
   Name:"VOLVE-CATALOGO-0230",TaskPath:"\\",Principal:"SYSTEM",
-  Actions:[]windowsVOLVETaskAction{{Execute:`C:\Program Files\VOLVE\VOLVE_Catalog.exe`,Arguments:"--catalog"}},
+  Actions:[]windowsVOLVETaskAction{{Execute:`C:\Program Files\VOLVE\VOLVE_Catalog.exe`,Arguments:"--catalog",WorkingDirectory:new(string)}},
   DefinitionSHA256:strings.Repeat("a",64),
  }
 }
@@ -27,6 +27,8 @@ func TestWindowsFreshTaskInventoryExactCatalogAndUnknowns(t *testing.T){
  for _,tc:=range []struct{name string;records []windowsVOLVETaskRecord;exe,args string;wantReady bool;wantUnknown int}{
   {"empty",[]windowsVOLVETaskRecord{},"","",true,0},
   {"expected-catalog",[]windowsVOLVETaskRecord{good},path,"--catalog",true,0},
+  {"catalog-working-dir-unpinned",func()[]windowsVOLVETaskRecord{bad:=freshTaskFixture();wd:=`C:\Temp`;bad.Actions[0].WorkingDirectory=&wd;return []windowsVOLVETaskRecord{bad}}(),path,"--catalog",false,0},
+  {"catalog-working-dir-missing",func()[]windowsVOLVETaskRecord{bad:=freshTaskFixture();bad.Actions[0].WorkingDirectory=nil;return []windowsVOLVETaskRecord{bad}}(),path,"--catalog",false,0},
   {"catalog-args-unknown",[]windowsVOLVETaskRecord{good},path,"--delete",false,0},
   {"catalog-path-unknown",[]windowsVOLVETaskRecord{good},"","",false,0},
   {"catalog-principal-untrusted",func()[]windowsVOLVETaskRecord{bad:=good;bad.Principal="Users";return []windowsVOLVETaskRecord{bad}}(),path,"--catalog",false,0},
