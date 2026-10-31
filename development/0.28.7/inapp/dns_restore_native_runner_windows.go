@@ -14,6 +14,8 @@ import (
     "os/exec"
     "path/filepath"
     "reflect"
+    "net"
+    "strconv"
     "strings"
 )
 
@@ -22,12 +24,66 @@ import (
 // slice, never cmd.exe, PowerShell interpolation or a shell command string.
 type WindowsDNSNativeInvoke func(context.Context, []string) error
 
-// DefaultWindowsDNSNativeInvoke is implemented but NOT wired to VOLVE's
-// installed app. It is only safe when called by a separately authenticated,
-// locked recovery driver against a dedicated test adapter. It does not
-// authorize an interface or a recovery attempt by itself.
+// DefaultWindowsDNSNativeInvoke is deliberately READ-ONLY. Direct callers
+// can inspect interfaces but cannot alter DNS, even with SYSTEM privileges.
+// Actual mutation is exposed only via the separately authorized recovery
+// transaction below, never via a generic exported netsh invoker.
 func DefaultWindowsDNSNativeInvoke(ctx context.Context, args []string) error {
+    if !reflect.DeepEqual(args,[]string{"interface","ipv4","show","interfaces"}) &&
+       !reflect.DeepEqual(args,[]string{"interface","ipv6","show","interfaces"}) {
+        return errors.New("direct native netsh invoker is read-only")
+    }
+    return runPinnedWindowsNativeDNS(ctx,args)
+}
+
+// validatePinnedWindowsDNSArgv deliberately accepts only the exact netsh
+// grammar produced by PlanWindowsDNSRestore, plus the two read-only show
+// commands. Free-form netsh and every shell escape are refused.
+func validatePinnedWindowsDNSArgv(args []string) error {
+    if reflect.DeepEqual(args,[]string{"interface","ipv4","show","interfaces"}) ||
+       reflect.DeepEqual(args,[]string{"interface","ipv6","show","interfaces"}) {return nil}
+    if len(args)!=8 || args[0]!="interface" || args[3]!="dnsservers" ||
+        args[7]!="validate=no" || !strings.HasPrefix(args[4],"name=") {
+        return errors.New("unsupported native Windows DNS command")
+    }
+    if args[1]!="ipv4"&&args[1]!="ipv6" {return errors.New("invalid DNS family")}
+    indexString:=strings.TrimPrefix(args[4],"name=")
+    index,err:=strconv.ParseUint(indexString,10,32)
+    if err!=nil||index==0||strconv.FormatUint(index,10)!=indexString{
+        return errors.New("invalid or noncanonical Windows interface index")
+    }
+    addressAt:=5
+    if args[2]=="set" {
+        if args[5]!="source=static" {return errors.New("unsafe DNS assignment mode")}
+        addressAt=6
+    }else if args[2]=="add" {
+        if !strings.HasPrefix(args[6],"index="){return errors.New("DNS append index required")}
+        nString:=strings.TrimPrefix(args[6],"index=")
+        n,e:=strconv.ParseUint(nString,10,16)
+        if e!=nil||n<2||strconv.FormatUint(n,10)!=nString{
+            return errors.New("invalid static DNS server position")
+        }
+    }else{return errors.New("only static DNS set/add permitted")}
+    if !strings.HasPrefix(args[addressAt],"address="){
+        return errors.New("DNS IP address required")
+    }
+    server:=strings.TrimPrefix(args[addressAt],"address=")
+    ip:=net.ParseIP(server)
+    if ip==nil||strings.TrimSpace(server)!=server||server==""{
+        return errors.New("non-IP or malformed native DNS destination")
+    }
+    if (args[1]=="ipv4")!=(ip.To4()!=nil) {
+        return errors.New("DNS server family mismatch")
+    }
+    return nil
+}
+
+// runPinnedWindowsNativeDNS is intentionally unexported and restricted to a
+// tiny no-shell argv grammar. ONLY the authorized transaction below can use
+// this for DNS writes; outside it the exported default is read-only.
+func runPinnedWindowsNativeDNS(ctx context.Context, args []string) error {
     if err:=ctx.Err();err!=nil{return err}
+    if err:=validatePinnedWindowsDNSArgv(args);err!=nil{return err}
     systemRoot:=os.Getenv("SystemRoot")
     if systemRoot==""||!filepath.IsAbs(systemRoot){
         return errors.New("Windows system root unavailable")
