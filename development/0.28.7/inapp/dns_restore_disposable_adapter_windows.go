@@ -106,8 +106,27 @@ func windowsLabNonRoutingPrefix(s string)bool{
  return bits==128&&ones>=10&&link.Contains(ipnet.IP)
 }
 
+// VerifyWindowsDisposableDNSAdapterReadOnly is the initial-state safety gate.
+// It accepts only OS-generated, disconnected DNS placeholders.
 func VerifyWindowsDisposableDNSAdapterReadOnly(
  ctx context.Context,alias,expectedGUID string,inspect WindowsDisposableDNSInspect,
+)(WindowsDisposableDNSAdapter,error){
+ return inspectWindowsDisposableDNSAdapterAtState(ctx,alias,expectedGUID,inspect,nil,nil,false)
+}
+
+// VerifyWindowsDisposableDNSAdapterWithLocalDNSReadOnly is restricted to the
+// exact localhost configuration after a deliberately isolated VOLVE trial.
+// Unlike the initial gate, it NEVER approves the automatic IPv6 placeholders.
+func VerifyWindowsDisposableDNSAdapterWithLocalDNSReadOnly(
+ ctx context.Context,alias,expectedGUID string,inspect WindowsDisposableDNSInspect,
+)(WindowsDisposableDNSAdapter,error){
+ return inspectWindowsDisposableDNSAdapterAtState(ctx,alias,expectedGUID,inspect,
+  []string{"127.0.0.1"},[]string{"::1"},true)
+}
+
+func inspectWindowsDisposableDNSAdapterAtState(
+ ctx context.Context,alias,expectedGUID string,inspect WindowsDisposableDNSInspect,
+ pinnedV4,pinnedV6 []string,requirePinned bool,
 )(WindowsDisposableDNSAdapter,error){
  var zero WindowsDisposableDNSAdapter
  if err:=ctx.Err();err!=nil{return zero,err}
@@ -153,7 +172,12 @@ func VerifyWindowsDisposableDNSAdapterReadOnly(
  // They are not evidence of a manually configured DNS resolver.
  // Reject EVERY other pre-existing DNS value, including any IPv4 server.
  ipv6Fallback:=[]string{"fec0:0:0:ffff::1","fec0:0:0:ffff::2","fec0:0:0:ffff::3"}
- if len(selected.DNSIPv4)!=0 ||
+ if requirePinned {
+  if !sameDNSAddresses(selected.DNSIPv4,pinnedV4) ||
+     !sameDNSAddresses(selected.DNSIPv6,pinnedV6){
+   return zero,errors.New("disposable recovery adapter does not have exact localhost DNS")
+  }
+ }else if len(selected.DNSIPv4)!=0 ||
     (len(selected.DNSIPv6)!=0 && !sameDNSAddresses(selected.DNSIPv6,ipv6Fallback)){
   return zero,errors.New("disposable DNS adapter has unknown configured DNS servers")
  }
