@@ -45,7 +45,7 @@ jobs:
             if($LASTEXITCODE -ne 0){throw 'CI module setup failed'}
             go build -o $exe ./cmd/systemprobe
             if($LASTEXITCODE -ne 0){throw 'CI identity-only executable failed to compile'}
-            $interactive=Start-Process -FilePath $exe -ArgumentList @("''"+"$receipt"+"''") -NoNewWindow -PassThru -Wait
+            $interactive=Start-Process -FilePath $exe -ArgumentList ('"'+$receipt+'"') -NoNewWindow -PassThru -Wait
             if($interactive.ExitCode -ne 83 -or (Test-Path $receipt)){
               throw 'Interactive admin was incorrectly accepted as SYSTEM'
             }
