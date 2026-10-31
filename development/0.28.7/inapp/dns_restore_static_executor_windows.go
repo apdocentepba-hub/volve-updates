@@ -43,10 +43,12 @@ func observeWindowsDNSRestoreStage(
     if err != nil || checked != index {
         return 0, 0, errors.New("Windows adapter identity changed during DNS restore")
     }
-    if sameDNSAddresses(observed, r.Expected.Servers) { return index, 0, nil }
+    // Prefer the longest historical prefix when its first server also
+    // happens to be localhost: then the remaining add commands can resume.
     for n := len(r.Original.Servers); n > 0; n-- {
         if sameDNSAddresses(observed, r.Original.Servers[:n]) { return index, n, nil }
     }
+    if sameDNSAddresses(observed, r.Expected.Servers) { return index, 0, nil }
     return 0, 0, errors.New("unexpected DNS state; external change or unsafe partial restore")
 }
 
