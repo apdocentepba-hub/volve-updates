@@ -27,13 +27,13 @@ $items=@(Get-ScheduledTask -ErrorAction Stop | Where-Object {
  # filtering must never classify that installation as "motor absent".
  $named=([string]$_.TaskName -match '(?i)^VOLVE(?:-|_|$)');
  $linked=@($_.Actions | Where-Object {
-   ([string]$_.Execute -match '(?i)[\\/]VOLVE(?:[\\/]|[_-])') -or
-   ([string]$_.Arguments -match '(?i)[\\/]VOLVE(?:[\\/]|[_-])')
+   ([string]$_.Execute -match '(?i)[\\/]VOLVE(?:[\\/]|[_.-]|[0-9]|$)') -or
+   ([string]$_.Arguments -match '(?i)[\\/]VOLVE(?:[\\/]|[_.-]|[0-9]|$)')
  });
  $named -or $linked.Count -gt 0
 } | ForEach-Object {
  $task=$_;$action=@($task.Actions | ForEach-Object {
-   [pscustomobject]@{Execute=[string]$_.Execute;Arguments=[string]$_.Arguments}
+   [pscustomobject]@{Execute=[string]$_.Execute;Arguments=[string]$_.Arguments;WorkingDirectory=[string]$_.WorkingDirectory}
  });
  $xml=Export-ScheduledTask -TaskName $task.TaskName -TaskPath $task.TaskPath -ErrorAction Stop;
  $hasher=[Security.Cryptography.SHA256]::Create();
@@ -58,6 +58,7 @@ func DefaultWindowsFreshTaskInspect(ctx context.Context,query string)([]byte,err
 type windowsVOLVETaskAction struct {
  Execute string `json:"Execute"`
  Arguments string `json:"Arguments"`
+ WorkingDirectory string `json:"WorkingDirectory"`
 }
 type windowsVOLVETaskRecord struct {
  Name string `json:"Name"`
@@ -122,7 +123,8 @@ func InspectWindowsVOLVETasksReadOnly(ctx context.Context,
   if len(task.Actions)==1 && expectedCatalogExecutable!="" {
    act:=task.Actions[0]
    verified.ActionVerified=strings.EqualFold(filepath.Clean(act.Execute),expectedCatalogExecutable) &&
-    filepath.IsAbs(act.Execute) && act.Arguments==expectedCatalogArguments
+    filepath.IsAbs(act.Execute) && act.Arguments==expectedCatalogArguments &&
+    act.WorkingDirectory=="" // An unpinned working dir is an unsafe executable context.
   }
   result.VerifiedCatalogTask=verified
  }
