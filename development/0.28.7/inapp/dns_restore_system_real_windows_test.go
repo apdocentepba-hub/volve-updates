@@ -21,7 +21,6 @@ import (
  "os/exec"
  "path/filepath"
  "regexp"
- "strconv"
  "strings"
  "testing"
  "time"
@@ -222,7 +221,7 @@ func windowsSYSDNSWatchdog(t *testing.T){
 func windowsSYSDNSCreateTask(ctx context.Context,name,exe,config string)error {
  if !windowsSYSDNSTaskPattern.MatchString(name)||!filepath.IsAbs(exe)||
   !filepath.IsAbs(config){return errors.New("unsafe SYSTEM lab task declaration")}
- args:="-test.run=^TestWindowsRealDNSSYSTEMWatchdogAfterUpdaterCrash$ -test.v -volve-ci-sys-watchdog-config="+strconv.Quote(config)
+ args:="-test.run=^TestWindowsRealDNSSYSTEMWatchdogAfterUpdaterCrash$ -test.v -volve-ci-sys-watchdog-config="+"\""+config+"\""
  script:=`$ErrorActionPreference='Stop';`+
   `$name=`+windowsSYSDNSQuote(name)+`;`+
   `if(Get-ScheduledTask -TaskName $name -ErrorAction SilentlyContinue){throw 'Existing task collision'};`+
