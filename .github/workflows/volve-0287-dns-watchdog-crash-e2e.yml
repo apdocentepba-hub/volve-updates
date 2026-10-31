@@ -16,7 +16,7 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: '1.23.x'
-      - name: Reproduce real updater crash and run independent DNS watchdog on internal vNIC
+      - name: Reproduce crash and attest durable signed CI journal before every real DNS recovery write
         shell: pwsh
         run: |
           $ErrorActionPreference='Stop'
