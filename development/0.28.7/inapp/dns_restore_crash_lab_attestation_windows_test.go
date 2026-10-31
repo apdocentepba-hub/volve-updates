@@ -207,3 +207,34 @@ func windowsCrashLabFinishRecovered(ctx context.Context)error{
 func windowsCrashLabNonce()string {return strconv.FormatInt(time.Now().UnixNano(),10)}
 
 var _ = syscall.Errno(0)
+
+func TestWindowsCrashLabAttestorRejectsJournalAndSignatureTamper(t *testing.T){
+ root:=t.TempDir()
+ records:=windowsDNSCrashRecords("{aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa}")
+ env:=prepareWindowsCrashLabSeal(t,root,records)
+ for key,value:=range env{t.Setenv(key,value)}
+ ctx:=context.Background()
+ a,err:=windowsCrashLabAttestor(nil)
+ if err!=nil{t.Fatal(err)}
+ // This isolated unit test uses a fake crashed-process callback ONLY to
+ // exercise real signed snapshot + create-only journal data validation.
+ a.VerifySYSTEMAndFailedMotor=func(context.Context,ResidentRecoveryIntent)error{return nil}
+ if err:=a.Verify(ctx,records);err!=nil{t.Fatalf("untampered signed journal rejected: %v",err)}
+ wrong:=cloneWindowsDNSRecoveryRecords(records)
+ wrong[0].Original.Servers[0]="8.8.8.8"
+ if err:=a.Verify(ctx,wrong);err==nil{t.Fatal("changed source DNS accepted")}
+ signed:=a.VerifyPublisherPermit
+ a.VerifyPublisherPermit=func(ctx context.Context,intent ResidentRecoveryIntent)error{
+  intent.Nonce=strings.Repeat("d",32)
+  return signed(ctx,intent)
+ }
+ if err:=a.Verify(ctx,records);err==nil{t.Fatal("publisher signature accepted with changed journal nonce")}
+ a.VerifyPublisherPermit=signed
+ raw,err:=os.ReadFile(env["VOLVE_CI_DNS_SNAPSHOT_PATH"])
+ if err!=nil{t.Fatal(err)}
+ if err:=os.WriteFile(env["VOLVE_CI_DNS_SNAPSHOT_PATH"],[]byte("{}"),0600);err!=nil{t.Fatal(err)}
+ if err:=a.Verify(ctx,records);err==nil{t.Fatal("changed snapshot content accepted")}
+ if err:=os.WriteFile(env["VOLVE_CI_DNS_SNAPSHOT_PATH"],raw,0600);err!=nil{t.Fatal(err)}
+ if err:=windowsCrashLabFinishRecovered(ctx);err!=nil{t.Fatal(err)}
+ if err:=a.Verify(ctx,records);err==nil{t.Fatal("already finalized resident journal authorized another DNS write")}
+}
