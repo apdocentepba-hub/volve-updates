@@ -69,5 +69,47 @@ $manualAfterBoot=@(
     (Record 102 1004 -seconds 4)
 )
 MustReject 'manually started recovery after a boot' $manualAfterBoot
-if($script:rejections -ne 12){throw ('Expected 12 rejection cases, got '+$script:rejections)}
-Write-Host ('PASS: correlated 118/100/201/102 proof and '+$script:rejections+' false-positive/altered-evidence cases')
+MustReject 'event record IDs monotonic but wall-clock timestamps reversed' @(
+    (Record 118 1001 -seconds 1),
+    (Record 100 1002 -seconds 4),
+    (Record 201 1003 -seconds 3),
+    (Record 102 1004 -seconds 5)
+)
+MustReject 'late boot trigger sixteen minutes after OS boot' @(
+    (Record 118 1001 -seconds 961),
+    (Record 100 1002 -seconds 962),
+    (Record 201 1003 -seconds 963),
+    (Record 102 1004 -seconds 964)
+)
+MustReject 'future-dated scheduler event evidence' @(
+    (Record 118 1001 -seconds 315360000),
+    (Record 100 1002 -seconds 315360001),
+    (Record 201 1003 -seconds 315360002),
+    (Record 102 1004 -seconds 315360003)
+)
+MustReject 'task completion result code failed even though action exited zero' @(
+    (Record 118 1001 -seconds 1),
+    (Record 100 1002 -seconds 2),
+    (Record 201 1003 -seconds 3),
+    (Record 102 1004 -seconds 4 -result '5')
+)
+MustReject 'nonpositive event record IDs' @(
+    (Record 118 -1 -seconds 1),
+    (Record 100 0 -seconds 2),
+    (Record 201 1 -seconds 3),
+    (Record 102 2 -seconds 4)
+)
+# Actual EventID 102 may contain no ResultCode; EventID 201 is the
+# authoritative action return code, and absence at 102 is not forgery.
+$successNo102Result=@(
+    (Record 118 1001 -seconds 1),
+    (Record 100 1002 -seconds 2),
+    (Record 201 1003 -seconds 3),
+    (Record 102 1004 -seconds 4 -result '')
+)
+$withMissing102=Assert-VolvBootEventChain -Events $successNo102Result -TaskName $task -BootUTC $boot
+if($withMissing102.EventIds -ne '118,100,201,102'){
+    throw 'Windows EventID 102 without ResultCode incorrectly rejected'
+}
+if($script:rejections -ne 17){throw ('Expected 17 rejection cases, got '+$script:rejections)}
+Write-Host ('PASS: same-instance boot proof, plausible clock ordering, no future/late events and '+$script:rejections+' adversarial rejection cases')
