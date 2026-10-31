@@ -117,7 +117,7 @@ func windowsDNSCrashChildUpdater(t *testing.T){
  for _,record:=range plan.Records {
   if err:=windowsDNSCrashApplyAndVerify(ctx,record,index,false);err!=nil{t.Fatal(err)}
  }
- if err:=VerifyWindowsDisposableDNSAdapterWithLocalDNSReadOnly(ctx,plan.Alias,plan.GUID,DefaultWindowsDisposableDNSInspect);err!=nil{
+ if _,err:=VerifyWindowsDisposableDNSAdapterWithLocalDNSReadOnly(ctx,plan.Alias,plan.GUID,DefaultWindowsDisposableDNSInspect);err!=nil{
   t.Fatalf("updater produced untrusted network state: %v",err)
  }
  ready:=os.Getenv("VOLVE_CI_DNS_CRASH_ARMED")
