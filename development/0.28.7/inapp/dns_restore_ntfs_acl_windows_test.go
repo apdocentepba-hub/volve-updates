@@ -122,3 +122,25 @@ func TestWindowsRealSYSTEMIdentityRequiredForDNSRecovery(t *testing.T){
   t.Fatal("interactive Windows admin was mistaken for SYSTEM")
  }
 }
+
+func TestWindowsRealNTFSSealedJournalAttestorReadOnly(t *testing.T){
+ if os.Getenv("VOLVE_CI_READONLY_ADAPTER_INSPECTION")!="1"{
+  t.Skip("requires disposable Windows CI host; never inspect user recovery tree")
+ }
+ fixture:=fixtureWindowsSealedSnapshot(t)
+ sealWindowsDNSFixtureACL(t,fixture.gate.JournalDir,fixture.gate.SnapshotPath)
+ ctx,cancel:=context.WithTimeout(context.Background(),90*time.Second)
+ defer cancel()
+ verifier,err:=NewWindowsDNSProtectedACLVerifier(ctx,
+  fixture.gate.JournalDir,fixture.gate.SnapshotPath,
+  DefaultWindowsDNSProtectedACLInspect)
+ if err!=nil{t.Fatal(err)}
+ fixture.gate.Protect=verifier
+ if err:=fixture.gate.Verify(ctx,fixture.records);err!=nil{
+  t.Fatalf("real SYSTEM/Admin NTFS ACL not accepted in sealed journal attestation: %v",err)
+ }
+ if err:=os.WriteFile(filepath.Join(fixture.gate.JournalDir,ResidentResultFile),[]byte("{}"),0600);err!=nil{t.Fatal(err)}
+ if err:=fixture.gate.Verify(ctx,fixture.records);err==nil{
+  t.Fatal("unsealed or forged terminal receipt authorized additional DNS restoration")
+ }
+}
