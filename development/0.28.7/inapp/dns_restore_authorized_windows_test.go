@@ -5,6 +5,8 @@ package motorupdate
 import (
   "context"
   "errors"
+  "fmt"
+  "time"
   "reflect"
   "testing"
 )
@@ -24,13 +26,14 @@ func (a *testWindowsDNSRecoveryAttestor) Verify(ctx context.Context, records []D
   return nil
 }
 func TestWindowsDNSRecoveryAttestationAroundEveryWrite(t *testing.T) {
+  labLock:=fmt.Sprintf("VOLVE-CI-DNSLock-%d",time.Now().UnixNano())
   v4,v6,h:=batchFixture()
   records:=[]DNSRestoreRecord{v4,v6}
   gate:=&testWindowsDNSRecoveryAttestor{Journal:cloneWindowsDNSRecoveryRecords(records)}
   invoke:=func(ctx context.Context,args []string)error {
     return h.write(ctx,WindowsDNSCommand{Program:"netsh.exe",Args:args})
   }
-  if err:=runAttestedWindowsStaticDNSRecovery(context.Background(),records,h.inspect,gate,invoke);err!=nil{
+  if err:=runAttestedWindowsStaticDNSRecovery(context.Background(),records,h.inspect,gate,invoke,labLock);err!=nil{
     t.Fatal(err)
   }
   if gate.Calls!=9 {
@@ -40,13 +43,14 @@ func TestWindowsDNSRecoveryAttestationAroundEveryWrite(t *testing.T) {
      !reflect.DeepEqual(h.live[DNSIPv6],v6.Original.Servers) {t.Fatal("DNS not restored precisely")}
 }
 func TestWindowsDNSRecoveryLosesAuthorizationAndSafelyResumes(t *testing.T) {
+  labLock:=fmt.Sprintf("VOLVE-CI-DNSLock-%d",time.Now().UnixNano())
   v4,v6,h:=batchFixture()
   records:=[]DNSRestoreRecord{v4,v6}
   gate:=&testWindowsDNSRecoveryAttestor{Journal:cloneWindowsDNSRecoveryRecords(records),FailAt:5}
   invoke:=func(ctx context.Context,args []string)error {
     return h.write(ctx,WindowsDNSCommand{Program:"netsh.exe",Args:args})
   }
-  if err:=runAttestedWindowsStaticDNSRecovery(context.Background(),records,h.inspect,gate,invoke);err==nil{
+  if err:=runAttestedWindowsStaticDNSRecovery(context.Background(),records,h.inspect,gate,invoke,labLock);err==nil{
     t.Fatal("expired recovery authorization accepted")
   }
   if len(h.actions)!=1 || !reflect.DeepEqual(h.live[DNSIPv4],[]string{"9.9.9.9"}) ||
@@ -56,7 +60,7 @@ func TestWindowsDNSRecoveryLosesAuthorizationAndSafelyResumes(t *testing.T) {
   }
   gate.Calls=0
   gate.FailAt=0
-  if err:=runAttestedWindowsStaticDNSRecovery(context.Background(),records,h.inspect,gate,invoke);err!=nil{
+  if err:=runAttestedWindowsStaticDNSRecovery(context.Background(),records,h.inspect,gate,invoke,labLock);err!=nil{
     t.Fatalf("could not resume authenticated partial recovery: %v",err)
   }
   if len(h.actions)!=3 || !reflect.DeepEqual(h.live[DNSIPv4],v4.Original.Servers) ||
@@ -65,20 +69,21 @@ func TestWindowsDNSRecoveryLosesAuthorizationAndSafelyResumes(t *testing.T) {
   }
 }
 func TestWindowsDNSRecoveryRejectsMissingOrCorruptedAttestationBeforeMutation(t *testing.T){
+  labLock:=fmt.Sprintf("VOLVE-CI-DNSLock-%d",time.Now().UnixNano())
   v4,_,h:=batchFixture()
   records:=[]DNSRestoreRecord{v4}
   writes:=0
   invoke:=func(context.Context,[]string)error{writes++;return nil}
-  if err:=runAttestedWindowsStaticDNSRecovery(context.Background(),records,h.inspect,nil,invoke);err==nil {
+  if err:=runAttestedWindowsStaticDNSRecovery(context.Background(),records,h.inspect,nil,invoke,labLock);err==nil {
     t.Fatal("missing SYSTEM/journal attestor accepted")
   }
   gate:=&testWindowsDNSRecoveryAttestor{Journal:cloneWindowsDNSRecoveryRecords(records),FailAt:1}
-  if err:=runAttestedWindowsStaticDNSRecovery(context.Background(),records,h.inspect,gate,invoke);err==nil{
+  if err:=runAttestedWindowsStaticDNSRecovery(context.Background(),records,h.inspect,gate,invoke,labLock);err==nil{
     t.Fatal("unverified recovery accepted")
   }
   gate.FailAt=0;gate.Calls=0
   records[0].Original.Servers[0]="8.8.8.8"
-  if err:=runAttestedWindowsStaticDNSRecovery(context.Background(),records,h.inspect,gate,invoke);err==nil{
+  if err:=runAttestedWindowsStaticDNSRecovery(context.Background(),records,h.inspect,gate,invoke,labLock);err==nil{
     t.Fatal("journal mismatch accepted")
   }
   if writes!=0 || len(h.actions)!=0 {t.Fatal("unauthorized DNS mutation occurred")}
