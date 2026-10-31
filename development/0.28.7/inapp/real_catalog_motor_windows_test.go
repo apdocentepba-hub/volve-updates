@@ -56,19 +56,27 @@ func TestActualFullCatalogLoadsAndBlocksOnLiveWindowsUDP(t *testing.T) {
     putLabFullCatalog(t,root,400002)
     eng,err:=fullEngineAt(root)
     if err!=nil{t.Fatalf("real Full catalog loader rejected valid fixture: %v",err)}
-    // The production DNS server binds BOTH TCP and UDP on one port. On
-    // Windows, choosing TCP :0 first can consistently select ports excluded
-    // for UDP. Choose an OS-allocated UDP port first, then validate TCP.
-    // The test still MUST run real DNS over both protocols; it never skips.
+    // The production server needs the SAME port for TCP and UDP. On some
+    // Windows/Hyper-V runners, :0 repeatedly allocates UDP ephemeral ports
+    // that are EXCLUDED for TCP by host networking. Retrying :0 then fails
+    // 128 times despite ordinary unreserved loopback ports being available.
+    // Scan a process-offset HIGH test-only port range below Windows' default
+    // ephemeral range (49152+). Never use DNS/53 or a real network adapter.
+    // Both sockets must actually bind; don't skip the live DNS proof.
     port:=0
     var lastPortFailure error
-    for attempt:=0;attempt<128;attempt++{
-        probeUDP,udpErr:=net.ListenPacket("udp4","127.0.0.1:0")
-        if udpErr!=nil{t.Fatalf("Windows cannot allocate local UDP4: %v",udpErr)}
-        proposed:=probeUDP.LocalAddr().(*net.UDPAddr).Port
-        probeTCP,tcpErr:=net.Listen("tcp4",fmt.Sprintf("127.0.0.1:%d",proposed))
+    const firstLabPort=20000
+    const labPortSpan=20000
+    const maximumAttempts=4096
+    offset:=os.Getpid()%labPortSpan
+    for attempt:=0;attempt<maximumAttempts;attempt++{
+        candidate:=firstLabPort+((offset+attempt)%labPortSpan)
+        address:=fmt.Sprintf("127.0.0.1:%d",candidate)
+        probeUDP,udpErr:=net.ListenPacket("udp4",address)
+        if udpErr!=nil{lastPortFailure=udpErr;continue}
+        probeTCP,tcpErr:=net.Listen("tcp4",address)
         if tcpErr==nil{
-            port=proposed
+            port=candidate
             probeTCP.Close()
         }else{
             lastPortFailure=tcpErr
@@ -77,7 +85,7 @@ func TestActualFullCatalogLoadsAndBlocksOnLiveWindowsUDP(t *testing.T) {
         if port!=0{break}
     }
     if port==0{
-        t.Fatalf("no shared TCP/UDP localhost port after 128 UDP-first attempts (last TCP: %v)",lastPortFailure)
+        t.Fatalf("no shared TCP/UDP localhost lab port in %d attempts (last: %v)",maximumAttempts,lastPortFailure)
     }
     ctx,cancel:=context.WithCancel(context.Background())
     defer cancel()
