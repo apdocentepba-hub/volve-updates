@@ -67,7 +67,7 @@ func TestFreshDNSAdaptersFailClosedOnInvalidOrMissingEvidence(t *testing.T) {
   {"trailing", []byte("[] true")},
   {"malformed", []byte("[")},
   {"oversized", []byte(strings.Repeat(" ", 1<<20+1))},
-  {"missing-servers", []byte("{\"InterfaceIndex\":17,\"Family\":\"IPv4\"}")},
+  {"missing-servers", []byte("[{\"InterfaceIndex\":17,\"Family\":\"IPv4\"}]")},
   {"unknown-family", freshDNSRows(t, []windowsFreshDNSAdapterRow{{InterfaceIndex:17, Family:"Unknown", Servers:[]string{}}})},
   {"zero-index", freshDNSRows(t, []windowsFreshDNSAdapterRow{{InterfaceIndex:0, Family:"IPv4", Servers:[]string{}}})},
   {"duplicate-index-family", freshDNSRows(t, []windowsFreshDNSAdapterRow{good,good})},
