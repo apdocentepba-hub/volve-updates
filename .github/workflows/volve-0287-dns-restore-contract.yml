@@ -25,6 +25,7 @@ on:
       - 'development/0.28.7/inapp/dns_restore_disposable_adapter_windows.go'
       - 'development/0.28.7/inapp/dns_restore_disposable_adapter_windows_test.go'
       - 'development/0.28.7/inapp/dns_restore_disposable_real_windows_test.go'
+      - 'development/0.28.7/inapp/dns_restore_watchdog_crash_windows_test.go'
       - '.github/workflows/volve-0287-dns-restore-contract.yml'
   workflow_dispatch:
 permissions:
@@ -49,7 +50,7 @@ jobs:
           $source='development/0.28.7/inapp'
           $folder=Join-Path $env:RUNNER_TEMP 'volve-dns-restore-ci'
           New-Item -ItemType Directory -Path $folder -Force|Out-Null
-          foreach($name in @('resident_journal.go','resident_journal_test.go','dns_restore_transaction.go','dns_restore_transaction_test.go','dns_restore_netsh_plan.go','dns_restore_netsh_plan_test.go','dns_restore_adapter_inventory_windows.go','dns_restore_adapter_inventory_windows_test.go','dns_restore_static_executor_windows.go','dns_restore_static_executor_windows_test.go','dns_restore_static_batch_windows_test.go','dns_restore_native_runner_windows.go','dns_restore_native_runner_windows_test.go','dns_restore_authorized_windows.go','dns_restore_authorized_windows_test.go','dns_restore_lab_mutex_windows.go','dns_restore_lab_mutex_windows_test.go','dns_restore_sealed_attestor_windows.go','dns_restore_sealed_attestor_windows_test.go','dns_restore_disposable_adapter_windows.go','dns_restore_disposable_adapter_windows_test.go','dns_restore_disposable_real_windows_test.go')){
+          foreach($name in @('resident_journal.go','resident_journal_test.go','dns_restore_transaction.go','dns_restore_transaction_test.go','dns_restore_netsh_plan.go','dns_restore_netsh_plan_test.go','dns_restore_adapter_inventory_windows.go','dns_restore_adapter_inventory_windows_test.go','dns_restore_static_executor_windows.go','dns_restore_static_executor_windows_test.go','dns_restore_static_batch_windows_test.go','dns_restore_native_runner_windows.go','dns_restore_native_runner_windows_test.go','dns_restore_authorized_windows.go','dns_restore_authorized_windows_test.go','dns_restore_lab_mutex_windows.go','dns_restore_lab_mutex_windows_test.go','dns_restore_sealed_attestor_windows.go','dns_restore_sealed_attestor_windows_test.go','dns_restore_disposable_adapter_windows.go','dns_restore_disposable_adapter_windows_test.go','dns_restore_disposable_real_windows_test.go','dns_restore_watchdog_crash_windows_test.go')){
             Copy-Item -LiteralPath (Join-Path $source $name) -Destination (Join-Path $folder $name) -ErrorAction Stop
           }
           Push-Location $folder
