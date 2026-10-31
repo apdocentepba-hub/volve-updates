@@ -76,6 +76,10 @@ jobs:
             Write-Host "Newly created internal vNIC DNS=$virtualDNS"
             Write-Host "Newly created internal vNIC routes=$virtualRoutes"
             Write-Host "Newly created internal vNIC IPs=$virtualIPs"
+            # Strict Go preflight recognizes only exact Windows fec0::1-3
+            # automatic IPv6 placeholders and local multicast/link-local
+            # routes observed on a newly created isolated vNIC. It still
+            # refuses arbitrary resolvers, LAN routes and physical adapters.
             $env:VOLVE_CI_DNS_REAL_DISPOSABLE='INTERNAL_HYPERV_VM_ONLY'
             $env:VOLVE_CI_DNS_LAB_ALIAS=$alias
             $env:VOLVE_CI_DNS_LAB_GUID=$guid
