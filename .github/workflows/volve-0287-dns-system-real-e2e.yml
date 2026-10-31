@@ -16,7 +16,7 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: '1.23.x'
-      - name: Finish real SYSTEM crash rollback and seal durable recovery receipt using native Windows ACLs
+      - name: Audit exact Windows NTFS terminal receipt rejection after real SYSTEM DNS recovery
         shell: pwsh
         run: |
           $ErrorActionPreference='Stop'
