@@ -6,17 +6,17 @@ Fecha de corte inicial: 30/10/2026. Rama de desarrollo: feature/motor-updater-02
 
 Las cifras son **estimaciones conservadoras de ingeniería por entregables ponderados**, no una medición del tiempo, ni una cantidad de líneas, ni un porcentaje de protección. Se acumula crédito parcial por código efectivamente integrado y verificable; aprobar CI no reemplaza los ensayos sobre un equipo Windows persistente. Nunca publicar como cerrado un paso que no haya aprobado todos sus criterios obligatorios.
 
-### Paso 2 — Actualización del motor DNS: 62/100 (62%)
+### Paso 2 — Actualización del motor DNS: 63/100 (63%)
 
 | Subentregable | Peso | Puntos reconocidos | Estado |
 | --- | ---: | ---: | --- |
 | Permiso editorial exacto, autenticidad y pinning | 15 | 8 | Validación criptográfica en CI; falta emisión legítima para el motor instalado |
 | Respaldo anterior y journal protegido | 15 | 15 | Código y auditorías NTFS probados |
-| Watchdog de recuperación SYSTEM independiente | 25 | 11 | Watchdog CI real y recuperación DNS interprocesos; ahora también se probó positivamente la detección del token LocalSystem S-1-5-18 en tarea SYSTEM descartable; falta integrarlo en el controlador productivo |
+| Watchdog de recuperación SYSTEM independiente | 25 | 12 | Una misma tarea SYSTEM de laboratorio valida SID + ACL NTFS reales del journal/snapshot, y rechaza suplantación de permisos en segunda ejecución; falta integrarla con el watchdog que restaura DNS |
 | Controlador Windows real que cambia y revierte el motor | 20 | 13 | Restauración real IPv4/IPv6 en Hyper-V y auditoría NTFS por SID conectada al atestador de journal en ensayos Windows reales; sin firma editorial ni autorizador productivos |
 | Tests adversos, DNS dual-stack, identidad, rollback en CI | 15 | 15 | Motor compilado ejecutado bajo SYSTEM en DNS/53 real y sondeado externamente en VM descartable; faltan escenarios productivos |
 | Reinicio real repetible de VM persistente | 10 | 0 | Sin ejecutar |
-| **TOTAL** | **100** | **62** | **Paso abierto** |
+| **TOTAL** | **100** | **63** | **Paso abierto** |
 
 Los seis criterios A–F de STEP2_EXIT_CRITERIA.md siguen sin aprobarse **como condiciones de cierre completas**, aunque hay subtrabajos de esos criterios realizados.
 
@@ -224,3 +224,14 @@ Ver [CI actual de la política](https://github.com/apdocentepba-hub/volve-update
 **Puntuación conservadora:** +1 en watchdog SYSTEM de paso 2 (**10→11/25**) por validación del token real bajo tarea local CI; +1 en controlador Windows (**12→13/20**) por verificación NTFS real integrada al atestador aislado. **Paso 2: 60→62%**; **paso 3 sigue 44%**. La identidad SYSTEM y la ACL **aún no se probaron juntas con mutaciones DNS reales en la misma tarea productiva**, por lo que no se acreditan los 25 puntos del watchdog persistente ni el cierre de etapa. Firmas de CI efímeras NO sustituyen permiso editorial, y falta reboot real y actualización dentro del programa instalado.
 
 **No autorizado:** modificar `main`, tareas estables, DNS de la PC del usuario o distribuir un instalador de actualización. La versión 0.28.6 reportada por el usuario permanece fuera de las pruebas.
+
+
+## 31/10/2026 — SID LocalSystem + DACL NTFS REALES comprobados conjuntamente, con negativo adverso
+
+**Implementación:** se amplió el ejecutable CI-only `dns_system_probe_ci/main_windows.go` para aceptar un journal y snapshot de laboratorio, ejecutar `VerifyWindowsCurrentSystemSIDReadOnly` sobre **su propio token de Windows** y, solo después de verificar `S-1-5-18`, comprobar mediante `NewWindowsDNSProtectedACLVerifier` y `DefaultWindowsDNSProtectedACLInspect` los descriptores NTFS de parent, journal, intent y snapshot. **No** ejecuta `netsh`, no cambia DNS, no habilita firmware/servicios ni altera tareas de VOLVÉ existentes. No se creó controlador de producción.
+
+**Ensayo real:** [GitHub Actions #41217455845](https://github.com/apdocentepba-hub/volve-updates/actions/runs/41217455845) finalizó **SUCCESS** en `windows-latest`: se creó exclusivamente un journal/snapshot descartable con propietarios SYSTEM/Administrators y DACL sin herencia, el administrador interactivo obtuvo rechazo código 83, **el mismo binario iniciado desde una tarea real LocalSystem pasó identidad + ACL conjuntamente**, y después se agregó deliberadamente al snapshot una ACE de lectura para BUILTIN\\Users; al relanzar la MISMA tarea SYSTEM sin cambiar el código, devolvió código 83 y no escribió evidencia de aprobación. La tarea `VOLVE-CI-SystemSID-<RUN_ID>` fue eliminada en `finally`. El primer intento falló por usar una API de .NET Framework que no existe en PowerShell 7; fue corregido con `Set-Acl` y reejecutado con resultado verde. No hubo cambios de red en la VM.
+
+**Crédito parcial:** subentregable 'Watchdog de recuperación SYSTEM independiente' pasa de **11→12 de 25 puntos** por una prueba adversa real y conjunta sobre el token y DACL, aunque todavía no se haya unido al recuperador que escribe DNS. **Paso 2: 63/100 (+1). Paso 3: 44/100 sin cambios.** No acreditar el hito de watchdog SYSTEM persistente, restauración productiva o reinicio: siguen completamente abiertos.
+
+**Siguiente bloqueo crítico:** ejecutar el restaurador real IPv4/IPv6 del switch interno Hyper-V **bajo una tarea SYSTEM** con la ACL NTFS y el permiso editorial auténtico/inmutable validados en la misma operación; luego prueba de reinicio en una VM persistente. La clave Ed25519 de los ensayos de recuperación anteriores es **efímera de CI**, NO la firma de producción. No tocar `main`, canales estables, DNS del usuario ni su 0.28.6.
