@@ -547,6 +547,31 @@ jobs:
             }finally {
               Set-Acl -LiteralPath $kit -AclObject $baselineAcl -ErrorAction Stop
             }
+            # A protected parent is NOT enough: an individual proof file can
+            # contain a foreign explicit ACE. Tamper the actual metadata
+            # file in the disposable VM lab, require fail-closed behavior.
+            $metaFile=Join-Path $kit 'vm-trial.json'
+            $baselineFileACL=Get-Acl -LiteralPath $metaFile -ErrorAction Stop
+            try {
+              $badFileACL=Get-Acl -LiteralPath $metaFile -ErrorAction Stop
+              $extraFileAce=[Security.AccessControl.FileSystemAccessRule]::new(
+                [Security.Principal.SecurityIdentifier]::new('S-1-5-32-545'),
+                [Security.AccessControl.FileSystemRights]::Read,
+                [Security.AccessControl.AccessControlType]::Allow)
+              $badFileACL.AddAccessRule($extraFileAce)
+              Set-Acl -LiteralPath $metaFile -AclObject $badFileACL -ErrorAction Stop
+              $fileRejected=$false
+              try { & $script -Mode Verify -RunId $trialId }
+              catch {
+                if($_.Exception.Message -match '^Foreign or DENY VM evidence file DACL entry:'){
+                  $fileRejected=$true
+                }else{throw}
+              }
+              if(-not $fileRejected){throw 'SECURITY: foreign explicit metadata-file ACE trusted as boot proof'}
+              Write-Host 'PASS: real NTFS metadata file with foreign Users ACE failed closed'
+            }finally {
+              Set-Acl -LiteralPath $metaFile -AclObject $baselineFileACL -ErrorAction Stop
+            }
             # Deliberately trigger the watchdog by hand. It must NOT be counted
             # as a real reboot even when recovery itself succeeds under SYSTEM.
             $bootTask='VOLVE-CI-BootRecovery-'+$trialId
