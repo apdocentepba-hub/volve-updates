@@ -10,7 +10,8 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference='Stop'
 $ProgressPreference='SilentlyContinue'
-if($env:GITHUB_ACTIONS -ne 'true' -or $env:RUNNER_ENVIRONMENT -ne 'github-hosted'){throw 'CI rescue refused: runner identity'}
+# SYSTEM tasks do not inherit GitHub runner environment variables. Hardware,
+# allowlisted task names, protected path, code hash and privileged SID are mandatory.
 $computer=Get-CimInstance Win32_ComputerSystem -ErrorAction Stop
 if(($computer.Manufacturer+' '+$computer.Model) -notmatch '(?i:virtual machine|vmware|hyper-v|kvm|qemu|virtualbox)'){throw 'CI rescue refused: nonvirtual host'}
 if([Security.Principal.WindowsIdentity]::GetCurrent().User.Value -ne 'S-1-5-18'){throw 'CI rescue refused: not SYSTEM'}
