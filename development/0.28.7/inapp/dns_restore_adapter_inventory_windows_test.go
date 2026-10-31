@@ -112,3 +112,42 @@ func TestWindowsEffectiveDNSInventoryRealReadOnly(t *testing.T){
  if matchedFamilies==0{t.Fatal("no actual Windows DNS address family resolved against GUID/InterfaceIndex snapshot")}
  t.Logf("PASS: independently read %d live adapter/family DNS records without changing Windows network configuration",matchedFamilies)
 }
+
+func TestWindowsAdapterInventoryQuarantinesAmbiguousHiddenInterfaces(t *testing.T){
+ raw:=`[
+ {"InterfaceGuid":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa","InterfaceIndex":17},
+ {"InterfaceGuid":"bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb","InterfaceIndex":17},
+ {"InterfaceGuid":"cccccccc-cccc-cccc-cccc-cccccccccccc","InterfaceIndex":29},
+ {"InterfaceGuid":"cccccccc-cccc-cccc-cccc-cccccccccccc","InterfaceIndex":29}
+ ]`
+ list,err:=parseWindowsAdapterInventory([]byte(raw))
+ if err!=nil{t.Fatal(err)}
+ if len(list)!=1||list[0].InterfaceIndex!=29||
+  list[0].InterfaceGUID!="{cccccccc-cccc-cccc-cccc-cccccccccccc}"{
+  t.Fatalf("ambiguous interface leaked into trusted inventory: %+v",list)
+ }
+ if _,err:=FindWindowsAdapterIndex(context.Background(),"{aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa}",func(context.Context,string)([]byte,error){
+  return []byte(raw),nil
+ });err==nil{t.Fatal("ambiguous requested GUID must be rejected")}
+}
+
+func TestWindowsAdapterInventoryRejectsAllAmbiguousTargets(t *testing.T){
+ raw:=`[
+ {"InterfaceGuid":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa","InterfaceIndex":17},
+ {"InterfaceGuid":"bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb","InterfaceIndex":17}
+ ]`
+ if list,err:=parseWindowsAdapterInventory([]byte(raw));err==nil||len(list)!=0{
+  t.Fatal("no trusted adapter target should survive ambiguous index")
+ }
+ // A GUID that flips indexes can also not be trusted, even when both
+ // indexes otherwise appear unique.
+ raw=`[
+ {"InterfaceGuid":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa","InterfaceIndex":17},
+ {"InterfaceGuid":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa","InterfaceIndex":19},
+ {"InterfaceGuid":"cccccccc-cccc-cccc-cccc-cccccccccccc","InterfaceIndex":21}
+ ]`
+ list,err:=parseWindowsAdapterInventory([]byte(raw))
+ if err!=nil||len(list)!=1||list[0].InterfaceIndex!=21{
+  t.Fatalf("conflicting duplicate GUID not quarantined: %+v, %v",list,err)
+ }
+}
