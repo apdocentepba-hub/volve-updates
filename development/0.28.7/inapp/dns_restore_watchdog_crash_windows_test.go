@@ -105,12 +105,25 @@ func windowsDNSCrashAwaitFile(ctx context.Context,path string)error{
 func windowsDNSCrashChildUpdater(t *testing.T){
  plan,err:=windowsDNSCrashPlanFromDisk()
  if err!=nil{t.Fatal(err)}
- ctx,cancel:=context.WithTimeout(context.Background(),65*time.Second)
+ ctx,cancel:=context.WithTimeout(context.Background(),110*time.Second)
  defer cancel()
  adapter,err:=VerifyWindowsDisposableDNSAdapterReadOnly(ctx,plan.Alias,plan.GUID,DefaultWindowsDisposableDNSInspect)
  if err!=nil{t.Fatalf("updater did not prove fresh isolated adapter: %v",err)}
  index,err:=FindWindowsAdapterIndex(ctx,plan.GUID,DefaultWindowsReadOnlyPowerShell)
  if err!=nil||index!=adapter.InterfaceIndex{t.Fatal("updater lost pinned disposable index")}
+ // When the SYSTEM prearm barrier is present, the sacrificial updater
+ // MUST NOT change even the disposable vNIC until a separate boot-triggered
+ // SYSTEM watchdog has been installed AND has opened our process handle.
+ // The older independent-process E2E omits this variable and is unchanged.
+ if gate:=os.Getenv("VOLVE_CI_DNS_WAIT_FOR_SYSTEM_WATCHDOG");gate!=""{
+  if os.Getenv("GITHUB_ACTIONS")!="true"||
+   os.Getenv("VOLVE_CI_DNS_REAL_DISPOSABLE")!="INTERNAL_HYPERV_VM_ONLY"{
+   t.Fatal("refusing to wait for a SYSTEM prearm barrier outside disposable CI")
+  }
+  if err:=windowsDNSCrashAwaitFile(ctx,gate);err!=nil{
+   t.Fatalf("prearmed SYSTEM watchdog never authorized disposable updater: %v",err)
+  }
+ }
  for _,record:=range plan.Records {
   if err:=windowsDNSCrashApplyAndVerify(ctx,record,index,true);err!=nil{t.Fatal(err)}
  }
