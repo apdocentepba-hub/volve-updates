@@ -60,6 +60,8 @@ jobs:
           $vm=Get-CimInstance Win32_ComputerSystem -ErrorAction Stop
           if(($vm.Manufacturer+' '+$vm.Model) -notmatch '(?i:virtual machine|vmware|hyper-v|kvm|qemu|virtualbox)'){throw 'Not a VM'}
           $script=Join-Path (Get-Location) 'development/0.28.7/lab/VOLVE_CI_MotorInstall.ps1'
+          $rescueSource=Join-Path (Get-Location) 'development/0.28.7/lab/VOLVE_CI_MotorRescue.ps1'
+          $rescueSHA=(Get-FileHash -LiteralPath $rescueSource -Algorithm SHA256).Hash.ToLowerInvariant()
           $parserTokens=$null
           $parseErrors=$null
           [Management.Automation.Language.Parser]::ParseFile($script,[ref]$parserTokens,[ref]$parseErrors)|Out-Null
@@ -68,26 +70,28 @@ jobs:
           $source=Join-Path $env:RUNNER_TEMP 'VOLVE_CI_FreshDNS53.exe'
           $hash=(Get-FileHash -LiteralPath $source -Algorithm SHA256).Hash.ToLowerInvariant()
           $task='VOLVE-CI-FreshMotor-'+$labId
+          $rescueTask='VOLVE-CI-FreshRescue-'+$labId
           $dataRoot=Join-Path $env:ProgramData ('VOLVE-CI-FreshDNS53-'+$labId)
           $root=Join-Path $env:ProgramData ('VOLVE-CI-MotorInstall-'+$labId)
           $exe=Join-Path $root 'VOLVE_CI_FreshDNS53.exe'
+          $rescueProof=Join-Path $root 'ci-rescue-result.json'
           $dnsBefore=Get-DnsClientServerAddress|Sort-Object InterfaceIndex,AddressFamily|Select-Object InterfaceIndex,AddressFamily,ServerAddresses|ConvertTo-Json -Compress -Depth 6
           $hostsBefore=(Get-FileHash -LiteralPath "$env:WINDIR\System32\drivers\etc\hosts" -Algorithm SHA256).Hash
           $installed=$false
           try{
-            & $script -Mode Install -LabId $labId -SourceExe $source -ExpectedSHA256 $hash
+            & $script -Mode Install -LabId $labId -SourceExe $source -SourceRescue $rescueSource -ExpectedSHA256 $hash -ExpectedRescueSHA256 $rescueSHA
             $installed=$true
-            & $script -Mode Verify -LabId $labId -ExpectedSHA256 $hash
+            & $script -Mode Verify -LabId $labId -ExpectedSHA256 $hash -ExpectedRescueSHA256 $rescueSHA
             # The installer must reject a mismatched signed-inventory hash
             # and an attempt to overwrite this same installed motor.
             $badHash='0'*64
             $badRejected=$false
-            try { & $script -Mode Verify -LabId $labId -ExpectedSHA256 $badHash } catch { $badRejected=$true }
+            try { & $script -Mode Verify -LabId $labId -ExpectedSHA256 $badHash -ExpectedRescueSHA256 $rescueSHA } catch { $badRejected=$true }
             if(-not $badRejected){throw 'Installer accepted wrong installed engine SHA256'}
             $overwriteRejected=$false
-            try { & $script -Mode Install -LabId $labId -SourceExe $source -ExpectedSHA256 $hash } catch { $overwriteRejected=$true }
+            try { & $script -Mode Install -LabId $labId -SourceExe $source -SourceRescue $rescueSource -ExpectedSHA256 $hash -ExpectedRescueSHA256 $rescueSHA } catch { $overwriteRejected=$true }
             if(-not $overwriteRejected){throw 'Installer accepted overwriting already-registered motor'}
-            & $script -Mode Verify -LabId $labId -ExpectedSHA256 $hash
+            & $script -Mode Verify -LabId $labId -ExpectedSHA256 $hash -ExpectedRescueSHA256 $rescueSHA
             $folderACL=Get-Acl -LiteralPath $root -ErrorAction Stop
             if(-not $folderACL.AreAccessRulesProtected){throw 'Installed motor directory inherited broad ACL'}
             $allowedSIDs=@('S-1-5-18','S-1-5-32-544')
@@ -121,7 +125,7 @@ jobs:
               $running=@(Get-CimInstance Win32_Process -Filter "Name='VOLVE_CI_FreshDNS53.exe'" -ErrorAction SilentlyContinue|Where-Object { [string]$_.ExecutablePath -ieq $exe })
             }until($running.Count -eq 0 -or (Get-Date) -ge $deadline)
             if($running.Count -ne 0){throw 'Lab motor did not stop before restart'}
-            & $script -Mode Verify -LabId $labId -ExpectedSHA256 $hash
+            & $script -Mode Verify -LabId $labId -ExpectedSHA256 $hash -ExpectedRescueSHA256 $rescueSHA
             Start-ScheduledTask -TaskName $task -ErrorAction Stop
             Push-Location build/codigo
             try{
@@ -129,11 +133,44 @@ jobs:
               if($LASTEXITCODE -ne 0){throw 'Same installed motor failed on restart'}
             }finally{Pop-Location}
             Write-Host 'PASS: installed ProgramData motor restarted without copying or re-registering'
+            # Inject a genuine motor crash after both real IPv4+IPv6 DNS/53
+            # probes, and let a distinct prearmed SYSTEM task disable it.
+            $live=@(Get-CimInstance Win32_Process -Filter "Name='VOLVE_CI_FreshDNS53.exe'" -ErrorAction Stop | Where-Object { [string]$_.ExecutablePath -ieq $exe })
+            if($live.Count -ne 1){throw 'Expected one installed motor before crash'}
+            $owner=Invoke-CimMethod -InputObject $live[0] -MethodName GetOwnerSid -ErrorAction Stop
+            if($owner.ReturnValue -ne 0 -or $owner.Sid -ne 'S-1-5-18'){throw 'Refusing to kill non-SYSTEM process'}
+            $rescue=Get-ScheduledTask -TaskName $rescueTask -ErrorAction Stop
+            if($rescue.Principal.UserId -notin @('SYSTEM','S-1-5-18')){throw 'Recovery not prearmed as SYSTEM'}
+            Stop-Process -Id $live[0].ProcessId -Force -ErrorAction Stop
+            $crashDeadline=(Get-Date).AddSeconds(15)
+            do{
+              Start-Sleep -Milliseconds 400
+              $stillRunning=@(Get-CimInstance Win32_Process -Filter "Name='VOLVE_CI_FreshDNS53.exe'" -ErrorAction SilentlyContinue | Where-Object { [string]$_.ExecutablePath -ieq $exe })
+            }until($stillRunning.Count -eq 0 -or (Get-Date) -ge $crashDeadline)
+            if($stillRunning.Count -ne 0){throw 'Motor did not exit on injected crash'}
+            Start-ScheduledTask -TaskName $rescueTask -ErrorAction Stop
+            $rescueDeadline=(Get-Date).AddSeconds(30)
+            do{
+              Start-Sleep -Milliseconds 500
+              $resultPresent=Test-Path -LiteralPath $rescueProof -PathType Leaf
+              $rescueInfo=Get-ScheduledTaskInfo -TaskName $rescueTask -ErrorAction Stop
+              $rescueStatus=Get-ScheduledTask -TaskName $rescueTask -ErrorAction Stop
+            }until($resultPresent -or ($rescueInfo.LastRunTime -gt (Get-Date).AddMinutes(-1) -and $rescueStatus.State -ne 'Running' -and $rescueInfo.LastTaskResult -ne 0) -or (Get-Date) -ge $rescueDeadline)
+            if(-not $resultPresent){throw ('Independent SYSTEM watchdog failed; task result='+$rescueInfo.LastTaskResult)}
+            $result=Get-Content -LiteralPath $rescueProof -Raw -Encoding UTF8 | ConvertFrom-Json -ErrorAction Stop
+            if($result.schema -ne 1 -or $result.state -ne 'motor-disabled-after-crash' -or $result.motorSHA256 -cne $hash -or $result.rescueSHA256 -cne $rescueSHA -or $result.motorTask -cne $task){throw 'Recovery proof does not match installed engine'}
+            $disabled=Get-ScheduledTask -TaskName $task -ErrorAction Stop
+            if($disabled.State -ne 'Disabled'){throw 'Independent watchdog did not disable crashed task'}
+            foreach($ip in @('127.0.0.1','::1')){
+              if(@(Get-NetUDPEndpoint -LocalAddress $ip -LocalPort 53 -ErrorAction SilentlyContinue).Count -ne 0){throw 'DNS/53 still occupied after recovery'}
+            }
+            Write-Host 'PASS: actual SYSTEM motor crashed; separate prearmed SYSTEM rescue disabled exactly its own motor task'
+            & $script -Mode Verify -LabId $labId -ExpectedSHA256 $hash -ExpectedRescueSHA256 $rescueSHA
           }finally{
             Remove-Item Env:\VOLVE_CI_FRESH_DNS53_PROBE -ErrorAction SilentlyContinue
             if($installed){
-              & $script -Mode Remove -LabId $labId -ExpectedSHA256 $hash
-              if((Test-Path -LiteralPath $root) -or (Test-Path -LiteralPath $dataRoot) -or (Get-ScheduledTask -TaskName $task -ErrorAction SilentlyContinue)){
+              & $script -Mode Remove -LabId $labId -ExpectedSHA256 $hash -ExpectedRescueSHA256 $rescueSHA
+              if((Test-Path -LiteralPath $root) -or (Test-Path -LiteralPath $dataRoot) -or (Get-ScheduledTask -TaskName $task -ErrorAction SilentlyContinue) -or (Get-ScheduledTask -TaskName $rescueTask -ErrorAction SilentlyContinue)){
                 throw 'Exact rollback incomplete'
               }
               Write-Host 'PASS: isolated versioned installation and task removed with no remnants'
