@@ -6,17 +6,17 @@ Fecha de corte inicial: 30/10/2026. Rama de desarrollo: feature/motor-updater-02
 
 Las cifras son **estimaciones conservadoras de ingeniería por entregables ponderados**, no una medición del tiempo, ni una cantidad de líneas, ni un porcentaje de protección. Se acumula crédito parcial por código efectivamente integrado y verificable; aprobar CI no reemplaza los ensayos sobre un equipo Windows persistente. Nunca publicar como cerrado un paso que no haya aprobado todos sus criterios obligatorios.
 
-### Paso 2 — Actualización del motor DNS: 52/100 (52%)
+### Paso 2 — Actualización del motor DNS: 54/100 (54%)
 
 | Subentregable | Peso | Puntos reconocidos | Estado |
 | --- | ---: | ---: | --- |
 | Permiso editorial exacto, autenticidad y pinning | 15 | 8 | Validación criptográfica en CI; falta emisión legítima para el motor instalado |
 | Respaldo anterior y journal protegido | 15 | 15 | Código y auditorías NTFS probados |
 | Watchdog de recuperación SYSTEM independiente | 25 | 10 | Recuperador separado prearmado como tarea SYSTEM recurrente cada minuto en VM descartable; detectó caída real sin disparo manual; falta watchdog productivo |
-| Controlador Windows real que cambia y revierte el motor | 20 | 4 | Instalación y retirada versionada de laboratorio desde ProgramData con tarea SYSTEM, hash, ACL, DNS/53 real y rollback aprobados; faltan conmutación de producción, rescate persistente y DNS de adaptador |
+| Controlador Windows real que cambia y revierte el motor | 20 | 6 | Instalación/retirada versionada de motor SYSTEM y recuperador en VM; ahora lectura Windows real de GUID/InterfaceIndex y DNS IPv4/IPv6 sin cambios de red, con rechazos de identidad concurrente; falta ejecutar restauración autenticada de adaptador |
 | Tests adversos, DNS dual-stack, identidad, rollback en CI | 15 | 15 | Motor compilado ejecutado bajo SYSTEM en DNS/53 real y sondeado externamente en VM descartable; faltan escenarios productivos |
 | Reinicio real repetible de VM persistente | 10 | 0 | Sin ejecutar |
-| **TOTAL** | **100** | **52** | **Paso abierto** |
+| **TOTAL** | **100** | **54** | **Paso abierto** |
 
 Los seis criterios A–F de STEP2_EXIT_CRITERIA.md siguen sin aprobarse **como condiciones de cierre completas**, aunque hay subtrabajos de esos criterios realizados.
 
@@ -126,3 +126,11 @@ Ver [CI actual de la política](https://github.com/apdocentepba-hub/volve-update
 - Fallo de validación corregido: el primer ensayo confundía `LastTaskResult=1` correspondiente a la comprobación de motor sano con un error tras el crash; el criterio pasó a exigir un intento posterior a `crashAt`. También se adelantó el primer tick del laboratorio a los 75 segundos para reducir duración del ensayo sin cambiar el intervalo recurrente de un minuto. El ensayo corregido terminó **SUCCESS**; no se ocultan los intentos fallidos.
 - Progreso por entregables ponderados: **paso 2 sube de 49 a 52%** (+3 en watchdog SYSTEM independiente de laboratorio) y **paso 3 sube de 33 a 38%** (+5 en prueba de recuperación independiente ahora automática). No computar puntos de arranque persistente real de Windows ni de recuperación productiva, que continúan pendientes.
 - **No aprobado:** watchdog de producción, instalación autoconfigurada en PC real, transición de DNS de adaptadores/rollback, reinicio completo de la misma VM persistente, actualización de motor desde Centro instalado, firma editorial y escenarios VPN/DoH.
+
+
+## Verificación Windows real de identidad y DNS por familia — 30/10/2026 Argentina
+
+- Implementación **solo lectura**, con código integrado en `inapp/dns_restore_adapter_inventory_windows.go` y pruebas `dns_restore_adapter_inventory_windows_test.go`. El inspector exige GUID de adaptador completo, consulta `Get-NetAdapter -IncludeHidden` y resuelve el InterfaceIndex vivo, comprueba duplicaciones y cambios del índice entre dos consultas, lee `Get-DnsClientServerAddress` e impide generar el plan de restauración si el DNS observado no apunta exactamente a `127.0.0.1` o `::1` según familia. El plan de reversión es de argumentos independientes IPv4 e IPv6, con modo DHCP/manual preservado desde journal confiable; **NO ejecuta los cambios**.
+- **Evidencia: [CI específica #41154999313](https://github.com/apdocentepba-hub/volve-updates/actions/runs/41154999313), dos trabajos SUCCESS, Windows y Linux.** En el runner Windows 2026-10-31T01:23:08Z se comprobaron **8 vínculos reales GUID/InterfaceIndex** y a las 01:23:10Z se leyeron correctamente **4 registros reales DNS por adaptador/familia**. La prueba final confirmó `PASS: DNS restore contract validated, live Windows DNS settings remain unchanged`. Incluye Go test y vet, pruebas adversas y de modificación concurrente.
+- **Errores encontrados y corregidos en pruebas:** expresión YAML de matriz mal escapada, y diferencias de representación de `AddressFamily` en Windows (enum `2/23` versus texto). El primer ensayo de lectura DNS falló y el corregido pasó; no confundir intentos fallidos con aprobaciones.
+- Crédito conservador **paso 2: 54/100** (+2 dentro de controlador Windows por prueba del inspector real); **paso 3 sigue 38/100** porque ningún adaptador fue modificado o recuperado efectivamente. Faltan backend ejecutor privilegiado con controles de firma/journal/ACL y lock, reconocimiento fiable de origen DHCP/estático y pruebas reales de restauración en adaptador descartable con rollback y reinicio real. La PC del usuario sigue intacta.
