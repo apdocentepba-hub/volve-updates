@@ -1,4 +1,4 @@
-name: VOLVE 0.28.7 real SYSTEM SID read-only gate (NO RELEASE)
+name: VOLVE 0.28.7 SYSTEM + NTFS combined read-only gate (NO RELEASE)
 on:
   push:
     branches: [feature/motor-updater-0287-pilot]
@@ -6,6 +6,7 @@ on:
       - '.github/workflows/volve-0287-system-sid-readonly.yml'
       - 'development/0.28.7/inapp/dns_system_probe_ci/main_windows.go'
       - 'development/0.28.7/inapp/dns_restore_sealed_attestor_windows.go'
+      - 'development/0.28.7/inapp/dns_restore_ntfs_acl_windows.go'
   workflow_dispatch:
 permissions:
   contents: read
@@ -39,19 +40,56 @@ jobs:
           Copy-Item -LiteralPath (Join-Path $source 'dns_system_probe_ci/main_windows.go') -Destination $target -ErrorAction Stop
           $exe=Join-Path $folder 'volve-ci-system-probe.exe'
           $receipt=Join-Path $folder 'system-token-evidence.txt'
+          # Create a disposable REAL Windows NTFS journal fixture. Seal its
+          # owner/ACL to LocalSystem+Administrators, without changing any
+          # product directory, DNS interface, existing task or user file.
+          $parent=Join-Path $folder 'legacy-engine-recovery'
+          $journal=Join-Path $parent 'motor-recovery-transaction'
+          $intent=Join-Path $journal 'resident-intent.json'
+          $snapshot=Join-Path $parent 'dns-restore-snapshot.json'
+          New-Item -ItemType Directory -Path $journal -Force | Out-Null
+          [IO.File]::WriteAllText($intent,'{}')
+          [IO.File]::WriteAllText($snapshot,'{}')
+          $admins=[Security.Principal.SecurityIdentifier]::new('S-1-5-32-544')
+          $system=[Security.Principal.SecurityIdentifier]::new('S-1-5-18')
+          $full=[Security.AccessControl.FileSystemRights]::FullControl
+          $allow=[Security.AccessControl.AccessControlType]::Allow
+          foreach($p in @($parent,$journal,$intent,$snapshot)){
+            if([IO.Directory]::Exists($p)){
+              $acl=New-Object Security.AccessControl.DirectorySecurity
+              $flags=[Security.AccessControl.InheritanceFlags]::ContainerInherit -bor [Security.AccessControl.InheritanceFlags]::ObjectInherit
+              foreach($sid in @($admins,$system)){
+                $rule=[Security.AccessControl.FileSystemAccessRule]::new($sid,$full,$flags,[Security.AccessControl.PropagationFlags]::None,$allow)
+                $acl.AddAccessRule($rule)
+              }
+              $acl.SetAccessRuleProtection($true,$false)
+              $acl.SetOwner($admins)
+              [IO.Directory]::SetAccessControl($p,$acl)
+            }else{
+              $acl=New-Object Security.AccessControl.FileSecurity
+              foreach($sid in @($admins,$system)){
+                $rule=[Security.AccessControl.FileSystemAccessRule]::new($sid,$full,$allow)
+                $acl.AddAccessRule($rule)
+              }
+              $acl.SetAccessRuleProtection($true,$false)
+              $acl.SetOwner($admins)
+              [IO.File]::SetAccessControl($p,$acl)
+            }
+          }
+          Write-Host 'PASS: disposable journal and snapshot sealed to SYSTEM/Administrators NTFS DACL'
           Push-Location $folder
           try {
             go mod init volve-ci-system-dns-readonly
             if($LASTEXITCODE -ne 0){throw 'CI module setup failed'}
             go build -o $exe ./cmd/systemprobe
             if($LASTEXITCODE -ne 0){throw 'CI identity-only executable failed to compile'}
-            $interactive=Start-Process -FilePath $exe -ArgumentList ('"'+$receipt+'"') -NoNewWindow -PassThru -Wait
+            $interactive=Start-Process -FilePath $exe -ArgumentList ('"'+$receipt+'" "'+$journal+'" "'+$snapshot+'"') -NoNewWindow -PassThru -Wait
             if($interactive.ExitCode -ne 83 -or (Test-Path $receipt)){
               throw 'Interactive admin was incorrectly accepted as SYSTEM'
             }
             Write-Host 'PASS: interactive Windows admin rejected (SID != S-1-5-18)'
             $principal=New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest
-            $action=New-ScheduledTaskAction -Execute $exe -Argument ('"'+$receipt+'"')
+            $action=New-ScheduledTaskAction -Execute $exe -Argument ('"'+$receipt+'" "'+$journal+'" "'+$snapshot+'"')
             $trigger=New-ScheduledTaskTrigger -Once -At ((Get-Date).AddDays(5))
             $registered=$false
             try {
@@ -67,7 +105,7 @@ jobs:
               for($i=0;$i -lt 80;$i++){
                 if(Test-Path -LiteralPath $receipt){
                   $evidence=Get-Content -LiteralPath $receipt -Raw -ErrorAction Stop
-                  if($evidence -ne 'VOLVE_CI_WINDOWS_SYSTEM_SID_S-1-5-18'){
+                  if($evidence -ne 'VOLVE_CI_WINDOWS_SYSTEM_SID_AND_SEALED_NTFS'){
                     throw 'SYSTEM task returned unexpected identity evidence'
                   }
                   $matched=$true
@@ -79,7 +117,7 @@ jobs:
                 $info=Get-ScheduledTaskInfo -TaskName $name -ErrorAction SilentlyContinue
                 throw "SYSTEM-only process did not attest its token; LastTaskResult=$($info.LastTaskResult)"
               }
-              Write-Host 'PASS: actual Scheduled Task ran with Windows LocalSystem SID S-1-5-18'
+              Write-Host 'PASS: one actual LocalSystem process proved SID S-1-5-18 AND verified all protected NTFS journal/snapshot descriptors'
             } finally {
               if($registered){
                 $task=Get-ScheduledTask -TaskName $name -ErrorAction SilentlyContinue
