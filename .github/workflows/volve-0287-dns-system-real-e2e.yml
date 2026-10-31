@@ -16,7 +16,7 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: '1.23.x'
-      - name: Audit exact Windows NTFS terminal receipt rejection after real SYSTEM DNS recovery
+      - name: Complete true SYSTEM DNS v4/v6 crash recovery with explicitly protected NTFS terminal receipt
         shell: pwsh
         run: |
           $ErrorActionPreference='Stop'
