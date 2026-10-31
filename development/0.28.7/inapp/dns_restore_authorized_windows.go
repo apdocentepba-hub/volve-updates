@@ -3,8 +3,9 @@
 package motorupdate
 
 // Authorization boundary for the EXPERIMENTAL Windows DNS restore path.
-// This package does not authenticate SYSTEM, the publisher, journal ACLs or
-// process-wide mutex by itself. A production attestor is NOT implemented and
+// This package does not authenticate SYSTEM, the publisher or journal ACLs
+// itself. It holds only a disposable CI interprocess mutex, NOT a
+// production-authorized mutex. A production attestor is NOT implemented and
 // no installed product calls this function. Without one it fails closed.
 import (
   "context"
@@ -42,11 +43,18 @@ func runAttestedWindowsStaticDNSRecovery(
   inspect WindowsReadOnlyPowerShell,
   attestor WindowsDNSRecoveryAttestor,
   invoke WindowsDNSNativeInvoke,
+  disposableLabLockName string,
 ) error {
   if len(records)==0||inspect==nil||attestor==nil||invoke==nil{
     return errors.New("protected DNS recovery has no attested journal, inspector or invoker")
   }
   if err:=ctx.Err();err!=nil{return err}
+  // This lab-only namespace cannot be confused with a production motor.
+  // The OS-wide mutex is held across attestation, adapter pinning, every
+  // IPv4/IPv6 write, independent postchecks, and the final authorization.
+  release,err:=acquireWindowsDNSLabRecoveryLease(ctx,disposableLabLockName)
+  if err!=nil{return fmt.Errorf("exclusive DNS recovery lease unavailable: %w",err)}
+  defer release()
   snapshot:=cloneWindowsDNSRecoveryRecords(records)
   verify:=func(stage string)error{
     if err:=ctx.Err();err!=nil{return err}
