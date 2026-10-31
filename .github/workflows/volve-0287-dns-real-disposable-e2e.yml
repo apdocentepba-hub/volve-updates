@@ -56,7 +56,7 @@ jobs:
             }
             if(-not $adapter){throw 'Hyper-V did not create the expected internal vNIC'}
             Write-Host "Observed internal vNIC: name=$($adapter.Name); description=$($adapter.InterfaceDescription); hardware=$($adapter.HardwareInterface); ifindex=$($adapter.InterfaceIndex)"
-            if($adapter.InterfaceDescription -ne 'Hyper-V Virtual Ethernet Adapter' -or
+            if($adapter.InterfaceDescription -notmatch '^Hyper-V Virtual Ethernet Adapter( #[1-9][0-9]*)?$' -or
                [bool]$adapter.HardwareInterface){
               throw 'Hyper-V device did not have expected virtual-only identity'
             }
