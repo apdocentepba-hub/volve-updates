@@ -7,6 +7,8 @@ on:
       - 'development/0.28.7/inapp/dns_restore_transaction_test.go'
       - 'development/0.28.7/inapp/dns_restore_netsh_plan.go'
       - 'development/0.28.7/inapp/dns_restore_netsh_plan_test.go'
+      - 'development/0.28.7/inapp/dns_restore_adapter_inventory_windows.go'
+      - 'development/0.28.7/inapp/dns_restore_adapter_inventory_windows_test.go'
       - '.github/workflows/volve-0287-dns-restore-contract.yml'
   workflow_dispatch:
 permissions:
@@ -17,7 +19,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest]
-    runs-on: \${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
