@@ -52,21 +52,43 @@ func parseWindowsAdapterInventory(raw []byte)([]WindowsAdapterBinding,error){
  var parsed []windowsAdapterRecord
  if err:=json.Unmarshal(bytes.TrimSpace(raw),&parsed);err!=nil{return nil,fmt.Errorf("invalid adapter JSON array: %w",err)}
  if len(parsed)==0{return nil,errors.New("no Windows network adapters with valid identity")}
- seenGUID:=map[string]bool{}
- seenIndex:=map[uint32]bool{}
- out:=make([]WindowsAdapterBinding,0,len(parsed))
+ // Get-NetAdapter -IncludeHidden can expose duplicate virtual entries on
+ // GitHub-hosted Windows. Never treat duplicate interface IDs as independent
+ // targets. Exclude every conflicting GUID or index instead of trusting a
+ // random first match; a caller asking for an ambiguous target will fail.
+ seenGUID:=map[string]uint32{}
+ seenIndex:=map[uint32]string{}
+ badGUID:=map[string]bool{}
+ badIndex:=map[uint32]bool{}
+ candidates:=make([]WindowsAdapterBinding,0,len(parsed))
  for _,r:=range parsed{
   norm:="{"+strings.ToLower(strings.Trim(r.InterfaceGuid,"{}"))+"}"
   if err:=validDNSState(DNSServerState{InterfaceGUID:norm,Family:DNSIPv4,Mode:DNSAutomatic});err!=nil {
    return nil,fmt.Errorf("invalid live adapter GUID: %w",err)
   }
-  if r.InterfaceIndex==0||seenGUID[norm]||seenIndex[r.InterfaceIndex] {
-   return nil,errors.New("ambiguous live Windows adapter index or GUID")
+  if r.InterfaceIndex==0{return nil,errors.New("Windows interface index cannot be zero")}
+  if prior,exists:=seenGUID[norm];exists && prior!=r.InterfaceIndex {
+   badGUID[norm]=true
+   badIndex[prior]=true
+   badIndex[r.InterfaceIndex]=true
   }
-  seenGUID[norm]=true
-  seenIndex[r.InterfaceIndex]=true
-  out=append(out,WindowsAdapterBinding{InterfaceGUID:norm,InterfaceIndex:r.InterfaceIndex})
+  if prior,exists:=seenIndex[r.InterfaceIndex];exists && prior!=norm {
+   badIndex[r.InterfaceIndex]=true
+   badGUID[prior]=true
+   badGUID[norm]=true
+  }
+  if _,exists:=seenGUID[norm];!exists{seenGUID[norm]=r.InterfaceIndex}
+  if _,exists:=seenIndex[r.InterfaceIndex];!exists{seenIndex[r.InterfaceIndex]=norm}
+  candidates=append(candidates,WindowsAdapterBinding{InterfaceGUID:norm,InterfaceIndex:r.InterfaceIndex})
  }
+ out:=make([]WindowsAdapterBinding,0,len(candidates))
+ retained:=map[string]bool{}
+ for _,a:=range candidates{
+  if badGUID[a.InterfaceGUID]||badIndex[a.InterfaceIndex]||retained[a.InterfaceGUID]{continue}
+  retained[a.InterfaceGUID]=true
+  out=append(out,a)
+ }
+ if len(out)==0{return nil,errors.New("no uniquely identifiable Windows adapter in live inventory")}
  return out,nil
 }
 
