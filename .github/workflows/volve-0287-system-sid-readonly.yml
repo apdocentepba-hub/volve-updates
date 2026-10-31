@@ -64,7 +64,7 @@ jobs:
               }
               $acl.SetAccessRuleProtection($true,$false)
               $acl.SetOwner($admins)
-              [IO.Directory]::SetAccessControl($p,$acl)
+              Set-Acl -LiteralPath $p -AclObject $acl -ErrorAction Stop
             }else{
               $acl=New-Object Security.AccessControl.FileSecurity
               foreach($sid in @($admins,$system)){
@@ -73,7 +73,7 @@ jobs:
               }
               $acl.SetAccessRuleProtection($true,$false)
               $acl.SetOwner($admins)
-              [IO.File]::SetAccessControl($p,$acl)
+              Set-Acl -LiteralPath $p -AclObject $acl -ErrorAction Stop
             }
           }
           Write-Host 'PASS: disposable journal and snapshot sealed to SYSTEM/Administrators NTFS DACL'
