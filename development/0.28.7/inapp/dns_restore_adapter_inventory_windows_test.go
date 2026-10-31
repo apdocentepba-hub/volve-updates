@@ -87,3 +87,28 @@ func TestWindowsAdapterInventoryIsReadOnlyOnGithubWindows(t *testing.T){
  // Inventory intentionally never inspects or modifies private DNS values.
  t.Logf("PASS: inspected %d live Windows GUID/index bindings without DNS writes",len(inventory))
 }
+
+func TestWindowsEffectiveDNSInventoryRealReadOnly(t *testing.T){
+ if os.Getenv("VOLVE_CI_READONLY_ADAPTER_INSPECTION")!="1"{t.Skip("CI Windows only")}
+ ctx,cancel:=context.WithTimeout(context.Background(),30*time.Second)
+ defer cancel()
+ rawAdapters,err:=DefaultWindowsReadOnlyPowerShell(ctx,windowsAdapterInventoryQuery)
+ if err!=nil{t.Fatal(err)}
+ adapters,err:=parseWindowsAdapterInventory(rawAdapters)
+ if err!=nil{t.Fatal(err)}
+ rawDNS,err:=DefaultWindowsReadOnlyPowerShell(ctx,windowsEffectiveDNSQuery)
+ if err!=nil{t.Fatal(err)}
+ matchedFamilies:=0
+ for _,adapter:=range adapters {
+  for _,family:=range []DNSAddressFamily{DNSIPv4,DNSIPv6}{
+   servers,err:=parseEffectiveDNS(rawDNS,adapter.InterfaceIndex,family)
+   if err!=nil{continue} // hidden adapters may not expose both address families
+   matchedFamilies++
+   for _,s:=range servers{
+    if s==""{t.Fatal("empty DNS server accepted")}
+   }
+  }
+ }
+ if matchedFamilies==0{t.Fatal("no actual Windows DNS address family resolved against GUID/InterfaceIndex snapshot")}
+ t.Logf("PASS: independently read %d live adapter/family DNS records without changing Windows network configuration",matchedFamilies)
+}
