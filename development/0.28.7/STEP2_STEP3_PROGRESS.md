@@ -6,17 +6,17 @@ Fecha de corte inicial: 30/10/2026. Rama de desarrollo: feature/motor-updater-02
 
 Las cifras son **estimaciones conservadoras de ingeniería por entregables ponderados**, no una medición del tiempo, ni una cantidad de líneas, ni un porcentaje de protección. Se acumula crédito parcial por código efectivamente integrado y verificable; aprobar CI no reemplaza los ensayos sobre un equipo Windows persistente. Nunca publicar como cerrado un paso que no haya aprobado todos sus criterios obligatorios.
 
-### Paso 2 — Actualización del motor DNS: 56/100 (56%)
+### Paso 2 — Actualización del motor DNS: 58/100 (58%)
 
 | Subentregable | Peso | Puntos reconocidos | Estado |
 | --- | ---: | ---: | --- |
 | Permiso editorial exacto, autenticidad y pinning | 15 | 8 | Validación criptográfica en CI; falta emisión legítima para el motor instalado |
 | Respaldo anterior y journal protegido | 15 | 15 | Código y auditorías NTFS probados |
 | Watchdog de recuperación SYSTEM independiente | 25 | 10 | Recuperador separado prearmado como tarea SYSTEM recurrente cada minuto en VM descartable; detectó caída real sin disparo manual; falta watchdog productivo |
-| Controlador Windows real que cambia y revierte el motor | 20 | 8 | Instalación/retirada versionada de motor SYSTEM y recuperador en VM; ahora lectura Windows real de GUID/InterfaceIndex y DNS IPv4/IPv6 sin cambios de red, con rechazos de identidad concurrente; falta ejecutar restauración autenticada de adaptador |
+| Controlador Windows real que cambia y revierte el motor | 20 | 10 | Instalación/retirada versionada de motor SYSTEM y recuperador en VM; ahora lectura Windows real de GUID/InterfaceIndex y DNS IPv4/IPv6 sin cambios de red, con rechazos de identidad concurrente; falta ejecutar restauración autenticada de adaptador |
 | Tests adversos, DNS dual-stack, identidad, rollback en CI | 15 | 15 | Motor compilado ejecutado bajo SYSTEM en DNS/53 real y sondeado externamente en VM descartable; faltan escenarios productivos |
 | Reinicio real repetible de VM persistente | 10 | 0 | Sin ejecutar |
-| **TOTAL** | **100** | **56** | **Paso abierto** |
+| **TOTAL** | **100** | **58** | **Paso abierto** |
 
 Los seis criterios A–F de STEP2_EXIT_CRITERIA.md siguen sin aprobarse **como condiciones de cierre completas**, aunque hay subtrabajos de esos criterios realizados.
 
@@ -167,3 +167,14 @@ Ver [CI actual de la política](https://github.com/apdocentepba-hub/volve-update
 **Crédito incremental sin duplicar:** +2 dentro de los 15 puntos de política de recuperación, por bloqueo Windows interproceso realmente integrado al contrato experimental y ensayado entre procesos. **Paso 2 permanece en 56/100; Paso 3 sube 38→40/100.** No computar los 3 puntos restantes de política ni los 25 de watchdog persistente hasta que exista un conductor autorizado de Windows y pruebas posreinicio.
 
 **Barreras todavía pendientes:** este mutex acepta ÚNICAMENTE namespace de CI; no hay protección de objeto global con DACL SYSTEM del entorno productivo, ni atestador Windows productivo del respaldo/journal y proceso original, ni prueba de escrituras DNS reales en adaptador descartable, ni recuperación tras reboot en VM persistente. La ruta de instalación del usuario y `main` quedan inalteradas.
+
+
+## 31/10/2026 — Respaldo DNS sellado vinculado a journal pendiente y verificación de autorización
+
+**Entregable nuevo (solo rama de desarrollo):** `dns_restore_sealed_attestor_windows.go` valida sobre el disco un snapshot DNS JSON canónico con tamaño acotado, ruta fija, huella SHA-256 fijada en preflight, nonce único, hash del motor original y hash del candidato, todos cotejados contra el `ResidentRecoveryIntent` duradero. Usa `InspectResidentRecoveryJournal` del proyecto para exigir estado `recovery-required`, vuelve a leer snapshot/journal para detectar sustituciones y rechaza DNS distinto del plan, familias duplicadas y registros terminados. Dos verificadores inyectados obligatorios comprueban permiso editorial y estado SYSTEM/motor antes y después de cada observación; el control de recuperación experimental los invoca nuevamente antes y después de cada operación. Se incorporó `VerifyWindowsCurrentSystemSIDReadOnly` para consultar el SID del usuario actual sin depender del idioma de Windows. **NO** hay todavía implementación productiva que reúna los verificadores Windows con el emisor real de permisos, ACL sellada y driver SYSTEM: estos contratos no habilitan escritura DNS ni migración en la máquina del usuario.
+
+**Ensayo real:** [CI de contrato DNS #41208498224](https://github.com/apdocentepba-hub/volve-updates/actions/runs/41208498224) finalizó **SUCCESS** en Windows y Ubuntu. En Windows pasó validación con journal auténtico sobre disco de CI y firma Ed25519 **efímera solo de prueba**, denegaciones por nonce incorrecto, ACL/permisos simulados inválidos, ausencia de comprobador SYSTEM, hash modificado, orden DNS distinto, estado terminal, sustitución de archivo durante lecturas y flujo completo de rollback **simulado** bajo bloqueo Windows entre procesos. El ejecutable de pruebas verificó además que el usuario real del runner no es SYSTEM, y que todos los DNS efectivos de la VM permanecieron idénticos. Errores de integración iniciales de CI por fuentes no incluidas fueron corregidos y reprobados: ver ejecución verde citada.
+
+**Crédito conservador:** controlador Windows sube **8→10 de 20** por verificación de contenido real del snapshot/journal y autorización adversa testada. **Paso 2: 58/100** (+2); **Paso 3: 40/100** (sin cambios). Métrica de ingeniería, NO capacidad productiva de protección contra apuestas.
+
+**Siguientes bloqueos:** vincular la huella DNS al journal protegido desde el instalador real, con datos del adaptador tomados bajo un controlador SYSTEM y DACL confiable; comprobar el permiso editorial genuino; restaurar DNS realmente sobre interfaz aislada reversible; validar mismo sistema Windows después de reinicio; después, integrar actualización desde el software ya instalado y firmar la publicación. El CI integral más reciente se seguirá por separado y no se presume verde. No se tocó `main`, canales estables ni la versión 0.28.6.
