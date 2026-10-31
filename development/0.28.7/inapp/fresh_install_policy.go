@@ -33,6 +33,15 @@ type FreshMotorInstallEvidence struct {
  // Root and identity were independently inspected with Administrator access,
  // not read from the candidate installer, an untrusted journal or a UI flag.
  InspectedAsAdministrator bool
+ // Prevent a dangerous zero-value default: an uninspected Windows system
+ // also has zero-valued fields. Each observation must be explicitly made
+ // by a privileged read-only inspector before a fresh-install verdict.
+ InspectedMotorFiles bool
+ InspectedTaskScheduler bool
+ InspectedServices bool
+ InspectedDNSAdapters bool
+ InspectedPort53Listeners bool
+ InspectedRecoveryState bool
  LegacyExecutablePresent bool
  VersionedMotorPresent bool
  InstalledEngineInventoryPresent bool
@@ -56,6 +65,11 @@ func CheckFreshMotorInstallReadiness(ctx context.Context, e FreshMotorInstallEvi
  if err:=ctx.Err();err!=nil{return err}
  if !e.InspectedAsAdministrator{
   return errors.New("cannot prove clean motor state without Administrator inspection")
+ }
+ if !e.InspectedMotorFiles || !e.InspectedTaskScheduler ||
+    !e.InspectedServices || !e.InspectedDNSAdapters ||
+    !e.InspectedPort53Listeners || !e.InspectedRecoveryState {
+  return errors.New("fresh motor state not independently inventoried: file, task, service, DNS, port53 and recovery checks mandatory")
  }
  if e.LegacyExecutablePresent || e.VersionedMotorPresent || e.InstalledEngineInventoryPresent {
   return errors.New("motor already exists: use signed migration/update, never a fresh install")
