@@ -1,0 +1,41 @@
+name: VOLVE 0.28.7 all-Windows-adapter DNS read-only census (NO RELEASE)
+on:
+  push:
+    branches: [feature/motor-updater-0287-pilot]
+    paths:
+      - 'development/0.28.7/inapp/fresh_dns_adapter_inventory_windows.go'
+      - 'development/0.28.7/inapp/fresh_dns_adapter_inventory_windows_test.go'
+      - 'development/0.28.7/inapp/fresh_install_policy.go'
+      - 'development/0.28.7/inapp/fresh_install_policy_test.go'
+      - '.github/workflows/volve-0287-fresh-dns-adapter-readonly.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  windows-dns-adapter-inventory:
+    runs-on: windows-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.x'
+      - name: Read every Windows DNS adapter family and prove local IPv4 or IPv6 blocks fresh install
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $env:GO111MODULE='off'
+          $files=@(
+            'development/0.28.7/inapp/fresh_install_policy.go',
+            'development/0.28.7/inapp/fresh_install_policy_test.go',
+            'development/0.28.7/inapp/fresh_dns_adapter_inventory_windows.go',
+            'development/0.28.7/inapp/fresh_dns_adapter_inventory_windows_test.go'
+          )
+          foreach($file in $files){
+            if(-not (Test-Path -LiteralPath $file -PathType Leaf)){
+              throw ('Required read-only DNS adapter inventory source missing: '+$file)
+            }
+          }
+          go test -count=1 -timeout 4m -v @files
+          if($LASTEXITCODE -ne 0){throw 'Read-only adapter inventory or IPv4/IPv6 local DNS classification FAILED'}
+          Write-Host 'PASS: real Windows DNS adapter inventory and fail-closed IPv4/IPv6 localhost classification. No adapters, services, tasks or registry changed.'
