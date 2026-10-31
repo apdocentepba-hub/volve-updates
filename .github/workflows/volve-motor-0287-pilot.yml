@@ -487,7 +487,7 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference='Stop'
-          foreach($script in @('development/0.28.7/lab/reboot_event_chain.ps1','development/0.28.7/lab/test_reboot_event_chain.ps1')){
+          foreach($script in @('development/0.28.7/lab/reboot_event_chain.ps1','development/0.28.7/lab/test_reboot_event_chain.ps1','development/0.28.7/lab/test_actual_manual_boot_event_rejection.ps1')){
             $tokens=$null; $parseErrors=$null
             [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path $script).Path,[ref]$tokens,[ref]$parseErrors) | Out-Null
             if($parseErrors.Count -gt 0){$parseErrors | Format-List;throw ('Invalid boot-evidence verifier script: '+$script)}
@@ -529,6 +529,7 @@ jobs:
             $root=Join-Path $kit ('VOLVE-CI-BOOT-'+$trialId)
             $success=Join-Path $root 'boot-recovery-success.marker'
             $failure=Join-Path $root 'boot-recovery-failed.marker'
+            $manualStartUTC=[DateTime]::UtcNow
             Start-ScheduledTask -TaskName $bootTask
             $deadline=[DateTime]::UtcNow.AddSeconds(60)
             while([DateTime]::UtcNow -lt $deadline) {
@@ -537,6 +538,10 @@ jobs:
               Start-Sleep -Milliseconds 500
             }
             if(-not (Test-Path -LiteralPath $success -PathType Leaf)){throw 'Manual SYSTEM recovery did not complete'}
+            # This uses REAL Windows Scheduler Operational events, not
+            # synthetic test records. Even a working startup-triggered SYSTEM
+            # task cannot pass reboot proof when it was launched manually.
+            & 'development/0.28.7/lab/test_actual_manual_boot_event_rejection.ps1' -TaskName ('\'+$bootTask) -ManualStartUTC $manualStartUTC
             $rejected=$false
             try { & $script -Mode Verify -RunId $trialId }
             catch {
