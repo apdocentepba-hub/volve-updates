@@ -6,17 +6,17 @@ Fecha de corte inicial: 30/10/2026. Rama de desarrollo: feature/motor-updater-02
 
 Las cifras son **estimaciones conservadoras de ingeniería por entregables ponderados**, no una medición del tiempo, ni una cantidad de líneas, ni un porcentaje de protección. Se acumula crédito parcial por código efectivamente integrado y verificable; aprobar CI no reemplaza los ensayos sobre un equipo Windows persistente. Nunca publicar como cerrado un paso que no haya aprobado todos sus criterios obligatorios.
 
-### Paso 2 — Actualización del motor DNS: 60/100 (60%)
+### Paso 2 — Actualización del motor DNS: 62/100 (62%)
 
 | Subentregable | Peso | Puntos reconocidos | Estado |
 | --- | ---: | ---: | --- |
 | Permiso editorial exacto, autenticidad y pinning | 15 | 8 | Validación criptográfica en CI; falta emisión legítima para el motor instalado |
 | Respaldo anterior y journal protegido | 15 | 15 | Código y auditorías NTFS probados |
-| Watchdog de recuperación SYSTEM independiente | 25 | 10 | Recuperador separado prearmado como tarea SYSTEM recurrente cada minuto en VM descartable; detectó caída real sin disparo manual; falta watchdog productivo |
-| Controlador Windows real que cambia y revierte el motor | 20 | 12 | Restore DNS IPv4/IPv6 real probado en interfaz Hyper-V descartable, con watchdog entre procesos; falta integrarlo al cambio de motor productivo, con firma/ACL/SYSTEM legítimos |
+| Watchdog de recuperación SYSTEM independiente | 25 | 11 | Watchdog CI real y recuperación DNS interprocesos; ahora también se probó positivamente la detección del token LocalSystem S-1-5-18 en tarea SYSTEM descartable; falta integrarlo en el controlador productivo |
+| Controlador Windows real que cambia y revierte el motor | 20 | 13 | Restauración real IPv4/IPv6 en Hyper-V y auditoría NTFS por SID conectada al atestador de journal en ensayos Windows reales; sin firma editorial ni autorizador productivos |
 | Tests adversos, DNS dual-stack, identidad, rollback en CI | 15 | 15 | Motor compilado ejecutado bajo SYSTEM en DNS/53 real y sondeado externamente en VM descartable; faltan escenarios productivos |
 | Reinicio real repetible de VM persistente | 10 | 0 | Sin ejecutar |
-| **TOTAL** | **100** | **60** | **Paso abierto** |
+| **TOTAL** | **100** | **62** | **Paso abierto** |
 
 Los seis criterios A–F de STEP2_EXIT_CRITERIA.md siguen sin aprobarse **como condiciones de cierre completas**, aunque hay subtrabajos de esos criterios realizados.
 
@@ -211,3 +211,16 @@ Ver [CI actual de la política](https://github.com/apdocentepba-hub/volve-update
 **Puntos de progreso:** se reconocen **2 puntos nuevos** al subentregable 'Journal durable y estado recuperable', 10→12 de 15, por haberlo usado y cerrado efectivamente tras una recuperación DNS REAL posterior a crash. **Paso 3: 42→44/100**; **Paso 2: 60/100 sin cambio**. La prueba es un hito de laboratorio; no acredita defensa antiapuestas ni publicación.
 
 **Límites de seguridad explícitos:** la firma Ed25519 es CI, no la clave editorial real; los hashes de los motores del registro son de una instancia sintética; el verificador de archivos CI rechaza cambios de ruta/enlaces pero NO certifica DACL/propietarios NTFS; el watchdog de esta prueba no trabaja como SYSTEM y no sobrevive a un reinicio de máquina persistente. NO está unido al instalador ni a `VOLVE-DNS-SERVER-0270` de producción. Faltan los criterios A–F (firma editorial real, token SYSTEM, control de motor, ACL protegidas, persistencia/reinicio y recuperación del sistema instalado). No tocar `main` ni canales estables.
+
+
+## 31/10/2026 — Inspección real de DACL NTFS e identidad LocalSystem verificadas
+
+**Entregables concretos:** `dns_restore_ntfs_acl_windows.go` agrega verificador NTFS **read-only** y no genérico para las rutas `legacy-engine-recovery/motor-recovery-transaction`, `resident-intent.json`, `resident-result.json` y `dns-restore-snapshot.json`. Rechaza rutas externas o no canónicas, symlinks, puntos de reanálisis, propietarios que no sean SYSTEM/Administrators y cualquier DACL heredada, ACE de denegación/tercero o ausencia de FullControl explícito de los dos SIDs `S-1-5-18` y `S-1-5-32-544`. Usa el PowerShell de ruta absoluta de Windows para obtener descriptores reales de seguridad, no permisos POSIX ni nombres localizados. El verificador se conecta como callback `Protect` del `WindowsSealedDNSRecoveryAttestor` **solo en pruebas**, no en ningún instalador ni driver de producción.
+
+**Prueba NTFS real:** [#41216103149](https://github.com/apdocentepba-hub/volve-updates/actions/runs/41216103149) **SUCCESS** Windows y Ubuntu. Los registros Windows muestran `TestWindowsDNSRealNTFSProtectedACLReadOnly` PASS, `TestWindowsRealNTFSSealedJournalAttestorReadOnly` PASS y `TestWindowsRealSYSTEMIdentityRequiredForDNSRecovery` PASS. La ejecución selló únicamente un árbol NTFS **descartable**, verificó todas las ACL reales, reutilizó el verificador con el journal persistente y rechazó un recibo terminal sin sellar. Ningún DNS fue escrito en este workflow.
+
+**Prueba de identidad Windows real:** `dns_system_probe_ci/main_windows.go` y workflow `volve-0287-system-sid-readonly.yml`: [#41216274266](https://github.com/apdocentepba-hub/volve-updates/actions/runs/41216274266) **SUCCESS**. El mismo chequeo `VerifyWindowsCurrentSystemSIDReadOnly` rechazó al administrador interactivo, pero en una tarea de Windows recién creada con principal SYSTEM acreditó el SID de proceso `S-1-5-18`; la tarea `VOLVE-CI-SystemSID-<RUN_ID>` se eliminó inmediatamente. No se cambió red, tarea productiva, motor instalado ni permisos permanentes.
+
+**Puntuación conservadora:** +1 en watchdog SYSTEM de paso 2 (**10→11/25**) por validación del token real bajo tarea local CI; +1 en controlador Windows (**12→13/20**) por verificación NTFS real integrada al atestador aislado. **Paso 2: 60→62%**; **paso 3 sigue 44%**. La identidad SYSTEM y la ACL **aún no se probaron juntas con mutaciones DNS reales en la misma tarea productiva**, por lo que no se acreditan los 25 puntos del watchdog persistente ni el cierre de etapa. Firmas de CI efímeras NO sustituyen permiso editorial, y falta reboot real y actualización dentro del programa instalado.
+
+**No autorizado:** modificar `main`, tareas estables, DNS de la PC del usuario o distribuir un instalador de actualización. La versión 0.28.6 reportada por el usuario permanece fuera de las pruebas.
