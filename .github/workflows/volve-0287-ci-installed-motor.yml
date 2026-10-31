@@ -161,6 +161,7 @@ jobs:
             if($owner.ReturnValue -ne 0 -or $owner.Sid -ne 'S-1-5-18'){throw 'Refusing to kill non-SYSTEM process'}
             $rescue=Get-ScheduledTask -TaskName $rescueTask -ErrorAction Stop
             if($rescue.Principal.UserId -notin @('SYSTEM','S-1-5-18')){throw 'Recovery not prearmed as SYSTEM'}
+            $crashAt=(Get-Date)
             Stop-Process -Id $live[0].ProcessId -Force -ErrorAction Stop
             $crashDeadline=(Get-Date).AddSeconds(15)
             do{
@@ -178,7 +179,7 @@ jobs:
               $resultPresent=Test-Path -LiteralPath $rescueProof -PathType Leaf
               $rescueInfo=Get-ScheduledTaskInfo -TaskName $rescueTask -ErrorAction Stop
               $rescueStatus=Get-ScheduledTask -TaskName $rescueTask -ErrorAction Stop
-            }until($resultPresent -or ($rescueInfo.LastRunTime -gt (Get-Date).AddMinutes(-1) -and $rescueStatus.State -ne 'Running' -and $rescueInfo.LastTaskResult -ne 0) -or (Get-Date) -ge $rescueDeadline)
+            }until($resultPresent -or ($rescueInfo.LastRunTime -gt $crashAt -and $rescueStatus.State -ne 'Running' -and $rescueInfo.LastTaskResult -ne 0) -or (Get-Date) -ge $rescueDeadline)
             if(-not $resultPresent){throw ('Independent SYSTEM watchdog failed; task result='+$rescueInfo.LastTaskResult)}
             $result=Get-Content -LiteralPath $rescueProof -Raw -Encoding UTF8 | ConvertFrom-Json -ErrorAction Stop
             if($result.schema -ne 1 -or $result.state -ne 'motor-disabled-after-crash' -or $result.motorSHA256 -cne $hash -or $result.rescueSHA256 -cne $rescueSHA -or $result.motorTask -cne $task){throw 'Recovery proof does not match installed engine'}
