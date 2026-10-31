@@ -42,8 +42,11 @@ func TestWindowsFreshTaskInventoryExactCatalogAndUnknowns(t *testing.T){
     })
    if err!=nil{t.Fatal(err)}
    if called!=1 || len(result.UnknownTaskNames)!=tc.wantUnknown {t.Fatalf("query/unknown mismatch: %+v",result)}
-   evidence:=FreshMotorInstallEvidence{InspectedAsAdministrator:true,
-    VOLVETaskCount:result.VOLVETaskCount,VerifiedCatalogTask:result.VerifiedCatalogTask}
+   // Other five OS inventories are synthetic in THIS test; the task
+   // inventory itself came from the injected Windows query response.
+   evidence:=freshCompleteObservation()
+   evidence.VOLVETaskCount=result.VOLVETaskCount
+   evidence.VerifiedCatalogTask=result.VerifiedCatalogTask
    accepted:=CheckFreshMotorInstallReadiness(context.Background(),evidence)==nil
    if accepted!=tc.wantReady{t.Fatalf("unsafe fresh classification: accepted=%t want=%t inventory=%+v",accepted,tc.wantReady,result)}
   })
