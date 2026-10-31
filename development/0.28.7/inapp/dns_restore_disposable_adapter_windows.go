@@ -19,6 +19,7 @@ import (
 )
 
 var windowsDisposableDNSAlias=regexp.MustCompile(`^VOLVE-CI-DNS-LAB-[0-9]{12,20}$`)
+var windowsDisposableHyperVDescription=regexp.MustCompile(`^Hyper-V Virtual Ethernet Adapter( #[1-9][0-9]*)?$`)
 
 type WindowsDisposableDNSAdapter struct {
  InterfaceGUID string
@@ -129,7 +130,7 @@ func VerifyWindowsDisposableDNSAdapterReadOnly(
  }
  if selected.HardwareInterface ||
     (selected.InterfaceDescription!="Microsoft KM-TEST Loopback Adapter" &&
-     selected.InterfaceDescription!="Hyper-V Virtual Ethernet Adapter"){
+     !windowsDisposableHyperVDescription.MatchString(selected.InterfaceDescription)){
   return zero,errors.New("disposable DNS adapter is physical or not an allowlisted virtual device")
  }
  if selected.NetworkCategory=="DomainAuthenticated"||selected.NetworkCategory=="Private"{
