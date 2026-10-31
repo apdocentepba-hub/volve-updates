@@ -120,7 +120,7 @@ if($Mode -eq 'Install'){
   # A genuine scheduled watchdog: independent SYSTEM process every minute.
   # Initial scan is delayed to allow the installer to finish and record state.
   # The CI watchdog is intentionally bounded to a 12-hour disposable VM window.
-  $rescueTrigger=New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(2) -RepetitionInterval (New-TimeSpan -Minutes 1) -RepetitionDuration (New-TimeSpan -Hours 12)
+  $rescueTrigger=New-ScheduledTaskTrigger -Once -At (Get-Date).AddSeconds(75) -RepetitionInterval (New-TimeSpan -Minutes 1) -RepetitionDuration (New-TimeSpan -Hours 12)
   $rescueSettings=New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Minutes 2)
   Register-ScheduledTask -TaskName $rescueTask -Action $rescueAction -Trigger $rescueTrigger -Settings $rescueSettings -User SYSTEM -RunLevel Highest -ErrorAction Stop | Out-Null
   $rescueRegistered=$true
