@@ -1,0 +1,42 @@
+name: VOLVE 0.28.7 sacrificial DNS adapter capability (READ ONLY)
+on:
+  push:
+    branches: [feature/motor-updater-0287-pilot]
+    paths:
+      - '.github/workflows/volve-0287-dns-disposable-capability.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  windows-disposable-adapter-discovery:
+    runs-on: windows-latest
+    timeout-minutes: 7
+    steps:
+      - name: Discover whether a disposable Windows adapter can be provisioned
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          # Strictly READ ONLY. Do not install drivers, add switches, assign
+          # IPs, alter DNS, or change host networking in this workflow.
+          $command = Get-Command New-VMSwitch -ErrorAction SilentlyContinue
+          $feature = Get-WindowsOptionalFeature -Online -FeatureName Microsoft-Hyper-V -ErrorAction SilentlyContinue
+          $adapters = @(Get-NetAdapter -IncludeHidden -ErrorAction Stop |
+            Where-Object { $_.InterfaceDescription -eq 'Microsoft KM-TEST Loopback Adapter' -or
+                           $_.InterfaceDescription -eq 'Hyper-V Virtual Ethernet Adapter' } |
+            Select-Object Name,InterfaceIndex,InterfaceGuid,InterfaceDescription,HardwareInterface)
+          $routeCount = @(Get-NetRoute -DestinationPrefix '0.0.0.0/0' -ErrorAction SilentlyContinue).Count
+          $report = [ordered]@{
+            disposable_lab_adapter_found = @($adapters).Count -gt 0
+            new_vmswitch_cmdlet_available = [bool]$command
+            hyperv_feature_enabled = ($feature -and $feature.State -eq 'Enabled')
+            host_ipv4_default_route_count = $routeCount
+            network_mutations = 0
+          }
+          $json = ConvertTo-Json -InputObject $report -Compress
+          Write-Host "VOLVE_DISPOSABLE_ADAPTER_CAPABILITY=$json"
+          $json | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
+          if (@($adapters).Count -eq 0) {
+            Write-Host 'PASS: no sacrificial adapter exists; real DNS mutation test must remain blocked.'
+          } else {
+            Write-Host 'INFO: virtual adapter exists but still needs GUID/route/ACL attestation before any write.'
+          }
