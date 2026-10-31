@@ -168,8 +168,11 @@ jobs:
               $stillRunning=@(Get-CimInstance Win32_Process -Filter "Name='VOLVE_CI_FreshDNS53.exe'" -ErrorAction SilentlyContinue | Where-Object { [string]$_.ExecutablePath -ieq $exe })
             }until($stillRunning.Count -eq 0 -or (Get-Date) -ge $crashDeadline)
             if($stillRunning.Count -ne 0){throw 'Motor did not exit on injected crash'}
-            Start-ScheduledTask -TaskName $rescueTask -ErrorAction Stop
-            $rescueDeadline=(Get-Date).AddSeconds(30)
+            # NO manual rescue here. Wait for the independently registered
+            # recurring Task Scheduler trigger to discover and recover crash.
+            Write-Host 'AUTOMATIC_RESCUE_WAIT: no Start-ScheduledTask on rescue after crash'
+
+            $rescueDeadline=(Get-Date).AddSeconds(190)
             do{
               Start-Sleep -Milliseconds 500
               $resultPresent=Test-Path -LiteralPath $rescueProof -PathType Leaf
@@ -184,7 +187,7 @@ jobs:
             foreach($ip in @('127.0.0.1','::1')){
               if(@(Get-NetUDPEndpoint -LocalAddress $ip -LocalPort 53 -ErrorAction SilentlyContinue).Count -ne 0){throw 'DNS/53 still occupied after recovery'}
             }
-            Write-Host 'PASS: actual SYSTEM motor crashed; separate prearmed SYSTEM rescue disabled exactly its own motor task'
+            Write-Host 'PASS: automatically scheduled SYSTEM rescue detected real crash without manual trigger and disabled its own motor task'
             & $script -Mode Verify -LabId $labId -ExpectedSHA256 $hash -ExpectedRescueSHA256 $rescueSHA
           }finally{
             Remove-Item Env:\VOLVE_CI_FRESH_DNS53_PROBE -ErrorAction SilentlyContinue
