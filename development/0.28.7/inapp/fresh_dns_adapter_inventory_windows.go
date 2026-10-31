@@ -120,7 +120,7 @@ func InspectWindowsFreshDNSAdaptersReadOnly(ctx context.Context, inspect Windows
 			if (row.Family == "IPv4" && !ip.Is4()) || (row.Family == "IPv6" && !ip.Is6()) {
 				return zero, errors.New("DNS server address family disagrees with adapter")
 			}
-			if ip.IsLoopback() {
+			if ip.Unmap().IsLoopback() {
 				if row.Family == "IPv4" {
 					result.LocalIPv4DNSConfigured = true
 				} else {
