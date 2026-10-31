@@ -121,3 +121,47 @@ func TestRealWindowsRunnerCannotBeMistakenForDisposableDNSAdapter(t *testing.T){
  }
  // No writes. The workflow compares real DNS settings before and after.
 }
+
+func TestDisposableDNSAdapterAcceptsOnlyBuiltInInternalWindowsFallbacks(t *testing.T){
+ x:=disposableAdapterFixture()
+ x.InterfaceDescription="Hyper-V Virtual Ethernet Adapter #2"
+ x.Routes=[]string{"255.255.255.255/32","224.0.0.0/4","ff00::/8",
+  "fe80::5f55:9b1d:3512:49a2/128","fe80::/64"}
+ x.IPAddresses=[]string{"fe80::5f55:9b1d:3512:49a2%71"}
+ x.DNSIPv6=[]string{"fec0:0:0:ffff::1","fec0:0:0:ffff::2","fec0:0:0:ffff::3"}
+ if _,err:=VerifyWindowsDisposableDNSAdapterReadOnly(context.Background(),
+  labAdapterAlias,labAdapterGUID,
+  disposableAdapterInspector([]windowsDisposableAdapterObservation{x}));err!=nil{
+  t.Fatalf("newly created disconnected Hyper-V adapter rejected: %v",err)
+ }
+ for _,tc:=range []struct{
+  name string
+  change func(*windowsDisposableAdapterObservation)
+ }{
+  {"wrong interface zone",func(v *windowsDisposableAdapterObservation){
+   v.IPAddresses=[]string{"fe80::1%72"}
+  }},
+  {"unknown DNS fallback",func(v *windowsDisposableAdapterObservation){
+   v.DNSIPv6=[]string{"fec0:0:0:ffff::1","fec0:0:0:ffff::2","2001:4860:4860::8888"}
+  }},
+  {"incomplete fallback",func(v *windowsDisposableAdapterObservation){
+   v.DNSIPv6=[]string{"fec0:0:0:ffff::1"}
+  }},
+  {"extra LAN route",func(v *windowsDisposableAdapterObservation){
+   v.Routes=append(v.Routes,"10.0.0.0/8")
+  }},
+ }{
+  t.Run(tc.name,func(t *testing.T){
+   wrong:=x
+   wrong.Routes=append([]string(nil),x.Routes...)
+   wrong.DNSIPv6=append([]string(nil),x.DNSIPv6...)
+   wrong.IPAddresses=append([]string(nil),x.IPAddresses...)
+   tc.change(&wrong)
+   if _,err:=VerifyWindowsDisposableDNSAdapterReadOnly(context.Background(),
+    labAdapterAlias,labAdapterGUID,
+    disposableAdapterInspector([]windowsDisposableAdapterObservation{wrong}));err==nil{
+    t.Fatal("unsafe internal vNIC configuration accepted")
+   }
+  })
+ }
+}
