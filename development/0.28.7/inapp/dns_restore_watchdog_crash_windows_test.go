@@ -167,30 +167,31 @@ func windowsDNSCrashWaitForUpdater(ctx context.Context,pid int)error{
 func windowsDNSCrashChildWatchdog(t *testing.T){
  plan,err:=windowsDNSCrashPlanFromDisk()
  if err!=nil{t.Fatal(err)}
- ctx,cancel:=context.WithTimeout(context.Background(),100*time.Second)
+ ctx,cancel:=context.WithTimeout(context.Background(),110*time.Second)
  defer cancel()
  pid,e:=strconv.Atoi(os.Getenv("VOLVE_CI_DNS_UPDATER_PID"))
  if e!=nil{t.Fatal(e)}
- if err:=windowsDNSCrashWaitForUpdater(ctx,pid);err!=nil{t.Fatal(err)}
- // No controller cooperation after the updater has exited.
- adapter,err:=VerifyWindowsDisposableDNSAdapterWithLocalDNSReadOnly(ctx,plan.Alias,plan.GUID,DefaultWindowsDisposableDNSInspect)
- if err!=nil{t.Fatalf("watchdog refused unsafe post-crash vNIC: %v",err)}
- lockName:=os.Getenv("VOLVE_CI_DNS_CRASH_LOCK")
- release,err:=acquireWindowsDNSLabRecoveryLease(ctx,lockName)
+ // Keep the original Windows process HANDLE across all verifier calls;
+ // never trust a possibly recycled PID once the update process has exited.
+ observed,err:=newWindowsCrashExitHandle(pid)
  if err!=nil{t.Fatal(err)}
- defer release()
- // Read snapshot again UNDER lock immediately before taking any action.
- currentPlan,err:=windowsDNSCrashPlanFromDisk()
- if err!=nil||!reflect.DeepEqual(plan,currentPlan){t.Fatal("recovery journal changed during OS lease")}
+ defer observed.Close()
+ if err:=os.WriteFile(os.Getenv("VOLVE_CI_DNS_WATCHDOG_READY"),
+   []byte(strconv.Itoa(pid)),0600);err!=nil{t.Fatal(err)}
+ if err:=observed.Wait(ctx);err!=nil{t.Fatal(err)}
+ // This attestor reads a REAL durable resident journal and canonical
+ // snapshot before and after EVERY netsh write. Publisher signature is
+ // EPHEMERAL and ACL checker only rejects filesystem redirect in this CI.
+ attestor,err:=windowsCrashLabAttestor(observed)
+ if err!=nil{t.Fatal(err)}
+ adapter,err:=VerifyWindowsDisposableDNSAdapterWithLocalDNSReadOnly(
+  ctx,plan.Alias,plan.GUID,DefaultWindowsDisposableDNSInspect)
+ if err!=nil{t.Fatalf("watchdog refused unsafe post-crash vNIC: %v",err)}
  pinned,err:=FindWindowsAdapterIndex(ctx,plan.GUID,DefaultWindowsReadOnlyPowerShell)
  if err!=nil||pinned!=adapter.InterfaceIndex{t.Fatal("watchdog vNIC index changed")}
- writer,err:=NewWindowsPinnedStaticDNSWriter(ctx,plan.Records,DefaultWindowsReadOnlyPowerShell,
-  func(ctx context.Context,args []string)error{
-   return runPinnedWindowsNativeDNS(ctx,args)
-  })
- if err!=nil{t.Fatal(err)}
- if err:=ExecuteWindowsStaticDNSRestoreBatch(ctx,plan.Records,DefaultWindowsReadOnlyPowerShell,writer);err!=nil{
-  t.Fatalf("independent watchdog could not restore both families: %v",err)
+ if err:=runAttestedWindowsStaticDNSRecovery(ctx,plan.Records,DefaultWindowsReadOnlyPowerShell,
+  attestor,runPinnedWindowsNativeDNS,os.Getenv("VOLVE_CI_DNS_CRASH_LOCK"));err!=nil{
+  t.Fatalf("signed-journal attested watchdog failed real dual-stack restore: %v",err)
  }
  for _,record:=range plan.Records{
   raw,err:=DefaultWindowsReadOnlyPowerShell(ctx,windowsEffectiveDNSQuery)
@@ -200,8 +201,14 @@ func windowsDNSCrashChildWatchdog(t *testing.T){
    t.Fatalf("watchdog independent DNS postcheck failed for %s: %v %v",record.Original.Family,got,err)
   }
  }
- if err:=os.WriteFile(os.Getenv("VOLVE_CI_DNS_WATCHDOG_RECEIPT"),[]byte("recovered after updater exited 83"),0600);err!=nil{t.Fatal(err)}
- t.Log("PASS: independent Windows watchdog observed updater crash and restored real IPv4/IPv6 DNS without updater assistance")
+ // Terminal result is created ONLY AFTER real independent DNS reads
+ // proved both families. Failure leaves recovery-required for retry.
+ if err:=windowsCrashLabFinishRecovered(ctx);err!=nil{
+  t.Fatalf("restoration succeeded but resident journal receipt was not durable: %v",err)
+ }
+ if err:=os.WriteFile(os.Getenv("VOLVE_CI_DNS_WATCHDOG_RECEIPT"),
+   []byte("recovered by attested journal watchdog after updater exited 83"),0600);err!=nil{t.Fatal(err)}
+ t.Log("PASS: independent Windows watchdog verified real create-only journal and ephemeral signed CI permit for every write, then restored DNS and finalized receipt")
 }
 
 func TestWindowsRealDNSWatchdogAfterUpdaterCrash(t *testing.T){
@@ -225,6 +232,10 @@ func TestWindowsRealDNSWatchdogAfterUpdaterCrash(t *testing.T){
  plan:=windowsDNSCrashRecoveryPlan{Schema:1,Alias:alias,GUID:guid,Records:windowsDNSCrashRecords(guid)}
  raw,err:=json.Marshal(plan);if err!=nil{t.Fatal(err)}
  root:=t.TempDir()
+ // The controller prepares an independent create-only on-disk recovery
+ // journal and a canonical, immutable DNS snapshot BEFORE the crash.
+ // Every watchdog write must revalidate them (lab ACL/signature only).
+ labSeal:=prepareWindowsCrashLabSeal(t,root,plan.Records)
  path:=filepath.Join(root,"pending-recovery-plan.json")
  if err:=os.WriteFile(path,raw,0600);err!=nil{t.Fatal(err)}
  sum:=sha256.Sum256(raw)
@@ -238,6 +249,7 @@ func TestWindowsRealDNSWatchdogAfterUpdaterCrash(t *testing.T){
   "VOLVE_CI_DNS_WATCHDOG_RECEIPT="+filepath.Join(root,"restored"),
   "VOLVE_CI_DNS_CRASH_LOCK=VOLVE-CI-DNSLock-"+nonce,
  )
+ for key,value:=range labSeal {common=append(common,key+"="+value)}
  updater:=exec.CommandContext(ctx,os.Args[0],"-test.run=^TestWindowsRealDNSWatchdogAfterUpdaterCrash$")
  updater.Env=append(append([]string(nil),common...),"VOLVE_CI_DNS_RECOVERY_CHILD=updater")
  var updaterOutput bytes.Buffer
@@ -275,6 +287,11 @@ func TestWindowsRealDNSWatchdogAfterUpdaterCrash(t *testing.T){
   t.Fatalf("separate watchdog did not recover after crash: %v, updater=%s, watchdog=%s",err,updaterOutput.String(),watchdogOutput.String())
  }
  if err:=windowsDNSCrashAwaitFile(ctx,filepath.Join(root,"restored"));err!=nil{t.Fatal(err)}
+ journalState,err:=InspectResidentRecoveryJournal(ctx,labSeal["VOLVE_CI_DNS_RESIDENT_DIR"],
+  windowsCrashLabFileProtection(root))
+ if err!=nil||journalState.Status!="restored"{
+  t.Fatalf("watchdog did not write verified final durable resident receipt: status=%s, err=%v",journalState.Status,err)
+ }
  index,err:=FindWindowsAdapterIndex(ctx,guid,DefaultWindowsReadOnlyPowerShell)
  if err!=nil{t.Fatal(err)}
  for _,record:=range plan.Records {
@@ -285,5 +302,5 @@ func TestWindowsRealDNSWatchdogAfterUpdaterCrash(t *testing.T){
    t.Fatalf("third independent DNS check failed after watchdog: %s: %v %v",record.Original.Family,got,err)
   }
  }
- t.Log("PASS: updater crashed with exit 83; independently running watchdog detected terminated process and restored REAL IPv4 and IPv6 DNS using pinned journal")
+ t.Log("PASS: updater crashed 83; independent watchdog revalidated durable resident journal, signed ephemeral CI permit and pinned Windows process before restoring REAL DNS v4/v6; recovered terminal journal persisted")
 }
