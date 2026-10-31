@@ -66,6 +66,16 @@ jobs:
               throw 'Pinned sacrificial adapter identity missing after rename'
             }
             $guid='{'+([string]$adapter.InterfaceGuid).Trim('{}').ToLowerInvariant()+'}'
+            $virtualDNS=Get-DnsClientServerAddress -InterfaceIndex $adapter.InterfaceIndex |
+              Select-Object InterfaceIndex,AddressFamily,ServerAddresses |
+              ConvertTo-Json -Compress -Depth 5
+            $virtualRoutes=Get-NetRoute -InterfaceIndex $adapter.InterfaceIndex |
+              Select-Object DestinationPrefix,NextHop | ConvertTo-Json -Compress -Depth 5
+            $virtualIPs=Get-NetIPAddress -InterfaceIndex $adapter.InterfaceIndex |
+              Select-Object IPAddress,AddressFamily | ConvertTo-Json -Compress -Depth 5
+            Write-Host "Newly created internal vNIC DNS=$virtualDNS"
+            Write-Host "Newly created internal vNIC routes=$virtualRoutes"
+            Write-Host "Newly created internal vNIC IPs=$virtualIPs"
             $env:VOLVE_CI_DNS_REAL_DISPOSABLE='INTERNAL_HYPERV_VM_ONLY'
             $env:VOLVE_CI_DNS_LAB_ALIAS=$alias
             $env:VOLVE_CI_DNS_LAB_GUID=$guid
