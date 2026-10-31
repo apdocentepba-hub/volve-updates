@@ -6,17 +6,17 @@ Fecha de corte inicial: 30/10/2026. Rama de desarrollo: feature/motor-updater-02
 
 Las cifras son **estimaciones conservadoras de ingeniería por entregables ponderados**, no una medición del tiempo, ni una cantidad de líneas, ni un porcentaje de protección. Se acumula crédito parcial por código efectivamente integrado y verificable; aprobar CI no reemplaza los ensayos sobre un equipo Windows persistente. Nunca publicar como cerrado un paso que no haya aprobado todos sus criterios obligatorios.
 
-### Paso 2 — Actualización del motor DNS: 58/100 (58%)
+### Paso 2 — Actualización del motor DNS: 60/100 (60%)
 
 | Subentregable | Peso | Puntos reconocidos | Estado |
 | --- | ---: | ---: | --- |
 | Permiso editorial exacto, autenticidad y pinning | 15 | 8 | Validación criptográfica en CI; falta emisión legítima para el motor instalado |
 | Respaldo anterior y journal protegido | 15 | 15 | Código y auditorías NTFS probados |
 | Watchdog de recuperación SYSTEM independiente | 25 | 10 | Recuperador separado prearmado como tarea SYSTEM recurrente cada minuto en VM descartable; detectó caída real sin disparo manual; falta watchdog productivo |
-| Controlador Windows real que cambia y revierte el motor | 20 | 10 | Instalación/retirada versionada de motor SYSTEM y recuperador en VM; ahora lectura Windows real de GUID/InterfaceIndex y DNS IPv4/IPv6 sin cambios de red, con rechazos de identidad concurrente; falta ejecutar restauración autenticada de adaptador |
+| Controlador Windows real que cambia y revierte el motor | 20 | 12 | Instalación/retirada versionada de motor SYSTEM y recuperador en VM; ahora lectura Windows real de GUID/InterfaceIndex y DNS IPv4/IPv6 sin cambios de red, con rechazos de identidad concurrente; falta ejecutar restauración autenticada de adaptador |
 | Tests adversos, DNS dual-stack, identidad, rollback en CI | 15 | 15 | Motor compilado ejecutado bajo SYSTEM en DNS/53 real y sondeado externamente en VM descartable; faltan escenarios productivos |
 | Reinicio real repetible de VM persistente | 10 | 0 | Sin ejecutar |
-| **TOTAL** | **100** | **58** | **Paso abierto** |
+| **TOTAL** | **100** | **60** | **Paso abierto** |
 
 Los seis criterios A–F de STEP2_EXIT_CRITERIA.md siguen sin aprobarse **como condiciones de cierre completas**, aunque hay subtrabajos de esos criterios realizados.
 
@@ -178,3 +178,14 @@ Ver [CI actual de la política](https://github.com/apdocentepba-hub/volve-update
 **Crédito conservador:** controlador Windows sube **8→10 de 20** por verificación de contenido real del snapshot/journal y autorización adversa testada. **Paso 2: 58/100** (+2); **Paso 3: 40/100** (sin cambios). Métrica de ingeniería, NO capacidad productiva de protección contra apuestas.
 
 **Siguientes bloqueos:** vincular la huella DNS al journal protegido desde el instalador real, con datos del adaptador tomados bajo un controlador SYSTEM y DACL confiable; comprobar el permiso editorial genuino; restaurar DNS realmente sobre interfaz aislada reversible; validar mismo sistema Windows después de reinicio; después, integrar actualización desde el software ya instalado y firmar la publicación. El CI integral más reciente se seguirá por separado y no se presume verde. No se tocó `main`, canales estables ni la versión 0.28.6.
+
+
+## 31/10/2026 — Restauración DNS REAL IPv4/IPv6 en adaptador descartable aislado
+
+**Evidencia decisiva:** [GitHub Actions #41210044405](https://github.com/apdocentepba-hub/volve-updates/actions/runs/41210044405) finalizó **SUCCESS**, con `TestWindowsRealDNSRestoreOnDisposableVMAdapter` **PASS (46,65 s)** en Windows real. La prueba creó exclusivamente un Hyper-V `New-VMSwitch -SwitchType Internal` con nombre `VOLVE-CI-DNS-LAB-<RUN_ID>`, validó GUID/InterfaceIndex, tipo de adaptador virtual, direcciones link-local, rutas no enrutable y DNS iniciales de reserva IPv6 de Windows; configuró DNS estáticos IPv4/IPv6 para representar el estado anterior, los sustituyó por loopback `127.0.0.1` y `::1`, y utilizó el ejecutor `netsh` real con planificación de restauración, doble comprobación del GUID y lectura independiente de `Get-DnsClientServerAddress` después de cada paso. Se restauró la lista IPv4 original de **dos servidores en orden** y la lista IPv6 original. El workflow eliminó el switch en `finally` y comprobó que **los DNS de todos los adaptadores preexistentes y las rutas por defecto del runner eran idénticos antes y después**. No se modificó el DNS de la PC del usuario.
+
+**Pruebas de seguridad previas:** las ejecuciones de laboratorio #41209551772, #41209631826, #41209749738 y #41209863782 fueron rojas por requisitos de identidad y DNS iniciales demasiado restrictivos, antes de escribir DNS. En todas el switch aislado se eliminó y los DNS/rutas originales del runner quedaron intactos. Se aceptó solamente el descriptor Hyper-V con sufijo numérico, los tres `fec0:0:0:ffff::1..3` predeterminados de Windows, el porcentaje de zona IPv6 vinculado al InterfaceIndex y rutas link-local/multicast. Los controles siguen rechazando NIC físicas, DNS externos preexistentes, redes privadas, rutas de LAN/Internet y cualquier otro GUID. [Contrato DNS #41210021665](https://github.com/apdocentepba-hub/volve-updates/actions/runs/41210021665) finalizó **SUCCESS** en Windows y Ubuntu, incluido el test adverso del nuevo inventario, sin escrituras DNS sobre interfaces ordinarias.
+
+**CRÉDITO DE INGENIERÍA:** el subentregable 'Controlador Windows real' pasa de **10 a 12 de 20 puntos**, porque por primera vez la cadena completa usa `netsh` y el DNS real de un adaptador Windows virtual descartable, con restauración ordenada IPv4/IPv6 y limpieza demostradas. **Paso 2 sube 58 → 60/100 (60%)**. **Paso 3 permanece 40/100 (40%)**: la restauración fue iniciada por la prueba, NO por el watchdog autónomo después de un reinicio de Windows ni en producción. El porcentaje no mide cobertura o efectividad antiapuestas.
+
+**BLOQUEOS AÚN ABIERTOS:** identidad SYSTEM/ACL/firma editorial reales, snapshot de adaptación protegido generado por el instalador, controlador transaccional de actualización de motor activo, sistema de detección/rollback autónomo, prueba de mismo Windows después de un reinicio persistente y versión firmada/instalable. No modificar `main`, archivos de canal estable, el motor 0.28.6 ni tareas productivas hasta cumplir los criterios A–F.
