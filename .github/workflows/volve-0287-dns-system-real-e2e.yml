@@ -16,7 +16,7 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: '1.23.x'
-      - name: Complete true SYSTEM DNS v4/v6 crash recovery with explicitly protected NTFS terminal receipt
+      - name: Prove SYSTEM boot-trigger watchdog is prearmed before any isolated DNS write and restores both families
         shell: pwsh
         run: |
           $ErrorActionPreference='Stop'
