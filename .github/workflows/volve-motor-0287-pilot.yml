@@ -523,6 +523,30 @@ jobs:
           $kit=Join-Path $env:ProgramData ('VOLVE-VM-RebootLab-'+$trialId)
           try {
             & $script -Mode Prepare -RunId $trialId -LabScript $lab -JournalExe $helper
+            # Real Windows NTFS adversarial control on THIS disposable
+            # ProgramData kit: add a foreign Users ACE, prove the verifier
+            # rejects it, then restore the exact original ACL in finally.
+            $baselineAcl=Get-Acl -LiteralPath $kit -ErrorAction Stop
+            try {
+              $badAcl=Get-Acl -LiteralPath $kit -ErrorAction Stop
+              $users=[Security.Principal.SecurityIdentifier]::new('S-1-5-32-545')
+              $extra=[Security.AccessControl.FileSystemAccessRule]::new(
+                $users,[Security.AccessControl.FileSystemRights]::Read,
+                [Security.AccessControl.AccessControlType]::Allow)
+              $badAcl.AddAccessRule($extra)
+              Set-Acl -LiteralPath $kit -AclObject $badAcl -ErrorAction Stop
+              $badRejected=$false
+              try { & $script -Mode Verify -RunId $trialId }
+              catch {
+                if($_.Exception.Message -match '^Foreign, inherited or DENY VM trial DACL entry:'){
+                  $badRejected=$true
+                }else{throw}
+              }
+              if(-not $badRejected){throw 'SECURITY: foreign Users ACL accepted as protected VM reboot evidence'}
+              Write-Host 'PASS: real NTFS VM kit with foreign Users ACE failed closed'
+            }finally {
+              Set-Acl -LiteralPath $kit -AclObject $baselineAcl -ErrorAction Stop
+            }
             # Deliberately trigger the watchdog by hand. It must NOT be counted
             # as a real reboot even when recovery itself succeeds under SYSTEM.
             $bootTask='VOLVE-CI-BootRecovery-'+$trialId
