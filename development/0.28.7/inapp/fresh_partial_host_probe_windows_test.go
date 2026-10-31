@@ -35,6 +35,15 @@ func partialHostInspectors(t *testing.T, admin bool, taskRows []windowsVOLVETask
 			}
 			return freshServiceJSON(t, serviceRows), nil
 		},
+		DNS: func(_ context.Context, query string) ([]byte, error) {
+			if query != WindowsFreshDNSAdapterQuery {
+				t.Fatal("unapproved Windows adapter query")
+			}
+			return freshDNSRows(t, []windowsFreshDNSAdapterRow{
+				{InterfaceIndex: 17, Family: "IPv4", Servers: []string{"8.8.8.8"}},
+				{InterfaceIndex: 17, Family: "IPv6", Servers: []string{"2606:4700:4700::1111"}},
+			}), nil
+		},
 	}
 }
 
@@ -69,13 +78,12 @@ func TestWindowsPartialHostNeverGrantsFreshInstall(t *testing.T) {
 				t.Fatal(err)
 			}
 			e := result.Evidence
-			if !e.InspectedAsAdministrator || !e.InspectedTaskScheduler || !e.InspectedServices ||
+			if !e.InspectedAsAdministrator || !e.InspectedTaskScheduler || !e.InspectedServices || !e.InspectedDNSAdapters ||
 				e.VOLVETaskCount != tc.wantTasks || e.VOLVEServiceCount != tc.wantServices {
 				t.Fatalf("wrong combined evidence: %+v", e)
 			}
-			if e.InspectedMotorFiles || e.InspectedDNSAdapters ||
-				e.InspectedPort53Listeners || e.InspectedRecoveryState {
-				t.Fatal("partial census fabricated other four OS checks")
+			if e.InspectedMotorFiles || e.InspectedPort53Listeners || e.InspectedRecoveryState {
+				t.Fatal("partial census fabricated other three OS checks")
 			}
 			if err := CheckFreshMotorInstallReadiness(context.Background(), e); err == nil {
 				t.Fatal("partial OS census was incorrectly accepted as a clean installation")
@@ -116,6 +124,14 @@ func TestWindowsPartialHostFailClosedOnNonAdminOrFailure(t *testing.T) {
 		evidence.Evidence.InspectedTaskScheduler || evidence.Evidence.InspectedServices {
 		t.Fatal("partial failure leaked a success-shaped inventory")
 	}
+	inspectors = partialHostInspectors(t, true, []windowsVOLVETaskRecord{}, []windowsVOLVEServiceRecord{})
+	inspectors.DNS = func(context.Context, string) ([]byte, error) {
+		return nil, errors.New("DNS adapter enumeration unavailable")
+	}
+	if evidence, err := InspectWindowsFreshPartialHostReadOnly(context.Background(), "", "", inspectors); err == nil ||
+		evidence.Evidence.InspectedDNSAdapters || evidence.Evidence.InspectedTaskScheduler {
+		t.Fatal("DNS read-only inventory failure leaked successful evidence")
+	}
 	if _, err := DefaultWindowsFreshAdminInspect(context.Background(), "Start-Service VOLVE"); err == nil {
 		t.Fatal("unapproved privileged Windows token query accepted")
 	}
@@ -144,7 +160,7 @@ func TestWindowsPartialHostNativeOSQueriesAreReadOnly(t *testing.T) {
 	if !elevated {
 		if _, err := InspectWindowsFreshPartialHostReadOnly(ctx, "", "", WindowsFreshPartialHostInspectors{
 			Admin: DefaultWindowsFreshAdminInspect, Tasks: DefaultWindowsFreshTaskInspect,
-			Services: DefaultWindowsFreshServiceInspect,
+			Services: DefaultWindowsFreshServiceInspect, DNS: DefaultWindowsFreshDNSAdapterInspect,
 		}); err == nil {
 			t.Fatal("non-admin Windows token was treated as elevated")
 		}
@@ -153,7 +169,7 @@ func TestWindowsPartialHostNativeOSQueriesAreReadOnly(t *testing.T) {
 	}
 	result, err := InspectWindowsFreshPartialHostReadOnly(ctx, "", "", WindowsFreshPartialHostInspectors{
 		Admin: DefaultWindowsFreshAdminInspect, Tasks: DefaultWindowsFreshTaskInspect,
-		Services: DefaultWindowsFreshServiceInspect,
+		Services: DefaultWindowsFreshServiceInspect, DNS: DefaultWindowsFreshDNSAdapterInspect,
 	})
 	if err != nil {
 		t.Fatalf("real Windows partial host census: %v", err)
@@ -161,6 +177,6 @@ func TestWindowsPartialHostNativeOSQueriesAreReadOnly(t *testing.T) {
 	if err := CheckFreshMotorInstallReadiness(ctx, result.Evidence); err == nil {
 		t.Fatal("real partial OS census authorized an unverified DNS installation")
 	}
-	t.Logf("READ ONLY: actual Windows token elevated; %d linked tasks; %d linked services; four inventories remain unknown",
-		result.Evidence.VOLVETaskCount, result.Evidence.VOLVEServiceCount)
+	t.Logf("READ ONLY: Windows elevated; %d tasks; %d services; %d DNS adapter families; three inventories remain unknown",
+		result.Evidence.VOLVETaskCount, result.Evidence.VOLVEServiceCount, result.DNSAdapterRecords)
 }
