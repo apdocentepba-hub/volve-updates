@@ -6,17 +6,17 @@ Fecha de corte inicial: 30/10/2026. Rama de desarrollo: feature/motor-updater-02
 
 Las cifras son **estimaciones conservadoras de ingeniería por entregables ponderados**, no una medición del tiempo, ni una cantidad de líneas, ni un porcentaje de protección. Se acumula crédito parcial por código efectivamente integrado y verificable; aprobar CI no reemplaza los ensayos sobre un equipo Windows persistente. Nunca publicar como cerrado un paso que no haya aprobado todos sus criterios obligatorios.
 
-### Paso 2 — Actualización del motor DNS: 67/100 (67%)
+### Paso 2 — Actualización del motor DNS: 69/100 (69%)
 
 | Subentregable | Peso | Puntos reconocidos | Estado |
 | --- | ---: | ---: | --- |
 | Permiso editorial exacto, autenticidad y pinning | 15 | 8 | Validación criptográfica en CI; falta emisión legítima para el motor instalado |
 | Respaldo anterior y journal protegido | 15 | 15 | Código y auditorías NTFS probados |
-| Watchdog de recuperación SYSTEM independiente | 25 | 15 | Probado restaurador DNS IPv4/IPv6 REAL desde tarea LocalSystem independiente tras fallo de actualizador, con atestación NTFS/journal/CI firmada por cada paso y recibo protegido final; falta watchdog productivo permanente |
+| Watchdog de recuperación SYSTEM independiente | 25 | 17 | Task Scheduler registró y validó disparador AtStartup auténtico con principal LocalSystem; watchdog independiente prearmado y activo ANTES de cualquier escritura DNS en Hyper-V. Tras caída, restauró v4/v6 reales y recibo protegido; falta reboot persistente y controlador productivo |
 | Controlador Windows real que cambia y revierte el motor | 20 | 14 | Controlador Windows ejecutado como LocalSystem reparó configuraciones DNS dual-stack reales con permiso CI firmado, mutex interproceso y vNIC Hyper-V pinneada; falta cambio de motor productivo y permiso editorial legítimo |
 | Tests adversos, DNS dual-stack, identidad, rollback en CI | 15 | 15 | Motor compilado ejecutado bajo SYSTEM en DNS/53 real y sondeado externamente en VM descartable; faltan escenarios productivos |
 | Reinicio real repetible de VM persistente | 10 | 0 | Sin ejecutar |
-| **TOTAL** | **100** | **67** | **Paso abierto** |
+| **TOTAL** | **100** | **69** | **Paso abierto** |
 
 Los seis criterios A–F de STEP2_EXIT_CRITERIA.md siguen sin aprobarse **como condiciones de cierre completas**, aunque hay subtrabajos de esos criterios realizados.
 
@@ -246,3 +246,14 @@ Ver [CI actual de la política](https://github.com/apdocentepba-hub/volve-update
 **Reconocimiento de progreso estimado y limitado:** subentregables paso 2 watchdog **12→15/25**, controlador Windows **13→14/20**: **paso 2 = 67% (+4)**. Paso 3 journal **12→13/15**, política/mutex **12→14/15**: **paso 3 = 47% (+3)**. Se mantiene **0/25** para watchdog SYSTEM persistente productivo, **0/15** para restauración productiva y **0/10** para reinicio real en VM persistente. La acreditación es por resultados del laboratorio, no por protección antiapuestas, distribución ni versión instalada.
 
 **Lo que NO demuestra:** que exista un permiso editorial firmado con la clave del producto; que el watchdog esté instalado y se inicie solo durante un arranque de Windows; que el DNS vuelva a la normalidad en la PC del usuario después de reinicio o que una versión 0.28.6 se actualice efectivamente sin manipulación. El piloto no trabaja con DHCP/RA, no admite adaptadores físicos, y no autorizó cambiar tareas estables, producción, canal de versiones ni rama `main`. Los criterios A–F de cierre siguen pendientes como conjunto.
+
+
+## 31/10/2026 — Registro de watchdog SYSTEM con trigger AtStartup ANTES de cualquier modificación DNS
+
+**Cambio de secuencia de seguridad (comprobado):** `dns_restore_watchdog_crash_windows_test.go` ahora admite exclusivamente en la VM Hyper-V descartable un semáforo `VOLVE_CI_DNS_WAIT_FOR_SYSTEM_WATCHDOG` que el actualizador respeta **antes de llamar por primera vez a los escritores `netsh`**. `dns_restore_system_real_windows_test.go` crea un journal pendiente y snapshot sellados, inicia un proceso actualizador detenido en esa compuerta, registra una tarea descartable `VOLVE-CI-DNS-SYSTEM-<runid>` como verdadero LocalSystem con un único `MSFT_TaskBootTrigger` `-AtStartup`, verifica el principal/acción/trigger mediante una consulta real del Programador y la inicia explícitamente. El watchdog se abre paso como proceso independiente, conserva el handle de Windows del actualizador y confirma `watchdog-ready`; el controlador comprueba que el DNS de la interfaz sigue en su estado inicial **antes de liberar el semáforo**. Solo entonces se asignan resolutores loopback v4/v6 a la interfaz de Hyper-V, se provoca la caída 83 y el watchdog restaura los DNS anteriores con firma **efímera CI**, DACL NTFS SYSTEM/Administradores y journal canónico revalidados en cada comando. El recibo terminal solo se escribe luego de comprobar ambas familias.
+
+**Evidencia real:** [GitHub Actions #41239073950](https://github.com/apdocentepba-hub/volve-updates/actions/runs/41239073950) terminó **SUCCESS** en `windows-latest`, `TestWindowsRealDNSSYSTEMWatchdogAfterUpdaterCrash` **PASS (95,36 s)**. Log literal: `SYSTEM watchdog with genuine at-startup trigger prearmed BEFORE first DNS write, restored REAL IPv4/IPv6 after crash with sealed NTFS CI permit and durable receipt`. `finally` eliminó el switch interno Hyper-V; auditó que DNS y rutas preexistentes del equipo ejecutor permanecieran intactos. [Contratos #41239059639](https://github.com/apdocentepba-hub/volve-updates/actions/runs/41239059639) **SUCCESS** Windows y Ubuntu. La integración completa del último commit se registra aparte; no presumir verde mientras Windows siga en ejecución.
+
+**Progreso limitado:** por corregir y probar realmente la secuencia crítica de registro/armado anterior a toda mutación y acreditar `AtStartup` bajo SYSTEM, se suman **2 de 25** puntos de prueba al watchdog independiente del paso 2 (**15→17**). **Paso 2: 67→69/100**. **Paso 3: 47/100 sin cambio**: un trigger AtStartup registrado no demuestra persistencia durante/reinicio real; el watchdog productivo sigue ausente y las subetapas de reboot/productivo permanecen en cero.
+
+**No demostrado ni autorizado:** una VM persistente haya reiniciado, el proceso haya sobrevivido al boot, que el instalador de 0.28.6 se actualice en el lugar, o que exista firma editorial legítima de producción. No cambió `main`, canales estables, `VOLVE-DNS-SERVER-0270` ni la PC instalada. La prueba usa tareas y vNIC exclusivamente descartables.
