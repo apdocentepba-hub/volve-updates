@@ -20,17 +20,17 @@ Las cifras son **estimaciones conservadoras de ingeniería por entregables ponde
 
 Los seis criterios A–F de STEP2_EXIT_CRITERIA.md siguen sin aprobarse **como condiciones de cierre completas**, aunque hay subtrabajos de esos criterios realizados.
 
-### Paso 3 — Recuperación automática: 40/100 (40%) — detección periódica y recuperación autónoma ante falla provocada aprobadas en CI
+### Paso 3 — Recuperación automática: 42/100 (42%) — restauración DNS real tras caída del actualizador en VM aislada aprobada
 
 | Subentregable | Peso | Puntos reconocidos | Estado |
 | --- | ---: | ---: | --- |
 | Journal durable y estado recuperable | 15 | 10 | Probado; terminal create-only |
-| Recuperación independiente de prueba | 20 | 18 | Laboratorio Windows: tarea SYSTEM prearmada y repetida cada minuto detecta caída real SIN intervención y deshabilita motor; rechaza falso positivo sano |
+| Recuperación independiente de prueba | 20 | 20 | Laboratorio Windows: watchdog en proceso independiente observa salida anómala del actualizador y RESTAURA DNS IPv4/IPv6 reales en vNIC Hyper-V aislada; no es servicio productivo |
 | Política de recuperación al iniciar, bloqueo de concurrencia, reintentos | 15 | 12 | **CI 3/3 aprobada; integración de mutex Windows y watchdog productivo pendiente** |
 | Watchdog SYSTEM persistente con arranque Windows | 25 | 0 | Ausente |
 | Restitución productiva y comprobación de motor/DNS/Internet | 15 | 0 | Ausente |
 | Pruebas de reinicio real en VM persistente | 10 | 0 | Ausente |
-| **TOTAL VERIFICADO** | **100** | **40** | **Paso abierto** |
+| **TOTAL VERIFICADO** | **100** | **42** | **Paso abierto** |
 
 **Trabajo de esta intervención:** \`resident_boot_recovery.go\` y \`resident_boot_recovery_test.go\` agregan una política repetible y no mutante de recuperación al arranque: exige bloqueo exclusivo, respaldo íntegro, journal pendiente, restaurador inyectado y comprobación de identidad/DNS/Internet antes de cerrar el journal. Los tests incluyen fallo del restaurador, caída de red, reintento tras interrupción, concurrencia, corrupción del journal y no repetición de tareas terminadas. Es exclusivamente lógica reutilizable, **NO** un watchdog SYSTEM instalado. La ejecución [#41107808258](https://github.com/apdocentepba-hub/volve-updates/actions/runs/41107808258) terminó **3/3 success** (Windows, Linux, recuperación aislada). Se acreditan **10 de 15 puntos** del subentregable "política de recuperación": el paso 3 se actualiza al **30%**. Los 5 puntos restantes dependen de integrar un controlador persistente real. La prueba de mutex entre procesos es una nueva subetapa aún pendiente de CI, por lo que no agrega puntos.
 
@@ -189,3 +189,14 @@ Ver [CI actual de la política](https://github.com/apdocentepba-hub/volve-update
 **CRÉDITO DE INGENIERÍA:** el subentregable 'Controlador Windows real' pasa de **10 a 12 de 20 puntos**, porque por primera vez la cadena completa usa `netsh` y el DNS real de un adaptador Windows virtual descartable, con restauración ordenada IPv4/IPv6 y limpieza demostradas. **Paso 2 sube 58 → 60/100 (60%)**. **Paso 3 permanece 40/100 (40%)**: la restauración fue iniciada por la prueba, NO por el watchdog autónomo después de un reinicio de Windows ni en producción. El porcentaje no mide cobertura o efectividad antiapuestas.
 
 **BLOQUEOS AÚN ABIERTOS:** identidad SYSTEM/ACL/firma editorial reales, snapshot de adaptación protegido generado por el instalador, controlador transaccional de actualización de motor activo, sistema de detección/rollback autónomo, prueba de mismo Windows después de un reinicio persistente y versión firmada/instalable. No modificar `main`, archivos de canal estable, el motor 0.28.6 ni tareas productivas hasta cumplir los criterios A–F.
+
+
+## 31/10/2026 — Watchdog independiente recuperó DNS REAL después de caída abrupta
+
+**Implementación:** `dns_restore_watchdog_crash_windows_test.go` implementa un ensayo integral Windows con *tres procesos distintos*: coordinador CI, actualizador que instala DNS de loopback en el adaptador aislado y termina deliberadamente con código **83** sin ejecutar su limpieza, y watchdog independiente que **ya está corriendo antes de la caída** y mantiene un identificador de proceso Windows `OpenProcess/WaitForSingleObject/GetExitCodeProcess`. El watchdog verifica la terminación anómala del proceso concreto, reabre y verifica en disco el plan JSON mediante SHA-256 prefijada por el coordinador, vuelve a inspeccionar la interfaz Hyper-V con GUID/índice, rutas y DNS locales exactos, adquiere mutex Windows entre procesos y ejecuta `NewWindowsPinnedStaticDNSWriter` + `ExecuteWindowsStaticDNSRestoreBatch` con `netsh.exe` REAL; termina con comprobación independiente de las dos familias y recibo de recuperación de laboratorio. No pide ayuda al actualizador una vez caído.
+
+**PRUEBAS VERIFICADAS:** [GitHub Actions #41213645830](https://github.com/apdocentepba-hub/volve-updates/actions/runs/41213645830) **SUCCESS**; `TestWindowsRealDNSWatchdogAfterUpdaterCrash` **PASS (58,96 s)**, código de fallo del actualizador 83 registrado y recuperación DNS v4/v6 desde proceso diferente. El `finally` del workflow confirmó eliminación del switch interno y DNS/rutas originales de la VM de GitHub intactos. [Contrato de restauración #41213629780](https://github.com/apdocentepba-hub/volve-updates/actions/runs/41213629780) **SUCCESS Windows y Ubuntu**. Corrigió dos fallas previas de integración de la prueba (YAML duplicado y asignación incorrecta de retorno Go) antes de lograr el resultado verde.
+
+**Acreditación sin duplicados:** subentregable 'Recuperación independiente de prueba' pasa **18→20 de 20**, por demostración de restauración DNS REAL tras caída anómala observada desde proceso independiente. **Paso 3: 40→42% (+2)**, **Paso 2: 60% (sin cambios)**. No contabilizar los 25 puntos de watchdog SYSTEM persistente ni 10 de reboot por esta prueba: son bloqueos separados y aún no ejecutados. La cifra mide entregables de laboratorio, no capacidad antiapuestas efectiva.
+
+**RESTRICCIONES:** aunque la interfaz y DNS fueron reales, el proceso watchdog de esta prueba corrió como usuario CI, no como un servicio SYSTEM productivo; el plan usó SHA-256 fijada por el coordinador y NO un permiso editorial legítimo firmado + snapshot NTFS sellado completo; tampoco se comprobó cierre durable de journal productivo, recuperación después de reinicio del MISMO Windows, ni una actualización automática efectiva en el VOLVÉ 0.28.6 instalado. Conservamos barreras del switch productivo, rama `main` y canales estables.
