@@ -6,31 +6,31 @@ Fecha de corte inicial: 30/10/2026. Rama de desarrollo: feature/motor-updater-02
 
 Las cifras son **estimaciones conservadoras de ingeniería por entregables ponderados**, no una medición del tiempo, ni una cantidad de líneas, ni un porcentaje de protección. Se acumula crédito parcial por código efectivamente integrado y verificable; aprobar CI no reemplaza los ensayos sobre un equipo Windows persistente. Nunca publicar como cerrado un paso que no haya aprobado todos sus criterios obligatorios.
 
-### Paso 2 — Actualización del motor DNS: 63/100 (63%)
+### Paso 2 — Actualización del motor DNS: 67/100 (67%)
 
 | Subentregable | Peso | Puntos reconocidos | Estado |
 | --- | ---: | ---: | --- |
 | Permiso editorial exacto, autenticidad y pinning | 15 | 8 | Validación criptográfica en CI; falta emisión legítima para el motor instalado |
 | Respaldo anterior y journal protegido | 15 | 15 | Código y auditorías NTFS probados |
-| Watchdog de recuperación SYSTEM independiente | 25 | 12 | Una misma tarea SYSTEM de laboratorio valida SID + ACL NTFS reales del journal/snapshot, y rechaza suplantación de permisos en segunda ejecución; falta integrarla con el watchdog que restaura DNS |
-| Controlador Windows real que cambia y revierte el motor | 20 | 13 | Restauración real IPv4/IPv6 en Hyper-V y auditoría NTFS por SID conectada al atestador de journal en ensayos Windows reales; sin firma editorial ni autorizador productivos |
+| Watchdog de recuperación SYSTEM independiente | 25 | 15 | Probado restaurador DNS IPv4/IPv6 REAL desde tarea LocalSystem independiente tras fallo de actualizador, con atestación NTFS/journal/CI firmada por cada paso y recibo protegido final; falta watchdog productivo permanente |
+| Controlador Windows real que cambia y revierte el motor | 20 | 14 | Controlador Windows ejecutado como LocalSystem reparó configuraciones DNS dual-stack reales con permiso CI firmado, mutex interproceso y vNIC Hyper-V pinneada; falta cambio de motor productivo y permiso editorial legítimo |
 | Tests adversos, DNS dual-stack, identidad, rollback en CI | 15 | 15 | Motor compilado ejecutado bajo SYSTEM en DNS/53 real y sondeado externamente en VM descartable; faltan escenarios productivos |
 | Reinicio real repetible de VM persistente | 10 | 0 | Sin ejecutar |
-| **TOTAL** | **100** | **63** | **Paso abierto** |
+| **TOTAL** | **100** | **67** | **Paso abierto** |
 
 Los seis criterios A–F de STEP2_EXIT_CRITERIA.md siguen sin aprobarse **como condiciones de cierre completas**, aunque hay subtrabajos de esos criterios realizados.
 
-### Paso 3 — Recuperación automática: 44/100 (44%) — recuperación DNS real con journal durable y autorización firmada de laboratorio
+### Paso 3 — Recuperación automática: 47/100 (47%) — recuperación real dual-stack desde watchdog LocalSystem independiente con recibo durable
 
 | Subentregable | Peso | Puntos reconocidos | Estado |
 | --- | ---: | ---: | --- |
-| Journal durable y estado recuperable | 15 | 12 | Journal create-only y snapshot vinculados por nonce/hash revalidados en cada escritura; recibo terminal tras recuperación DNS real en CI |
+| Journal durable y estado recuperable | 15 | 13 | Journal create-only y snapshot con nonce/hash, DACL NTFS SYSTEM/Administradores verificada y recibo restored sellado SIN herencia tras restaurar DNS reales desde SYSTEM |
 | Recuperación independiente de prueba | 20 | 20 | Laboratorio Windows: watchdog en proceso independiente observa salida anómala del actualizador y RESTAURA DNS IPv4/IPv6 reales en vNIC Hyper-V aislada; no es servicio productivo |
-| Política de recuperación al iniciar, bloqueo de concurrencia, reintentos | 15 | 12 | Mutex Windows probado entre procesos en CI; pendiente driver SYSTEM persistente y recuperación tras reinicio real |
+| Política de recuperación al iniciar, bloqueo de concurrencia, reintentos | 15 | 14 | Mutex Windows y recuperación autónoma tras caída probados bajo SYSTEM con verificación antes/después de cada comando; faltan inicio de Windows y reintentos productivos |
 | Watchdog SYSTEM persistente con arranque Windows | 25 | 0 | Ausente |
 | Restitución productiva y comprobación de motor/DNS/Internet | 15 | 0 | Ausente |
 | Pruebas de reinicio real en VM persistente | 10 | 0 | Ausente |
-| **TOTAL VERIFICADO** | **100** | **44** | **Paso abierto** |
+| **TOTAL VERIFICADO** | **100** | **47** | **Paso abierto** |
 
 **Trabajo de esta intervención:** \`resident_boot_recovery.go\` y \`resident_boot_recovery_test.go\` agregan una política repetible y no mutante de recuperación al arranque: exige bloqueo exclusivo, respaldo íntegro, journal pendiente, restaurador inyectado y comprobación de identidad/DNS/Internet antes de cerrar el journal. Los tests incluyen fallo del restaurador, caída de red, reintento tras interrupción, concurrencia, corrupción del journal y no repetición de tareas terminadas. Es exclusivamente lógica reutilizable, **NO** un watchdog SYSTEM instalado. La ejecución [#41107808258](https://github.com/apdocentepba-hub/volve-updates/actions/runs/41107808258) terminó **3/3 success** (Windows, Linux, recuperación aislada). Se acreditan **10 de 15 puntos** del subentregable "política de recuperación": el paso 3 se actualiza al **30%**. Los 5 puntos restantes dependen de integrar un controlador persistente real. La prueba de mutex entre procesos es una nueva subetapa aún pendiente de CI, por lo que no agrega puntos.
 
@@ -235,3 +235,14 @@ Ver [CI actual de la política](https://github.com/apdocentepba-hub/volve-update
 **Crédito parcial:** subentregable 'Watchdog de recuperación SYSTEM independiente' pasa de **11→12 de 25 puntos** por una prueba adversa real y conjunta sobre el token y DACL, aunque todavía no se haya unido al recuperador que escribe DNS. **Paso 2: 63/100 (+1). Paso 3: 44/100 sin cambios.** No acreditar el hito de watchdog SYSTEM persistente, restauración productiva o reinicio: siguen completamente abiertos.
 
 **Siguiente bloqueo crítico:** ejecutar el restaurador real IPv4/IPv6 del switch interno Hyper-V **bajo una tarea SYSTEM** con la ACL NTFS y el permiso editorial auténtico/inmutable validados en la misma operación; luego prueba de reinicio en una VM persistente. La clave Ed25519 de los ensayos de recuperación anteriores es **efímera de CI**, NO la firma de producción. No tocar `main`, canales estables, DNS del usuario ni su 0.28.6.
+
+
+## 31/10/2026 — Hito: restauración DNS IPv4 + IPv6 REAL desde una tarea LocalSystem, con journal/ACL/recibo real
+
+**Realización:** se agregó `dns_restore_system_real_windows_test.go` y el workflow `.github/workflows/volve-0287-dns-system-real-e2e.yml`, que crean exclusivamente una interfaz `Hyper-V SwitchType Internal` única y no enrutable en una VM Windows descartable de GitHub. El controlador prepara antes del fallo un journal durable create-only, un snapshot canónico y una autorización Ed25519 **efímera exclusivamente de CI**, protege las DACL de parent/journal/intent/snapshot para SIDs SYSTEM y Administradores, y cambia el DNS IPv4 e IPv6 de la interfaz virtual a loopback. Prearma un watchdog como tarea Task Scheduler con principal Windows **LocalSystem real (SID S-1-5-18)** y acceso por handle al proceso original. La tarea detecta su caída provocada (salida 83), verifica DACL reales de Windows, firma/nonce/huella, estado pending, GUID/InterfaceIndex/no rutas, exclusión por mutex `Global\\VOLVE-CI-DNSLock-...`, y restaura mediante comandos `netsh` nativos los servidores DNS estáticos originales de ambas familias. La verificación se repite antes/después de cada posible operación y de forma independiente tras el batch. **Solo después** genera el recibo `resident-result.json`, cuya DACL queda expresamente protegida contra herencia, y se comprueba que el journal pasó de `recovery-required` a `restored`. El controlador independiente confirma otra vez DNS v4/v6 antes de marcar el test como aprobado.
+
+**Prueba documentada:** [GitHub Actions #41229561215](https://github.com/apdocentepba-hub/volve-updates/actions/runs/41229561215) **SUCCESS**; `TestWindowsRealDNSSYSTEMWatchdogAfterUpdaterCrash` **PASS (86,07 s)** y el registro acredita `LocalSystem SYSTEM watchdog restored REAL DNS IPv4/IPv6 after updater crash using sealed NTFS DACL, ephemeral signed journal and pinned process handle`. El `finally` eliminó el switch de Hyper-V y comprobó que **todos** los DNS de adaptadores preexistentes y rutas de host quedaron sin cambios. El controlador también destruye su tarea SYSTEM de prueba; una limpieza adicional del workflow cubre fallos excepcionales. Se aprobaron por separado las pruebas que rechazan permisos NTFS ajenos y verifican token SYSTEM. Los anteriores ensayos de integración fallaron de modo seguro al sellar la DACL heredada del recibo; la corrección final garantiza una DACL explícita protegida, no desactiva auditorías.
+
+**Reconocimiento de progreso estimado y limitado:** subentregables paso 2 watchdog **12→15/25**, controlador Windows **13→14/20**: **paso 2 = 67% (+4)**. Paso 3 journal **12→13/15**, política/mutex **12→14/15**: **paso 3 = 47% (+3)**. Se mantiene **0/25** para watchdog SYSTEM persistente productivo, **0/15** para restauración productiva y **0/10** para reinicio real en VM persistente. La acreditación es por resultados del laboratorio, no por protección antiapuestas, distribución ni versión instalada.
+
+**Lo que NO demuestra:** que exista un permiso editorial firmado con la clave del producto; que el watchdog esté instalado y se inicie solo durante un arranque de Windows; que el DNS vuelva a la normalidad en la PC del usuario después de reinicio o que una versión 0.28.6 se actualice efectivamente sin manipulación. El piloto no trabaja con DHCP/RA, no admite adaptadores físicos, y no autorizó cambiar tareas estables, producción, canal de versiones ni rama `main`. Los criterios A–F de cierre siguen pendientes como conjunto.
