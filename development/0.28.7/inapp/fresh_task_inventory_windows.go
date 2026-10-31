@@ -58,7 +58,7 @@ func DefaultWindowsFreshTaskInspect(ctx context.Context,query string)([]byte,err
 type windowsVOLVETaskAction struct {
  Execute string `json:"Execute"`
  Arguments string `json:"Arguments"`
- WorkingDirectory string `json:"WorkingDirectory"`
+ WorkingDirectory *string `json:"WorkingDirectory"`
 }
 type windowsVOLVETaskRecord struct {
  Name string `json:"Name"`
@@ -124,7 +124,7 @@ func InspectWindowsVOLVETasksReadOnly(ctx context.Context,
    act:=task.Actions[0]
    verified.ActionVerified=strings.EqualFold(filepath.Clean(act.Execute),expectedCatalogExecutable) &&
     filepath.IsAbs(act.Execute) && act.Arguments==expectedCatalogArguments &&
-    act.WorkingDirectory=="" // An unpinned working dir is an unsafe executable context.
+    act.WorkingDirectory!=nil && *act.WorkingDirectory=="" // Missing or unpinned working dir must fail closed.
   }
   result.VerifiedCatalogTask=verified
  }
