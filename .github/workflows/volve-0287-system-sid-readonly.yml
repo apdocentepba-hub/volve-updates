@@ -118,6 +118,36 @@ jobs:
                 throw "SYSTEM-only process did not attest its token; LastTaskResult=$($info.LastTaskResult)"
               }
               Write-Host 'PASS: one actual LocalSystem process proved SID S-1-5-18 AND verified all protected NTFS journal/snapshot descriptors'
+              # Adversarial replay IN THE SAME SYSTEM TASK: tamper only the
+              # disposable CI snapshot DACL by granting BUILTIN Users read
+              # access. SYSTEM must now FAIL CLOSED (exit 83, no witness).
+              for($i=0;$i -lt 20;$i++){
+                $taskState=Get-ScheduledTask -TaskName $name -ErrorAction Stop
+                if($taskState.State -ne 'Running'){break}
+                Start-Sleep -Milliseconds 250
+              }
+              if((Get-ScheduledTask -TaskName $name).State -eq 'Running'){
+                throw 'First SYSTEM witness still executing before tamper probe'
+              }
+              Remove-Item -LiteralPath $receipt -Force -ErrorAction Stop
+              $weakAcl=Get-Acl -LiteralPath $snapshot -ErrorAction Stop
+              $users=[Security.Principal.SecurityIdentifier]::new('S-1-5-32-545')
+              $weakRule=[Security.AccessControl.FileSystemAccessRule]::new(
+                $users,[Security.AccessControl.FileSystemRights]::Read,
+                [Security.AccessControl.AccessControlType]::Allow)
+              $weakAcl.AddAccessRule($weakRule)
+              Set-Acl -LiteralPath $snapshot -AclObject $weakAcl -ErrorAction Stop
+              Start-ScheduledTask -TaskName $name -ErrorAction Stop
+              $denied=$false
+              for($i=0;$i -lt 80;$i++){
+                $status=Get-ScheduledTaskInfo -TaskName $name -ErrorAction Stop
+                if($status.LastTaskResult -eq 83){$denied=$true;break}
+                Start-Sleep -Milliseconds 500
+              }
+              if(-not $denied -or (Test-Path -LiteralPath $receipt)){
+                throw "SYSTEM re-attestation accepted compromised NTFS ACL, last result=$($status.LastTaskResult)"
+              }
+              Write-Host 'PASS: same LocalSystem task rejected a foreign Users ACL on the disposable snapshot'
             } finally {
               if($registered){
                 $task=Get-ScheduledTask -TaskName $name -ErrorAction SilentlyContinue
