@@ -22,7 +22,16 @@ import (
 // This is a fixed internal query. Never interpolate candidate file paths,
 // names or UI input into a privileged PowerShell script.
 const WindowsVOLVETaskInventoryQuery = `$ErrorActionPreference='Stop';$ProgressPreference='SilentlyContinue';
-$items=@(Get-ScheduledTask -ErrorAction Stop | Where-Object { $_.TaskName -match '(?i)^VOLVE(?:-|_|$)' } | ForEach-Object {
+$items=@(Get-ScheduledTask -ErrorAction Stop | Where-Object {
+ # A renamed task could still launch an old VOLVE motor. Name-only
+ # filtering must never classify that installation as "motor absent".
+ $named=([string]$_.TaskName -match '(?i)^VOLVE(?:-|_|$)');
+ $linked=@($_.Actions | Where-Object {
+   ([string]$_.Execute -match '(?i)[\\/]VOLVE(?:[\\/]|[_-])') -or
+   ([string]$_.Arguments -match '(?i)[\\/]VOLVE(?:[\\/]|[_-])')
+ });
+ $named -or $linked.Count -gt 0
+} | ForEach-Object {
  $task=$_;$action=@($task.Actions | ForEach-Object {
    [pscustomobject]@{Execute=[string]$_.Execute;Arguments=[string]$_.Arguments}
  });
