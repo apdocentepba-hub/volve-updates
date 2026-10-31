@@ -191,7 +191,23 @@ if($Mode -eq 'Prepare') {
     if($LASTEXITCODE -ne 0){throw 'Failed to stage isolated VM recovery trial'}
     $watch=Get-ScheduledTask -TaskName $bootTask
     if(@($watch.Triggers).Count -ne 1 -or $watch.Triggers[0].CimClass.CimClassName -ne 'MSFT_TaskBootTrigger'){throw 'Recovery task has no boot trigger'}
-    Assert-ProtectedDir $kit
+    # The VM must be completely recovery-ready BEFORE the operator reboots.
+    # A failed metadata ACL, wrong task action or missing pending journal
+    # must stop here, not leave a potentially unrecoverable reboot rehearsal.
+    $preparedMeta=Read-Metadata $kit
+    Assert-LabIdentity $kit $preparedMeta
+    Assert-ProtectedEvidenceFile (Join-Path $root 'old-task.xml')
+    Assert-ProtectedEvidenceFile (Join-Path $root 'recovery.json')
+    $journalState=& $copiedJournal status (Join-Path $root 'recovery.json')
+    if($LASTEXITCODE -ne 0 -or $journalState -ne 'ROLLBACK_REQUIRED'){
+        throw 'VM trial journal was not armed before reboot'
+    }
+    $candidate=Join-Path $env:WINDIR 'System32\notepad.exe'
+    $motor=Assert-LabTask $labTask $candidate
+    if([string]$motor.Actions[0].Arguments -ne ''){
+        throw 'Disposable motor candidate action unexpectedly has arguments'
+    }
+    Write-Host 'PASS: pre-reboot VM kit, evidence-file DACLs, signed lab helper, pending journal and switched disposable task verified.'
     Write-Host ''
     Write-Host ('PREPARED: VM-only trial id = '+$RunId)
     Write-Host 'NEXT: take a VM snapshot, restart THIS TEST VM manually, then invoke -Mode Verify -RunId <id>.'
