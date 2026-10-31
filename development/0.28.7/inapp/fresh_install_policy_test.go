@@ -6,8 +6,44 @@ import (
  "testing"
 )
 
+// Synthetic complete observation for policy tests ONLY. A real Windows
+// installer cannot set these flags without reading all six independent
+// operating-system inventories.
+func freshCompleteObservation() FreshMotorInstallEvidence {
+ return FreshMotorInstallEvidence{
+  InspectedAsAdministrator:true,
+  InspectedMotorFiles:true,InspectedTaskScheduler:true,InspectedServices:true,
+  InspectedDNSAdapters:true,InspectedPort53Listeners:true,InspectedRecoveryState:true,
+ }
+}
+func freshCompleteObservationWithCatalog()FreshMotorInstallEvidence{
+ e:=freshCompleteObservation()
+ e.VOLVETaskCount=1
+ e.VerifiedCatalogTask=verifiedCatalogFixture()
+ return e
+}
+func TestFreshMotorPolicyRejectsUninspectedWindowsState(t *testing.T){
+ if err:=CheckFreshMotorInstallReadiness(context.Background(),FreshMotorInstallEvidence{InspectedAsAdministrator:true});err==nil{
+  t.Fatal("uninspected Windows host was treated as safe zero-valued inventory")
+ }
+ for _,tc:=range []struct{name string;omit func(*FreshMotorInstallEvidence)}{
+  {"files",func(e *FreshMotorInstallEvidence){e.InspectedMotorFiles=false}},
+  {"tasks",func(e *FreshMotorInstallEvidence){e.InspectedTaskScheduler=false}},
+  {"services",func(e *FreshMotorInstallEvidence){e.InspectedServices=false}},
+  {"DNS",func(e *FreshMotorInstallEvidence){e.InspectedDNSAdapters=false}},
+  {"port53",func(e *FreshMotorInstallEvidence){e.InspectedPort53Listeners=false}},
+  {"rollback",func(e *FreshMotorInstallEvidence){e.InspectedRecoveryState=false}},
+ }{
+  t.Run(tc.name,func(t *testing.T){
+   e:=freshCompleteObservation();tc.omit(&e)
+   if err:=CheckFreshMotorInstallReadiness(context.Background(),e);err==nil{
+    t.Fatal("partial Windows host inventory was treated as clean")
+   }
+  })
+ }
+}
 func TestFreshMotorPolicyCleanHostIsReadinessOnly(t *testing.T) {
- e:=FreshMotorInstallEvidence{InspectedAsAdministrator:true}
+ e:=freshCompleteObservation()
  if err:=CheckFreshMotorInstallReadiness(context.Background(),e);err!=nil{t.Fatal(err)}
 }
 func TestFreshMotorPolicyRejectsEveryUnsafeResidue(t *testing.T){
@@ -30,7 +66,7 @@ func TestFreshMotorPolicyRejectsEveryUnsafeResidue(t *testing.T){
   {"unknown-udp-owner",func(e *FreshMotorInstallEvidence){e.UDP53IPv4OwnerCount=-1}},
  }{
   t.Run(tc.name,func(t *testing.T){
-   e:=FreshMotorInstallEvidence{InspectedAsAdministrator:true}
+   e:=freshCompleteObservation()
    tc.edit(&e)
    if err:=CheckFreshMotorInstallReadiness(context.Background(),e);err==nil{
     t.Fatal("unsafe host would be allowed into the clean-install path")
@@ -40,7 +76,7 @@ func TestFreshMotorPolicyRejectsEveryUnsafeResidue(t *testing.T){
 }
 func TestFreshMotorPolicyCancelledWithoutSideEffects(t *testing.T){
  ctx,cancel:=context.WithCancel(context.Background());cancel()
- if err:=CheckFreshMotorInstallReadiness(ctx,FreshMotorInstallEvidence{InspectedAsAdministrator:true});!errors.Is(err,context.Canceled){
+ if err:=CheckFreshMotorInstallReadiness(ctx,freshCompleteObservation());!errors.Is(err,context.Canceled){
   t.Fatalf("cancelled preflight accepted: %v",err)
  }
 }
@@ -54,7 +90,7 @@ func verifiedCatalogFixture() *VerifiedFreshCatalogTask {
  }
 }
 func TestFreshMotorPolicyPartialProtectionCatalogIsNotDNSMotor(t *testing.T) {
- e:=FreshMotorInstallEvidence{InspectedAsAdministrator:true,VOLVETaskCount:1,VerifiedCatalogTask:verifiedCatalogFixture()}
+ e:=freshCompleteObservationWithCatalog()
  if err:=CheckFreshMotorInstallReadiness(context.Background(),e);err!=nil{t.Fatal(err)}
 }
 func TestFreshMotorPolicyRejectsUntrustedCatalogEvidence(t *testing.T) {
@@ -69,12 +105,12 @@ func TestFreshMotorPolicyRejectsUntrustedCatalogEvidence(t *testing.T) {
   {"other-volve-tasks",func(e *FreshMotorInstallEvidence){e.VOLVETaskCount=2}},
  }
  for _,tc:=range cases {t.Run(tc.name,func(t *testing.T){
-  e:=FreshMotorInstallEvidence{InspectedAsAdministrator:true,VOLVETaskCount:1,VerifiedCatalogTask:verifiedCatalogFixture()}
+  e:=freshCompleteObservationWithCatalog()
   tc.mutate(&e)
   if err:=CheckFreshMotorInstallReadiness(context.Background(),e);err==nil{t.Fatal("unsafe task accepted")}
  })}
 }
 func TestFreshMotorPolicyContradictoryInventoryRejected(t *testing.T){
- e:=FreshMotorInstallEvidence{InspectedAsAdministrator:true,VerifiedCatalogTask:verifiedCatalogFixture()}
+ e:=func()FreshMotorInstallEvidence{e:=freshCompleteObservation();e.VerifiedCatalogTask=verifiedCatalogFixture();return e}()
  if err:=CheckFreshMotorInstallReadiness(context.Background(),e);err==nil{t.Fatal("task count contradiction accepted")}
 }
