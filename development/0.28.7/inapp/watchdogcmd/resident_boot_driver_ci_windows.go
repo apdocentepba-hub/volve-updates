@@ -39,7 +39,10 @@ func(d *residentCIBootDriver) AcquireExclusive(ctx context.Context)(func(),error
 func(d *residentCIBootDriver) VerifySealedOriginal(ctx context.Context,
  intent motorupdate.ResidentRecoveryIntent)error {
  if d==nil{return errors.New("missing CI boot driver")}
- proof,err:=auditPendingResidentChain(ctx,d.root)
+ // This executes AFTER a switch/crash, so the active old executable may
+ // legitimately be missing. Only the sealed fallback and pending journal
+ // can establish the original identity at this stage.
+ proof,err:=auditPostSwitchResidentRecovery(ctx,d.root)
  if err!=nil{return err}
  if proof.LegacySHA256!=intent.LegacySHA256 ||
   proof.TaskXMLSHA256!=intent.TaskXMLSHA256 ||
@@ -58,8 +61,13 @@ func(d *residentCIBootDriver) RestoreOriginal(ctx context.Context,
   return fmt.Errorf("original motor changed before independent restoration: %w",err)
  }
  // The policy already owns the OS-level mutex for the entire transaction.
- // Do NOT call restoreResidentPilotSYSTEMTask, which would lock a second
- // time; use the separately tested bounded executor that only accepts a
- // disposable CI name. It never writes a terminal receipt by itself.
+ // Do NOT call restoreMissingOriginalAndDisposableTaskCILab, which would
+ // acquire the same lock again. First recover the missing original bytes
+ // without clobbering any DIFFERENT live executable. Then import only the
+ // exact original disposable SYSTEM task under the existing lock.
+ // No product task can pass these CI-name and hosted-runner allowlists.
+ if err:=restoreMissingLegacyExecutableCILab(ctx,d.root,d.disposableTask);err!=nil {
+  return fmt.Errorf("CI-only protected original executable restore refused: %w",err)
+ }
  return restoreResidentPilotSYSTEMTaskWithRunner(ctx,d.root,d.disposableTask,d.runner)
 }
