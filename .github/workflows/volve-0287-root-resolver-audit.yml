@@ -71,3 +71,4 @@ jobs:
           $end=[Math]::Min($src.Length,$start+50)
           Write-Host ('STATE RESOLVER SOURCE: '+[IO.Path]::GetFileName($state[0].Path))
           for($i=$start-1;$i -lt $end;$i++){Write-Host ('STATE: '+$src[$i])}
+          Get-ChildItem 'build/codigo' -Filter '*.go' -Recurse -File | Select-String -Pattern '^\s*(const\s+stateDirName|stateDirName\s*=)' | ForEach-Object { Write-Host ('INSTALL FOLDER CONSTANT: '+$_.Line.Trim()) }
