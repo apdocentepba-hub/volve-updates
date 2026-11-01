@@ -8,8 +8,9 @@ package main
 // Task Scheduler/DNS and never restores from a journal without a sealed copy.
 //
 // The real privileged SYSTEM controller is NOT implemented by this function.
-// In particular it deliberately refuses to replace an EXISTING different
-// executable; that requires a separately signed, process-locked transaction.
+// It may replace ONLY a byte-exact, pending-journal-pinned candidate inside
+// an isolated CI directory. It rejects unknown binaries. The journal's hash
+// is NOT a valid publisher signature: production remains forbidden.
 import (
  "context"
  "crypto/sha256"
@@ -25,6 +26,7 @@ import (
 func restoreMissingLegacyExecutableCILab(ctx context.Context,root,pilotTask string)error{
  if err:=ctx.Err();err!=nil{return err}
  if os.Getenv("GITHUB_ACTIONS")!="true"||
+  os.Getenv("RUNNER_ENVIRONMENT")!="github-hosted"||
   !pilotTaskPattern.MatchString(pilotTask)||
   !filepath.IsAbs(root)||filepath.Clean(root)!=root{
   return errors.New("file restoration is restricted to a disposable Windows CI sandbox")
@@ -40,13 +42,23 @@ func restoreMissingLegacyExecutableCILab(ctx context.Context,root,pilotTask stri
  pinned,err:=auditPostSwitchResidentRecovery(ctx,root)
  if err!=nil{return fmt.Errorf("post-switch sealed fallback not trusted: %w",err)}
  original:=filepath.Join(root,residentLegacyExe)
- if _,err:=os.Lstat(original);err==nil{
+ // A new candidate is an acceptable lab occupant ONLY when its exact bytes
+ // match the pending recovery intent. This is not publisher authorization.
+ // In particular, never overwrite an unknown or symlinked executable.
+ replacedPinnedCandidate:=false
+ if info,err:=os.Lstat(original);err==nil{
+  if !info.Mode().IsRegular() || info.Size()<1 || info.Size()>chainLegacyMax {
+   return errors.New("existing installed executable is linked or not a regular bounded file")
+  }
   actual,hashErr:=digestResidentLive(ctx,original)
   if hashErr!=nil{return fmt.Errorf("existing legacy motor unsafe: %w",hashErr)}
-  if actual!=pinned.LegacySHA256{
+  if actual==pinned.LegacySHA256{
+   return nil // Already restored: never rewrite an otherwise healthy original.
+  }
+  if actual!=pinned.TargetSHA256 || pinned.TargetSHA256==pinned.LegacySHA256{
    return errors.New("different installed executable requires a separate locked replacement transaction")
   }
-  return nil // Already restored: never rewrite an otherwise healthy original.
+  replacedPinnedCandidate=true
  }else if !errors.Is(err,os.ErrNotExist){return err}
 
  snapshot:=filepath.Join(root,residentRecoveryParent,residentRecoveryFolder,residentRecoveryExe)
@@ -78,11 +90,25 @@ func restoreMissingLegacyExecutableCILab(ctx context.Context,root,pilotTask stri
   return errors.New("sealed backup or journal changed before CI original restoration")
  }
  if err:=ctx.Err();err!=nil{return err}
- // NTFS hard-link creation is no-clobber: if another actor creates the old
- // filename concurrently, Link fails. Stage and installed path share bytes
- // on the same volume; removing stagePath does not remove the installed file.
- if err:=os.Link(stagePath,original);err!=nil{
-  return fmt.Errorf("cannot exclusively publish restored CI original: %w",err)
+ if replacedPinnedCandidate {
+  // A bounded lab file-level transaction: the original is staged and synced
+  // before any replacement, and the currently installed bytes are checked
+  // AGAIN at the last boundary. Never stop a running product motor; Windows
+  // atomically refuses renaming over an executable that is still in use.
+  current,err:=digestResidentLive(ctx,original)
+  if err!=nil || current!=pinned.TargetSHA256 {
+   return errors.New("CI candidate changed before byte-exact replacement")
+  }
+  if err:=os.Rename(stagePath,original);err!=nil{
+   return fmt.Errorf("atomic CI replacement of the exact pinned candidate failed: %w",err)
+  }
+ }else{
+  // NTFS hard-link creation is no-clobber: if another actor creates the old
+  // filename concurrently, Link fails. Stage and installed path share bytes
+  // on the same volume; removing stagePath does not remove the installed file.
+  if err:=os.Link(stagePath,original);err!=nil{
+   return fmt.Errorf("cannot exclusively publish restored CI original: %w",err)
+  }
  }
  runningHash,err:=digestResidentLive(ctx,original)
  if err!=nil||runningHash!=pinned.LegacySHA256{
