@@ -71,10 +71,23 @@ func RecoverPendingResidentAfterBoot(
    return "",fmt.Errorf("independent original motor restore failed: %w",err)
   }
  }
- // Do NOT finalize on a successful Windows task registration. Confirm
- // identity, DNS and network independently or leave the journal pending.
- if err:=ConfirmResidentRecoveryOutcome(ctx,journalDir,"restored",seal,protect,checks);err!=nil {
-  return "",fmt.Errorf("restored motor health not proven: %w",err)
+ // Do NOT finalize on a successful Windows task registration. The
+ // original protected recovery asset must still exist, unchanged and sealed
+ // AFTER DNS and Internet health probes, not only before RestoreOriginal.
+ // No terminal receipt is written if another process damages the original
+ // during health checks, even when the current motor seems healthy.
+ audited,err:=AuditResidentRecoveryOutcome(ctx,journalDir,"restored",protect,checks)
+ if err!=nil{return "",fmt.Errorf("restored motor health not proven: %w",err)}
+ if audited!=state.Intent{return "",errors.New("recovery intent changed during health audit")}
+ if err:=driver.VerifySealedOriginal(ctx,state.Intent);err!=nil{
+  return "",fmt.Errorf("original recovery snapshot changed during health checks: %w",err)
+ }
+ finalState,err:=InspectResidentRecoveryJournal(ctx,journalDir,protect)
+ if err!=nil||finalState.Status!="recovery-required"||finalState.Intent!=state.Intent{
+  return "",errors.New("recovery journal changed before terminal receipt")
+ }
+ if err:=FinishResidentRecoveryIntent(ctx,journalDir,"restored",seal,protect);err!=nil{
+  return "",fmt.Errorf("restored motor receipt not durable: %w",err)
  }
  return "restored",nil
 }
