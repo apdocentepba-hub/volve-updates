@@ -21,6 +21,7 @@ type ciBootHealth struct{
  firstOriginalMissing bool
  rejectDNS bool
  rejectNetwork bool
+ afterDNSProbe func()error
 }
 func(h *ciBootHealth) VerifyRunningIdentity(_ context.Context,
  _ motorupdate.ResidentRecoveryIntent,outcome string) error{
@@ -30,6 +31,7 @@ func(h *ciBootHealth) VerifyRunningIdentity(_ context.Context,
  return nil
 }
 func(h *ciBootHealth)ProbeLocalDNS(context.Context)error{
+ if h.afterDNSProbe!=nil{if err:=h.afterDNSProbe();err!=nil{return err}}
  if h.rejectDNS{return errors.New("simulated DNS failure")}
  return nil
 }
@@ -106,5 +108,39 @@ func TestResidentCIBootDriverRejectsProductiveTaskBeforeOSLock(t *testing.T){
  }
  if d,err:=newResidentCIBootDriver(t.TempDir(),disposableResidentTask,nil);err==nil||d!=nil{
   t.Fatal("CI boot driver accepted missing privileged task executor")
+ }
+}
+
+func TestResidentCIBootDriverRejectsBackupDriftDuringDNSProbe(t *testing.T){
+ root,dir,seal,protect:=chainFixture(t,false)
+ restored:=0
+ driver,err:=newResidentCIBootDriver(root,disposableResidentTask,
+  func(context.Context,string)(string,error){
+   restored++
+   return "VOLVE_CI_RESIDENT_RESTORED",nil
+  })
+ if err!=nil{t.Fatal(err)}
+ health:=&ciBootHealth{}
+ health.afterDNSProbe=func()error{
+  health.afterDNSProbe=nil
+  // Synthetic NTFS recovery fixture in the ephemeral Windows CI VM only:
+  // corrupt the protected fallback AFTER its first independent verification,
+  // not before or during Task Scheduler operation.
+  return os.WriteFile(filepath.Join(root,residentLegacyExe),[]byte("MZ_CI_CHANGED_DURING_NETWORK_HEALTH"),0600)
+ }
+ outcome,err:=motorupdate.RecoverPendingResidentAfterBoot(context.Background(),
+  dir,seal,protect,health,driver)
+ if err==nil||outcome!=""{
+  t.Fatalf("changed original falsely finalized as healthy: %s %v",outcome,err)
+ }
+ if restored!=0||health.identityChecks!=3{
+  t.Fatalf("changed original caused unapproved restore or skipped health: %d checks=%d",restored,health.identityChecks)
+ }
+ state,err:=motorupdate.InspectResidentRecoveryJournal(context.Background(),dir,protect)
+ if err!=nil||state.Status!="recovery-required"{
+  t.Fatalf("corrupt fallback lost pending recovery evidence: %+v %v",state,err)
+ }
+ if _,err:=os.Lstat(filepath.Join(dir,motorupdate.ResidentResultFile));!os.IsNotExist(err){
+  t.Fatalf("restore receipt appeared despite fallback tamper: %v",err)
  }
 }
