@@ -72,3 +72,16 @@ jobs:
           Write-Host ('STATE RESOLVER SOURCE: '+[IO.Path]::GetFileName($state[0].Path))
           for($i=$start-1;$i -lt $end;$i++){Write-Host ('STATE: '+$src[$i])}
           Get-ChildItem 'build/codigo' -Filter '*.go' -Recurse -File | Select-String -Pattern '^\s*(const\s+stateDirName|stateDirName\s*=)' | ForEach-Object { Write-Host ('INSTALL FOLDER CONSTANT: '+$_.Line.Trim()) }
+      - name: Inspect original 0.28.6 catalog scheduler contract read only
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $hits=@(Get-ChildItem 'build/codigo' -Filter '*.go' -Recurse -File |
+            Select-String -Pattern 'VOLVE-CATALOGO-0230|VOLVE_CATALOGO|catalogTask|catalogScheduler|Register-ScheduledTask|schtasks.exe')
+          Write-Host ('CATALOG SOURCE HITS: '+$hits.Count)
+          foreach($m in @($hits | Select-Object -First 55)){
+            $line=$m.Line.Trim()
+            if($line.Length -gt 180){$line=$line.Substring(0,180)}
+            Write-Host ('CATALOG: '+[IO.Path]::GetFileName($m.Path)+':'+$m.LineNumber+': '+$line)
+          }
+          if($hits.Count -eq 0){throw 'No catalog source contract located in source archive'}
