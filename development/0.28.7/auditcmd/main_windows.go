@@ -33,6 +33,7 @@ type Diagnosis struct {
  Explanation string `json:"explanation"`
  Route *motorupdate.MotorInstallRouteReport `json:"route,omitempty"`
  HostEvidence *motorupdate.WindowsMotorRouteSummary `json:"host_evidence,omitempty"`
+ CatalogSourceStatus SourceCatalogStatus `json:"catalog_source_status"`
  BrowserPolicies *motorupdate.WindowsBrowserPolicyEvidence `json:"browser_policies,omitempty"`
  BrowserPoliciesStatus string `json:"browser_policies_status"`
 }
@@ -74,10 +75,24 @@ func diagnosis(ctx context.Context,programData string,admin bool,
   result.Explanation="The installed Centro state root is not independently verifiable: "+err.Error()
   return result
  }
- details,err:=motorupdate.InspectWindowsMotorRouteWithSummaryReadOnly(ctx,root,"","",readers)
+ catalogExe,status:=verifyPinnedCatalogFileReadOnly(ctx,root)
+ result.CatalogSourceStatus=status
+ args:=""
+ if status==CatalogSourceMatched{args=sourceCatalogArguments}
+ details,err:=motorupdate.InspectWindowsMotorRouteWithSummaryReadOnly(ctx,root,catalogExe,args,readers)
  if err!=nil{
   result.Explanation="Six-inventory Windows observation incomplete: "+err.Error()
   return result
+ }
+ if status==CatalogSourceMatched {
+  // Re-read the bytes after the Windows task/port/registry census: a
+  // time-of-check/time-of-use change must not produce an optimistic verdict.
+  secondExe,secondStatus:=verifyPinnedCatalogFileReadOnly(ctx,root)
+  if secondStatus!=CatalogSourceMatched||secondExe!=catalogExe{
+   result.Explanation="Catalog executable changed during inspection; status invalidated, no changes made."
+   result.CatalogSourceStatus=CatalogSourceUnknown
+   return result
+  }
  }
  if err:=motorupdate.RequireMotorRouteReviewOnly(details.Decision);err!=nil{
   result.Explanation="Unsafe diagnosis unexpectedly carried a write authorization; discarded."
