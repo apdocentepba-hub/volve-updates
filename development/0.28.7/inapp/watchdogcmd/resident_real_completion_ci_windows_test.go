@@ -12,7 +12,6 @@ import (
  "fmt"
  "os"
  "path/filepath"
- "strings"
  "time"
 
  "volve-browser-protection/dnsproxy"
@@ -134,4 +133,3 @@ func certifyActualCIResidentOutcome(
 // The constructor and probe interface are test-scoped only; the production
 // watchdog is deliberately NOT wired to this CI adapter.
 var _ motorupdate.ResidentCompletionChecks=(*residentCIActualCompletion)(nil)
-var _ = strings.TrimSpace
