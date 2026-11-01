@@ -10,6 +10,8 @@ import (
  "context"
  "errors"
  "fmt"
+ "os"
+ "strings"
  "regexp"
  "runtime"
  "sync"
@@ -77,4 +79,31 @@ func acquireWindowsDNSLabRecoveryLease(ctx context.Context,name string)(func(),e
    return nil,fmt.Errorf("unexpected Windows DNS mutex wait status %d",result)
   }
  }
+}
+
+// AcquireWindowsSignedLegacyLabLease is ONLY an isolated Windows CI lease.
+// It maps the disposable signed migration task to the existing kernel mutex
+// implementation, which pins ownership to an OS thread. No production task,
+// DNS settings or Windows services are touched. A production implementation
+// MUST independently share an ACL-secured mutex with the real SYSTEM
+// watchdog; this lab wrapper alone does NOT prove that integration.
+func AcquireWindowsSignedLegacyLabLease(ctx context.Context, task string)(func(),error){
+ if err:=ctx.Err();err!=nil{return nil,err}
+ if os.Getenv("GITHUB_ACTIONS")!="true" ||
+  os.Getenv("RUNNER_ENVIRONMENT")!="github-hosted" {
+  return nil,errors.New("signed legacy lab mutex requires hosted disposable Windows CI")
+ }
+ const prefix="VOLVE-CI-ManagedMotor-"
+ if !strings.HasPrefix(task,prefix) {
+  return nil,errors.New("signed legacy mutex refuses productive or unknown task")
+ }
+ id:=strings.TrimPrefix(task,prefix)
+ if len(id)<12||len(id)>20{
+  return nil,errors.New("signed legacy mutex nonce length invalid")
+ }
+ name:="VOLVE-CI-DNSLock-"+id
+ if !windowsDNSLabLeaseName.MatchString(name){
+  return nil,errors.New("signed legacy mutex task nonce not allowlisted")
+ }
+ return acquireWindowsDNSLabRecoveryLease(ctx,name)
 }
