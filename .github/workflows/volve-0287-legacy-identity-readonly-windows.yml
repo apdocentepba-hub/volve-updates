@@ -1,0 +1,45 @@
+name: VOLVE legacy motor identity report - Windows read-only validation
+on:
+  push:
+    branches: [feature/motor-updater-0287-pilot]
+    paths:
+      - '.github/workflows/volve-0287-legacy-identity-readonly-windows.yml'
+      - 'development/0.28.7/motor-release-candidate/VOLVE_0287_Identidad_Motor_Solo_Lectura.ps1'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  windows-identity:
+    runs-on: windows-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check read-only inspector returns fail-closed JSON without altering Windows
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          if($env:GITHUB_ACTIONS -ne 'true' -or $env:RUNNER_ENVIRONMENT -ne 'github-hosted'){throw 'CI-only test'}
+          $sys=Get-CimInstance Win32_ComputerSystem
+          if(($sys.Manufacturer+' '+$sys.Model) -notmatch '(?i:virtual machine|vmware|hyper-v|qemu|kvm|virtualbox)'){throw 'Not a VM'}
+          $taskBefore=@(Get-ScheduledTask | Where-Object TaskName -like 'VOLVE-*' | Select-Object TaskName,TaskPath,State | ConvertTo-Json -Compress)
+          $dnsBefore=Get-DnsClientServerAddress | Sort-Object InterfaceIndex,AddressFamily | Select-Object InterfaceIndex,AddressFamily,ServerAddresses | ConvertTo-Json -Compress -Depth 5
+          $path='development/0.28.7/motor-release-candidate/VOLVE_0287_Identidad_Motor_Solo_Lectura.ps1'
+          $raw=& powershell.exe -NoProfile -NonInteractive -File $path 2>&1
+          if($LASTEXITCODE -ne 0){throw ('Readonly inspection failed to execute: '+($raw | Out-String))}
+          $output=($raw | Out-String).Trim()
+          $report=$output|ConvertFrom-Json -ErrorAction Stop
+          if($report.schema -ne 1 -or $report.tool -ne 'volve-0287-legacy-engine-review-readonly' -or
+            $report.may_modify_windows -ne $false -or $report.migration_authorized -ne $false){
+            throw 'Inspection did not fail closed'
+          }
+          if($report.old_engine_file -eq $null){throw 'Missing bounded file evidence'}
+          if($report.legacy_task_status -ne 'not_verified' -or $report.identity_review_possible -ne $false){
+            throw 'Disposable empty Windows host was mistakenly claimed as installed verified legacy motor'
+          }
+          if($output -match '(?i)ComputerName|DomainName|UserName|C:\\Users|IPv4Address|MacAddress'){
+            throw 'Output unexpectedly reveals user or device identity'
+          }
+          $taskAfter=@(Get-ScheduledTask | Where-Object TaskName -like 'VOLVE-*' | Select-Object TaskName,TaskPath,State | ConvertTo-Json -Compress)
+          $dnsAfter=Get-DnsClientServerAddress | Sort-Object InterfaceIndex,AddressFamily | Select-Object InterfaceIndex,AddressFamily,ServerAddresses | ConvertTo-Json -Compress -Depth 5
+          if(($taskBefore -join '') -cne ($taskAfter -join '') -or $dnsBefore -cne $dnsAfter){throw 'Inspection unexpectedly modified OS state'}
+          Write-Host 'PASS: read-only legacy motor fingerprint report, unknown actual legacy state preserved; no DNS or tasks changed'
