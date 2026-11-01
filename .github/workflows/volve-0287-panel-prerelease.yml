@@ -44,9 +44,19 @@ jobs:
         run: |
           $ErrorActionPreference='Stop'
           gh release view v0.28.7 --repo "${{ github.repository }}" *> $null
-          if($LASTEXITCODE -eq 0){throw 'Refusing to replace existing release v0.28.7'}
-          gh release create v0.28.7 stage/VOLVE_0_28_7_CENTRO.exe release-candidates/v0.28.7/stable.json release-candidates/v0.28.7/stable.json.sig --repo "${{ github.repository }}" --target 99ecd4999118ee9371d101c9a0b877d41b729491 --prerelease --title "VOLVÉ 0.28.7 Centro (prueba firmada)" --notes "Centro Windows 0.28.7 firmado con el canal Ed25519 existente. Solo Centro; el motor DNS y las tareas SYSTEM instaladas no se sustituyen. No se activa el canal estable hasta pasar integración 0.28.6 -> 0.28.7."
-          if($LASTEXITCODE -ne 0){throw 'Pre-release creation failed'}
+          if($LASTEXITCODE -eq 0){
+            New-Item -ItemType Directory stage-existing -Force | Out-Null
+            gh release download v0.28.7 --repo "${{ github.repository }}" --pattern VOLVE_0_28_7_CENTRO.exe --dir stage-existing
+            if($LASTEXITCODE -ne 0){throw 'Existing signed release download unavailable'}
+            $publishedSha=(Get-FileHash -Algorithm SHA256 stage-existing/VOLVE_0_28_7_CENTRO.exe).Hash.ToLowerInvariant()
+            if($publishedSha -ne 'e451b6289116636986ddd67b39dc15f02e471ebde7be9508b38d7bcb0155b414'){
+              throw 'Existing prerelease differs from authorized signed candidate; abort'
+            }
+            Write-Host 'PASS: immutable signed v0.28.7 prerelease already exists; testing without overwriting'
+          }else{
+            gh release create v0.28.7 stage/VOLVE_0_28_7_CENTRO.exe release-candidates/v0.28.7/stable.json release-candidates/v0.28.7/stable.json.sig --repo "${{ github.repository }}" --target 99ecd4999118ee9371d101c9a0b877d41b729491 --prerelease --title "VOLVÉ 0.28.7 Centro (prueba firmada)" --notes "Centro Windows 0.28.7 firmado con el canal Ed25519 existente. Solo Centro; el motor DNS y las tareas SYSTEM instaladas no se sustituyen. No se activa el canal estable hasta pasar integración 0.28.6 -> 0.28.7."
+            if($LASTEXITCODE -ne 0){throw 'Pre-release creation failed'}
+          }
       - name: Install signed 0.28.7 from REAL 0.28.6 updater in disposable VM only
         shell: pwsh
         env:
@@ -87,7 +97,11 @@ jobs:
               throw 'Installed panel hash does not match signed v0.28.7'
             }
             $shortcut=Join-Path $env:ProgramData 'Microsoft/Windows/Start Menu/Programs/VOLVE - Centro de proteccion.lnk'
-            if(-not (Test-Path -LiteralPath $shortcut -PathType Leaf)){throw 'Centro shortcut missing'}
+            $shortcutDeadline=[DateTime]::UtcNow.AddSeconds(25)
+            while(-not (Test-Path -LiteralPath $shortcut -PathType Leaf) -and [DateTime]::UtcNow -lt $shortcutDeadline){
+              Start-Sleep -Milliseconds 500
+            }
+            if(-not (Test-Path -LiteralPath $shortcut -PathType Leaf)){throw 'Centro shortcut missing after bounded wait'}
             $realTarget=(New-Object -ComObject WScript.Shell).CreateShortcut($shortcut).TargetPath
             if($realTarget -ne $target){throw 'Shortcut does not point to version 0.28.7'}
             foreach($name in @('VOLVE-DNS-SERVER-0270','VOLVE-DNS-RESCUE-0270')){
