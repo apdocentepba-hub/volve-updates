@@ -18,6 +18,7 @@ type signedLegacyDriverLab struct {
     replaceCandidate bool
     replaceOldMotor string
     afterSnapshot func()error
+    afterInstall func()error
 }
 func newSignedLegacyDriverLab()*signedLegacyDriverLab {
     return &signedLegacyDriverLab{managedDriverTest:&managedDriverTest{}}
@@ -41,6 +42,7 @@ func (d *signedLegacyDriverLab) VerifyPreparedTarget(_ context.Context, m Manife
 }
 func (d *signedLegacyDriverLab) InstallVersionedCandidate(ctx context.Context,candidate string) error {
     if err:=d.managedDriverTest.InstallVersionedCandidate(ctx,candidate);err!=nil{return err}
+    if d.afterInstall!=nil{return d.afterInstall()}
     if d.replaceCandidate{
         return os.WriteFile(candidate,[]byte("MZ_CANDIDATE_MODIFIED_AFTER_FIRST_SIGNATURE"),0600)
     }
@@ -191,27 +193,19 @@ func TestSignedLegacyTransactionRejectsBackupModifiedImmediatelyAfterSnapshot(t 
  }
 }
 
-func TestSignedLegacyTransactionNeverClaimsSealedRecoveryWhenBackupCorruptsAfterStaging(t *testing.T){
+func TestSignedLegacyTransactionRejectsSealedBackupTamperedAfterTargetPreparation(t *testing.T){
  f:=newSignedBridge(t)
  d:=newSignedLegacyDriverLab()
- d.fail="prepared"
- d.afterSnapshot=func()error{return nil}
- // The installed motor mutation is separate from the sealed recovery.
- // Corrupt the backup only once the (simulated) new motor was prepared.
- d.replaceCandidate=false
- // Inject corruption using the second independent watchdog readiness gate;
- // the signed verifier would reject it before Switch.
- count:=0
- acl:=func(path string)error{
-  if path==f.backup {
-   count++
-   if count>=6{return errors.New("recovery ACL changed during transaction")}
-  }
-  return nil
+ d.afterInstall=func()error{
+  return os.WriteFile(filepath.Join(f.backup,legacyBackupXML),[]byte("XML_CHANGED_AFTER_PREPARATION"),0600)
  }
- err:=runSignedLegacyLab(context.Background(),f,d,acl,func()error{return nil})
- if err==nil{t.Fatal("recovery ACL mutation ignored")}
- for _,step:=range d.calls{
-  if step=="switch"||step=="commit"{t.Fatalf("untrusted backup allowed production switch: %v",d.calls)}
+ err:=runSignedLegacyLab(context.Background(),f,d,testSecureLabFolderBridge,func()error{return nil})
+ if err==nil||!strings.Contains(err.Error(),"CRÍTICO")||
+  !strings.Contains(err.Error(),"autorización cambió"){
+  t.Fatalf("corrupted rollback after installing target not critical: %v",err)
+ }
+ want:=[]string{"preflight","watchdog","snapshot","install","prepared","restore","probe","connectivity"}
+ if !reflect.DeepEqual(d.calls,want){
+  t.Fatalf("corrupted backup allowed switch or false commit: %v",d.calls)
  }
 }
