@@ -110,6 +110,22 @@ func TestPostSwitchSystemTaskCILabRestoresRealDisposableSystemTaskAndOriginalByt
  if result,err:=ps(ctx,validate);err!=nil||result!="CI_REAL_SYSTEM_TASK_RESTORED"{
   t.Fatalf("real Windows task not restored correctly: %s %v",result,err)
  }
+ // Model a second reboot/crash BEFORE any healthy terminal result: run the
+ // SAME independent watchdog process again while the real SYSTEM task is
+ // ALREADY restored. This must succeed without re-importing or changing it.
+ retry:=exec.CommandContext(ctx,os.Args[0],
+  "-test.run=^TestPostSwitchSystemTaskCILabExternalChild$","-test.v")
+ retry.Env=append(os.Environ(),
+  "VOLVE_CI_TASK_RESTORE_CHILD=1",
+  "VOLVE_CI_TASK_RESTORE_ROOT="+root,
+  "VOLVE_CI_TASK_RESTORE_NAME="+task)
+ retryOutput,retryErr:=retry.CombinedOutput()
+ if retryErr!=nil || !strings.Contains(string(retryOutput),"CI_EXTERNAL_RECOVERY_OK"){
+  t.Fatalf("already-restored SYSTEM task refused safe independent retry: %v %s",retryErr,retryOutput)
+ }
+ if result,err:=ps(ctx,validate);err!=nil||result!="CI_REAL_SYSTEM_TASK_RESTORED"{
+  t.Fatalf("second recovery damaged exact SYSTEM task: %s %v",result,err)
+ }
  current,err:=motorupdate.InspectResidentRecoveryJournal(ctx,journalDir,protect)
  if err!=nil||current.Status!="recovery-required"{
   t.Fatalf("task+file restore falsely published DNS success: %+v %v",current,err)
@@ -117,7 +133,7 @@ func TestPostSwitchSystemTaskCILabRestoresRealDisposableSystemTaskAndOriginalByt
  if _,err:=os.Lstat(filepath.Join(journalDir,motorupdate.ResidentResultFile));!os.IsNotExist(err){
   t.Fatalf("restored task falsely wrote DNS/Internet health receipt: %v",err)
  }
- t.Logf("PASS: real disposable SYSTEM task and original EXE recovered (scenario=%s); journal still pending; DNS untouched",scenario)
+ t.Logf("PASS: real SYSTEM task and old EXE recovered, independent-process retry idempotent (scenario=%s); journal still pending; DNS untouched",scenario)
   })
  }
 }
