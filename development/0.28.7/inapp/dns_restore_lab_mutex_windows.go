@@ -19,7 +19,7 @@ import (
  "unsafe"
 )
 
-var windowsDNSLabLeaseName=regexp.MustCompile(`^VOLVE-CI-DNSLock-[0-9]{12,20}$`)
+var windowsDNSLabLeaseName=regexp.MustCompile(`^VOLVE-CI-(?:DNSLock|BootLock)-[0-9]{12,20}$`)
 
 const (
  windowsDNSWaitObject0=0x00000000
@@ -82,11 +82,10 @@ func acquireWindowsDNSLabRecoveryLease(ctx context.Context,name string)(func(),e
 }
 
 // AcquireWindowsSignedLegacyLabLease is ONLY an isolated Windows CI lease.
-// It maps the disposable signed migration task to the existing kernel mutex
-// implementation, which pins ownership to an OS thread. No production task,
-// DNS settings or Windows services are touched. A production implementation
-// MUST independently share an ACL-secured mutex with the real SYSTEM
-// watchdog; this lab wrapper alone does NOT prove that integration.
+// It maps the disposable signed migration task to the SAME BootLock name
+// consumed by the separately compiled SYSTEM watchdog. This does not prove
+// correct lock handoff or publisher authorization; the integration tests must
+// exercise both processes together before production can be considered.
 func AcquireWindowsSignedLegacyLabLease(ctx context.Context, task string)(func(),error){
  if err:=ctx.Err();err!=nil{return nil,err}
  if os.Getenv("GITHUB_ACTIONS")!="true" ||
@@ -101,7 +100,7 @@ func AcquireWindowsSignedLegacyLabLease(ctx context.Context, task string)(func()
  if len(id)<12||len(id)>20{
   return nil,errors.New("signed legacy mutex nonce length invalid")
  }
- name:="VOLVE-CI-DNSLock-"+id
+ name:="VOLVE-CI-BootLock-"+id
  if !windowsDNSLabLeaseName.MatchString(name){
   return nil,errors.New("signed legacy mutex task nonce not allowlisted")
  }
