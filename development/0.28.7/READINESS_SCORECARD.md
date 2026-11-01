@@ -168,3 +168,14 @@ El test recupera el ejecutable original desde el respaldo NTFS, restaura una tar
 **Límites:** aunque la recuperación usa un proceso y una tarea SYSTEM reales en Windows, **no** demuestra comportamiento tras reinicio real, no implementa watchdog productivo persistente, no habilita cambios en la tarea instalada ni valida un permiso firmado del editor destinado a usuarios. El resto de los controles completos de las puertas 6–10 continúa pendiente. No se publicaron binarios ni se tocó VOLVÉ 0.28.6.
 
 **Porcentajes:** ensayo específico (incluida prueba de falla): **100% aprobado**; aceptación global de producto **50% (5/10 puertas)** sin cambio.
+
+
+## 01/11/2026 — Idempotencia ante interrupción tras restaurar SYSTEM
+
+**Comprobado:** [Windows GitHub Actions #41338763565](https://github.com/apdocentepba-hub/volve-updates/actions/runs/41338763565), `success`. Se resolvió un estado de recuperación pendiente que antes quedaba bloqueado: la tarea descartable SYSTEM ya había sido restaurada a su ejecutable/argumentos originales, pero un corte ocurrió antes del recibo terminal. El nuevo verificador de `resident_pilot_restore_windows.go` acepta **solo la acción original exacta** o la acción candidata exacta, y vuelve a verificar el SHA-256 del ejecutable y XML protegidos ANTES de decidir si importa la tarea. Si la acción original ya está colocada, devuelve éxito técnico sin una segunda importación; el journal sigue pendiente hasta las verificaciones independientes de identidad/DNS/conectividad.
+
+**Prueba real:** para `missing` y `journal-pinned-replacement`, la VM Windows creó una tarea SYSTEM temporal, ejecutó la restauración mediante un proceso distinto y, con la tarea ya correcta, efectuó un **segundo proceso de recuperación**. Ambos escenarios pasaron, conservando tarea original, bytes originales y journal `recovery-required`. No hubo cambios de DNS ni de la tarea productiva.
+
+**Negativo adicional:** se agregó test que altera los argumentos de la tarea SYSTEM exclusivamente descartable y exige que otro proceso rechace la recuperación sin modificar la tarea ni cerrar el journal (commit `ab1239b`). **Su resultado aún requiere CI verde:** no contabilizarlo como aprobado antes de consultar los logs.
+
+**Progreso de aceptación global: 50% (5/10 hitos).** Es subcontrol CI de la puerta 7; aún falta watchdog productivo firmado y persistente, reinicio REAL de VM, permiso editorial auténtico y migración 0.28.6 → 0.28.7.
