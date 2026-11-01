@@ -120,6 +120,27 @@ func InspectWindowsFreshRecoveryReadOnly(ctx context.Context,root string,
   }
   if err:=protect(ctx,path);err!=nil{return zero,fmt.Errorf("recovery artifact ACL untrusted: %w",err)}
   if name==freshRecoverySnapshotName {
+   // The snapshot verifier validates receipt and SHA256; independently
+   // verify each CHILD file's DACL too. Checking only the parent directory
+   // would miss a separately writable recovery EXE, XML or JSON receipt.
+   children,readErr:=os.ReadDir(path)
+   if readErr!=nil{return zero,readErr}
+   if len(children)!=3{return zero,errors.New("incomplete or unexpected recovery snapshot content")}
+   expected:=map[string]bool{
+    legacyBackupExe:true,legacyBackupXML:true,legacyBackupReceipt:true,
+   }
+   for _,child:=range children {
+    if !expected[child.Name()] {return zero,errors.New("unknown legacy backup entry")}
+    childPath:=filepath.Join(path,child.Name())
+    childInfo,statErr:=os.Lstat(childPath)
+    if statErr!=nil{return zero,statErr}
+    if !childInfo.Mode().IsRegular()||childInfo.Mode()&os.ModeSymlink!=0{
+     return zero,errors.New("legacy recovery backup is linked or nonregular")
+    }
+    if aclErr:=protect(ctx,childPath);aclErr!=nil{
+     return zero,fmt.Errorf("untrusted legacy backup file ACL: %w",aclErr)
+    }
+   }
    record,err:=VerifyUnversionedLegacyRecovery(path,func(p string)error{return protect(ctx,p)})
    if err!=nil{return zero,fmt.Errorf("legacy recovery snapshot incomplete: %w",err)}
    if record.ExeSHA256==""||record.XMLSHA256==""{
