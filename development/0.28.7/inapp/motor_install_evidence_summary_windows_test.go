@@ -18,7 +18,7 @@ func TestWindowsMotorRouteSummaryKeepsDNSResidueEvenWhenCatalogUnpinned(t *testi
  if err!=nil{t.Fatal(err)}
  s:=got.Summary
  if got.Decision.Route!=MotorRouteUnverified || s.InventoriesObserved!=6 ||
-  s.VOLVETasks!=1||!s.CatalogTaskSeen||s.CatalogTaskPublisherPinned ||
+  s.VOLVETasks!=1||!s.CatalogTaskSeen||s.CatalogTaskSourcePinned ||
   s.OtherTaskCount!=0||!s.LocalDNSIPv6Seen||s.UDP53IPv6Listeners!=1 ||
   s.SignedUpgradeAuthorized||s.CanModifyDNS{
   t.Fatalf("unverified catalog hid existing IPv6/DNS port evidence: %+v",got)
