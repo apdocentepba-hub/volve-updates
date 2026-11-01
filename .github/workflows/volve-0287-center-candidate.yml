@@ -65,11 +65,9 @@ jobs:
           if len(found)!=1:
               raise SystemExit(f'FAIL CLOSED: expected exactly one panel version declaration, got {len(found)}')
           source,data,match=found[0]
-          if match.group(1)!='0.28.6':
-              raise SystemExit(f'FAIL CLOSED: base version is {match.group(1)!r}, not installed 0.28.6')
-          edited=data[:match.start(1)]+'0.28.7'+data[match.end(1):]
-          source.write_text(edited,encoding='utf-8')
-          print(f'Panel identity upgraded in {source.name}: 0.28.6 -> 0.28.7')
+          if match.group(1)!='0.28.7':
+              raise SystemExit(f'FAIL CLOSED: reconstructed Centro identifies {match.group(1)!r} instead of 0.28.7')
+          print(f'PASS: exact 0.28.7 Centro identity already present in {source.name}; no source mutation required')
           '@ | python -
           if($LASTEXITCODE -ne 0){throw 'Panel version update refused'}
       - name: Tests and Windows GUI build
