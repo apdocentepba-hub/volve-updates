@@ -27,6 +27,7 @@ const legacyExpectedTask="VOLVE-DNS-SERVER-0270"
 
 type LegacyPublisherBaseline struct {
  Status string `json:"status"`
+ FailureStage string `json:"failure_stage,omitempty"`
  Schema int `json:"schema"`
  FromTask string `json:"from_task,omitempty"`
  FromExecutable string `json:"from_executable,omitempty"`
@@ -68,33 +69,40 @@ func defaultLegacyTaskXML(ctx context.Context)([]byte,error){
  return out,nil
 }
 
-func inspectVerifiedLegacyTask(ctx context.Context,root string,inspect motorupdate.WindowsFreshTaskInspect)error{
- if inspect==nil{return errors.New("no Windows task inventory observer")}
+// inspectVerifiedLegacyTaskStage returns a finite diagnostic code. No path,
+// principal, task XML or query errors are propagated to the exported JSON.
+// A mismatch never grants authority to install or repair the 0.28.6 motor.
+func inspectVerifiedLegacyTaskStage(ctx context.Context,root string,inspect motorupdate.WindowsFreshTaskInspect)string{
+ if ctx.Err()!=nil{return "CANCELLED"}
+ if inspect==nil{return "TASK_READER_MISSING"}
  raw,err:=inspect(ctx,motorupdate.WindowsVOLVETaskInventoryQuery)
- if err!=nil{return err}
- if len(raw)<2||len(raw)>1<<20{return errors.New("Windows task inventory invalid")}
+ if err!=nil{return "TASK_QUERY_FAILED"}
+ if len(raw)<2||len(raw)>1<<20{return "TASK_RESPONSE_INVALID"}
  dec:=json.NewDecoder(bytes.NewReader(raw));dec.DisallowUnknownFields()
  var records []publisherTaskEntry
- if err:=dec.Decode(&records);err!=nil{return err}
+ if err:=dec.Decode(&records);err!=nil{return "TASK_RESPONSE_INVALID"}
  var trailing any
- if err:=dec.Decode(&trailing);err!=io.EOF{return errors.New("trailing task inventory")}
- if len(records)==0||len(records)>64{return errors.New("Windows VOLVE task inventory empty/oversized")}
+ if err:=dec.Decode(&trailing);err!=io.EOF{return "TASK_RESPONSE_INVALID"}
+ if len(records)==0||len(records)>64{return "TASK_RESPONSE_INVALID"}
  matches:=0
  expected:=filepath.Join(root,legacyExpectedExe)
- for _,task:=range records {
-  if task.Name!=legacyExpectedTask {continue}
+ for _,task:=range records{
+  if task.Name!=legacyExpectedTask{continue}
   matches++
-  if task.TaskPath!="\\"||
-   (task.Principal!="SYSTEM"&&task.Principal!="S-1-5-18")||
-   len(task.Actions)!=1{return errors.New("legacy SYSTEM task identity differs")}
+  if task.TaskPath!="\\"{return "TASK_FOLDER_MISMATCH"}
+  if task.Principal!="SYSTEM"&&task.Principal!="S-1-5-18"{return "TASK_OWNER_MISMATCH"}
+  if len(task.Actions)!=1{return "TASK_ACTION_COUNT_MISMATCH"}
   a:=task.Actions[0]
-  if !filepath.IsAbs(a.Execute) ||
-   !strings.EqualFold(filepath.Clean(a.Execute),expected) ||
-   a.Arguments!="--dns-service" || a.WorkingDirectory==nil||
-   *a.WorkingDirectory!="" {return errors.New("legacy SYSTEM task action differs")}
+  if !filepath.IsAbs(a.Execute)||!strings.EqualFold(filepath.Clean(a.Execute),expected){
+   return "TASK_ACTION_PATH_MISMATCH"
+  }
+  if a.Arguments!="--dns-service"{return "TASK_ARGUMENTS_MISMATCH"}
+  if a.WorkingDirectory==nil{return "TASK_WORKING_DIR_MISSING"}
+  if *a.WorkingDirectory!=""{return "TASK_WORKING_DIR_MISMATCH"}
  }
- if matches!=1{return errors.New("legacy SYSTEM task missing/duplicated")}
- return ctx.Err()
+ if matches!=1{return "TASK_MISSING_OR_DUPLICATED"}
+ if ctx.Err()!=nil{return "CANCELLED"}
+ return ""
 }
 
 func digestLegacyInstalledMotor(ctx context.Context,root string)(string,int64,error){
@@ -135,21 +143,40 @@ func digestOriginalTaskXML(ctx context.Context,read func(context.Context)([]byte
 // Incomplete checks return no hashes and no authorizations.
 func buildUnsignedLegacyPublisherBaseline(ctx context.Context,root string,readers legacyBaselineReaders)LegacyPublisherBaseline{
  denied:=LegacyPublisherBaseline{Schema:1,Status:"NOT_VERIFIED_NO_CHANGES"}
- if err:=ctx.Err();err!=nil{return denied}
+ fail:=func(stage string)LegacyPublisherBaseline{
+  denied.FailureStage=stage
+  return denied
+ }
+ if ctx.Err()!=nil{return fail("CANCELLED")}
  if root==""||!filepath.IsAbs(root)||filepath.Clean(root)!=root||
-  readers.Tasks==nil||readers.XML==nil||readers.Owner==nil{return denied}
+  readers.Tasks==nil||readers.XML==nil||readers.Owner==nil{
+  return fail("REQUIRED_INSPECTOR_MISSING")
+ }
  owner:=readers.Owner(ctx)
  if owner.Status!="EXACT_LEGACY_SYSTEM_PROCESS_ON_BOTH_UDP53_SOCKETS_NOT_SIGNED"||
-  owner.Evidence==nil||!owner.Safe(){return denied}
- if err:=inspectVerifiedLegacyTask(ctx,root,readers.Tasks);err!=nil{return denied}
- hash1,size1,err:=digestLegacyInstalledMotor(ctx,root);if err!=nil{return denied}
- xml1,err:=digestOriginalTaskXML(ctx,readers.XML);if err!=nil{return denied}
- if err:=inspectVerifiedLegacyTask(ctx,root,readers.Tasks);err!=nil{return denied}
- hash2,size2,err:=digestLegacyInstalledMotor(ctx,root);if err!=nil{return denied}
- xml2,err:=digestOriginalTaskXML(ctx,readers.XML);if err!=nil{return denied}
+  owner.Evidence==nil||!owner.Safe(){return fail("DNS_OWNER_FIRST_UNVERIFIED")}
+ if stage:=inspectVerifiedLegacyTaskStage(ctx,root,readers.Tasks);stage!=""{
+  return fail("FIRST_"+stage)
+ }
+ hash1,size1,err:=digestLegacyInstalledMotor(ctx,root)
+ if err!=nil{return fail("MOTOR_DIGEST_FIRST_FAILED")}
+ xml1,err:=digestOriginalTaskXML(ctx,readers.XML)
+ if err!=nil{return fail("TASK_XML_FIRST_FAILED")}
+ if stage:=inspectVerifiedLegacyTaskStage(ctx,root,readers.Tasks);stage!=""{
+  return fail("SECOND_"+stage)
+ }
+ hash2,size2,err:=digestLegacyInstalledMotor(ctx,root)
+ if err!=nil{return fail("MOTOR_DIGEST_SECOND_FAILED")}
+ xml2,err:=digestOriginalTaskXML(ctx,readers.XML)
+ if err!=nil{return fail("TASK_XML_SECOND_FAILED")}
  owner2:=readers.Owner(ctx)
- if ctx.Err()!=nil||owner2.Status!=owner.Status||owner2.Evidence==nil||!owner2.Safe()||
-  hash1!=hash2||size1!=size2||xml1!=xml2{return denied}
+ if ctx.Err()!=nil{return fail("CANCELLED")}
+ if owner2.Status!=owner.Status||owner2.Evidence==nil||!owner2.Safe()||
+  *owner2.Evidence!=*owner.Evidence{
+  return fail("DNS_OWNER_CHANGED_OR_UNVERIFIED")
+ }
+ if hash1!=hash2||size1!=size2{return fail("MOTOR_CHANGED_BETWEEN_READS")}
+ if xml1!=xml2{return fail("TASK_XML_CHANGED_BETWEEN_READS")}
  return LegacyPublisherBaseline{
   Schema:1,Status:"UNSIGNED_LEGACY_IDENTITY_FOR_PUBLISHER_REVIEW_ONLY",
   FromTask:legacyExpectedTask,FromExecutable:legacyExpectedExe,
