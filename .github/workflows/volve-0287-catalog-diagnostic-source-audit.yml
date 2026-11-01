@@ -1,0 +1,73 @@
+name: VOLVE 0.28.7 catalog task diagnostic source review (NO INSTALL)
+on:
+  push:
+    branches: [feature/motor-updater-0287-pilot]
+    paths:
+      - '.github/workflows/volve-0287-catalog-diagnostic-source-audit.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  source-audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.x'
+      - name: Reconstruct verified source with preserved overlay
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import hashlib
+          source=Path('development/0.28.7/complete-source-parts')
+          chunks=sorted(source.glob('part-*.bin'))
+          assert len(chunks)==10
+          with open('source.zip','wb') as f:
+              for n,chunk in enumerate(chunks):
+                  assert chunk.name==f'part-{n:02d}.bin'
+                  f.write(chunk.read_bytes())
+          assert hashlib.sha256(Path('source.zip').read_bytes()).hexdigest()=='92b3536559151260375b17a64eedd009df8399e45460637208027b7ca0587ba5'
+          PY
+          mkdir build
+          unzip -q source.zip -d build
+          echo 'fdfd31f21df81fe6da6075bfd442354297874576b6dc2c38f19bd35a681d95cd  development/0.28.7/VOLVE_0287_PRECHECK_RESCATE_OVERLAY_NO_INSTALAR.zip' | sha256sum -c
+          unzip -q -o development/0.28.7/VOLVE_0287_PRECHECK_RESCATE_OVERLAY_NO_INSTALAR.zip -d build
+          echo '773bd5eb5f1c4883021cc321856636354e964d3605dba9017e2fb5d1a7401b40  development/0.28.7/VOLVE_0287_RECUPERACION_INTERRUPCION_FORZADA_NO_INSTALAR_v3.zip' | sha256sum -c
+          unzip -q -o development/0.28.7/VOLVE_0287_RECUPERACION_INTERRUPCION_FORZADA_NO_INSTALAR_v3.zip -d build
+          cp development/0.28.7/journal/*.go build/codigo/motorupdate/
+          go run development/0.28.7/inapp/apply_overlay.go build/codigo
+      - name: Locate catalog freshness and update actions, source-only report
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          root=Path('build/codigo')
+          patterns=[
+            r'ACTUALIZADOR:',r'CATÁLOGO:',r'(?i)archivo no modificado recientemente',
+            r'(?i)hace .* horas',r'(?i)refresh',r'(?i)update.*catalog',
+            r'VOLVE-CATALOGO-',r'(?i)actualizar listas',r'(?i)doctor-admin'
+          ]
+          allowed={'catalog','feed','diagnos','doctor','update','motor','panel','main','dns','task'}
+          selected=[]
+          for path in sorted(root.glob('*.go')):
+              if not any(tag in path.name.lower() for tag in allowed):continue
+              lines=path.read_text(encoding='utf-8').splitlines()
+              hits=[i for i,line in enumerate(lines) if any(re.search(p,line) for p in patterns)]
+              if hits:
+                  selected.append(path.name)
+                  print('FILE',path.name)
+                  seen=set()
+                  for i in hits[:35]:
+                      for n in range(max(0,i-5),min(len(lines),i+7)):
+                          if n not in seen:
+                              print(f'{n+1}: {lines[n][:400]}')
+                              seen.add(n)
+                      print('----')
+          print('MATCHED_FILES',len(selected))
+          PY
