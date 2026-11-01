@@ -49,3 +49,35 @@ func restoreMissingOriginalAndDisposableTaskCILab(
  // and Internet health checks succeed; this function writes no receipt.
  return nil
 }
+
+ // recoverResidentCIFromStandalone is the only mutating resident CLI of the
+ // separately compiled watchdog. All permissions are deliberately bounded to
+ // a disposable hosted GitHub Windows VM. The production DNS task is never
+ // named in a mutation command. It does NOT certify DNS/Internet health or
+ // publish a terminal receipt.
+func recoverResidentCIFromStandalone(ctx context.Context,root,task string)error {
+ if err:=ctx.Err();err!=nil{return err}
+ if os.Getenv("GITHUB_ACTIONS")!="true" ||
+  os.Getenv("RUNNER_ENVIRONMENT")!="github-hosted" ||
+  !pilotTaskPattern.MatchString(task) ||
+  !filepath.IsAbs(root) || filepath.Clean(root)!=root {
+  return errors.New("standalone restoration CLI restricted to hosted Windows CI fixture")
+ }
+ // A user can spoof CI environment variables. Recheck the actual VM,
+ // administrator token and ABSENCE of a real production motor task before
+ // running any PowerShell command which changes a disposable task.
+ const hostCheck=`$ErrorActionPreference='Stop';$ProgressPreference='SilentlyContinue';
+$id=[Security.Principal.WindowsIdentity]::GetCurrent();
+$p=[Security.Principal.WindowsPrincipal]::new($id);
+if(-not $p.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)){throw 'CI administrator required'};
+$vm=Get-CimInstance -ClassName Win32_ComputerSystem -ErrorAction Stop;
+if(($vm.Manufacturer+' '+$vm.Model) -notmatch '(?i:virtual machine|vmware|hyper-v|kvm|qemu|virtualbox)'){throw 'host is not isolated VM'};
+if(Get-ScheduledTask -TaskName 'VOLVE-DNS-SERVER-0270' -ErrorAction SilentlyContinue){throw 'production motor task exists'};
+if(Get-ScheduledTask -TaskName 'VOLVE-DNS-RESCUE-0270' -ErrorAction SilentlyContinue){throw 'production rescue task exists'};
+Write-Output 'VOLVE_CI_HOST_VERIFIED'`
+ out,err:=ps(ctx,hostCheck)
+ if err!=nil||out!="VOLVE_CI_HOST_VERIFIED"{
+  return fmt.Errorf("standalone Windows VM preflight rejected: %s %w",out,err)
+ }
+ return restoreMissingOriginalAndDisposableTaskCILab(ctx,root,task,ps)
+}
