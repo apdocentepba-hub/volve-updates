@@ -144,3 +144,14 @@ jobs:
               Write-Host ('TRUSTED TASK SRC '+[IO.Path]::GetFileName($spec.Path)+':'+($i+1)+': '+$src[$i])
             }
           }
+      - name: Inspect exact original task pathname normalization contract
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $src=Get-Content 'build/codigo/catalog_task_xml.go'
+          $found=@(Select-String -Path 'build/codigo/catalog_task_xml.go' -Pattern '^func normalizedWinPath\(')
+          if($found.Count -ne 1){throw 'Original canonical path validator missing or ambiguous'}
+          $start=$found[0].LineNumber-1
+          for($i=$start;$i -lt [Math]::Min($start+38,$src.Length);$i++){
+            Write-Host ('ORIGINAL NORMALIZER '+($i+1)+': '+$src[$i])
+          }
