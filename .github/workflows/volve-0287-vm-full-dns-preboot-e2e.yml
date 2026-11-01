@@ -71,6 +71,14 @@ jobs:
             Select-Object InterfaceIndex,AddressFamily,ServerAddresses|ConvertTo-Json -Depth 6 -Compress)
           $hosts=Join-Path $env:WINDIR 'System32\drivers\etc\hosts'
           $hostsBefore=([Security.Cryptography.SHA256]::Create()).ComputeHash([IO.File]::ReadAllBytes($hosts))
+          # Hosted runners may disable this event log. Enable it ONLY for our
+          # ephemeral lab and restore its original setting in finally.
+          $eventLog='Microsoft-Windows-TaskScheduler/Operational'
+          $logWasEnabled=(Get-WinEvent -ListLog $eventLog -ErrorAction Stop).IsEnabled
+          if(-not $logWasEnabled){
+            & wevtutil.exe sl $eventLog /e:true
+            if($LASTEXITCODE -ne 0){throw 'Unable to enable disposable CI Task Scheduler history'}
+          }
           try{
             & $script -Mode Probe
             & $script -Mode Prepare -LabId $run -MotorExe $motor
@@ -105,5 +113,9 @@ jobs:
             $hostsAfter=([Security.Cryptography.SHA256]::Create()).ComputeHash([IO.File]::ReadAllBytes($hosts))
             if([BitConverter]::ToString($hostsAfter) -cne [BitConverter]::ToString($hostsBefore)){
               throw 'FATAL: Windows hosts changed'
+            }
+            if(-not $logWasEnabled){
+              & wevtutil.exe sl $eventLog /e:false
+              if($LASTEXITCODE -ne 0){throw 'Could not restore original disposable event history setting'}
             }
           }
