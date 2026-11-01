@@ -1,0 +1,53 @@
+name: VOLVE 0.28.7 persistent VM full DNS boot contract (NO REBOOT)
+on:
+  push:
+    branches: [feature/motor-updater-0287-pilot]
+    paths:
+      - 'development/0.28.7/lab/vm_full_motor_reboot_dns.ps1'
+      - 'development/0.28.7/lab/live_dns_boot_event_chain.ps1'
+      - 'development/0.28.7/lab/test_live_dns_boot_event_chain.ps1'
+      - 'development/0.28.7/inapp/ci_fresh_dns53_windows.go'
+      - '.github/workflows/volve-0287-real-vm-dns-boot-contract.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  vm-reboot-proof-contract:
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Parse VM-only script with Windows PowerShell 5.1, no execution of privileged modes
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $scripts=@(
+            'development/0.28.7/lab/vm_full_motor_reboot_dns.ps1',
+            'development/0.28.7/lab/live_dns_boot_event_chain.ps1',
+            'development/0.28.7/lab/test_live_dns_boot_event_chain.ps1'
+          )
+          foreach($script in $scripts) {
+            $tokens=$null; $syntax=$null
+            [void][System.Management.Automation.Language.Parser]::ParseFile(
+              (Resolve-Path -LiteralPath $script).Path,[ref]$tokens,[ref]$syntax)
+            if(@($syntax).Count -ne 0) { throw ('Invalid PowerShell 5.1 syntax in '+$script+': '+@($syntax)[0]) }
+          }
+          Write-Host 'PASS: native Windows PowerShell 5.1 parses all 3 VM-only files.'
+      - name: Verify positive event chain and 17 negative attacks without a reboot
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          & ./development/0.28.7/lab/test_live_dns_boot_event_chain.ps1
+          if(-not $?) { throw 'Boot event proof contract rejected' }
+      - name: Reject an unprepared hosted VM instead of changing any task or DNS
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $lab='development/0.28.7/lab/vm_full_motor_reboot_dns.ps1'
+          $rejected=$false
+          try { & $lab -Mode Verify -LabId '41306065399' } catch {
+            if($_.Exception.Message -match 'No matching persistent VM kit') {$rejected=$true}
+            else {throw}
+          }
+          if(-not $rejected){throw 'An unprepared VM was incorrectly marked reboot-verified'}
+          Write-Host 'PASS: no kit = no false reboot certification; no Windows changes.'
