@@ -91,3 +91,12 @@ Se implementó el enlace de revisión `legacy_observed_candidate_review.go`, que
 **Limitaciones:** motor inerte en prueba de tarea, no DNS servido ni cambios en adaptadores. El controlador de laboratorio no constituye un restorer productivo ni puede migrar 0.28.6; faltan firma auténtica de editor, conmutación completa, watchdog independiente aplicado al caso y reinicio de una VM persistente con comprobación DNS real. La prueba de DNS real SYSTEM en VM descartable existente pertenece a otra batería y **no** demuestra aún que el DNS funcione después de esta recuperación conjunta.
 
 **Progreso global permanece 50% (5/10 hitos):** el hito 7 acumula subpruebas completadas pero su criterio íntegro aún no está aprobado. Próxima acción útil: ejecutar recuperación conjunta usando un motor DNS que responda efectivamente por IPv4/IPv6, y luego un reinicio real persistente. No solicitar otro diagnóstico a la PC del usuario para este subpaso.
+
+
+## Ensayo integrado del 01/11/2026 — archivo + tarea SYSTEM + DNS/53 real de laboratorio
+
+**Ejecutado en Windows GitHub CI #41304036745, `SUCCESS`.** Por primera vez el mismo ensayo reconstruyó el ejecutable original ausente desde un respaldo NTFS protegido, reimportó efectivamente la tarea SYSTEM de laboratorio, la inició y comprobó respuestas UDP/53 por IPv4/IPv6 de ese mismo proceso. Las reglas del motor *mínimo de prueba* respondieron NXDOMAIN para `stake.com` y `betwarrior.bet.ar`, y NOERROR para `example.org`. El registro continuó pendiente hasta verificar el resto de condiciones de recuperación.
+
+**Alcance de la prueba:** NO es el motor real VOLVÉ ni una validación de su catálogo o actualizaciones. Tampoco es una VM persistente tras reiniciar; el resultado no equivale a una migración productiva segura. La general de Windows falló en #41272847247 por dependencia intermitente de `Get-FileHash`; se corrigió mediante SHA-256 .NET y la específica #41303405918 pasó. Debe verificarse por separado la conclusión de una corrida general no cancelada del código final.
+
+**Estado de aceptación mantenido: 50% global, 5/10 hitos.** Hitos 6, 7, 8, 9, 10 abiertos. Próximas pruebas con prioridad: usar el motor VOLVÉ real de CI en recuperación, reanudar watchdog independiente tras verdadero reinicio, completar firma editorial original y finalmente migración 0.28.6 en PC real con autorización, respaldo y reversión.
