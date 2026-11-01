@@ -22,6 +22,38 @@ type SignedLegacySwitchDriver interface {
     VerifyPreparedTarget(context.Context, Manifest) error
 }
 
+// checkSealedOriginalAtTransactionBoundary proves that the existing rollback
+// directory still contains the EXACT old motor and Task Scheduler XML covered
+// by the publisher's permit. A successful driver's Snapshot callback is not
+// sufficient evidence that the on-disk rollback survived that callback.
+func checkSealedOriginalAtTransactionBoundary(
+ backupDir string,protect func(string)error,proof VerifiedLegacyMigrationProof,
+)error{
+ snapshot,err:=VerifyUnversionedLegacyRecovery(backupDir,protect)
+ if err!=nil{return fmt.Errorf("protected rollback snapshot unreadable: %w",err)}
+ if snapshot.ExeSHA256!=proof.LegacySHA256||
+  snapshot.XMLSHA256!=proof.LegacyTaskXMLSHA256{
+  return errors.New("protected rollback original differs from signed migration")
+ }
+ return nil
+}
+
+// restoreSignedLegacyAndVerify never reports a successful recovery if the
+// original snapshot became untrusted. The independent restore still runs
+// with its own context even if the initiating update context is cancelled.
+// Recovery success is an OS-driver + health-check claim, not a JSON receipt.
+func restoreSignedLegacyAndVerify(
+ driver SignedLegacySwitchDriver,cause error,backupDir string,
+ protect func(string)error,proof VerifiedLegacyMigrationProof,
+)error{
+ rollbackErr:=restoreManagedAndVerify(driver,cause)
+ if err:=checkSealedOriginalAtTransactionBoundary(backupDir,protect,proof);err!=nil{
+  return errors.Join(rollbackErr,
+   fmt.Errorf("CRÍTICO: respaldo heredado no verificable después de la reversión: %w",err))
+ }
+ return rollbackErr
+}
+
 // ApplySignedLegacyWithRollback is transaction LOGIC only; it does not select
 // a driver, schedule a SYSTEM task, replace any executable or modify DNS.
 //
@@ -69,43 +101,51 @@ func ApplySignedLegacyWithRollback(
     if err := driver.Snapshot(ctx); err != nil {
         return fmt.Errorf("instantánea de reversión no durable; cambio no iniciado: %w",err)
     }
+    // The last preceding signed proof checked the old snapshot BEFORE
+    // Snapshot(). Revalidate the exact protected bytes directly after the
+    // callback and BEFORE even installing a new versioned candidate.
+    if err := checkSealedOriginalAtTransactionBoundary(backupDir,protectBackup,proof);err != nil {
+        return restoreSignedLegacyAndVerify(driver,
+            fmt.Errorf("respaldo alterado tras Snapshot: %w",err),
+            backupDir,protectBackup,proof)
+    }
     // Everything after Snapshot is a transaction. The original user context
     // may be cancelled; restoreManagedAndVerify uses a fresh 90s rescue context.
-    if err := ctx.Err(); err != nil { return restoreManagedAndVerify(driver,err) }
+    if err := ctx.Err(); err != nil { return restoreSignedLegacyAndVerify(driver,err) }
     if err := driver.InstallVersionedCandidate(ctx,candidate); err != nil {
-        return restoreManagedAndVerify(driver,fmt.Errorf("motor versionado no preparado: %w",err))
+        return restoreSignedLegacyAndVerify(driver,fmt.Errorf("motor versionado no preparado: %w",err),backupDir,protectBackup,proof)
     }
-    if err := ctx.Err(); err != nil { return restoreManagedAndVerify(driver,err) }
+    if err := ctx.Err(); err != nil { return restoreSignedLegacyAndVerify(driver,err) }
     if err := driver.VerifyPreparedTarget(ctx,manifest); err != nil {
-        return restoreManagedAndVerify(driver,fmt.Errorf("copia instalada no auténtica o incompleta: %w",err))
+        return restoreSignedLegacyAndVerify(driver,fmt.Errorf("copia instalada no auténtica o incompleta: %w",err),backupDir,protectBackup,proof)
     }
     if err := protectBackup(filepath.Dir(backupDir)); err != nil {
-        return restoreManagedAndVerify(driver,fmt.Errorf("directorio de recuperación cambió: %w",err))
+        return restoreSignedLegacyAndVerify(driver,fmt.Errorf("directorio de recuperación cambió: %w",err),backupDir,protectBackup,proof)
     }
     rechecked, err := VerifySignedUnversionedLegacyMigration(
         ctx,liveExe,backupDir,candidate,panelVersion,
         permitJSON,permitSignature,publisherKey,protectBackup,livePreflight,
     )
-    if err != nil { return restoreManagedAndVerify(driver,fmt.Errorf("identidad o autorización cambió antes de conmutar: %w",err)) }
+    if err != nil { return restoreSignedLegacyAndVerify(driver,fmt.Errorf("identidad o autorización cambió antes de conmutar: %w",err)) }
     if rechecked != proof {
-        return restoreManagedAndVerify(driver,errors.New("prueba firmada de migración cambió durante la preparación"))
+        return restoreSignedLegacyAndVerify(driver,errors.New("prueba firmada de migración cambió durante la preparación"),backupDir,protectBackup,proof)
     }
     if err := driver.IndependentRecoveryReady(ctx,rechecked); err != nil {
-        return restoreManagedAndVerify(driver,fmt.Errorf("watchdog independiente dejó de estar listo: %w",err))
+        return restoreSignedLegacyAndVerify(driver,fmt.Errorf("watchdog independiente dejó de estar listo: %w",err),backupDir,protectBackup,proof)
     }
-    if err := ctx.Err(); err != nil { return restoreManagedAndVerify(driver,err) }
+    if err := ctx.Err(); err != nil { return restoreSignedLegacyAndVerify(driver,err) }
     if err := driver.Switch(ctx); err != nil {
-        return restoreManagedAndVerify(driver,fmt.Errorf("conmutación del motor falló: %w",err))
+        return restoreSignedLegacyAndVerify(driver,fmt.Errorf("conmutación del motor falló: %w",err),backupDir,protectBackup,proof)
     }
     if err := driver.Probe(ctx); err != nil {
-        return restoreManagedAndVerify(driver,fmt.Errorf("nuevo DNS local no respondió: %w",err))
+        return restoreSignedLegacyAndVerify(driver,fmt.Errorf("nuevo DNS local no respondió: %w",err),backupDir,protectBackup,proof)
     }
     if err := driver.ProbeConnectivity(ctx); err != nil {
-        return restoreManagedAndVerify(driver,fmt.Errorf("Internet tras conmutación falló: %w",err))
+        return restoreSignedLegacyAndVerify(driver,fmt.Errorf("Internet tras conmutación falló: %w",err),backupDir,protectBackup,proof)
     }
-    if err := ctx.Err(); err != nil { return restoreManagedAndVerify(driver,err) }
+    if err := ctx.Err(); err != nil { return restoreSignedLegacyAndVerify(driver,err) }
     if err := driver.Commit(ctx,manifest); err != nil {
-        return restoreManagedAndVerify(driver,fmt.Errorf("registro administrado no confirmado: %w",err))
+        return restoreSignedLegacyAndVerify(driver,fmt.Errorf("registro administrado no confirmado: %w",err),backupDir,protectBackup,proof)
     }
     return nil
 }
