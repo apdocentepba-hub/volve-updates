@@ -148,7 +148,7 @@ func TestPostSwitchRestoredSystemTaskActuallyServesDualStackDNS53CILab(t *testin
   "Write-Output 'CI_DNS_VM_READY'"
  out,err:=ps(ctx,before)
  if err!=nil||out!="CI_DNS_VM_READY"{t.Fatalf("unsafe hosted Windows DNS state: %s %v",out,err)}
- root,journalDir,_,protect:=chainFixture(t,false)
+ root,journalDir,seal,protect:=chainFixture(t,false)
  installCILiveDNSBytesIntoProtectedFixture(t,root,journalDir)
  old:=filepath.Join(root,residentLegacyExe)
  task:=fmt.Sprintf("VOLVE-CI-ManagedMotor-%d",time.Now().UnixNano())
@@ -219,9 +219,20 @@ func TestPostSwitchRestoredSystemTaskActuallyServesDualStackDNS53CILab(t *testin
  if out,err:=ps(ctx,owner);err!=nil||out!="CI_RESTORED_SYSTEM_OWNS_BOTH_DNS53"{
   t.Fatalf("DNS answered but SYSTEM or socket ownership unverified: %s %v",out,err)
  }
- state,err:=motorupdate.InspectResidentRecoveryJournal(ctx,journalDir,protect)
- if err!=nil||state.Status!="recovery-required"{
-  t.Fatalf("synthetic DNS network health incorrectly finalized migration: %+v %v",state,err)
+ // Explicit test opt-in: use the actual boot-policy completion contract,
+ // not a synthetic success. It rechecks the signed-backup hash, live SYSTEM
+ // process/task/socket ownership twice, live dual-stack DNS blocking and
+ // direct external-IP TCP reachability before writing a terminal receipt.
+ if os.Getenv("VOLVE_CI_POLICY_AFTER_RESTORE")=="1" {
+  if err:=certifyActualCIResidentOutcome(ctx,root,journalDir,task,seal,protect);err!=nil{
+   t.Fatalf("real SYSTEM/DNS53/external connectivity did NOT qualify for recovery receipt: %v",err)
+  }
+  t.Log("PASS: create-only recovered terminal receipt after TWO true SYSTEM identity checks, actual blocked/allowed DNS v4/v6 and external numeric TCP from disposable Windows VM")
+ }else {
+  state,err:=motorupdate.InspectResidentRecoveryJournal(ctx,journalDir,protect)
+  if err!=nil||state.Status!="recovery-required"{
+   t.Fatalf("synthetic DNS network health incorrectly finalized migration: %+v %v",state,err)
+  }
  }
  if os.Getenv("VOLVE_CI_FULL_MOTOR_AFTER_RESTORE")=="1" {
   t.Log("PASS: REAL compiled VOLVE full-catalog motor restored from protected backup + actual SYSTEM task; dual-stack DNS53 blocked/allowed responses; journal pending")
