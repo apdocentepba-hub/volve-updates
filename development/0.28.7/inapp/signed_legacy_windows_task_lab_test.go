@@ -33,6 +33,17 @@ type signedLegacyWindowsTaskLab struct {
     watcherName, watchdogExe, watchdogJournal string
 }
 
+// The signed migration lab uses an actual cross-process Windows kernel
+// mutex through motorupdate's CI-only helper. No production mutex or installed
+// DNS service is acquired. Integration with the boot watchdog sharing this
+// exact lock remains a distinct acceptance requirement.
+func(d *signedLegacyWindowsTaskLab) AcquireExclusiveMigration(ctx context.Context)(func(),error){
+ if !managedLabName.MatchString(d.name){
+  return nil,errors.New("exclusive signed migration cannot target production task")
+ }
+ return motorupdate.AcquireWindowsSignedLegacyLabLease(ctx,d.name)
+}
+
 func (d *signedLegacyWindowsTaskLab) IndependentRecoveryReady(ctx context.Context, proof motorupdate.VerifiedLegacyMigrationProof) error {
     if err:=ctx.Err();err!=nil{return err}
     if !managedLabName.MatchString(d.name) || !watchdogLabName.MatchString(d.watcherName) {
