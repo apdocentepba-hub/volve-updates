@@ -7,6 +7,8 @@ on:
       - 'development/0.28.7/inapp/legacy_publisher_review_packet_test.go'
       - 'development/0.28.7/inapp/legacy_migration_draft.go'
       - 'development/0.28.7/inapp/legacy_migration_draft_test.go'
+      - 'development/0.28.7/inapp/legacy_migration_permit.go'
+      - 'development/0.28.7/inapp/legacy_migration_permit_test.go'
       - 'development/0.28.7/inapp/legacy_observed_candidate_review.go'
       - 'development/0.28.7/inapp/legacy_observed_candidate_review_test.go'
       - 'development/0.28.7/inapp/apply_overlay.go'
@@ -60,5 +62,5 @@ jobs:
         run: |
           test -f motorupdate/legacy_publisher_review_packet.go
           test -f motorupdate/legacy_publisher_review_packet_test.go
-          go test ./motorupdate -run '^(TestLegacyPublisherReviewPacket|TestLegacyMigrationDraft|TestSignedUnversionedBridge|TestUnsignedObservedHost|TestObservedCandidateReview)' -count=1 -timeout 4m -v
+          go test ./motorupdate -run '^(TestLegacyPublisherReviewPacket|TestLegacyMigrationDraft|TestSignedUnversionedBridge|TestSignedBridge|TestUnsignedObservedHost|TestObservedCandidateReview)' -count=1 -timeout 4m -v
           echo "PASS: 24-hour unsigned publisher permit draft matches protected original and independently signed target; no private release key or installation."
