@@ -98,7 +98,9 @@ function DNSRCode([string]$ip,[string]$domain){
         foreach($b in @([byte]0,[byte]0,[byte]1,[byte]0,[byte]1)){$message.Add($b)}
         [byte[]]$packet=$message.ToArray()
         $null=$socket.Send($packet,$packet.Length)
-        $remote=[Net.IPEndPoint]::new([Net.IPAddress]::Any,0)
+        $any=[Net.IPAddress]::Any
+        if($ip -eq '::1'){$any=[Net.IPAddress]::IPv6Any}
+        $remote=[Net.IPEndPoint]::new($any,0)
         [byte[]]$reply=$socket.Receive([ref]$remote)
         if($reply.Length -lt 12 -or $reply[0] -ne $packet[0] -or
            $reply[1] -ne $packet[1] -or ($reply[2] -band 128) -eq 0){
