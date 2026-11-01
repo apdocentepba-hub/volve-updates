@@ -9,6 +9,8 @@ package main
 import (
  "context"
  "errors"
+ "encoding/base64"
+ "unicode/utf16"
  "fmt"
  "os"
  "os/exec"
@@ -316,7 +318,20 @@ func TestStandaloneCIWatchdogAtStartupSYSTEMTaskCILab(t *testing.T){
  old:=filepath.Join(root,residentLegacyExe)
  protected,err:=digestResidentLive(ctx,old)
  if err!=nil{t.Fatal(err)}
- bootArgs:="--recover-resident-ci-task \""+root+"\" "+motorTask
+ // The Windows Task Scheduler does not inherit GitHub Actions' process
+ // environment. Preserve the original STRICT executable CI guards by using
+ // a dedicated SYSTEM-only lab bootstrap to recreate ephemeral env values
+ // and the runner's temp root. This is a LAB bridge, NOT production boot
+ // deployment. The actual separately compiled watchdog runs as SYSTEM.
+ bootstrap:="$ErrorActionPreference='Stop';"+
+  "$env:GITHUB_ACTIONS='true';$env:RUNNER_ENVIRONMENT='github-hosted';"+
+  "$env:TMP="+q(filepath.Dir(root))+";$env:TEMP="+q(filepath.Dir(root))+";"+
+  "& "+q(binary)+" '--recover-resident-ci-task' "+q(root)+" "+q(motorTask)+";"+
+  "if($LASTEXITCODE -ne 0){exit $LASTEXITCODE}"
+ unicodeUnits:=utf16.Encode([]rune(bootstrap))
+ buf:=make([]byte,len(unicodeUnits)*2)
+ for i,u:=range unicodeUnits{buf[2*i]=byte(u);buf[2*i+1]=byte(u>>8)}
+ bootArgs:="-NoProfile -NonInteractive -EncodedCommand "+base64.StdEncoding.EncodeToString(buf)
  create:="$ErrorActionPreference='Stop';"+
   "$motor="+q(motorTask)+";$boot="+q(bootTask)+";"+
   "$exe="+q(binary)+";$target="+q(target)+";"+
@@ -325,7 +340,7 @@ func TestStandaloneCIWatchdogAtStartupSYSTEMTaskCILab(t *testing.T){
   "$startup=New-ScheduledTaskTrigger -AtStartup;"+
   "$motorAction=New-ScheduledTaskAction -Execute $target -Argument '--dns-service';"+
   "Register-ScheduledTask -TaskName $motor -TaskPath '\\' -Principal $principal -Trigger $startup -Action $motorAction -ErrorAction Stop|Out-Null;"+
-  "$bootAction=New-ScheduledTaskAction -Execute $exe -Argument "+q(bootArgs)+";"+
+  "$bootAction=New-ScheduledTaskAction -Execute 'powershell.exe' -Argument "+q(bootArgs)+";"+
   "Register-ScheduledTask -TaskName $boot -TaskPath '\\' -Principal $principal -Trigger $startup -Action $bootAction -ErrorAction Stop|Out-Null;"+
   "Write-Output 'CI_INDEPENDENT_WATCHDOG_SYSTEM_BOOT_TASK_CREATED'"
  cleanup:="$ErrorActionPreference='Stop';"+
@@ -363,7 +378,7 @@ func TestStandaloneCIWatchdogAtStartupSYSTEMTaskCILab(t *testing.T){
   "if($info.LastRunTime.Year -ge 2020 -and $info.LastTaskResult -eq 0 -and "+
   "[string]$m.Actions[0].Execute -ieq $original -and "+
   "[string]$m.Actions[0].Arguments -ceq '--dns-service'){$good=$true;break}};"+
-  "if(-not $good){throw 'SYSTEM AtStartup watchdog task did not restore exact disposable motor'};"+
+  "if(-not $good){$last=Get-ScheduledTaskInfo -TaskName $watch -TaskPath '\\' -ErrorAction Stop;throw ('SYSTEM AtStartup watchdog failed: LastTaskResult='+$last.LastTaskResult+' LastRunTime='+$last.LastRunTime)};"+
   "Write-Output 'CI_BOOT_WATCHDOG_RAN_AS_SYSTEM_AND_RESTORED'"
  if out,err:=ps(ctx,start);err!=nil||out!="CI_BOOT_WATCHDOG_RAN_AS_SYSTEM_AND_RESTORED"{
   t.Fatalf("actual independent SYSTEM AtStartup task did not recover: %s %v",out,err)
@@ -378,5 +393,5 @@ func TestStandaloneCIWatchdogAtStartupSYSTEMTaskCILab(t *testing.T){
  if _,err:=os.Lstat(filepath.Join(journalDir,motorupdate.ResidentResultFile));!os.IsNotExist(err){
   t.Fatalf("real SYSTEM watchdog created false terminal receipt: %v",err)
  }
- t.Log("PASS: compiled EXE ran as a separate REAL SYSTEM ScheduledTask with AtStartup trigger; manually started in disposable VM, restored exact motor and preserved pending journal; NO VM reboot")
+ t.Log("PASS: SYSTEM AtStartup task launched compiled watchdog through lab-only environment bootstrap; manual trigger restored exact motor, journal pending; NO VM reboot and NOT a production boot service")
 }
