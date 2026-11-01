@@ -246,3 +246,31 @@ func TestStandaloneCIRecoveryCLIRejectsNonHostedRunner(t *testing.T){
   t.Fatal("standalone CI watchdog accepted production motor task")
  }
 }
+
+func TestStandaloneCIRecoveryCLIExecutableRejectsUnsafeInvocation(t *testing.T){
+ binary:=os.Getenv("VOLVE_CI_STANDALONE_RECOVERY_EXE")
+ if binary==""{
+  if os.Getenv("VOLVE_CI_REQUIRE_STANDALONE")=="1"{t.Fatal("standalone CLI binary mandatory in dedicated Windows job")}
+  t.Skip("dedicated compiled watchdog CLI only")
+ }
+ root:=t.TempDir()
+ for _,scenario:=range []struct{name,task string;runner string}{
+  {"productive-system-task","VOLVE-DNS-SERVER-0270","github-hosted"},
+  {"non-hosted-runner",disposableResidentTask,"self-hosted"},
+ }{
+  t.Run(scenario.name,func(t *testing.T){
+   ctx,cancel:=context.WithTimeout(context.Background(),20*time.Second)
+   defer cancel()
+   cmd:=exec.CommandContext(ctx,binary,"--recover-resident-ci-task",root,scenario.task)
+   env:=[]string{}
+   for _,item:=range os.Environ(){
+    if !strings.HasPrefix(item,"RUNNER_ENVIRONMENT="){env=append(env,item)}
+   }
+   cmd.Env=append(env,"RUNNER_ENVIRONMENT="+scenario.runner)
+   out,err:=cmd.CombinedOutput()
+   if err==nil || strings.Contains(string(out),"VOLVE_CI_STANDALONE_RECOVERED"){
+    t.Fatalf("compiled watchdog authorized forbidden scenario %s: %s",scenario.name,out)
+   }
+  })
+ }
+}
