@@ -116,3 +116,14 @@ Desarrollar el adaptador aislado que obtiene la identidad **real** de tarea SYST
 **Pruebas:** [Windows diagnóstico #41266391927](https://github.com/apdocentepba-hub/volve-updates/actions/runs/41266391927) aprobó reconstrucción de la fuente original, compilación Windows y regresiones de tareas inválidas, procesos distintos, alteración de XML/EXE, cancelación y ausencia de una firma. El paquete final con LEEME actualizado corresponde a [CI #41266506300](https://github.com/apdocentepba-hub/volve-updates/actions/runs/41266506300); consultar conclusión antes de distribuirlo.
 
 **Estado:** 5/10 hitos (50%) global, hito 6 **abierto**. No se probó la nueva recolección de huellas en el Windows del usuario ni se publicó/instaló un motor nuevo. El Centro 0.28.6 continúa intacto.
+
+
+### Identidad del motor 0.28.6 en la PC del usuario — diagnóstico de etapa 31/10/2026
+
+El JSON compartido demuestra que el motor DNS heredado conserva ambos endpoints UDP/53 loopback IPv4 e IPv6 bajo el mismo proceso SYSTEM, pero la verificación adicional `legacy_identity_for_publisher` devolvió `NOT_VERIFIED_NO_CHANGES`, sin hashes ni autorización. Esto no refuta la existencia del proceso. El JSON privado del usuario NO se subió a GitHub.
+
+**Corrección de código:** `development/0.28.7/auditcmd/legacy_publisher_baseline_windows.go` ahora informa un `failure_stage` seguro y acotado para distinguir fallos de propietario, ruta, argumentos, directorio de trabajo, ejecutable y XML de tarea, cambios entre observaciones y errores de lectura. Nunca incluye ruta local, PID, XML, contenido de tareas ni errores privados. Ante cualquier fallo omite hashes y no autoriza instalar, actualizar ni cambiar el DNS. La segunda observación de propietario ahora compara la evidencia booleana, no solo una cadena de estado.
+
+**CI y paquete:** GitHub Actions https://github.com/apdocentepba-hub/volve-updates/actions/runs/41267081082, éxito en Windows. La primera prueba detectó que el fixture reutilizaba el puntero a evidencia; se corrigió con copia independiente y pasó la regresión de deriva de proceso. Artefacto #13068130647 descargado e inspeccionado: ZIP válido; SHA-256 EXE 72e5bf9e1ae93ea42ce32e9751980ee6b8868925d65753b69055938abf5fbca6. Diagnóstico experimental NO firmado para distribución, no un actualizador.
+
+**Estado:** 50% global (5/10 hitos); hito 6 abierto. No existe permiso editorial productivo ni conmutación/recuperación validada sobre esta PC. Se requiere conocer `failure_stage` del equipo antes de revisar o suavizar cualquier verificación y antes de generar una autorización real de migración.
