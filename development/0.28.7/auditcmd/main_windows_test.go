@@ -199,7 +199,7 @@ func TestStandalonePinnedOriginalCatalogMotorAndTaskRecognizedWithoutDNSMutation
  if got.CatalogSourceStatus!=CatalogSourceMatched||got.Result!="REVIEW_ONLY"||
   got.Route==nil||got.Route.Route!=motorupdate.MotorRouteCatalogCandidate||
   got.HostEvidence==nil||!got.HostEvidence.CatalogTaskSeen||
-  !got.HostEvidence.CatalogTaskSourcePinned||got.HostEvidence.CanModifyDNS||
+  !got.HostEvidence.CatalogTaskActionPinned||got.HostEvidence.CanModifyDNS||
   got.HostEvidence.SignedUpgradeAuthorized{
   t.Fatalf("pinned source catalog should be recognized READ ONLY, never upgraded: %+v",got)
  }
@@ -212,7 +212,7 @@ func TestStandalonePinnedOriginalCatalogMotorAndTaskRecognizedWithoutDNSMutation
  bad:=diagnosis(context.Background(),programData,true,readers)
  if bad.CatalogSourceStatus!=CatalogSourceMismatch||bad.Route==nil||
   bad.Route.Route!=motorupdate.MotorRouteUnverified||
-  bad.HostEvidence==nil||bad.HostEvidence.CatalogTaskSourcePinned||
+  bad.HostEvidence==nil||bad.HostEvidence.CatalogTaskActionPinned||
   bad.HostEvidence.SignedUpgradeAuthorized||bad.HostEvidence.CanModifyDNS{
   t.Fatalf("catalog tampering incorrectly allowed update or trusted task: %+v",bad)
  }
