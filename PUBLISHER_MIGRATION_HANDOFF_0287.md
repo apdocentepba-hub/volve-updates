@@ -33,6 +33,18 @@ Los tests cubren firmas ausentes, otros editores, bytes de motor alterados, resp
 3. Mantener la barrera productiva: faltan watchdog SYSTEM autónomo y seguro, controlador transaccional, reboot real en la **misma VM Windows persistente**, y pruebas de reversión adversas. **No cambiar ni detener el motor instalado** ni publicar stable.json/motor-stable.json.
 4. Ningún CI GitHub-hosted equivale a un reboot persistente ni a pruebas del equipo del usuario. La verificación sobre el equipo real tiene que ser de solo lectura antes de autorizar una intervención.
 
+### Avance de la conexión real con Windows (31/10/2026)
+
+**Implementado en rama piloto:** `development/0.28.7/inapp/installed_publisher_review_windows.go` y sus pruebas. El ejecutable reconstruido incorpora una opción **explícita y de solo lectura** `--motor-publisher-review <ruta-al-candidato-firmado>`, ajena al botón corriente de actualización. No solicita UAC en la interfaz, no publica nada y no toca DNS, tareas, respaldos o ejecutables. Solo emite al administrador el expediente JSON de revisión sin firma después de verificar todas las condiciones.
+
+**Conexión con fuentes OS reales:** `installRoot()`, `isAdmin()`, `taskQuery()`, `verifySystemTaskXML()`, `preflightMotorUpgradeReadOnly()`, `verifyResidentRunningMotorReadOnly()` y `checkSealedLegacyRecoveryACL()`. Antes de ofrecer el expediente, exige tarea SYSTEM y proceso activo, propiedad del DNS/53 IPv4+IPv6, XML actual idéntico al respaldado, SHA-256 del motor activo igual al respaldo, ACL protegidas y candidato auténtico con la **clave pública** embebida. Repite las consultas para detectar cambios concurrentes.
+
+**Evidencia aprobada:** [CI Windows #41260532066](https://github.com/apdocentepba-hub/volve-updates/actions/runs/41260532066). Se reconstruyó el proyecto real, compilaron todos los módulos y pasaron los casos de tarea ausente, XML distinto, PID distinto, permisos insuficientes, motor o candidato adulterado, clave de otro editor, preflight fallido y cancelación. La consulta nativa de Task Scheduler detectó que la VM de pruebas **no tenía** la tarea productiva y rechazó generar un expediente auténtico. Una regresión adicional modifica el XML en la segunda inspección y está sometida a [CI #41260636604](https://github.com/apdocentepba-hub/volve-updates/actions/runs/41260636604).
+
+**Fuentes de publicación:** al consultar GitHub, la única release registrada es `v0.28.6` (pre-release del Centro); **no aparece un motor 0.28.7 editorialmente publicado**. No se generó ni se puede atribuir una firma editorial legítima.
+
+**Crédito:** el adaptador del control 6.3 está programado y probado en laboratorio, pero **el control no puede darse por aprobado hasta observar realmente la instalación del usuario**. Continúan acreditados **2/4 controles del hito 6** y **5/10 puertas (50%) del piloto**.
+
 ### Próximo avance de ingeniería independiente de la firma
 
 Desarrollar el adaptador aislado que obtiene la identidad **real** de tarea SYSTEM y del ejecutable instalado, valida el recibo bajo ACL y pasa esos valores a la función de revisión. Primero ejecutarlo en VM y con guardas de no-mutación; no integrarlo al botón de actualización hasta tener permiso editorial y ensayo de reboot.
