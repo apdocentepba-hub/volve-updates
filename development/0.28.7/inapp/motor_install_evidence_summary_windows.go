@@ -15,7 +15,7 @@ type WindowsMotorRouteSummary struct {
  InventoriesObserved int `json:"inventories_observed"`
  VOLVETasks int `json:"volve_tasks"`
  CatalogTaskSeen bool `json:"catalog_task_seen"`
- CatalogTaskPublisherPinned bool `json:"catalog_task_publisher_pinned"`
+ CatalogTaskSourcePinned bool `json:"catalog_task_source_pinned"`
  OtherTaskCount int `json:"other_task_count"`
  VOLVEServices int `json:"volve_services"`
  LegacyDNSMotorFileSeen bool `json:"legacy_dns_motor_file_seen"`
@@ -69,7 +69,7 @@ func InspectWindowsMotorRouteWithSummaryReadOnly(
   InventoriesObserved:6,
   VOLVETasks:e.VOLVETaskCount,
   CatalogTaskSeen:seenCatalog,
-  CatalogTaskPublisherPinned:allowedFreshAuxiliaryTask(e.VerifiedCatalogTask),
+  CatalogTaskSourcePinned:allowedFreshAuxiliaryTask(e.VerifiedCatalogTask),
   OtherTaskCount:len(otherTasks),
   VOLVEServices:e.VOLVEServiceCount,
   LegacyDNSMotorFileSeen:e.LegacyExecutablePresent,
