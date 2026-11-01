@@ -3,6 +3,7 @@ package motorupdate
 import (
     "context"
     "errors"
+    "fmt"
     "os"
     "path/filepath"
     "reflect"
@@ -211,5 +212,36 @@ func TestSignedLegacyTransactionRejectsSealedBackupTamperedAfterTargetPreparatio
  want:=[]string{"preflight","watchdog","snapshot","install","prepared"}
  if !reflect.DeepEqual(d.calls,want){
   t.Fatalf("corrupted backup allowed unsafe restore, switch or commit: %v",d.calls)
+ }
+}
+
+func TestSignedLegacyTransactionRestoresIfLiveSYSTEMChangesAtSecondProof(t *testing.T){
+ // First publisher proof: two good OS probes. The second proof happens
+ // AFTER the durable snapshot and candidate preparation, and must prevent
+ // Switch if either its initial or final OS/DNS observation fails.
+ for _,failAt:=range []int{3,4}{
+  t.Run(fmt.Sprintf("live-preflight-%d",failAt),func(t *testing.T){
+   f:=newSignedBridge(t)
+   d:=newSignedLegacyDriverLab()
+   checks:=0
+   err:=runSignedLegacyLab(context.Background(),f,d,
+    testSecureLabFolderBridge,func()error{
+     checks++
+     if checks==failAt {return errors.New("live SYSTEM DNS identity drift")}
+     return nil
+    })
+   if err==nil||!strings.Contains(err.Error(),"revertida")||checks!=failAt {
+    t.Fatalf("stale second signed identity proof was not rolled back: checks=%d, err=%v",checks,err)
+   }
+   for _,call:=range d.calls{
+    if call=="switch"||call=="commit"{
+     t.Fatalf("untrusted second preflight allowed %s: %v",call,d.calls)
+    }
+   }
+   tail:=d.calls[len(d.calls)-3:]
+   if !reflect.DeepEqual(tail,[]string{"restore","probe","connectivity"}){
+    t.Fatalf("recovery after changed SYSTEM identity not independently proved: %v",d.calls)
+   }
+  })
  }
 }
