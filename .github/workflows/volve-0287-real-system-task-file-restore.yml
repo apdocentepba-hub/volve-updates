@@ -5,6 +5,8 @@ on:
     paths:
       - 'development/0.28.7/inapp/watchdogcmd/resident_post_switch_file_task_ci_windows.go'
       - 'development/0.28.7/inapp/watchdogcmd/resident_post_switch_file_task_ci_windows_test.go'
+      - 'development/0.28.7/inapp/watchdogcmd/resident_pilot_restore_windows.go'
+      - 'development/0.28.7/inapp/watchdogcmd/resident_pilot_restore_windows_test.go'
       - 'development/0.28.7/inapp/apply_overlay.go'
       - '.github/workflows/volve-0287-real-system-task-file-restore.yml'
   workflow_dispatch:
@@ -56,5 +58,5 @@ jobs:
         run: |
           test -f cmd/volve-managed-watchdog/resident_post_switch_file_task_ci_windows.go
           test -f cmd/volve-managed-watchdog/resident_post_switch_file_task_ci_windows_test.go
-          go test ./cmd/volve-managed-watchdog -run '^TestPostSwitchSystemTask' -count=1 -timeout 4m -v
+          go test ./cmd/volve-managed-watchdog -run '^(TestPostSwitchSystemTask|TestResidentPilotRecoveryScriptBindsLiveTaskAndBackup)' -count=1 -timeout 4m -v
           echo 'PASS: isolated file+real disposable SYSTEM Task Scheduler restoration; no DNS adapter changes.'
