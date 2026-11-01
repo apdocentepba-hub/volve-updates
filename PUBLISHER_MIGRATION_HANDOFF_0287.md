@@ -103,3 +103,16 @@ Los tests cubren firmas ausentes, otros editores, bytes de motor alterados, resp
 Desarrollar el adaptador aislado que obtiene la identidad **real** de tarea SYSTEM y del ejecutable instalado, valida el recibo bajo ACL y pasa esos valores a la función de revisión. Primero ejecutarlo en VM y con guardas de no-mutación; no integrarlo al botón de actualización hasta tener permiso editorial y ensayo de reboot.
 
 **Importante:** esta puerta sigue ABIERTA; el 50% se refiere al progreso de las tareas de laboratorio, no a la capacidad de actualizar automáticamente.
+
+
+### Evidencia de instalación heredada y expediente editorial sin firma — 31/10/2026
+
+**Verificación privada en el equipo del usuario:** el diagnóstico 0.28.6 de solo lectura devolvió la presencia del motor DNS heredado y de su tarea SYSTEM; los dos sockets UDP/53 loopback IPv4/IPv6 tenían el mismo dueño y el proceso identificado correspondía a la ruta/argumentos heredados bajo SID SYSTEM. **Límite:** observación de identidad de proceso, no prueba positiva de consultas DNS bloqueadas, cadena de parentaje Scheduler, firma editorial, respaldo restaurable ni permiso para conmutar. No se incorpora al repositorio el JSON privado ni datos personales, rutas o PID.
+
+**Avance en código (sin tocar Windows):** `auditcmd/legacy_publisher_baseline_windows.go` construye una **solicitud de identidad sin firma**, solo si la inspección existente demuestra el proceso SYSTEM exacto. Revisa por duplicado la tarea `VOLVE-DNS-SERVER-0270`, su ruta y argumentos, el ejecutable instalado, su SHA-256 y tamaño, y la huella SHA-256 del XML original leído mediante `schtasks /Query /XML`. La doble lectura detecta cambios entre instantáneas y devuelve `NOT_VERIFIED_NO_CHANGES` **sin hashes** si algo falla. No guarda XML, rutas completas, nombres de usuario, PID, URL, clave privada ni datos de navegación; no escribe DNS, Scheduler ni binarios.
+
+**Condición de salida inalterada:** el campo `legacy_identity_for_publisher` con estado `UNSIGNED_LEGACY_IDENTITY_FOR_PUBLISHER_REVIEW_ONLY` es **solo una solicitud de revisión**, con `signature_verified=false`, `migration_authorized=false` y `ready_to_switch=false`; no es un recibo de recuperación ni una autorización. Solo un editor legítimo con la clave privada de producción, un candidato firmado compatible, backup seguro, driver con watchdog y VM Windows persistente puede habilitar una migración futura.
+
+**Pruebas:** [Windows diagnóstico #41266391927](https://github.com/apdocentepba-hub/volve-updates/actions/runs/41266391927) aprobó reconstrucción de la fuente original, compilación Windows y regresiones de tareas inválidas, procesos distintos, alteración de XML/EXE, cancelación y ausencia de una firma. El paquete final con LEEME actualizado corresponde a [CI #41266506300](https://github.com/apdocentepba-hub/volve-updates/actions/runs/41266506300); consultar conclusión antes de distribuirlo.
+
+**Estado:** 5/10 hitos (50%) global, hito 6 **abierto**. No se probó la nueva recolección de huellas en el Windows del usuario ni se publicó/instaló un motor nuevo. El Centro 0.28.6 continúa intacto.
