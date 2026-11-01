@@ -178,6 +178,11 @@ func TestUnsignedLegacyBaselineStageDetectsXMLOrRuntimeDrift(t *testing.T){
  readers.Owner=func(ctx context.Context)DNSOwnerReport{
   owners++
   o:=original(ctx)
+  // The native Windows inspector returns a newly-decoded evidence object
+  // each time. The fixture shares a pointer; copy it to simulate snapshots
+  // without retroactively changing the first observation.
+  cloned:=*o.Evidence
+  o.Evidence=&cloned
   if owners==2{o.Evidence.SystemOwner=false}
   return o
  }
