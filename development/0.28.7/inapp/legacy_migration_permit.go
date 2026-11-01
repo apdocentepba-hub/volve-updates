@@ -51,6 +51,15 @@ type VerifiedLegacyMigrationProof struct {
 }
 
 func parseSignedMigrationPermit(raw, signature []byte,key ed25519.PublicKey)(LegacyMigrationPermit,error){
+    return parseSignedMigrationPermitAtRecovery(raw,signature,key,false)
+}
+
+// During autonomous RESTORE only, the signed migration permit may have
+// expired since the originally authorized switch. Expiry MUST still be
+// enforced when STARTING any new migration; it must not strand the
+// original motor after an already-armed recovery journal survives a reboot.
+// All cryptographic, identity, issuance and lifetime checks remain enforced.
+func parseSignedMigrationPermitAtRecovery(raw, signature []byte,key ed25519.PublicKey,allowExpiredForRestore bool)(LegacyMigrationPermit,error){
     var m LegacyMigrationPermit
     if len(key)!=ed25519.PublicKeySize{return m,errors.New("publisher key invalid")}
     if len(raw)<2 || len(raw)>maxMigrationPermitBytes || len(signature)<64 || len(signature)>256 {
@@ -79,7 +88,8 @@ func parseSignedMigrationPermit(raw, signature []byte,key ed25519.PublicKey)(Leg
     expires,err:=time.Parse(time.RFC3339,m.ExpiresUTC)
     if err!=nil{return LegacyMigrationPermit{},errors.New("permit expiration time invalid")}
     now:=time.Now().UTC()
-    if issued.After(now.Add(5*time.Minute)) || expires.Before(now) ||
+    if issued.After(now.Add(5*time.Minute)) ||
+        (!allowExpiredForRestore && expires.Before(now)) ||
         !expires.After(issued) || expires.Sub(issued)>366*24*time.Hour {
         return LegacyMigrationPermit{},errors.New("migration permit expired, premature or unreasonably long")
     }
