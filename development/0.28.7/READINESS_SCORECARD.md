@@ -12,7 +12,7 @@ Escala interna de 10 hitos de peso igual; se acredita 10% solamente cuando las p
 | 3 | Tarea temporal SYSTEM, candidato firmado en laboratorio y watchdog independiente en el mismo arranque | Aprobado; run 41057083973 | 10% |
 | 4 | Inventarios Windows de tareas y servicios de solo lectura, clasificación conservadora con regresiones | Aprobado; runs 41251480487 y 41252704303 | 10% |
 | 5 | Inventario completo e integrado de archivos instalados, servicios, tareas, DNS, listeners/53 y recuperación | Aprobado SOLO como inventario read-only en VM Windows; CI #41257655408 | 10% |
-| 6 | Identidad y permiso de migración del motor heredado realmente instalado, firmados por editor legítimo | Pendiente; NO usar firmas efímeras de CI | 0% |
+| 6 | Identidad y permiso de migración del motor heredado realmente instalado, firmados por editor legítimo | En curso: 2/4 subcontroles de laboratorio aprobados; adaptador nativo read-only CI #41260532066. Pendientes PC real y permiso editorial auténtico | 0% |
 | 7 | Controlador de conmutación productivo protegido con backups, ACL, journal y watchdog independiente | Pendiente; **prohibido cambiar VOLVE-DNS-SERVER-0270** | 0% |
 | 8 | VM Windows persistente: conmutar, reiniciar de verdad, verificar servicio DNS y rollback con evidencia auditable | Pendiente; no confundir simulaciones con reinicios reales | 0% |
 | 9 | Publicación oficial firmada y Centro compatible con instalación desde programa existente | Pendiente; sin claves privadas en repositorio | 0% |
