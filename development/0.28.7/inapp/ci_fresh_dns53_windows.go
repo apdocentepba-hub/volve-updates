@@ -25,8 +25,22 @@ const ciFreshToken = "VOLVE-CI-GITHUB-HOSTED-VM-DNS53-ONLY"
 var ciFreshRootPattern = regexp.MustCompile("^VOLVE-CI-FreshDNS53-[0-9]{6,20}$")
 
 func init(){
- if len(os.Args)<2 || (os.Args[1]!="--ci-fresh-dns53" && os.Args[1]!="--ci-boot-dns53"){return}
+ if len(os.Args)<2 || (os.Args[1]!="--ci-fresh-dns53" &&
+     os.Args[1]!="--ci-boot-dns53" && os.Args[1]!="--ci-prepare-full-catalog"){return}
  if len(os.Args)!=4{fmt.Fprintln(os.Stderr,"CI DNS53: invalid arguments");os.Exit(2)}
+ // The boot VM kit is already an ACL-protected directory before Scheduler
+ // is registered. Explicitly seed a create-only deterministic catalog in
+ // that folder, WITHOUT starting a DNS listener or modifying any adapter.
+ if os.Args[1]=="--ci-prepare-full-catalog" {
+  if err:=assertCIFreshVM(os.Args[2],os.Args[3]);err!=nil{
+   fmt.Fprintln(os.Stderr,"CI Full catalog preflight refused:",err);os.Exit(1)
+  }
+  if err:=writeCIFreshCatalog(os.Args[2]);err!=nil{
+   fmt.Fprintln(os.Stderr,"CI Full catalog bootstrap refused:",err);os.Exit(1)
+  }
+  fmt.Println("PASS: CI-only Full DNS catalog created and verified before SYSTEM task startup")
+  os.Exit(0)
+ }
  // The ordinary hosted CI remains bounded to 95 seconds. Only a positively
  // attested isolated VM may use the longer boot/recovery observation window.
  duration:=95*time.Second
