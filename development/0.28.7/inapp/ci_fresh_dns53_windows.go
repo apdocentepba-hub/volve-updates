@@ -25,9 +25,13 @@ const ciFreshToken = "VOLVE-CI-GITHUB-HOSTED-VM-DNS53-ONLY"
 var ciFreshRootPattern = regexp.MustCompile("^VOLVE-CI-FreshDNS53-[0-9]{6,20}$")
 
 func init(){
- if len(os.Args)<2 || os.Args[1]!="--ci-fresh-dns53"{return}
+ if len(os.Args)<2 || (os.Args[1]!="--ci-fresh-dns53" && os.Args[1]!="--ci-boot-dns53"){return}
  if len(os.Args)!=4{fmt.Fprintln(os.Stderr,"CI DNS53: invalid arguments");os.Exit(2)}
- if err:=runCIFreshDNS53(os.Args[2],os.Args[3]);err!=nil{
+ // The ordinary hosted CI remains bounded to 95 seconds. Only a positively
+ // attested isolated VM may use the longer boot/recovery observation window.
+ duration:=95*time.Second
+ if os.Args[1]=="--ci-boot-dns53"{duration=30*time.Minute}
+ if err:=runCIFreshDNS53WithDuration(os.Args[2],os.Args[3],duration);err!=nil{
   fmt.Fprintln(os.Stderr,"CI DNS53 refused/failed:",err);os.Exit(1)
  }
  os.Exit(0)
@@ -105,6 +109,12 @@ func writeCIFreshCatalog(root string)error{
 }
 
 func runCIFreshDNS53(root,token string)error{
+ return runCIFreshDNS53WithDuration(root,token,95*time.Second)
+}
+func runCIFreshDNS53WithDuration(root,token string,duration time.Duration)error{
+ if duration<90*time.Second || duration>30*time.Minute {
+  return errors.New("CI DNS53 test duration outside bounded laboratory window")
+ }
  if err:=assertCIFreshVM(root,token);err!=nil{return err}
  // The scheduled task is intentionally restartable, like a real resident
  // installation. First launch prepares the full catalog; later starts verify
@@ -129,7 +139,7 @@ func runCIFreshDNS53(root,token string)error{
    _,_=upstream.WriteTo(response,peer)
   }
  }()
- ctx,cancel:=context.WithTimeout(context.Background(),95*time.Second)
+ ctx,cancel:=context.WithTimeout(context.Background(),duration)
  defer cancel()
  // This is the same production entrypoint used by --dns-service:
  // real 400k+ catalog and IPv4/IPv6 UDP/TCP on LOCAL port 53.
