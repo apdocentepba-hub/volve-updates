@@ -94,7 +94,7 @@ func TestWindowsFreshMotorFileInventoryRejectsUntrustedPaths(t *testing.T) {
  if _,err:=InspectWindowsFreshMotorFilesReadOnly(context.Background(),"relative-root");err==nil {
   t.Fatal("relative root was accepted")
  }
- if _,err:=InspectWindowsFreshMotorFilesReadOnly(context.Background(),filepath.Join(root,".."));err==nil{
+ if _,err:=InspectWindowsFreshMotorFilesReadOnly(context.Background(),root+string(os.PathSeparator)+"..");err==nil{
   t.Fatal("root whose parents have not been pinned was accepted")
  }
 }
