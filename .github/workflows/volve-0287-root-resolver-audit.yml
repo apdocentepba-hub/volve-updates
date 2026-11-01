@@ -129,3 +129,18 @@ jobs:
             if($ln.Length -gt 180){$ln=$ln.Substring(0,180)}
             Write-Host ('DNS SOURCE: '+[IO.Path]::GetFileName($h.Path)+':'+$h.LineNumber+': '+$ln)
           }
+      - name: Inspect exact task creation and XML canonicalization
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          foreach($spec in @(
+            @{Path='build/codigo/dnsprod_windows.go';First=210;Last=265},
+            @{Path='build/codigo/dnsprod_windows.go';First=302;Last=342},
+            @{Path='build/codigo/catalog_task_xml.go';First=98;Last=165}
+          )){
+            $src=Get-Content -LiteralPath $spec.Path
+            $first=[int]$spec.First;$last=[Math]::Min($src.Length,[int]$spec.Last)
+            for($i=$first-1;$i -lt $last;$i++){
+              Write-Host ('TRUSTED TASK SRC '+[IO.Path]::GetFileName($spec.Path)+':'+($i+1)+': '+$src[$i])
+            }
+          }
