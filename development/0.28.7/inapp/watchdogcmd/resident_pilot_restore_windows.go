@@ -77,7 +77,10 @@ func restoreResidentPilotSYSTEMTaskWithRunner(ctx context.Context,root,pilotTask
   `if([string]$live.Actions[0].Execute -ine $target -or `+
    `[string]$live.Actions[0].Arguments -cne '--dns-service'){throw 'Pilot target action changed'};`+
   `if(-not [IO.File]::Exists($original)){throw 'Legacy motor missing'};`+
-  `$motorDigest=(Get-FileHash -LiteralPath $original -Algorithm SHA256).Hash.ToLowerInvariant();`+
+  `$motorHasher=[Security.Cryptography.SHA256]::Create();`+
+  `try{$motorStream=[IO.File]::Open($original,[IO.FileMode]::Open,[IO.FileAccess]::Read,[IO.FileShare]::Read);`+
+  `try{$motorDigest=[BitConverter]::ToString($motorHasher.ComputeHash($motorStream)).Replace('-','').ToLowerInvariant()}`+
+  `finally{$motorStream.Dispose()}}finally{$motorHasher.Dispose()};`+
   `if($motorDigest -cne $oldHash){throw 'Legacy motor changed before restore'};`+
   // Hash the exact XML byte array being imported; two separate file reads
   // would leave a change-between-check-and-use window.
