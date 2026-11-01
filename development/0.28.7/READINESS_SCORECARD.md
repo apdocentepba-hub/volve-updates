@@ -73,3 +73,12 @@ El progreso general aumenta a **50% (5 de 10 puertas aprobadas)**. La integraci�
 - Para el hito 5 deben obtenerse las seis observaciones desde Windows, con
   identidad privilegiada comprobada y evidencia vinculada; no marcar flags a mano.
 - El progreso sólo aumenta con aceptación comprobada; la fecha no agrega progreso.
+
+
+## Avance verificado del hito 6 — 01/11/2026 (sin crédito global adicional)
+
+El informe de la PC del usuario ya acreditó los bytes y SHA-256 del motor 0.28.6 en ejecución, la huella de su tarea SYSTEM y los sockets DNS IPv4/IPv6. Se resolvió el falso rechazo por las comillas exteriores de la ruta. **No es una aprobación para migrar**.
+
+Se implementó el enlace de revisión `legacy_observed_candidate_review.go`, que compara un informe **no confiable** con un candidato de actualización firmado, comprueba versión y compatibilidad, y rechaza datos manipulados. [CI Windows/Linux #41269240819](https://github.com/apdocentepba-hub/volve-updates/actions/runs/41269240819) aprobada. Es una etapa de ingeniería de la puerta 6 y no un instalador; todavía se necesitan candidato firmado oficial, permiso firmado de editor, respaldo NTFS protegido y recuperación real.
+
+**Crédito global inalterado: 50% = 5/10 puertas completas.** La puerta 6 permanece pendiente aunque sus comprobaciones parciales de identidad y vinculación ya existen. No se tocó la PC del usuario ni se publicaron sus huellas en GitHub.
