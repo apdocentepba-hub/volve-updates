@@ -74,7 +74,7 @@ func TestSignedUnversionedBridgeRequiresExactTwoSignedIdentitiesAndProtectedOldB
     proof,err:=f.verify(context.Background())
     if err!=nil{t.Fatal(err)}
     if proof.CandidateVersion!="0.28.7" || proof.CandidateSHA256!=f.permit.ToSHA256 ||
-        proof.LegacySHA256!=f.permit.FromSHA256 || f.preflightCalls!=1{
+        proof.LegacySHA256!=f.permit.FromSHA256 || f.preflightCalls!=2{
         t.Fatalf("bridge proof mismatch %#v",proof)
     }
 }
@@ -148,4 +148,60 @@ func TestSignedUnversionedBridgeFailsClosedOnPreflightACLAndCancellation(t *test
     ctx,cancel:=context.WithCancel(context.Background());cancel()
     _,err=f.verify(ctx)
     if !errors.Is(err,context.Canceled){t.Fatalf("cancellation bypassed: %v",err)}
+}
+
+func TestSignedBridgeSecondLivePreflightRejectsStateChangeBeforeProof(t *testing.T){
+ for _,kind:=range []string{
+  "task-and-dns-no-longer-healthy",
+  "old-executable-replaced-after-first-snapshot",
+  "backup-corrupted-after-first-snapshot",
+  "signed-target-corrupted-after-first-snapshot",
+  "another-updater-registered-managed-engine",
+ }{
+  t.Run(kind,func(t *testing.T){
+   f:=newSignedBridge(t)
+   calls:=0
+   preflight:=func()error{
+    calls++
+    if calls!=2{return nil}
+    switch kind{
+    case "task-and-dns-no-longer-healthy":
+     return errors.New("SYSTEM DNS owner no longer trusted")
+    case "old-executable-replaced-after-first-snapshot":
+     return os.WriteFile(f.live,[]byte("MZ_CHANGED_ON_SECOND_PREFLIGHT"),0600)
+    case "backup-corrupted-after-first-snapshot":
+     return os.WriteFile(filepath.Join(f.backup,legacyBackupExe),[]byte("MZ_CORRUPT_ORIGINAL"),0600)
+    case "signed-target-corrupted-after-first-snapshot":
+     return os.WriteFile(f.candidate,[]byte("MZ_CORRUPT_CANDIDATE"),0600)
+    case "another-updater-registered-managed-engine":
+     dir:=filepath.Join(f.root,"installed-engines")
+     if err:=os.Mkdir(dir,0700);err!=nil{return err}
+     return os.WriteFile(filepath.Join(dir,installedReceiptName),[]byte("{}"),0600)
+    default:return errors.New("missing regression case")
+    }
+   }
+   proof,err:=VerifySignedUnversionedLegacyMigration(context.Background(),
+    f.live,f.backup,f.candidate,"0.28.7",f.raw,f.sig,f.pub,
+    testSecureLabFolderBridge,preflight)
+   if err==nil||proof.CandidateSHA256!=""||calls!=2{
+    t.Fatalf("second-preflight drift %q incorrectly authorized: proof=%+v, probes=%d, err=%v",kind,proof,calls,err)
+   }
+  })
+ }
+}
+
+func TestSignedBridgeDoesNotIssueProofWhenFinalPreflightCancelled(t *testing.T){
+ f:=newSignedBridge(t)
+ ctx,cancel:=context.WithCancel(context.Background())
+ defer cancel()
+ calls:=0
+ proof,err:=VerifySignedUnversionedLegacyMigration(ctx,f.live,f.backup,f.candidate,
+  "0.28.7",f.raw,f.sig,f.pub,testSecureLabFolderBridge,func()error{
+   calls++
+   if calls==2{cancel()}
+   return nil
+  })
+ if !errors.Is(err,context.Canceled)||proof.CandidateSHA256!=""||calls!=2{
+  t.Fatalf("cancellation during second live inspection issued proof: %+v, calls=%d, err=%v",proof,calls,err)
+ }
 }
