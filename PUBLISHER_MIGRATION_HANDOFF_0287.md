@@ -74,6 +74,18 @@ Los tests cubren firmas ausentes, otros editores, bytes de motor alterados, resp
 
 **Progreso global sigue en 50%**. Este binario permite obtener la evidencia concreta que falta para decidir la ruta en la PC del usuario, pero no reemplaza la firma editorial auténtica ni la VM Windows persistente, watchdog o conmutación productiva. El paso 6 sigue abierto.
 
+### Auditoría de navegador VS motor DNS del Centro 0.28.6 — 31/10/2026
+
+**Hecho:** se añadió `browser_policy_inventory_windows.go`, que consulta exclusivamente tres rutas HKLM fijas de la 0.28.6: Chrome URLBlocklist, Edge URLBlocklist y Firefox WebsiteFilter/Block. Calcula contadores anónimos de valores numerados y datos inválidos, sin incorporar URLs ni historial al informe. Tener entradas en Registro **NO comprueba que los navegadores las apliquen**, y mucho menos que el motor DNS esté instalado.
+
+**Integración:** el diagnóstico autónomo `auditcmd/main_windows.go` ahora devuelve `browser_policies` con los tres contadores, más `browser_policies_status`, **separados** de la ruta de motor DNS basada en seis observaciones. Si falla la lectura o no hay permisos, lo declara desconocido y no inventa protección efectiva.
+
+**Pruebas Windows aprobadas:** [GitHub Actions #41263495317](https://github.com/apdocentepba-hub/volve-updates/actions/runs/41263495317). Pruebas unitarias contra duplicados, omisiones, valores corruptos, inyecciones, cancelación y ejecución real read-only del Registro en VM. En la VM efímera se contaron Chrome=0, Edge=0, Firefox=0, lo que **no describe la PC del usuario**.
+
+**Artefacto independiente:** `VOLVE_0287_Diagnostico_Windows_SoloLectura_LAB` #13066760394, cuatro archivos; EXE de 5.527.040 bytes, SHA-256 `dea0adac311321ce5ba8b2614ae9f936ce3cdf2e89bc427b20b728906ea86022`, comprobado tras descargar el ZIP además de GitHub CI. Diagnóstico **sin firma editorial de distribución**, no instalador ni release del Centro. No deshabilitar SmartScreen o Defender para ejecutarlo.
+
+**Lo que realmente falta:** resultados de la máquina con Centro 0.28.6, firma auténtica del editor, controlador SYSTEM productivo con rollback, prueba de reinicio persistente y publicación compatible. **Progreso global 50% (5/10 hitos), puerta 6 abierta**; no se ha autorizado ni ejecutado una migración.
+
 ### Próximo avance de ingeniería independiente de la firma
 
 Desarrollar el adaptador aislado que obtiene la identidad **real** de tarea SYSTEM y del ejecutable instalado, valida el recibo bajo ACL y pasa esos valores a la función de revisión. Primero ejecutarlo en VM y con guardas de no-mutación; no integrarlo al botón de actualización hasta tener permiso editorial y ensayo de reboot.
