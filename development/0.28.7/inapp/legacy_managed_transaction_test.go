@@ -185,9 +185,9 @@ func TestSignedLegacyTransactionRejectsBackupModifiedImmediatelyAfterSnapshot(t 
     !strings.Contains(err.Error(),"respaldo alterado tras Snapshot"){
     t.Fatalf("corrupted backup after snapshot was not marked critical: %v",err)
    }
-   want:=[]string{"preflight","watchdog","snapshot","restore","probe","connectivity"}
+   want:=[]string{"preflight","watchdog","snapshot"}
    if !reflect.DeepEqual(d.calls,want){
-    t.Fatalf("modified fallback allowed installation or skipped restoration: %v",d.calls)
+    t.Fatalf("modified fallback allowed installation or attempted unsafe restore: %v",d.calls)
    }
   })
  }
@@ -204,8 +204,8 @@ func TestSignedLegacyTransactionRejectsSealedBackupTamperedAfterTargetPreparatio
   !strings.Contains(err.Error(),"autorización cambió"){
   t.Fatalf("corrupted rollback after installing target not critical: %v",err)
  }
- want:=[]string{"preflight","watchdog","snapshot","install","prepared","restore","probe","connectivity"}
+ want:=[]string{"preflight","watchdog","snapshot","install","prepared"}
  if !reflect.DeepEqual(d.calls,want){
-  t.Fatalf("corrupted backup allowed switch or false commit: %v",d.calls)
+  t.Fatalf("corrupted backup allowed unsafe restore, switch or commit: %v",d.calls)
  }
 }
