@@ -1,0 +1,66 @@
+name: VOLVE 0.28.7 installed-root resolver source audit (NO RELEASE)
+on:
+  push:
+    branches: [feature/motor-updater-0287-pilot]
+    paths:
+      - '.github/workflows/volve-0287-root-resolver-audit.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  inspect-root-resolver:
+    runs-on: windows-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.x'
+      - name: Reconstruct authenticated source and compose ALL six Windows inventories
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $parts=@(Get-ChildItem 'development/0.28.7/complete-source-parts' -Filter 'part-*.bin' -File | Sort-Object Name)
+          if($parts.Count -ne 10){throw 'Source chunks missing'}
+          $zip=[IO.File]::Create((Join-Path (Get-Location) 'source.zip'))
+          try{
+            for($i=0;$i -lt 10;$i++){
+              if($parts[$i].Name -ne ('part-{0:D2}.bin' -f $i)){throw 'Unexpected source chunk name'}
+              $source=[IO.File]::OpenRead($parts[$i].FullName)
+              try{$source.CopyTo($zip)}finally{$source.Dispose()}
+            }
+          }finally{$zip.Dispose()}
+          if((Get-FileHash -Algorithm SHA256 source.zip).Hash.ToLowerInvariant() -ne '92b3536559151260375b17a64eedd009df8399e45460637208027b7ca0587ba5'){throw 'Original source integrity mismatch'}
+          New-Item -ItemType Directory build -Force | Out-Null
+          Expand-Archive -LiteralPath source.zip -DestinationPath build -Force
+          $overlay='development/0.28.7/VOLVE_0287_PRECHECK_RESCATE_OVERLAY_NO_INSTALAR.zip'
+          if((Get-FileHash -Algorithm SHA256 $overlay).Hash.ToLowerInvariant() -ne 'fdfd31f21df81fe6da6075bfd442354297874576b6dc2c38f19bd35a681d95cd'){throw 'Preflight overlay altered'}
+          Expand-Archive -LiteralPath $overlay -DestinationPath build -Force
+          Copy-Item 'development/0.28.7/journal/*.go' build/codigo/motorupdate/ -Force
+          $crash='development/0.28.7/VOLVE_0287_RECUPERACION_INTERRUPCION_FORZADA_NO_INSTALAR_v3.zip'
+          if((Get-FileHash -Algorithm SHA256 $crash).Hash.ToLowerInvariant() -ne '773bd5eb5f1c4883021cc321856636354e964d3605dba9017e2fb5d1a7401b40'){throw 'Recovery overlay altered'}
+          Expand-Archive -LiteralPath $crash -DestinationPath build -Force
+          go run development/0.28.7/inapp/apply_overlay.go build/codigo
+          if($LASTEXITCODE -ne 0){throw 'Real Go source overlay failed'}
+          foreach($file in @(
+            'fresh_recovery_inventory_windows.go',
+            'fresh_recovery_inventory_windows_test.go',
+            'fresh_complete_host_probe_windows.go',
+            'fresh_complete_host_probe_windows_test.go'
+          )){
+            if(-not (Test-Path -LiteralPath (Join-Path 'build/codigo/motorupdate' $file) -PathType Leaf)){
+              throw ('Recovery or six-inventory module omitted from actual Go build: '+$file)
+            }
+          }
+      - name: Inspect actual installed-root resolver with no host changes
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $matches=@(Get-ChildItem 'build/codigo' -Filter '*.go' -Recurse -File | Select-String -Pattern '^func installRoot\(')
+          if($matches.Count -ne 1){throw ('Expected one installed-root resolver; saw '+$matches.Count)}
+          $file=$matches[0].Path
+          $line=[int]$matches[0].LineNumber
+          $lines=Get-Content -LiteralPath $file
+          $end=[Math]::Min($lines.Length,$line+80)
+          Write-Host ('RESOLVER SOURCE: '+[IO.Path]::GetFileName($file))
+          for($i=$line-1;$i -lt $end;$i++){Write-Host ('SRC: '+$lines[$i])}
