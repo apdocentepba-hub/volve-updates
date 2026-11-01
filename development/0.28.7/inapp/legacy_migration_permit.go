@@ -155,6 +155,41 @@ func VerifySignedUnversionedLegacyMigration(
         return empty,errors.New("running legacy executable changed since signed permit/backup")
     }
     if err:=ctx.Err();err!=nil{return empty,err}
+    // The first live check is not enough: the SYSTEM task, DNS owner,
+    // protected rollback, signed target or registered-engine state might
+    // change while calculating the running motor hash. Re-audit immediately
+    // before returning the proof. Both observations must agree, fail closed.
+    if err:=livePreflight();err!=nil{
+        return empty,fmt.Errorf("live SYSTEM/DNS state changed during migration review: %w",err)
+    }
+    // A managed-engine receipt appearing during the review means another
+    // updater already completed the migration; refuse a duplicate bridge.
+    for _,path:=range []string{
+        filepath.Join(filepath.Dir(liveExe),"installed-engines",installedReceiptName),
+        filepath.Join(filepath.Dir(liveExe),installedReceiptName),
+    } {
+        if _,err:=os.Lstat(path);err==nil{
+            return empty,errors.New("managed motor registered during migration review")
+        }else if !errors.Is(err,os.ErrNotExist){return empty,err}
+    }
+    again,err:=VerifyUnversionedLegacyRecovery(backupDir,protectBackup)
+    if err!=nil||again!=receipt{
+        return empty,errors.New("protected legacy recovery backup changed during migration review")
+    }
+    secondManifest,err:=VerifyStaged(candidate,publisherKey)
+    if err!=nil||secondManifest!=candidateManifest{
+        return empty,errors.New("signed candidate changed during migration review")
+    }
+    secondHash,secondSize,err:=legacyDigest(liveExe,legacyBackupMaxExe)
+    if err!=nil||secondHash!=activeHash||secondSize!=activeSize{
+        return empty,errors.New("running legacy motor changed during migration review")
+    }
+    // Recheck the signed permit at the final boundary so an expiration during
+    // slow Windows probes cannot be presented as a still-valid authorization.
+    if _,err:=parseSignedMigrationPermit(permitJSON,permitSignature,publisherKey);err!=nil{
+        return empty,fmt.Errorf("migration permission became invalid during review: %w",err)
+    }
+    if err:=ctx.Err();err!=nil{return empty,err}
     return VerifiedLegacyMigrationProof{
         LegacySHA256:permit.FromSHA256,
         LegacyTaskXMLSHA256:permit.FromTaskXMLSHA256,
