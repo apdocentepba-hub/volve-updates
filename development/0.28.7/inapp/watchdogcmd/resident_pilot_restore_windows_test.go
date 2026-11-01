@@ -59,7 +59,7 @@ func TestResidentPilotRecoveryScriptBindsLiveTaskAndBackup(t *testing.T){
  if executed!=1 {t.Fatalf("unsafe executor call count: %d",executed)}
  for _,literal:=range []string{
   "Get-ScheduledTask","Register-ScheduledTask",
-  "Get-FileHash","$xmlHash","$oldHash","$target",
+  "$motorHasher.ComputeHash","$xmlHash","$oldHash","$target",
   "SYSTEM","--dns-service","VOLVE_CI_RESIDENT_RESTORED",
   disposableResidentTask,
  }{
