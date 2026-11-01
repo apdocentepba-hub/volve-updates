@@ -65,6 +65,20 @@ func ClassifyMotorInstallRouteReadOnly(
  namedCatalogCount:=0
  if e.VerifiedCatalogTask!=nil{
   if !knownCatalog{
+   // An unpinned catalog must NEVER hide an observed legacy DNS motor,
+   // occupied local DNS listeners or extra scheduled tasks. The actual 0.28.6
+   // host has all of those. It is a conflicting EXISTING install requiring
+   // targeted identity review, not a candidate for a fresh installation.
+   if e.LegacyExecutablePresent || e.VersionedMotorPresent ||
+    e.InstalledEngineInventoryPresent || e.VOLVETaskCount>1 ||
+    e.VOLVEServiceCount>0 || e.LocalIPv4DNSConfigured ||
+    e.LocalIPv6DNSConfigured || e.UDP53IPv4OwnerCount>0 ||
+    e.UDP53IPv6OwnerCount>0 || e.TCP53IPv4OwnerCount>0 ||
+    e.TCP53IPv6OwnerCount>0 {
+    report.Route=MotorRouteConflictingResidue
+    report.Reason="Unverified catalog task coexists with installed DNS motor, additional VOLVE tasks or local DNS evidence. Preserve existing protections; identify tasks and port53 owner before signed migration."
+    return report,nil
+   }
    report.Reason="Catalog task exists but executable, owner or definition is not verified."
    return report,nil
   }
