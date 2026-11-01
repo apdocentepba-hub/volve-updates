@@ -59,10 +59,16 @@ func installCILiveDNSBytesIntoProtectedFixture(t *testing.T,root,journalDir stri
  t.Cleanup(func(){_ = os.Remove(source)})
  // Build a real Windows binary with NO network-access code beyond the
  // isolated UDP reply loop; it does NOT use the installed VOLVE engine.
- cmd:=exec.Command("go","build","-trimpath","-o",old,source)
+ // The existing fixture originally contains inert placeholder bytes.
+ // Go refuses -o when that executable already exists, so compile into a
+ // unique temporary target, then replace only our disposable fixture.
+ built:=filepath.Join(root,"ci-only-compiled-dns.exe")
+ cmd:=exec.Command("go","build","-trimpath","-o",built,source)
  cmd.Dir=root
  if out,err:=cmd.CombinedOutput();err!=nil{t.Fatalf("CI DNS fixture compile failed: %v %s",err,out)}
- data,err:=os.ReadFile(old);if err!=nil{t.Fatal(err)}
+ data,err:=os.ReadFile(built);if err!=nil{t.Fatal(err)}
+ if err:=os.WriteFile(old,data,0600);err!=nil{t.Fatal(err)}
+ if err:=os.Remove(built);err!=nil{t.Fatal(err)}
  hash:=sha256.Sum256(data)
  actualSHA:=hex.EncodeToString(hash[:])
  backup:=filepath.Join(root,residentRecoveryParent,residentRecoveryFolder)
