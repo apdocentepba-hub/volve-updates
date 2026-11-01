@@ -45,6 +45,20 @@ Los tests cubren firmas ausentes, otros editores, bytes de motor alterados, resp
 
 **Crédito:** el adaptador del control 6.3 está programado y probado en laboratorio, pero **el control no puede darse por aprobado hasta observar realmente la instalación del usuario**. Continúan acreditados **2/4 controles del hito 6** y **5/10 puertas (50%) del piloto**.
 
+### Ruta real de instalación: catálogo ≠ motor DNS — 31/10/2026
+
+**Implementado** (solo rama piloto, sin publicación):
+- `motor_install_route.go` clasifica únicamente expedientes con seis inventarios completos y token Administrator: sin motor DNS, catálogo verificado solamente, motor heredado que necesita revisión firmada, motor administrado firmado o protección residual/contradictoria que exige auditoría. No declara protegida ni desprotegida la política de navegadores.
+- `motor_install_route_windows.go` conecta exclusivamente las consultas nativas read-only: tareas, servicios, adaptadores DNS, archivos, propietarios TCP/UDP 53 y estado de recuperación. Ninguna ruta otorga permiso para instalar, limpiar, sustituir ni cambiar la red.
+- `installed_motor_route_windows.go` agrega un comando diagnóstico **explícito** `--motor-route-readonly` en el ejecutable *piloto*, sin conectarlo al botón «Actualizar VOLVÉ». Emite JSON solo al administrador que lo ejecuta, sin subirlo a servidores ni escribirlo en disco.
+- No se infieren los argumentos ni la ruta de la tarea de catálogo a partir del propio Scheduler. En ausencia de una definición editorial fijada y verificable, la tarea se reporta como no verificada y **no** habilita una instalación nueva.
+
+**Evidencia:** GitHub Actions [#41261743766](https://github.com/apdocentepba-hub/volve-updates/actions/runs/41261743766) aprobó clasificación y lecturas nativas Windows. [#41261901273](https://github.com/apdocentepba-hub/volve-updates/actions/runs/41261901273) aprobó además los tests de la interfaz CLI incorporada al ejecutable reconstruido. Los casos negativos incluyen motor sin tarea, tarea sin motor, catálogo sin identidad fijada, `::1`, TCP/UDP 53 ocupados, servicio detenido, recibos huérfanos y archivos de recuperación. El runner no representa la PC del usuario.
+
+**Diagnóstico del usuario todavía desconocido:** en la información local compartida previamente había una tarea `VOLVE-CATALOGO-0230`, ausencia de `VOLVE-DNS-SERVER-0270`, algún DNS de loopback IPv6 y bloqueos de apuestas observados. Ninguno de esos indicadores demuestra por sí solo un motor DNS administrado funcionando o la ausencia de protección de navegadores. No se ha ejecutado el nuevo diagnóstico sobre el equipo del usuario.
+
+**Crédito:** progreso global **50% (5/10)**; puerta 6 permanece **2/4 controles aceptados** porque faltan la identidad concreta del motor instalado y el permiso auténtico firmado por el editor. Este diagnóstico no es un instalador, ni una publicación, ni una actualización productiva.
+
 ### Próximo avance de ingeniería independiente de la firma
 
 Desarrollar el adaptador aislado que obtiene la identidad **real** de tarea SYSTEM y del ejecutable instalado, valida el recibo bajo ACL y pasa esos valores a la función de revisión. Primero ejecutarlo en VM y con guardas de no-mutación; no integrarlo al botón de actualización hasta tener permiso editorial y ensayo de reboot.
