@@ -9,6 +9,8 @@ import (
  "errors"
  "fmt"
  "os"
+ "os/exec"
+ "strings"
  "testing"
  "time"
 )
@@ -56,4 +58,56 @@ func TestSignedLegacyLabKernelMutexRejectsProductiveNameAndNonHostedCI(t *testin
  if release!=nil{release()}
  if err==nil||release!=nil{t.Fatal("nonhosted Windows runner obtained lab migration lock")}
  t.Setenv("RUNNER_ENVIRONMENT",original)
+}
+
+func TestSignedLegacyLabKernelMutexChildProbe(t *testing.T){
+ name:=os.Getenv("VOLVE_CI_MUTEX_CHILD_NAME")
+ if name==""{t.Skip("cross-process child probe only")}
+ shouldAcquire:=os.Getenv("VOLVE_CI_MUTEX_CHILD_EXPECT_ACQUIRE")=="1"
+ ctx,cancel:=context.WithTimeout(context.Background(),400*time.Millisecond)
+ defer cancel()
+ release,err:=AcquireWindowsSignedLegacyLabLease(ctx,name)
+ if shouldAcquire{
+  if err!=nil||release==nil{t.Fatalf("unlocked kernel mutex refused independent process: %v",err)}
+  release()
+  t.Log("CI_CROSS_PROCESS_MUTEX_ACQUIRED")
+  return
+ }
+ if release!=nil{release()}
+ if release!=nil||!errors.Is(err,context.DeadlineExceeded){
+  t.Fatalf("a second Windows process entered another process's kernel mutex: release=%t err=%v",release!=nil,err)
+ }
+ t.Log("CI_CROSS_PROCESS_MUTEX_EXCLUDED")
+}
+
+func TestSignedLegacyLabKernelMutexCrossProcessExclusion(t *testing.T){
+ if os.Getenv("GITHUB_ACTIONS")!="true"||
+  os.Getenv("RUNNER_ENVIRONMENT")!="github-hosted"{
+  t.Skip("hosted disposable Windows VM only")
+ }
+ name:=fmt.Sprintf("VOLVE-CI-ManagedMotor-%d",time.Now().UnixNano())
+ release,err:=AcquireWindowsSignedLegacyLabLease(context.Background(),name)
+ if err!=nil||release==nil{t.Fatalf("parent cannot own named Windows mutex: %v",err)}
+ held:=true
+ defer func(){if held{release()}}()
+ runChild:=func(accept bool){
+  t.Helper()
+  ctx,cancel:=context.WithTimeout(context.Background(),25*time.Second)
+  defer cancel()
+  cmd:=exec.CommandContext(ctx,os.Args[0],"-test.run=^TestSignedLegacyLabKernelMutexChildProbe$","-test.v")
+  env:=append(os.Environ(),"VOLVE_CI_MUTEX_CHILD_NAME="+name)
+  marker:="CI_CROSS_PROCESS_MUTEX_EXCLUDED"
+  if accept{
+   env=append(env,"VOLVE_CI_MUTEX_CHILD_EXPECT_ACQUIRE=1")
+   marker="CI_CROSS_PROCESS_MUTEX_ACQUIRED"
+  }
+  cmd.Env=env
+  output,err:=cmd.CombinedOutput()
+  if err!=nil||!strings.Contains(string(output),marker){
+   t.Fatalf("independent Windows process did not prove kernel mutex state: %v, output=%s",err,output)
+  }
+ }
+ runChild(false)
+ release();held=false
+ runChild(true)
 }
