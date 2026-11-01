@@ -36,6 +36,7 @@ type Diagnosis struct {
  CatalogSourceStatus SourceCatalogStatus `json:"catalog_source_status"`
  BrowserPolicies *motorupdate.WindowsBrowserPolicyEvidence `json:"browser_policies,omitempty"`
  BrowserPoliciesStatus string `json:"browser_policies_status"`
+ DNSOwner *DNSOwnerReport `json:"dns_udp53_owner,omitempty"`
 }
 
 func installedRootFromOriginalStatePath(programData string)(string,error){
@@ -159,6 +160,10 @@ func main(){
  if err!=nil{admin=false}
  report:=diagnosisWithBrowserPolicies(ctx,os.Getenv("ProgramData"),admin,
   motorupdate.DefaultWindowsMotorRouteInspectors(),motorupdate.DefaultWindowsBrowserPolicyInspect)
+ if admin && report.Route!=nil && ctx.Err()==nil {
+  evidence:=inspectDNSOwnerReadOnly(ctx,defaultDNSOwnerRead)
+  if evidence.Safe(){report.DNSOwner=&evidence}
+ }
  if err!=nil{
   report.Result="INCOMPLETE"
   report.Explanation="Windows administrator token could not be authenticated; no modifications made."
