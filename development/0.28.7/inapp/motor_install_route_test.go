@@ -2,6 +2,7 @@ package motorupdate
 
 import (
  "context"
+ "strings"
  "testing"
 )
 
@@ -128,5 +129,37 @@ func TestMotorRouteNeverAcceptsInjectedActionFlags(t *testing.T){
   r:=MotorInstallRouteReport{Route:MotorRouteFreshCandidate}
   change(&r)
   if err:=RequireMotorRouteReviewOnly(r);err==nil{t.Fatal("unsafe action was allowed in the read-only route result")}
+ }
+}
+
+func TestMotorRouteActual0286ThreeTasksUnverifiedCatalogDoesNotObscureActiveDNS(t *testing.T){
+ e:=freshCompleteObservation()
+ e.VOLVETaskCount=3
+ e.VerifiedCatalogTask=verifiedCatalogFixture()
+ e.VerifiedCatalogTask.ActionVerified=false
+ e.LegacyExecutablePresent=true
+ e.LocalIPv4DNSConfigured=true
+ e.LocalIPv6DNSConfigured=true
+ e.UDP53IPv4OwnerCount=1
+ e.UDP53IPv6OwnerCount=1
+ other:=[]string{`\VOLVE-DNS-SERVER-0270`,`\VOLVE-ANOTHER-LEGACY`}
+ got,err:=ClassifyMotorInstallRouteReadOnly(context.Background(),e,other)
+ if err!=nil{t.Fatal(err)}
+ if got.Route!=MotorRouteConflictingResidue||
+  !strings.Contains(got.Reason,"Preserve existing protections")||
+  got.InventoriesChecked!=6||got.SignedUpgradeAuthorized||got.FreshInstallAuthorized||
+  got.CanModifyDNS{
+  t.Fatalf("real 0.28.6 layout was mislabeled a fresh machine or allowed a write: %+v",got)
+ }
+}
+func TestMotorRouteUnverifiedCatalogAloneStillRequiresReadOnlyReview(t *testing.T){
+ e:=freshCompleteObservation()
+ e.VOLVETaskCount=1
+ e.VerifiedCatalogTask=verifiedCatalogFixture()
+ e.VerifiedCatalogTask.ActionVerified=false
+ got,err:=ClassifyMotorInstallRouteReadOnly(context.Background(),e,nil)
+ if err!=nil{t.Fatal(err)}
+ if got.Route!=MotorRouteUnverified||got.FreshInstallAuthorized||got.CanModifyDNS{
+  t.Fatalf("catalog alone became an unsafe fresh candidate: %+v",got)
  }
 }
