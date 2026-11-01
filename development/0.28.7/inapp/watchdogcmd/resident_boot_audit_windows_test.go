@@ -4,11 +4,13 @@ package main
 
 import (
  "context"
+ "errors"
  "os"
  "os/exec"
  "path/filepath"
  "strings"
  "testing"
+ "time"
 
  "volve-browser-protection/motorupdate"
 )
@@ -136,5 +138,40 @@ func TestIndependentBootAuditRejectsForgedTerminalReceipt(t *testing.T){
  if err:=os.WriteFile(result,[]byte(`{"schema":1,"component":"dns-engine-recovery-result","outcome":"committed"}`),0600);err!=nil{t.Fatal(err)}
  if plan,err:=auditResidentBootPlan(context.Background(),root);err==nil{
   t.Fatalf("forged success receipt caused a false no-op plan: %+v",plan)
+ }
+}
+
+func TestProtectedBootPlanAuditWaitsForProductionUpdateMutex(t *testing.T){
+ if os.Getenv("GITHUB_ACTIONS")!="true"||os.Getenv("RUNNER_ENVIRONMENT")!="github-hosted"{
+  t.Skip("requires privileged disposable Windows hosted runner")
+ }
+ root,dir,_,protect:=chainFixture(t,false)
+ owner,err:=motorupdate.AcquireProtectedResidentTransitionLease(context.Background())
+ if err!=nil{t.Fatal(err)}
+ held:=true
+ defer func(){if held{owner()}}()
+ ctx,cancel:=context.WithTimeout(context.Background(),300*time.Millisecond)
+ defer cancel()
+ done:=make(chan error,1)
+ go func(){
+  _,err:=auditResidentBootPlanProtected(ctx,root)
+  done<-err
+ }()
+ select{
+ case err:=<-done:
+  if !errors.Is(err,context.DeadlineExceeded) {
+   t.Fatalf("independent boot CLI bypassed live updater mutex: %v",err)
+  }
+ case <-time.After(4*time.Second):
+  t.Fatal("boot audit failed to cancel while protected mutex was held")
+ }
+ // Exclusive denial must not consume or overwrite a pending journal.
+ state,err:=motorupdate.InspectResidentRecoveryJournal(context.Background(),dir,protect)
+ if err!=nil||state.Status!="recovery-required"{t.Fatalf("blocked audit mutated recovery intent: %+v %v",state,err)}
+ owner()
+ held=false
+ plan,err:=auditResidentBootPlanProtected(context.Background(),root)
+ if err!=nil||plan.Status!="recovery-required"||plan.Action!="recover-original"{
+  t.Fatalf("independent boot audit could not read trusted pending intent after mutex release: %+v %v",plan,err)
  }
 }
