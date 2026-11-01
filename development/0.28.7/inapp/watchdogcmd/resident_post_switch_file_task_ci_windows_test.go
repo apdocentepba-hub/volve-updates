@@ -1,0 +1,124 @@
+//go:build windows
+
+package main
+
+// Windows hosted CI: a REAL disposable Task Scheduler job is changed from a
+// synthetic target action back to a protected original SYSTEM action.
+// The old EXE is also physically restored from the sealed CI snapshot.
+// No DNS motor is started; no actual VOLVE product task is touched.
+import (
+ "context"
+ "errors"
+ "fmt"
+ "os"
+ "path/filepath"
+ "strings"
+ "testing"
+ "time"
+
+ "volve-browser-protection/motorupdate"
+)
+
+func TestPostSwitchSystemTaskCILabRestoresRealDisposableSystemTaskAndMissingExe(t *testing.T){
+ if os.Getenv("GITHUB_ACTIONS")!="true"||
+  os.Getenv("RUNNER_ENVIRONMENT")!="github-hosted"{
+  t.Skip("hosted Windows disposable GitHub runner required")
+ }
+ ctx,cancel:=context.WithTimeout(context.Background(),170*time.Second)
+ defer cancel()
+ // Reject non-admin/non-VM contexts before any Scheduler change.
+ check:="$ErrorActionPreference='Stop';"+
+  "$id=[Security.Principal.WindowsIdentity]::GetCurrent();"+
+  "$p=[Security.Principal.WindowsPrincipal]::new($id);"+
+  "if(-not $p.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)){throw 'CI runner lacks administrator'};"+
+  "$vm=Get-CimInstance Win32_ComputerSystem;"+
+  "if(($vm.Manufacturer+' '+$vm.Model) -notmatch '(?i:virtual machine|vmware|hyper-v|kvm|qemu|virtualbox)'){throw 'not disposable virtual machine'};"+
+  "Write-Output 'CI_VM_ADMIN_OK'"
+ if result,err:=ps(ctx,check);err!=nil||result!="CI_VM_ADMIN_OK"{
+  t.Fatalf("refusing Scheduler test outside verified disposable VM: %s %v",result,err)
+ }
+ root,journalDir,_,protect:=chainFixture(t,false)
+ task:=fmt.Sprintf("VOLVE-CI-ManagedMotor-%d",time.Now().UnixNano())
+ if !pilotTaskPattern.MatchString(task){t.Fatal("generated task not disposable")}
+ target,err:=residentPilotTargetPath(root,"0.28.7")
+ if err!=nil{t.Fatal(err)}
+ if err:=os.WriteFile(target,[]byte("CI_INERT_NEW_TARGET_NOT_EXECUTABLE"),0600);err!=nil{t.Fatal(err)}
+ old:=filepath.Join(root,residentLegacyExe)
+ original,err:=os.ReadFile(old);if err!=nil{t.Fatal(err)}
+ create:="$ErrorActionPreference='Stop';"+
+  "$n="+q(task)+";"+
+  "$existing=Get-ScheduledTask -TaskName $n -TaskPath '\\' -ErrorAction SilentlyContinue;"+
+  "if($null -ne $existing){throw 'CI task name already exists'};"+
+  "$action=New-ScheduledTaskAction -Execute "+q(target)+" -Argument '--dns-service';"+
+  "$principal=New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest;"+
+  "$trigger=New-ScheduledTaskTrigger -AtStartup;"+
+  "Register-ScheduledTask -TaskName $n -TaskPath '\\' -Action $action -Principal $principal -Trigger $trigger -ErrorAction Stop|Out-Null;"+
+  "$t=Get-ScheduledTask -TaskName $n -TaskPath '\\' -ErrorAction Stop;"+
+  "if($t.Principal.UserId -notin @('SYSTEM','S-1-5-18') -or @($t.Actions).Count -ne 1 -or [string]$t.Actions[0].Execute -ine "+q(target)+"){throw 'unexpected disposable task after registration'};"+
+  "Write-Output 'CI_DISPOSABLE_TARGET_REGISTERED'"
+ cleanup:="$ErrorActionPreference='Stop';"+
+  "$n="+q(task)+";"+
+  "$t=Get-ScheduledTask -TaskName $n -TaskPath '\\' -ErrorAction SilentlyContinue;"+
+  "if($null -ne $t){"+
+  "if($t.Principal.UserId -notin @('SYSTEM','S-1-5-18')){throw 'refusing to delete unrelated task'};"+
+  "Unregister-ScheduledTask -TaskName $n -TaskPath '\\' -Confirm:$false -ErrorAction Stop};"+
+  "if($null -ne (Get-ScheduledTask -TaskName $n -TaskPath '\\' -ErrorAction SilentlyContinue)){throw 'disposable task cleanup incomplete'};"+
+  "Write-Output 'CI_DISPOSABLE_TASK_REMOVED'"
+ t.Cleanup(func(){
+  cleanCtx,cc:=context.WithTimeout(context.Background(),25*time.Second)
+  defer cc()
+  out,err:=ps(cleanCtx,cleanup)
+  if err!=nil||out!="CI_DISPOSABLE_TASK_REMOVED"{t.Errorf("CI Scheduler cleanup failed: %s %v",out,err)}
+ })
+ if result,err:=ps(ctx,create);err!=nil||result!="CI_DISPOSABLE_TARGET_REGISTERED"{
+  t.Fatalf("disposable SYSTEM task registration failed: %s %v",result,err)
+ }
+ if err:=os.Remove(old);err!=nil{t.Fatal(err)}
+ if err:=restoreMissingOriginalAndDisposableTaskCILab(ctx,root,task,ps);err!=nil{
+  t.Fatalf("file + ACTUAL Task Scheduler restore failed: %v",err)
+ }
+ restored,err:=os.ReadFile(old)
+ if err!=nil||string(restored)!=string(original){
+  t.Fatalf("physical original not restored byte-for-byte: %v",err)
+ }
+ validate:="$ErrorActionPreference='Stop';"+
+  "$n="+q(task)+";"+
+  "$t=Get-ScheduledTask -TaskName $n -TaskPath '\\' -ErrorAction Stop;"+
+  "if($t.TaskPath -ne '\\' -or $t.Principal.UserId -notin @('SYSTEM','S-1-5-18') -or @($t.Actions).Count -ne 1 -or [string]$t.Actions[0].Execute -ine "+q(old)+" -or [string]$t.Actions[0].Arguments -cne '--dns-service'){throw 'real SYSTEM task not restored'};"+
+  "Write-Output 'CI_REAL_SYSTEM_TASK_RESTORED'"
+ if result,err:=ps(ctx,validate);err!=nil||result!="CI_REAL_SYSTEM_TASK_RESTORED"{
+  t.Fatalf("real Windows task not restored correctly: %s %v",result,err)
+ }
+ current,err:=motorupdate.InspectResidentRecoveryJournal(ctx,journalDir,protect)
+ if err!=nil||current.Status!="recovery-required"{
+  t.Fatalf("task+file restore falsely published DNS success: %+v %v",current,err)
+ }
+ if _,err:=os.Lstat(filepath.Join(journalDir,motorupdate.ResidentResultFile));!os.IsNotExist(err){
+  t.Fatalf("restored task falsely wrote DNS/Internet health receipt: %v",err)
+ }
+ t.Log("PASS: real disposable SYSTEM task and original EXE recovered in Windows VM; journal still pending; DNS untouched")
+}
+
+func TestPostSwitchSystemTaskCILabFailsBeforeSchedulerWhenOriginalIsDifferent(t *testing.T){
+ root,_,_,_:=chainFixture(t,false)
+ old:=filepath.Join(root,residentLegacyExe)
+ if err:=os.WriteFile(old,[]byte("MZ_CI_DIFFERENT_ACTIVE_EXE"),0600);err!=nil{t.Fatal(err)}
+ called:=0
+ runner:=func(context.Context,string)(string,error){called++;return "",errors.New("should never run")}
+ err:=restoreMissingOriginalAndDisposableTaskCILab(context.Background(),root,disposableResidentTask,runner)
+ if err==nil||!strings.Contains(err.Error(),"different installed executable")||called!=0{
+  t.Fatalf("different original bypassed no-clobber gate or reached Scheduler: %v calls=%d",err,called)
+ }
+}
+
+func TestPostSwitchSystemTaskCILabRejectsProductiveTaskAndNonHostedRunner(t *testing.T){
+ root,_,_,_:=chainFixture(t,false)
+ called:=0
+ runner:=func(context.Context,string)(string,error){called++;return "",errors.New("must not run")}
+ for _,task:=range []string{"VOLVE-DNS-SERVER-0270","VOLVE-CI-ManagedMotor-42","unrelated"}{
+  if err:=restoreMissingOriginalAndDisposableTaskCILab(context.Background(),root,task,runner);err==nil{
+   t.Fatalf("unsafe Scheduler identity accepted: %q",task)
+  }
+ }
+ if called!=0{t.Fatal("unsafe task invoked external Scheduler runner")}
+}
