@@ -17,7 +17,7 @@ func TestWindowsMotorRouteSummaryKeepsDNSResidueEvenWhenCatalogUnpinned(t *testi
  got,err:=InspectWindowsMotorRouteWithSummaryReadOnly(context.Background(),root,"","",readers)
  if err!=nil{t.Fatal(err)}
  s:=got.Summary
- if got.Decision.Route!=MotorRouteUnverified || s.InventoriesObserved!=6 ||
+ if got.Decision.Route!=MotorRouteConflictingResidue || s.InventoriesObserved!=6 ||
   s.VOLVETasks!=1||!s.CatalogTaskSeen||s.CatalogTaskActionPinned ||
   s.OtherTaskCount!=0||!s.LocalDNSIPv6Seen||s.UDP53IPv6Listeners!=1 ||
   s.SignedUpgradeAuthorized||s.CanModifyDNS{
