@@ -116,6 +116,17 @@ func LoadResidentDurablePublisherGrant(ctx context.Context,root string,
  if err!=nil||!bytes.Equal(sig,againSig){
   return empty,errors.New("publisher grant signature changed during verification")
  }
+ // Directory ACLs and reparse-point identities must remain trusted AFTER
+ // reading and authenticating both files. A permission change during a
+ // lengthy sealed-backup hash must never produce a boot recovery grant.
+ for _,p:=range []string{root,parent,dir}{
+  if err:=checkResidentGrantNode(p,true);err!=nil{
+   return empty,fmt.Errorf("signed grant ancestor changed during verification: %w",err)
+  }
+  if err:=protect(p);err!=nil{
+   return empty,fmt.Errorf("signed grant ancestor ACL changed during verification: %w",err)
+  }
+ }
  if err:=ctx.Err();err!=nil{return empty,err}
  return ResidentDurablePublisherGrant{
   JournalDir:journal,BackupDir:backup,

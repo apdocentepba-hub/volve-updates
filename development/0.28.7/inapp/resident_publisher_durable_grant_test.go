@@ -154,3 +154,41 @@ func TestDurablePublisherGrantRejectsExpiredOrTerminalJournalOnNewRead(t *testin
   t.Fatal("terminal journal authorized another independent recovery")
  }
 }
+
+func TestDurablePublisherGrantRejectsLateAncestorACLChange(t *testing.T){
+ f:=makeSignedRecoveryFixture(t,false)
+ allow:=func(string)error{return nil}
+ if err:=PersistResidentDurablePublisherGrant(context.Background(),f.root,
+  f.permit,f.sig,f.pub,allow,allow,allow,allow);err!=nil{t.Fatal(err)}
+ rootChecks:=0
+ protect:=func(path string)error{
+  if filepath.Clean(path)==filepath.Clean(f.root){
+   rootChecks++
+   if rootChecks==2{return errors.New("injected late root ACL change")}
+  }
+  return nil
+ }
+ if _,err:=LoadResidentDurablePublisherGrant(context.Background(),f.root,f.pub,
+  protect,allow,allow);err==nil{
+  t.Fatal("signed boot grant accepted an ancestor ACL change after payload verification")
+ }
+ if rootChecks!=2{t.Fatalf("expected initial and final root ACL rechecks, got %d",rootChecks)}
+}
+
+func TestDurablePublisherGrantLateAncestorACLRemainsTrusted(t *testing.T){
+ f:=makeSignedRecoveryFixture(t,false)
+ allow:=func(string)error{return nil}
+ if err:=PersistResidentDurablePublisherGrant(context.Background(),f.root,
+  f.permit,f.sig,f.pub,allow,allow,allow,allow);err!=nil{t.Fatal(err)}
+ checks:=0
+ protect:=func(path string)error{
+  if filepath.Clean(path)==filepath.Clean(f.root){checks++}
+  return nil
+ }
+ grant,err:=LoadResidentDurablePublisherGrant(context.Background(),f.root,f.pub,
+  protect,allow,allow)
+ if err!=nil||!bytes.Equal(grant.Permit,f.permit)||
+  !bytes.Equal(grant.Signature,f.sig)||checks!=2{
+  t.Fatalf("unchanged signed grant rejected or no final ACL recheck: %v, root_checks=%d",err,checks)
+ }
+}
