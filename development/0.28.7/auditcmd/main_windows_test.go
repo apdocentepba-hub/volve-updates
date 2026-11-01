@@ -146,3 +146,23 @@ func TestStandaloneAuditBrowserPolicyFailureNeverInventsBlocking(t *testing.T){
  if noAdmin.BrowserPolicies!=nil||noAdmin.BrowserPoliciesStatus!="NOT_INSPECTED_NO_ADMIN_TOKEN"||
   noAdmin.Result!="INCOMPLETE"{t.Fatalf("admin absence ignored: %+v",noAdmin)}
 }
+
+
+func TestStandaloneReportReturnsPrivacySafeSixInventoryDetails(t *testing.T){
+ pd,_:=testStateDirectory(t)
+ got:=diagnosisWithBrowserPolicies(context.Background(),pd,true,fakeReadOnlyHost(true),
+  func(context.Context,string)([]byte,error){
+   return []byte(`[{"Name":"chrome","Present":true,"NumberedEntries":40,"InvalidEntries":0,"UnexpectedEntries":0},{"Name":"edge","Present":true,"NumberedEntries":40,"InvalidEntries":0,"UnexpectedEntries":0},{"Name":"firefox","Present":true,"NumberedEntries":80,"InvalidEntries":0,"UnexpectedEntries":0}]`),nil
+  })
+ if got.Route==nil||got.HostEvidence==nil||got.BrowserPolicies==nil||
+  got.HostEvidence.InventoriesObserved!=6||!got.HostEvidence.LocalDNSIPv6Seen||
+  got.HostEvidence.CanModifyDNS||got.HostEvidence.SignedUpgradeAuthorized||
+  got.BrowserPolicies.TotalNumberedEntries!=160||got.BrowserPolicies.DNSMotorVerified||
+  got.BrowserPolicies.BrowserEnforcementVerified {
+  t.Fatalf("standalone browser policy and host motor state conflated: %+v",got)
+ }
+ raw,err:=json.Marshal(got);if err!=nil{t.Fatal(err)}
+ if strings.Contains(string(raw),`C:\\Program Files`) ||strings.Contains(string(raw),`"::1"`) {
+  t.Fatal("private executable action path or literal DNS address escaped into report")
+ }
+}
