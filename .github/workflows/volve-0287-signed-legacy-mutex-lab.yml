@@ -1,0 +1,41 @@
+name: VOLVE 0.28.7 signed legacy kernel mutex on disposable Windows (NO RELEASE)
+on:
+  push:
+    branches: [feature/motor-updater-0287-pilot]
+    paths:
+      - 'development/0.28.7/inapp/dns_restore_lab_mutex_windows.go'
+      - 'development/0.28.7/inapp/dns_restore_signed_migration_mutex_windows_test.go'
+      - '.github/workflows/volve-0287-signed-legacy-mutex-lab.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  kernel-mutex-lab:
+    runs-on: windows-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.x'
+      - name: Test native Windows named kernel mutex without motor or DNS changes
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          if($env:GITHUB_ACTIONS -ne 'true' -or $env:RUNNER_ENVIRONMENT -ne 'github-hosted'){
+            throw 'Signed legacy mutex CI must use hosted disposable Windows'
+          }
+          $dir=Join-Path $env:RUNNER_TEMP 'volve-signed-legacy-mutex-ci'
+          New-Item -ItemType Directory -Path $dir -Force|Out-Null
+          Copy-Item -LiteralPath 'development/0.28.7/inapp/dns_restore_lab_mutex_windows.go' -Destination $dir -ErrorAction Stop
+          Copy-Item -LiteralPath 'development/0.28.7/inapp/dns_restore_signed_migration_mutex_windows_test.go' -Destination $dir -ErrorAction Stop
+          Push-Location $dir
+          try{
+            go mod init volve-signed-legacy-mutex-ci
+            if($LASTEXITCODE -ne 0){throw 'Cannot prepare isolated CI module'}
+            go test -run '^TestSignedLegacyLabKernelMutex' -count=1 -timeout 2m -v .
+            if($LASTEXITCODE -ne 0){throw 'Native Windows signed migration mutex test failed'}
+            go vet .
+            if($LASTEXITCODE -ne 0){throw 'Native Windows signed migration mutex vet failed'}
+          }finally{Pop-Location}
+          Write-Host 'PASS: real named Windows mutex excludes concurrent disposable migration, denies production task and nonhosted requests; no OS task or DNS changes.'
