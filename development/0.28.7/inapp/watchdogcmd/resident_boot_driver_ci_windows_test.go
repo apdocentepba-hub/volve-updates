@@ -190,3 +190,40 @@ func TestResidentCIBootDriverRebuildsMissingExeBeforeTaskRecovery(t *testing.T){
   t.Fatalf("boot recovered DNS but did not publish durable terminal receipt: %v",err)
  }
 }
+
+func TestResidentCIBootDriverRestoresExactJournalPinnedCandidateThenHealthChecks(t *testing.T){
+ if os.Getenv("GITHUB_ACTIONS")!="true"||os.Getenv("RUNNER_ENVIRONMENT")!="github-hosted"{
+  t.Skip("only hosted disposable CI Windows sandbox may replace a lab executable")
+ }
+ root,dir,seal,protect:=chainFixture(t,false)
+ live:=filepath.Join(root,residentLegacyExe)
+ original,err:=os.ReadFile(live);if err!=nil{t.Fatal(err)}
+ // The exact synthetic target hash was pinned before the recovery journal
+ // was armed. This is a CI fixture, NOT a signed production candidate.
+ if err:=os.WriteFile(live,[]byte("publisher-signed candidate CI bytes"),0600);err!=nil{t.Fatal(err)}
+ runnerCalled:=0
+ driver,err:=newResidentCIBootDriver(root,disposableResidentTask,
+  func(_ context.Context,script string)(string,error){
+   runnerCalled++
+   if !strings.Contains(script,"Register-ScheduledTask"){return "",errors.New("missing real restore command")}
+   recovered,err:=os.ReadFile(live)
+   if err!=nil || string(recovered)!=string(original){
+    return "",errors.New("task restoration attempted BEFORE physical original was recovered")
+   }
+   return "VOLVE_CI_RESIDENT_RESTORED",nil
+  })
+ if err!=nil{t.Fatal(err)}
+ health:=&ciBootHealth{firstOriginalMissing:true}
+ status,err:=motorupdate.RecoverPendingResidentAfterBoot(context.Background(),
+  dir,seal,protect,health,driver)
+ if err!=nil || status!="restored" || runnerCalled!=1 || health.identityChecks!=3{
+  t.Fatalf("replaced executable not recovered in correct order: status=%s calls=%d checks=%d err=%v",
+   status,runnerCalled,health.identityChecks,err)
+ }
+ got,err:=os.ReadFile(live)
+ if err!=nil || string(got)!=string(original){t.Fatalf("original bytes not restored: %v",err)}
+ after,err:=motorupdate.InspectResidentRecoveryJournal(context.Background(),dir,protect)
+ if err!=nil || after.Status!="restored"{
+  t.Fatalf("health-check completion was not reflected in trusted journal: %+v %v",after,err)
+ }
+}
