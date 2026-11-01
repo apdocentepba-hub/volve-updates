@@ -204,6 +204,18 @@ func run(ctx context.Context,path string) error {
     }
 }
 func main(){
+    // Explicit opt-in from a hosted Windows CI sandbox ONLY. This exercises
+    // the separately COMPILED watchdog binary, not a Go test child process.
+    // The CLI has no route to VOLVE-DNS-SERVER-0270 or a production root.
+    if len(os.Args)==4 && os.Args[1]=="--recover-resident-ci-task" {
+        ctx,cancel:=context.WithTimeout(context.Background(),105*time.Second);defer cancel()
+        if err:=recoverResidentCIFromStandalone(ctx,os.Args[2],os.Args[3]);err!=nil{
+            fmt.Fprintln(os.Stderr,"VOLVE CI STANDALONE RECOVERY REFUSED:",err)
+            os.Exit(1)
+        }
+        fmt.Println("VOLVE_CI_STANDALONE_RECOVERED")
+        return
+    }
     if len(os.Args)==3 && os.Args[1]=="--audit-resident-boot-plan" {
         ctx,cancel:=context.WithTimeout(context.Background(),90*time.Second);defer cancel()
         plan,err:=auditResidentBootPlan(ctx,os.Args[2])
