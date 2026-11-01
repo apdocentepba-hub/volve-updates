@@ -323,11 +323,14 @@ func TestStandaloneCIWatchdogAtStartupSYSTEMTaskCILab(t *testing.T){
  // a dedicated SYSTEM-only lab bootstrap to recreate ephemeral env values
  // and the runner's temp root. This is a LAB bridge, NOT production boot
  // deployment. The actual separately compiled watchdog runs as SYSTEM.
- bootstrap:="$ErrorActionPreference='Stop';"+
+ logPath:=filepath.Join(root,"CI-WATCHDOG-SYSTEM-DIAGNOSTIC.txt")
+ bootstrap:="$ErrorActionPreference='Stop';$ProgressPreference='SilentlyContinue';"+
   "$env:GITHUB_ACTIONS='true';$env:RUNNER_ENVIRONMENT='github-hosted';"+
   "$env:TMP="+q(filepath.Dir(root))+";$env:TEMP="+q(filepath.Dir(root))+";"+
-  "& "+q(binary)+" '--recover-resident-ci-task' "+q(root)+" "+q(motorTask)+";"+
-  "if($LASTEXITCODE -ne 0){exit $LASTEXITCODE}"
+  "& "+q(binary)+" '--recover-resident-ci-task' "+q(root)+" "+q(motorTask)+" *> "+q(logPath)+";"+
+  "$ciExit=$LASTEXITCODE;"+
+  "Add-Content -LiteralPath "+q(logPath)+" -Value ('CI_WATCHDOG_EXIT='+$ciExit);"+
+  "if($ciExit -ne 0){exit $ciExit}"
  unicodeUnits:=utf16.Encode([]rune(bootstrap))
  buf:=make([]byte,len(unicodeUnits)*2)
  for i,u:=range unicodeUnits{buf[2*i]=byte(u);buf[2*i+1]=byte(u>>8)}
@@ -365,7 +368,7 @@ func TestStandaloneCIWatchdogAtStartupSYSTEMTaskCILab(t *testing.T){
  // The journal and immutable backup were armed before the simulated crash.
  // Delete ONLY the disposable lab original to require actual restoration.
  if err:=os.Remove(old);err!=nil{t.Fatal(err)}
- start:="$ErrorActionPreference='Stop';"+
+ start:="$ErrorActionPreference='Stop';$ProgressPreference='SilentlyContinue';"+
   "$watch="+q(bootTask)+";$motor="+q(motorTask)+";$original="+q(old)+";"+
   "$w=Get-ScheduledTask -TaskName $watch -TaskPath '\\' -ErrorAction Stop;"+
   "if($w.Principal.UserId -notin @('SYSTEM','S-1-5-18') -or @($w.Triggers).Count -ne 1 -or "+
@@ -377,11 +380,16 @@ func TestStandaloneCIWatchdogAtStartupSYSTEMTaskCILab(t *testing.T){
   "$m=Get-ScheduledTask -TaskName $motor -TaskPath '\\' -ErrorAction Stop;"+
   "if($info.LastRunTime.Year -ge 2020 -and $info.LastTaskResult -eq 0 -and "+
   "[string]$m.Actions[0].Execute -ieq $original -and "+
-  "[string]$m.Actions[0].Arguments -ceq '--dns-service'){$good=$true;break}};"+
-  "if(-not $good){$last=Get-ScheduledTaskInfo -TaskName $watch -TaskPath '\\' -ErrorAction Stop;throw ('SYSTEM AtStartup watchdog failed: LastTaskResult='+$last.LastTaskResult+' LastRunTime='+$last.LastRunTime)};"+
-  "Write-Output 'CI_BOOT_WATCHDOG_RAN_AS_SYSTEM_AND_RESTORED'"
+  "[string]$m.Actions[0].Arguments -ceq '--dns-service'){$good=$true;break};"+
+  "if($info.LastRunTime.Year -ge 2020 -and $info.LastTaskResult -notin @(0,267009) -and "+
+  "(Get-ScheduledTask -TaskName $watch -TaskPath '\\').State -ne 'Running'){break}};"+
+  "if(-not $good){$last=Get-ScheduledTaskInfo -TaskName $watch -TaskPath '\\' -ErrorAction Stop;"+
+  "$lastMotor=Get-ScheduledTask -TaskName $motor -TaskPath '\\' -ErrorAction Stop;"+
+  "Write-Output ('CI_WATCHDOG_NOT_RESTORED: EXIT='+$last.LastTaskResult+' ACTION='+$lastMotor.Actions[0].Execute)}"+
+  "else{Write-Output 'CI_BOOT_WATCHDOG_RAN_AS_SYSTEM_AND_RESTORED'}"
  if out,err:=ps(ctx,start);err!=nil||out!="CI_BOOT_WATCHDOG_RAN_AS_SYSTEM_AND_RESTORED"{
-  t.Fatalf("actual independent SYSTEM AtStartup task did not recover: %s %v",out,err)
+  diag,_:=os.ReadFile(logPath)
+  t.Fatalf("actual independent SYSTEM AtStartup task did not recover: %s %v; watchdog diagnostic=%s",out,err,diag)
  }
  if hash,err:=digestResidentLive(ctx,old);err!=nil||hash!=protected{
   t.Fatalf("independent SYSTEM watchdog restored incorrect original: %s %v",hash,err)
