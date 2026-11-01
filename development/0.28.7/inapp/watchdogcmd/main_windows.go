@@ -236,7 +236,7 @@ func main(){
     }
     if len(os.Args)==3 && os.Args[1]=="--audit-resident-boot-plan" {
         ctx,cancel:=context.WithTimeout(context.Background(),90*time.Second);defer cancel()
-        plan,err:=auditResidentBootPlan(ctx,os.Args[2])
+        plan,err:=auditResidentBootPlanProtected(ctx,os.Args[2])
         if err!=nil{
             fmt.Fprintln(os.Stderr,"VOLVÉ: PLAN DE RESCATE NO VERIFICADO; ninguna tarea, DNS ni archivo modificado:",err)
             os.Exit(1)
