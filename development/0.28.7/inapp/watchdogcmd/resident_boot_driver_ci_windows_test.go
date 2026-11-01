@@ -125,9 +125,9 @@ func TestResidentCIBootDriverRejectsBackupDriftDuringDNSProbe(t *testing.T){
  health.afterDNSProbe=func()error{
   health.afterDNSProbe=nil
   // Synthetic NTFS recovery fixture in the ephemeral Windows CI VM only:
-  // corrupt the protected fallback AFTER its first independent verification,
-  // not before or during Task Scheduler operation.
-  if err:=os.WriteFile(filepath.Join(root,residentLegacyExe),[]byte("MZ_CI_CHANGED_DURING_NETWORK_HEALTH"),0600);err!=nil{return err}
+  // corrupt the sealed backup AFTER its first independent verification,
+  // not the live executable: recovery still depends on the protected copy.
+  if err:=os.WriteFile(filepath.Join(root,residentRecoveryParent,residentRecoveryFolder,residentRecoveryExe),[]byte("MZ_CI_CHANGED_PROTECTED_FALLBACK_DURING_NETWORK_HEALTH"),0600);err!=nil{return err}
   altered=true
   return nil
  }
@@ -145,5 +145,48 @@ func TestResidentCIBootDriverRejectsBackupDriftDuringDNSProbe(t *testing.T){
  }
  if _,err:=os.Lstat(filepath.Join(dir,motorupdate.ResidentResultFile));!os.IsNotExist(err){
   t.Fatalf("restore receipt appeared despite fallback tamper: %v",err)
+ }
+}
+
+
+func TestResidentCIBootDriverRebuildsMissingExeBeforeTaskRecovery(t *testing.T){
+ if os.Getenv("GITHUB_ACTIONS")!="true" || os.Getenv("RUNNER_ENVIRONMENT")!="github-hosted" {
+  t.Skip("requires disposable GitHub-hosted Windows VM and temp-only fixture")
+ }
+ root,dir,seal,protect:=chainFixture(t,false)
+ live:=filepath.Join(root,residentLegacyExe)
+ if err:=os.Remove(live);err!=nil{t.Fatal(err)}
+ ran:=0
+ driver,err:=newResidentCIBootDriver(root,disposableResidentTask,
+  func(_ context.Context,script string)(string,error){
+   ran++
+   if !strings.Contains(script,"Register-ScheduledTask")||
+      !strings.Contains(script,disposableResidentTask){
+    return "",errors.New("missing isolated SYSTEM task restore contract")
+   }
+   return "VOLVE_CI_RESIDENT_RESTORED",nil
+  })
+ if err!=nil{t.Fatal(err)}
+ health:=&ciBootHealth{firstOriginalMissing:true}
+ state,err:=motorupdate.RecoverPendingResidentAfterBoot(context.Background(),
+  dir,seal,protect,health,driver)
+ if err!=nil || state!="restored" || ran!=1 {
+  t.Fatalf("missing motor not recovered by isolated boot chain: state=%q calls=%d err=%v",state,ran,err)
+ }
+ if _,err:=auditPendingResidentChain(context.Background(),root);err==nil {
+  // Once journal is terminal the pre-switch pending audit must not be reused.
+  t.Fatal("pre-switch audit accepted a terminal recovery journal")
+ }
+ if got,err:=digestResidentLive(context.Background(),live);err!=nil || got=="" {
+  t.Fatalf("missing original EXE was not physically recovered from protected bytes: %s %v",got,err)
+ }
+ old,err:=auditResidentRollback(context.Background(),root)
+ if err!=nil{t.Fatal(err)}
+ hash,err:=digestResidentLive(context.Background(),live)
+ if err!=nil || hash!=old.LegacySHA256 {
+  t.Fatalf("restored original bytes differ from sealed recovery copy: %s %v",hash,err)
+ }
+ if _,err:=os.Lstat(filepath.Join(dir,motorupdate.ResidentResultFile));err!=nil {
+  t.Fatalf("boot recovered DNS but did not publish durable terminal receipt: %v",err)
  }
 }
