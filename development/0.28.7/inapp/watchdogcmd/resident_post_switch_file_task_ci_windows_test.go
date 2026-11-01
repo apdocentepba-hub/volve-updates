@@ -11,6 +11,7 @@ import (
  "errors"
  "fmt"
  "os"
+ "os/exec"
  "path/filepath"
  "strings"
  "testing"
@@ -83,8 +84,19 @@ func TestPostSwitchSystemTaskCILabRestoresRealDisposableSystemTaskAndOriginalByt
   // Do not confuse this fixture with an authentic publisher-signed binary.
   if err:=os.WriteFile(old,[]byte("publisher-signed candidate CI bytes"),0600);err!=nil{t.Fatal(err)}
  }
- if err:=restoreMissingOriginalAndDisposableTaskCILab(ctx,root,task,ps);err!=nil{
-  t.Fatalf("file + ACTUAL Task Scheduler restore failed: %v",err)
+ // The recovery helper must be a genuinely different OS process from
+ // this test's parent/updater. This proves the sealed NTFS snapshot and
+ // pending journal can be reread without parent process memory.
+ child:=exec.CommandContext(ctx,os.Args[0],
+  "-test.run=^TestPostSwitchSystemTaskCILabExternalChild$","-test.v")
+ child.Env=append(os.Environ(),
+  "VOLVE_CI_TASK_RESTORE_CHILD=1",
+  "VOLVE_CI_TASK_RESTORE_ROOT="+root,
+  "VOLVE_CI_TASK_RESTORE_NAME="+task)
+ output,childErr:=child.CombinedOutput()
+ if childErr!=nil || !strings.Contains(string(output),"CI_EXTERNAL_RECOVERY_OK") {
+  t.Fatalf("separate process file + real SYSTEM task restoration failed: %v %s",
+   childErr,output)
  }
  restored,err:=os.ReadFile(old)
  if err!=nil||string(restored)!=string(original){
@@ -132,4 +144,24 @@ func TestPostSwitchSystemTaskCILabRejectsProductiveTaskAndNonHostedRunner(t *tes
   }
  }
  if called!=0{t.Fatal("unsafe task invoked external Scheduler runner")}
+}
+
+func TestPostSwitchSystemTaskCILabExternalChild(t *testing.T){
+ if os.Getenv("VOLVE_CI_TASK_RESTORE_CHILD")!="1"{return}
+ if os.Getenv("GITHUB_ACTIONS")!="true" ||
+  os.Getenv("RUNNER_ENVIRONMENT")!="github-hosted"{
+  t.Fatal("independent recovery child requires ephemeral GitHub-hosted Windows runner")
+ }
+ root:=os.Getenv("VOLVE_CI_TASK_RESTORE_ROOT")
+ task:=os.Getenv("VOLVE_CI_TASK_RESTORE_NAME")
+ if !pilotTaskPattern.MatchString(task) || !filepath.IsAbs(root) ||
+  filepath.Clean(root)!=root {
+  t.Fatal("external recovery child target is not an allowlisted CI task and canonical root")
+ }
+ ctx,cancel:=context.WithTimeout(context.Background(),110*time.Second)
+ defer cancel()
+ if err:=restoreMissingOriginalAndDisposableTaskCILab(ctx,root,task,ps);err!=nil{
+  t.Fatalf("fresh process could not restore protected original and SYSTEM task: %v",err)
+ }
+ t.Log("CI_EXTERNAL_RECOVERY_OK: separate process restored original EXE and real disposable SYSTEM task")
 }
