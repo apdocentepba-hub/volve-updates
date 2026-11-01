@@ -5,6 +5,8 @@ on:
     paths:
       - 'development/0.28.7/inapp/watchdogcmd/resident_post_switch_recovery_audit_windows.go'
       - 'development/0.28.7/inapp/watchdogcmd/resident_post_switch_recovery_audit_windows_test.go'
+      - 'development/0.28.7/inapp/watchdogcmd/resident_post_switch_file_restore_ci_windows.go'
+      - 'development/0.28.7/inapp/watchdogcmd/resident_post_switch_file_restore_ci_windows_test.go'
       - 'development/0.28.7/inapp/apply_overlay.go'
       - '.github/workflows/volve-0287-post-switch-recovery-windows.yml'
   workflow_dispatch:
@@ -56,5 +58,6 @@ jobs:
         run: |
           test -f cmd/volve-managed-watchdog/resident_post_switch_recovery_audit_windows.go
           test -f cmd/volve-managed-watchdog/resident_post_switch_recovery_audit_windows_test.go
-          go test ./cmd/volve-managed-watchdog -run '^TestPostSwitchRecovery' -count=1 -timeout 8m -v
-          echo "PASS: post-switch backup and journal integrity verified without requiring original active motor; no task switch."
+          test -f cmd/volve-managed-watchdog/resident_post_switch_file_restore_ci_windows_test.go
+          go test ./cmd/volve-managed-watchdog -run '^TestPostSwitch(Recovery|CILab)' -count=1 -timeout 8m -v
+          echo "PASS: post-switch backup and journal integrity verified; actual missing legacy bytes recovered in disposable Windows CI without task switch."
