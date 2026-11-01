@@ -153,3 +153,18 @@ La primera corrida integral [#41305829291](https://github.com/apdocentepba-hub/v
 **Alcance:** proceso independiente real pero sin reinicio de Windows y sin que el padre necesariamente termine; no hay arranque automático del watchdog en el boot, ni firma editorial productiva. La restauración usa nombres y ejecutables de laboratorio, nunca `VOLVE-DNS-SERVER-0270`. Es un **subcontrol completado** del diseño de la puerta 7, no la puerta 7 completa. No hubo modificación del equipo del usuario, DNS de adaptadores o canal de publicación.
 
 **Progreso global sin cambio: 50% (5 de 10 hitos).** El experimento específico de recuperación independiente pasó **2/2 escenarios (100% del ensayo)**, pero las puertas 6–10 no reciben crédito hasta alcanzar sus criterios completos. La batería general posterior al nuevo commit se comprueba por separado y no se presume aprobada.
+
+
+
+## 01/11/2026 — Verificación real DNS53 + SYSTEM + conectividad antes del recibo
+
+**Evidencia: GitHub Actions Windows #41337942228 y #41338153644, ambas SUCCESS.**
+Se introdujo un comprobador acotado a la VM de GitHub `resident_real_completion_ci_windows_test.go`, incluido por el overlay de compilación pero nunca enlazado a un controlador de producción.
+
+El test recupera el ejecutable original desde el respaldo NTFS, restaura una tarea SYSTEM descartable, arranca el **motor VOLVÉ real** con catálogo de laboratorio de más de 400.000 reglas y verifica respuestas UDP/53 IPv4+IPv6 de dominios bloqueados y permitidos. El resultado final de recuperación se publica únicamente tras comprobar dos veces: ejecutable con SHA-256 original coincidente con journal, tarea Scheduler SYSTEM con acción/argumentos exactos, proceso con SID `S-1-5-18`, titularidad PID de ambos sockets UDP/53; y realizar además consultas DNS efectivas y una prueba de conectividad TCP directa a IP pública (no se confunde con navegación HTTP/HTTPS completa).
+
+**Prueba negativa nueva, también aprobada (#41338153644):** se inyecta una falla de conectividad EXTERNA después de verificar identidad real SYSTEM y DNS real. `ConfirmResidentRecoveryOutcome` rechaza finalizar, mantiene el journal `recovery-required` y no genera recibo. Luego, sin usar respuestas ficticias para Internet, el ensayo vuelve a realizar pruebas reales y publica un único recibo `restored`. Un segundo intento de cerrar el mismo journal se rechaza.
+
+**Límites:** aunque la recuperación usa un proceso y una tarea SYSTEM reales en Windows, **no** demuestra comportamiento tras reinicio real, no implementa watchdog productivo persistente, no habilita cambios en la tarea instalada ni valida un permiso firmado del editor destinado a usuarios. El resto de los controles completos de las puertas 6–10 continúa pendiente. No se publicaron binarios ni se tocó VOLVÉ 0.28.6.
+
+**Porcentajes:** ensayo específico (incluida prueba de falla): **100% aprobado**; aceptación global de producto **50% (5/10 puertas)** sin cambio.
