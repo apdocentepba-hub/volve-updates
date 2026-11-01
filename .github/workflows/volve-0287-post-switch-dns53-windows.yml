@@ -64,7 +64,6 @@ jobs:
           # Deliberately INJECTED into this one disposable workflow build.
           # apply_overlay.go never includes this source in a released app.
           cp ../../development/0.28.7/inapp/watchdogcmd/ci_post_switch_real_motor_shim_windows.go ci_post_switch_real_motor_shim_windows.go
-          VOLVE_CI_FULL_MOTOR_AFTER_RESTORE=1 go test ./cmd/volve-managed-watchdog -run '^TestPostSwitchRestoredSystemTaskActuallyServesDualStackDNS53CILab
- -count=1 -timeout 7m -v
+          VOLVE_CI_FULL_MOTOR_AFTER_RESTORE=1 go test ./cmd/volve-managed-watchdog -run '^TestPostSwitchRestoredSystemTaskActuallyServesDualStackDNS53CILab$' -count=1 -timeout 7m -v
           echo 'PASS: recovered original FULL VOLVE motor bytes and SYSTEM task serve true 400k+ rule dual-stack DNS53 (isolated VM only).'
 
