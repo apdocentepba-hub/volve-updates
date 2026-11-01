@@ -137,7 +137,7 @@ func TestUnsignedLegacyBaselineStageCodesAreSafeAndPreciselyClassified(t *testin
   {"wrong-principal",strings.Replace(original,`"Principal":"SYSTEM"`,`"Principal":"USER"`,1),"FIRST_TASK_OWNER_MISMATCH"},
   {"wrong-action-path",strings.Replace(original,legacyExpectedExe,"another.exe",1),"FIRST_TASK_ACTION_PATH_MISMATCH"},
   {"wrong-arguments",strings.Replace(original,"--dns-service","--refresh",1),"FIRST_TASK_ARGUMENTS_MISMATCH"},
-  {"working-directory-nonempty",strings.Replace(original,`"WorkingDirectory":""`,`"WorkingDirectory":"C:\\"`,1),"FIRST_TASK_WORKING_DIR_MISMATCH"},
+  {"working-directory-nonempty",strings.Replace(original,`"WorkingDirectory":""`,`"WorkingDirectory":"DIR_NOT_EMPTY"`,1),"FIRST_TASK_WORKING_DIR_MISMATCH"},
   {"working-directory-null",strings.Replace(original,`"WorkingDirectory":""`,`"WorkingDirectory":null`,1),"FIRST_TASK_WORKING_DIR_MISSING"},
   {"unexpected-field",strings.Replace(original,`"Name":`,`"secret":"SHOULD_NOT_LEAK","Name":`,1),"FIRST_TASK_RESPONSE_INVALID"},
   {"task-missing","[]","FIRST_TASK_RESPONSE_INVALID"},
