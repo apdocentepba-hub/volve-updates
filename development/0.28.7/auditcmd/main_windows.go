@@ -32,6 +32,7 @@ type Diagnosis struct {
  Result string `json:"result"`
  Explanation string `json:"explanation"`
  Route *motorupdate.MotorInstallRouteReport `json:"route,omitempty"`
+ HostEvidence *motorupdate.WindowsMotorRouteSummary `json:"host_evidence,omitempty"`
  BrowserPolicies *motorupdate.WindowsBrowserPolicyEvidence `json:"browser_policies,omitempty"`
  BrowserPoliciesStatus string `json:"browser_policies_status"`
 }
@@ -73,18 +74,19 @@ func diagnosis(ctx context.Context,programData string,admin bool,
   result.Explanation="The installed Centro state root is not independently verifiable: "+err.Error()
   return result
  }
- route,err:=motorupdate.InspectWindowsMotorRouteReadOnly(ctx,root,"","",readers)
+ details,err:=motorupdate.InspectWindowsMotorRouteWithSummaryReadOnly(ctx,root,"","",readers)
  if err!=nil{
   result.Explanation="Six-inventory Windows observation incomplete: "+err.Error()
   return result
  }
- if err:=motorupdate.RequireMotorRouteReviewOnly(route);err!=nil{
+ if err:=motorupdate.RequireMotorRouteReviewOnly(details.Decision);err!=nil{
   result.Explanation="Unsafe diagnosis unexpectedly carried a write authorization; discarded."
   return result
  }
  result.Result="REVIEW_ONLY"
- result.Explanation="Diagnostic completed; no change applied. Browser-policy blocking was NOT inspected. Signed production release and independent rollback are STILL required."
- result.Route=&route
+ result.Explanation="Six Windows inventories completed without changes. Registry policy counts are separate and do not prove browser enforcement. A signed release and independent rollback remain mandatory."
+ result.Route=&details.Decision
+ result.HostEvidence=&details.Summary
  return result
 }
 
