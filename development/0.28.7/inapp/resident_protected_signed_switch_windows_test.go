@@ -15,10 +15,27 @@ import (
 type unsafeLeaseStub struct{
  SignedLegacySwitchDriver
  calls int
+ handoffs int
 }
 func(s *unsafeLeaseStub)AcquireExclusiveMigration(context.Context)(func(),error){
  s.calls++
  return nil,errors.New("weaker delegate lock must never run")
+}
+func(s *unsafeLeaseStub)RestoreAfterProtectedHandoff(ctx context.Context)error{
+ s.handoffs++
+ // Independent SYSTEM watchdog must be able to own protected mutex now.
+ // If updater forgot to release it, this bounded wait fails instead of
+ // reporting a successful recovery. No product task is touched.
+ received:=make(chan error,1)
+ go func(){
+  release,err:=AcquireProtectedResidentTransitionLease(ctx)
+  if release!=nil{release()}
+  received<-err
+ }()
+ select{
+ case err:=<-received:return err
+ case <-ctx.Done():return ctx.Err()
+ }
 }
 
 type bootOriginalStub struct{}
@@ -69,5 +86,58 @@ func TestProtectedAdaptersFailClosedWithoutTrustedOperations(t *testing.T){
  }
  if driver,err:=NewProtectedResidentBootDriver(nil);err==nil||driver!=nil{
   t.Fatal("missing boot restorer was accepted")
+ }
+}
+
+
+func TestProtectedSignedRollbackHandsOffThenReacquiresBeforeHealth(t *testing.T){
+ if os.Getenv("GITHUB_ACTIONS")!="true"||os.Getenv("RUNNER_ENVIRONMENT")!="github-hosted"{
+  t.Skip("protected Windows mutex handoff only in hosted VM")
+ }
+ stub:=&unsafeLeaseStub{}
+ wrapped,err:=NewProtectedSignedLegacySwitchDriver(stub)
+ if err!=nil{t.Fatal(err)}
+ finish,err:=wrapped.AcquireExclusiveMigration(context.Background())
+ if err!=nil{t.Fatal(err)}
+ defer finish()
+ // A real (separate-thread) SYSTEM watchdog simulation must acquire the
+ // SAME protected kernel object during RestoreAfterProtectedHandoff.
+ ctx,cancel:=context.WithTimeout(context.Background(),2*time.Second)
+ defer cancel()
+ if err:=wrapped.Restore(ctx);err!=nil{
+  t.Fatalf("watchdog cannot acquire mutex released by updater: %v",err)
+ }
+ if stub.handoffs!=1||stub.calls!=0{
+  t.Fatalf("unsafe delegated lock or missing watchdog handoff: calls=%d handoffs=%d",stub.calls,stub.handoffs)
+ }
+ // The updater now owns a fresh protected lease, so another boot agent
+ // must fail closed while post-recovery health checks are still pending.
+ secondCtx,stop:=context.WithTimeout(context.Background(),260*time.Millisecond)
+ defer stop()
+ observed:=make(chan error,1)
+ go func(){
+  release,err:=AcquireProtectedResidentTransitionLease(secondCtx)
+  if release!=nil{release()}
+  observed<-err
+ }()
+ select{
+ case err:=<-observed:
+  if !errors.Is(err,context.DeadlineExceeded){
+   t.Fatalf("updater failed to reacquire protected mutex after recovery: %v",err)
+  }
+ case <-time.After(3*time.Second):
+  t.Fatal("second boot recovery stuck behind protected health gate")
+ }
+ finish()
+ // Final release must be the second acquired lease, not the original.
+ last,err:=AcquireProtectedResidentTransitionLease(context.Background())
+ if err!=nil{t.Fatalf("protected handoff leaked final mutex ownership: %v",err)}
+ last()
+}
+
+func TestProtectedSignedDriverRejectsHandoffMissing(t *testing.T){
+ type noHandoffDriver struct{SignedLegacySwitchDriver}
+ if d,err:=NewProtectedSignedLegacySwitchDriver(&noHandoffDriver{});err==nil||d!=nil{
+  t.Fatal("signed transition accepted driver that cannot release mutex for watchdog")
  }
 }
