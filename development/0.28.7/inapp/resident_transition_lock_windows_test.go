@@ -8,6 +8,7 @@ package motorupdate
 import (
  "context"
  "errors"
+ "fmt"
  "os"
  "os/exec"
  "strings"
@@ -34,6 +35,13 @@ func TestProtectedResidentMutexChild(t *testing.T){
  ctx,cancel:=context.WithTimeout(context.Background(),450*time.Millisecond)
  defer cancel()
  release,err:=AcquireProtectedResidentTransitionLease(ctx)
+ if kind=="crash"{
+  if err!=nil||release==nil{t.Fatalf("child cannot acquire protected transition lock before crash: %v",err)}
+  fmt.Println("VOLVE_PROD_MUTEX_ABANDONED_OWNER")
+  // Terminate the independent updater without release or defers. Kernel
+  // WAIT_ABANDONED must permit the privileged watchdog to reclaim mutex.
+  os.Exit(71)
+ }
  if kind=="blocked"{
   if release!=nil{release()}
   if !errors.Is(err,context.DeadlineExceeded){
@@ -104,4 +112,40 @@ func TestProtectedResidentMutexCancelledBeforeObjectAcquisition(t *testing.T){
  release,err:=AcquireProtectedResidentTransitionLease(ctx)
  if release!=nil{release()}
  if !errors.Is(err,context.Canceled){t.Fatalf("cancelled transition not refused: %v",err)}
+}
+
+func TestProtectedResidentMutexRecoversAfterOwnerProcessDies(t *testing.T){
+ residentProtectedCITest(t)
+ // The parent keeps a SECOND open handle to the protected object without
+ // taking ownership. Thus the object persists when the updater process
+ // exits abruptly; otherwise Windows could destroy it and this test would
+ // falsely pass through simple recreation.
+ descriptor,err:=residentMutexSecurityDescriptor()
+ if err!=nil{t.Fatal(err)}
+ defer residentLocalFree.Call(descriptor)
+ attributes:=residentSecurityAttributes{
+  Length:uint32(unsafe.Sizeof(residentSecurityAttributes{})),Descriptor:descriptor,
+ }
+ name,err:=syscall.UTF16PtrFromString(residentTransitionMutexName)
+ if err!=nil{t.Fatal(err)}
+ keeper,_,last:=residentCreateMutex.Call(uintptr(unsafe.Pointer(&attributes)),0,uintptr(unsafe.Pointer(name)))
+ runtime.KeepAlive(name)
+ runtime.KeepAlive(attributes)
+ if keeper==0{t.Fatalf("cannot retain protected Windows mutex object: %v",last)}
+ defer residentCloseHandle.Call(keeper)
+ if err:=residentRequireExactSD(keeper);err!=nil{t.Fatalf("keeper DACL mismatch: %v",err)}
+ ctx,cancel:=context.WithTimeout(context.Background(),12*time.Second)
+ defer cancel()
+ command:=exec.CommandContext(ctx,os.Args[0],"-test.run=^TestProtectedResidentMutexChild$","-test.v")
+ command.Env=append(os.Environ(),"VOLVE_CI_PROTECTED_RESIDENT_CHILD=crash")
+ output,err:=command.CombinedOutput()
+ if err==nil||!strings.Contains(string(output),"VOLVE_PROD_MUTEX_ABANDONED_OWNER"){
+  t.Fatalf("updater fixture did not terminate while holding protected mutex: %v, %s",err,output)
+ }
+ recoveryCtx,stopRecovery:=context.WithTimeout(context.Background(),4*time.Second)
+ defer stopRecovery()
+ release,err:=AcquireProtectedResidentTransitionLease(recoveryCtx)
+ if err!=nil||release==nil{t.Fatalf("independent SYSTEM recovery cannot regain abandoned kernel lock: %v",err)}
+ release()
+ release() // idempotent even after crash recovery
 }
