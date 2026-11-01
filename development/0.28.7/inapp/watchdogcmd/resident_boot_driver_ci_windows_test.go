@@ -12,6 +12,7 @@ import (
  "path/filepath"
  "strings"
  "testing"
+ "time"
 
  "volve-browser-protection/motorupdate"
 )
@@ -225,5 +226,60 @@ func TestResidentCIBootDriverRestoresExactJournalPinnedCandidateThenHealthChecks
  after,err:=motorupdate.InspectResidentRecoveryJournal(context.Background(),dir,protect)
  if err!=nil || after.Status!="restored"{
   t.Fatalf("health-check completion was not reflected in trusted journal: %+v %v",after,err)
+ }
+}
+
+func TestProtectedResidentBootPolicyUsesProductionMutexBeforeReadingJournal(t *testing.T){
+ if os.Getenv("GITHUB_ACTIONS")!="true"||os.Getenv("RUNNER_ENVIRONMENT")!="github-hosted"{
+  t.Skip("privileged protected mutex tested only in disposable Windows VM")
+ }
+ root,dir,seal,protect:=chainFixture(t,false)
+ runnerCalls:=0
+ lab,err:=newResidentCIBootDriver(root,disposableResidentTask,
+  func(_ context.Context,script string)(string,error){
+   runnerCalls++
+   if !strings.Contains(script,"Register-ScheduledTask"){return "",errors.New("missing isolated task restore")}
+   return "VOLVE_CI_RESIDENT_RESTORED",nil
+  })
+ if err!=nil{t.Fatal(err)}
+ // The lab driver still implements its own DIFFERENT CI-BootLock. The
+ // production wrapper MUST override it with the fixed protected mutex.
+ driver,err:=motorupdate.NewProtectedResidentBootDriver(lab)
+ if err!=nil{t.Fatal(err)}
+ owner,err:=motorupdate.AcquireProtectedResidentTransitionLease(context.Background())
+ if err!=nil{t.Fatalf("cannot hold protected production transition mutex: %v",err)}
+ held:=true
+ defer func(){if held{owner()}}()
+ ctx,cancel:=context.WithTimeout(context.Background(),400*time.Millisecond)
+ defer cancel()
+ result:=make(chan error,1)
+ go func(){
+  _,err:=motorupdate.RecoverPendingResidentAfterBoot(ctx,dir,seal,protect,
+   &ciBootHealth{firstOriginalMissing:true},driver)
+  result<-err
+ }()
+ select{
+ case blocked:=<-result:
+  if !errors.Is(blocked,context.DeadlineExceeded){
+   t.Fatalf("recovery read journal or invoked operations without protected mutex: %v",blocked)
+  }
+ case <-time.After(4*time.Second):
+  t.Fatal("recovery did not honor bounded mutex acquisition")
+ }
+ if runnerCalls!=0{t.Fatal("restoration was called while updater owned protected mutex")}
+ // Journal must remain pending until the real lock has been released.
+ status,err:=motorupdate.InspectResidentRecoveryJournal(context.Background(),dir,protect)
+ if err!=nil||status.Status!="recovery-required"{t.Fatalf("blocked recovery changed journal: %+v %v",status,err)}
+ owner()
+ held=false
+ outcome,err:=motorupdate.RecoverPendingResidentAfterBoot(context.Background(),dir,seal,protect,
+  &ciBootHealth{firstOriginalMissing:true},driver)
+ if err!=nil||outcome!="restored"||runnerCalls!=1{
+  t.Fatalf("recovery with protected mutex did not restore original exactly once: %q calls=%d err=%v",outcome,runnerCalls,err)
+ }
+ // A terminal receipt cannot be replayed into a second restoration.
+ next,err:=motorupdate.RecoverPendingResidentAfterBoot(context.Background(),dir,seal,protect,&ciBootHealth{},driver)
+ if err!=nil||next!="restored"||runnerCalls!=1{
+  t.Fatalf("locked terminal recovery replayed: %q calls=%d err=%v",next,runnerCalls,err)
  }
 }
