@@ -15,6 +15,10 @@ import (
 // fake drivers. None launches a DNS service, alters Windows tasks or network.
 type signedLegacyDriverLab struct {
     *managedDriverTest
+    lockHeld bool
+    lockAcquires int
+    lockReleases int
+    failLock bool
     watchdogCount int
     failWatchdogAt int
     preparedCount int
@@ -29,20 +33,57 @@ type signedLegacyDriverLab struct {
 func newSignedLegacyDriverLab()*signedLegacyDriverLab {
     return &signedLegacyDriverLab{managedDriverTest:&managedDriverTest{}}
 }
+// Fake lock is strictly test-scoped and cannot authorize a real Windows switch.
+// It verifies every driver operation occurs inside ONE transaction-wide lease.
+func (d *signedLegacyDriverLab) AcquireExclusiveMigration(ctx context.Context)(func(),error){
+ if err:=ctx.Err();err!=nil{return nil,err}
+ if d.failLock{return nil,errors.New("another updater or SYSTEM watchdog owns the motor mutex")}
+ if d.lockHeld{return nil,errors.New("migration lock already held")}
+ d.lockHeld=true
+ d.lockAcquires++
+ return func(){d.lockHeld=false;d.lockReleases++},nil
+}
+func (d *signedLegacyDriverLab) requireLock()error{
+ if !d.lockHeld{return errors.New("operation attempted without migration mutex")}
+ return nil
+}
+func (d *signedLegacyDriverLab) Preflight(ctx context.Context,m Manifest)error{
+ if err:=d.requireLock();err!=nil{return err}
+ return d.managedDriverTest.Preflight(ctx,m)
+}
+func (d *signedLegacyDriverLab) Switch(ctx context.Context)error{
+ if err:=d.requireLock();err!=nil{return err}
+ return d.managedDriverTest.Switch(ctx)
+}
+func (d *signedLegacyDriverLab) Probe(ctx context.Context)error{
+ if err:=d.requireLock();err!=nil{return err}
+ return d.managedDriverTest.Probe(ctx)
+}
+func (d *signedLegacyDriverLab) Commit(ctx context.Context,m Manifest)error{
+ if err:=d.requireLock();err!=nil{return err}
+ return d.managedDriverTest.Commit(ctx,m)
+}
+func (d *signedLegacyDriverLab) Restore(ctx context.Context)error{
+ if err:=d.requireLock();err!=nil{return err}
+ return d.managedDriverTest.Restore(ctx)
+}
 // Override Snapshot so tests can corrupt the real temp-file backup only
 // after the independent signed permission and readiness checks succeeded.
 func (d *signedLegacyDriverLab) Snapshot(ctx context.Context)error{
+ if err:=d.requireLock();err!=nil{return err}
  if err:=d.managedDriverTest.Snapshot(ctx);err!=nil{return err}
  if d.afterSnapshot!=nil{return d.afterSnapshot()}
  return nil
 }
 func (d *signedLegacyDriverLab) IndependentRecoveryReady(_ context.Context, _ VerifiedLegacyMigrationProof)error{
+    if err:=d.requireLock();err!=nil{return err}
     d.watchdogCount++
     if err:=d.tick("watchdog");err!=nil{return err}
     if d.failWatchdogAt==d.watchdogCount{return errors.New("independent recovery agent unavailable")}
     return nil
 }
 func (d *signedLegacyDriverLab) VerifyPreparedTarget(_ context.Context, m Manifest) error {
+    if err:=d.requireLock();err!=nil{return err}
     d.preparedCount++
     if m.Version!="0.28.7" {return errors.New("invalid signed prepared version")}
     if err:=d.tick("prepared");err!=nil{return err}
@@ -50,12 +91,14 @@ func (d *signedLegacyDriverLab) VerifyPreparedTarget(_ context.Context, m Manife
     return nil
 }
 func (d *signedLegacyDriverLab) ProbeConnectivity(ctx context.Context)error{
+    if err:=d.requireLock();err!=nil{return err}
     if err:=d.managedDriverTest.ProbeConnectivity(ctx);err!=nil{return err}
     d.connectivityCount++
     if d.connectivityCount==1&&d.afterConnectivity!=nil{return d.afterConnectivity()}
     return nil
 }
 func (d *signedLegacyDriverLab) InstallVersionedCandidate(ctx context.Context,candidate string) error {
+    if err:=d.requireLock();err!=nil{return err}
     if err:=d.managedDriverTest.InstallVersionedCandidate(ctx,candidate);err!=nil{return err}
     if d.afterInstall!=nil{return d.afterInstall()}
     if d.replaceCandidate{
@@ -82,7 +125,10 @@ func TestSignedLegacyTransactionRequiresRevalidationAndIndependentWatchdog(t *te
     // Each of the TWO signed-proof boundaries now verifies SYSTEM/DNS twice:
     // initial and final immutable-host checks (4 total). The external
     // watchdog itself is independently checked before and after Snapshot.
-    if checks!=4 || d.watchdogCount!=3||d.preparedCount!=2{t.Fatalf("expected 4 SYSTEM/DNS checks, 3 watchdog checks, and 2 installed target checks before commit; got %d/%d/%d",checks,d.watchdogCount,d.preparedCount)}
+    if checks!=4 || d.watchdogCount!=3||d.preparedCount!=2||
+        d.lockHeld||d.lockAcquires!=1||d.lockReleases!=1 {
+        t.Fatalf("expected 4 OS probes, 3 watchdogs, 2 target checks and ONE released exclusive lease; got %d/%d/%d locks=%d/%d active=%t",checks,d.watchdogCount,d.preparedCount,d.lockAcquires,d.lockReleases,d.lockHeld)
+    }
 }
 func TestSignedLegacyTransactionBlocksBeforeSnapshotWithoutPermissionOrWatchdog(t *testing.T){
     for _,kind:=range []string{"wrong-publisher","unsafe-parent","no-live-dns","missing-watchdog","no-driver"}{
@@ -318,5 +364,49 @@ func TestSignedLegacyTransactionLastHealthFenceOccursBeforeCommit(t *testing.T){
  wantSuffix:=[]string{"switch","probe","connectivity","prepared","watchdog","commit"}
  if !reflect.DeepEqual(d.calls[len(d.calls)-len(wantSuffix):],wantSuffix){
   t.Fatalf("signed target and watchdog were not rechecked AFTER DNS and BEFORE Commit: %v",d.calls)
+ }
+}
+
+func TestSignedLegacyTransactionRequiresExclusiveLeaseBeforeAnyReadOrMutation(t *testing.T){
+ f:=newSignedBridge(t)
+ d:=newSignedLegacyDriverLab()
+ d.failLock=true
+ probes:=0
+ err:=runSignedLegacyLab(context.Background(),f,d,testSecureLabFolderBridge,
+  func()error{probes++;return nil})
+ if err==nil||!strings.Contains(err.Error(),"bloqueo exclusivo")||
+  probes!=0||len(d.calls)!=0||d.lockAcquires!=0||
+  d.lockReleases!=0||d.lockHeld{
+  t.Fatalf("blocked exclusive migration still observed/mutated: %v probes=%d calls=%v",err,probes,d.calls)
+ }
+}
+
+func TestSignedLegacyTransactionKeepsLeaseDuringRollbackAndReleasesOnError(t *testing.T){
+ for _,stage:=range []string{"switch","probe","connectivity","commit"}{
+  t.Run(stage,func(t *testing.T){
+   f:=newSignedBridge(t)
+   d:=newSignedLegacyDriverLab()
+   d.fail=stage
+   err:=runSignedLegacyLab(context.Background(),f,d,testSecureLabFolderBridge,func()error{return nil})
+   if err==nil||d.lockHeld||d.lockAcquires!=1||d.lockReleases!=1{
+    t.Fatalf("lock not held across failed stage and released once: %v locks=%d/%d active=%t",err,d.lockAcquires,d.lockReleases,d.lockHeld)
+   }
+   seenRestore:=false
+   for _,call:=range d.calls{if call=="restore"{seenRestore=true}}
+   if !seenRestore{t.Fatalf("rollback not executed inside lease: %v",d.calls)}
+  })
+ }
+}
+
+func TestSignedLegacyTransactionRejectsNilExclusiveLease(t *testing.T){
+ f:=newSignedBridge(t)
+ // This test invokes a fake with a valid lock. An independent OS driver
+ // returning a nil unlock is rejected by the production transaction before
+ // any live preflight and before the first mutating operation.
+ d:=newSignedLegacyDriverLab()
+ ctx,cancel:=context.WithCancel(context.Background());cancel()
+ err:=runSignedLegacyLab(ctx,f,d,testSecureLabFolderBridge,func()error{return nil})
+ if !errors.Is(err,context.Canceled)||d.lockAcquires!=0{
+  t.Fatalf("cancelled transaction unexpectedly acquired exclusive lock: %v",err)
  }
 }
