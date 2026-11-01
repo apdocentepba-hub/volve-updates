@@ -116,3 +116,16 @@ jobs:
           Get-ChildItem 'build/codigo/assets' -File -ErrorAction SilentlyContinue |
            Where-Object { $_.Name -match '(?i)catalog|motor' } |
            ForEach-Object { Write-Host ('ASSET: '+$_.Name+' SHA256='+(Get-FileHash -Algorithm SHA256 -LiteralPath $_.FullName).Hash.ToLowerInvariant()) }
+      - name: Identify original 0.28.6 DNS task action construction without host modifications
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $files=@(Get-ChildItem build/codigo -Filter '*.go' -File -Recurse)
+          $hits=@($files | Select-String -Pattern 'VOLVE-DNS-SERVER-0270|dnsServiceTask|/TR|verifySystemTaskXML|--dns-service' | Where-Object { $_.Path -notmatch 'test.go$' } )
+          Write-Host ('ORIGINAL DNS TASK SOURCE HITS: '+$hits.Count)
+          if($hits.Count -eq 0){throw 'Original DNS task source absent'}
+          foreach($h in @($hits | Select-Object -First 90)){
+            $ln=$h.Line.Trim()
+            if($ln.Length -gt 180){$ln=$ln.Substring(0,180)}
+            Write-Host ('DNS SOURCE: '+[IO.Path]::GetFileName($h.Path)+':'+$h.LineNumber+': '+$ln)
+          }
