@@ -89,11 +89,12 @@ func compareLegacyTaskActionPath(actual,expected string)(bool,string){
   trimmed=trimmed[1:len(trimmed)-1]
   hadQuotes=true
  }
- if strings.Contains(trimmed,`"`)||strings.ContainsAny(trimmed,"%*?|<>"){
+ if strings.Contains(trimmed,`"`)||strings.ContainsAny(trimmed,"%*|<>"){
   return false,"UNSAFE_EXECUTE_SYNTAX"
  }
  hadPrefix:=strings.HasPrefix(trimmed,`\\?\`)
  if hadPrefix{trimmed=strings.TrimPrefix(trimmed,`\\?\`)}
+ if strings.Contains(trimmed,"?"){return false,"UNSAFE_EXECUTE_SYNTAX"}
  hadSlash:=strings.Contains(trimmed,"/")
  normalized:=strings.ReplaceAll(trimmed,"/",`\`)
  for _,part:=range strings.Split(normalized,`\`){
