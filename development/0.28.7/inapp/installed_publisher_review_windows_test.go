@@ -85,7 +85,7 @@ func TestInstalledPublisherReviewBridgeRejectsUnsafeLiveWindows(t *testing.T){
     base:=p.TaskXML
     p.TaskXML=func(ctx context.Context,exe string)([]byte,error){
      b,err:=base(ctx,exe)
-     if err==nil&&calls[2]==1 {b=append(b,[]byte(" changed")...)}
+     if err==nil&&calls[2]==2 {b=append(b,[]byte(" changed after first verified read")...)}
      return b,err
     }
    case "running-motor-gone-between-reads":
