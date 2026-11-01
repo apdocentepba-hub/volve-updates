@@ -76,3 +76,11 @@ jobs:
           test -f cmd/volve-managed-watchdog/resident_post_switch_file_task_ci_windows_test.go
           go test ./cmd/volve-managed-watchdog -run '^(TestPostSwitchSystemTask|TestStandaloneCIRecoveryCLI|TestResidentPilotRecoveryScriptBindsLiveTaskAndBackup)' -count=1 -timeout 6m -v
           echo 'PASS: compiled independent watchdog executable restored the actual disposable SYSTEM task twice, rejected tampered arguments; no product tasks or DNS adapters changed.'
+      - name: Manually trigger the real SYSTEM AtStartup watchdog task (NO OS reboot)
+        shell: bash
+        working-directory: build/codigo
+        run: |
+          test -n "$VOLVE_CI_STANDALONE_RECOVERY_EXE"
+          test "$VOLVE_CI_REQUIRE_STANDALONE" = 1
+          go test ./cmd/volve-managed-watchdog -run '^TestStandaloneCIWatchdogAtStartupSYSTEMTaskCILab$' -count=1 -timeout 4m -v
+          echo 'PASS: real independent compiled watchdog ran from an actual Windows SYSTEM AtStartup scheduled task, manually started, with protected original recovery; NOT a real reboot.'
