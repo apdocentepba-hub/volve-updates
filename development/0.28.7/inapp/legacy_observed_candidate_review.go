@@ -127,6 +127,7 @@ func BindUnsignedHostReportToSignedCandidateReadOnly(
  // because it also contains anonymous catalog and browser-policy telemetry.
  // Decode the full report into raw fields, then STRICTLY decode critical
  // subobjects; reject duplicate keys in those subobjects.
+ if err:=rejectDuplicateHostJSONKeys(reportJSON);err!=nil{return zero,errors.New("invalid or duplicate host JSON fields")}
  var root map[string]json.RawMessage
  if err:=json.Unmarshal(reportJSON,&root);err!=nil{return zero,errors.New("invalid review JSON")}
  var v observedHostCandidateInput
@@ -200,13 +201,44 @@ func RequireObservedCandidateReviewOnly(p UnsignedObservedCandidateReview)error{
  return nil
 }
 
-// This helper intentionally cannot accept raw commands, task paths, signing
-// keys or state-changing callbacks, and cannot serialize arbitrary host fields.
-func decodeUniqueCriticalObject(raw json.RawMessage)error{
- dec:=json.NewDecoder(bytes.NewReader(raw));dec.DisallowUnknownFields()
- var o map[string]json.RawMessage
- if err:=dec.Decode(&o);err!=nil{return err}
+// Reject duplicate keys anywhere, not just on the top-level JSON object.
+// Otherwise JSON producers and consumers could select different task hashes
+// from the same purported review packet. Never log the rejected JSON.
+func rejectDuplicateHostJSONKeys(raw []byte)error{
+ dec:=json.NewDecoder(bytes.NewReader(raw))
+ if err:=walkUniqueHostJSON(dec,0);err!=nil{return err}
  var trailing any
- if err:=dec.Decode(&trailing);err!=io.EOF{return errors.New("trailing object bytes")}
+ if err:=dec.Decode(&trailing);err!=io.EOF{return errors.New("trailing JSON payload")}
+ return nil
+}
+
+func walkUniqueHostJSON(dec *json.Decoder,depth int)error{
+ if depth>16{return errors.New("JSON nesting too deep")}
+ tok,err:=dec.Token()
+ if err!=nil{return err}
+ delim,ok:=tok.(json.Delim)
+ if !ok{return nil}
+ switch delim{
+ case '{':
+  seen:=map[string]bool{}
+  for dec.More(){
+   k,err:=dec.Token()
+   if err!=nil{return err}
+   key,ok:=k.(string)
+   if !ok{return errors.New("invalid JSON property name")}
+   if seen[key]{return errors.New("duplicate JSON property")}
+   seen[key]=true
+   if err:=walkUniqueHostJSON(dec,depth+1);err!=nil{return err}
+  }
+  end,err:=dec.Token()
+  if err!=nil||end!=json.Delim('}'){return errors.New("unclosed JSON object")}
+ case '[':
+  for dec.More(){
+   if err:=walkUniqueHostJSON(dec,depth+1);err!=nil{return err}
+  }
+  end,err:=dec.Token()
+  if err!=nil||end!=json.Delim(']'){return errors.New("unclosed JSON array")}
+ default:return errors.New("invalid JSON delimiter")
+ }
  return nil
 }
