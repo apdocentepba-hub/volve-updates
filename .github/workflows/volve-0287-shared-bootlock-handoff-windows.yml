@@ -20,6 +20,8 @@ on:
       - 'development/0.28.7/inapp/resident_publisher_durable_grant.go'
       - 'development/0.28.7/inapp/resident_publisher_durable_grant_test.go'
       - 'development/0.28.7/inapp/watchdogcmd/resident_publisher_grant_disk_windows_test.go'
+      - 'development/0.28.7/inapp/resident_durable_publisher_boot_windows.go'
+      - 'development/0.28.7/inapp/resident_durable_publisher_boot_windows_test.go'
       - 'development/0.28.7/inapp/watchdogcmd/resident_boot_audit_windows_test.go'
       - 'development/0.28.7/inapp/watchdogcmd/resident_boot_protected_gate_windows.go'
       - 'development/0.28.7/inapp/apply_overlay.go'
@@ -81,7 +83,7 @@ jobs:
           go build -trimpath -o $helper ./cmd/volve-managed-watchdog
           if($LASTEXITCODE -ne 0 -or -not (Test-Path $helper)){throw 'Independent watchdog did not build'}
           $env:VOLVE_CI_MANAGED_WATCHDOG_EXE=$helper
-          go test ./motorupdate -run '^TestDurablePublisherGrant' -count=1 -timeout 2m -v
+          go test ./motorupdate -run '^(TestDurablePublisherGrant|TestDurablePublisherBoundWindowsBoot)' -count=1 -timeout 3m -v
           if($LASTEXITCODE -ne 0){throw 'Durable grant failed persisted file/fresh process negative tests'}
           go test ./motorupdate -run '^(TestSignedPublisherBootRecovery|TestPublisherBoundProtectedBoot)' -count=1 -timeout 2m -v
           if($LASTEXITCODE -ne 0){throw 'Signed publisher grant and resident journal binding failed'}
