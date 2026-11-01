@@ -62,6 +62,7 @@ func TestFreshMotorPolicyRejectsEveryUnsafeResidue(t *testing.T){
   {"negative-tcp-owner",func(e *FreshMotorInstallEvidence){e.TCP53IPv4OwnerCount=-1}},
   {"ipv4-local",func(e *FreshMotorInstallEvidence){e.LocalIPv4DNSConfigured=true}},
   {"ipv6-local",func(e *FreshMotorInstallEvidence){e.LocalIPv6DNSConfigured=true}},
+  {"artifacts-even-with-terminal-journal",func(e *FreshMotorInstallEvidence){e.RecoveryArtifactsPresent=true}},
   {"journal",func(e *FreshMotorInstallEvidence){e.RecoveryJournalPresent=true}},
   {"rollback",func(e *FreshMotorInstallEvidence){e.PendingRollbackPresent=true}},
   {"unknown-task-count",func(e *FreshMotorInstallEvidence){e.VOLVETaskCount=-1}},
