@@ -37,6 +37,7 @@ type Diagnosis struct {
  BrowserPolicies *motorupdate.WindowsBrowserPolicyEvidence `json:"browser_policies,omitempty"`
  BrowserPoliciesStatus string `json:"browser_policies_status"`
  DNSOwner *DNSOwnerReport `json:"dns_udp53_owner,omitempty"`
+ LegacyIdentity *LegacyPublisherBaseline `json:"legacy_identity_for_publisher,omitempty"`
 }
 
 func installedRootFromOriginalStatePath(programData string)(string,error){
@@ -163,6 +164,20 @@ func main(){
  if admin && report.Route!=nil && ctx.Err()==nil {
   evidence:=inspectDNSOwnerReadOnly(ctx,defaultDNSOwnerRead)
   if evidence.Safe(){report.DNSOwner=&evidence}
+  // Only the exact observed SYSTEM process on BOTH local UDP/53 sockets
+  // qualifies for an unsigned, non-authorizing identity evidence request.
+  // The signed production candidate and sealed rollback are STILL absent.
+  if evidence.Status=="EXACT_LEGACY_SYSTEM_PROCESS_ON_BOTH_UDP53_SOCKETS_NOT_SIGNED"{
+   root,rootErr:=installedRootFromOriginalStatePath(os.Getenv("ProgramData"))
+   if rootErr==nil{
+    unsigned:=buildUnsignedLegacyPublisherBaseline(ctx,root,legacyBaselineReaders{
+     Tasks:motorupdate.DefaultWindowsFreshTaskInspect,
+     XML:defaultLegacyTaskXML,
+     Owner:func(c context.Context)DNSOwnerReport{return inspectDNSOwnerReadOnly(c,defaultDNSOwnerRead)},
+    })
+    report.LegacyIdentity=&unsigned
+   }
+  }
  }
  if err!=nil{
   report.Result="INCOMPLETE"
