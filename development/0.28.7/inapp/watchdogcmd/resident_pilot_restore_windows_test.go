@@ -61,6 +61,7 @@ func TestResidentPilotRecoveryScriptBindsLiveTaskAndBackup(t *testing.T){
   "Get-ScheduledTask","Register-ScheduledTask",
   "$motorHasher.ComputeHash","$xmlHash","$oldHash","$target",
   "SYSTEM","--dns-service","VOLVE_CI_RESIDENT_RESTORED",
+  "$alreadyOriginal","$candidateAction","if($alreadyOriginal)",
   disposableResidentTask,
  }{
   if !strings.Contains(script,literal){t.Fatalf("recovery plan omitted %q",literal)}
@@ -73,6 +74,10 @@ func TestResidentPilotRecoveryScriptBindsLiveTaskAndBackup(t *testing.T){
  if !strings.Contains(script,"Original task XML changed before import") ||
     !strings.Contains(script,"Restored task identity mismatch"){
   t.Fatal("recovery plan omits before/after verification")
+ }
+ if strings.Index(script,"if($alreadyOriginal)")<strings.Index(script,"if($xmlDigest -cne $xmlHash)") ||
+  strings.Index(script,"if($alreadyOriginal)")>strings.Index(script,"Register-ScheduledTask"){
+  t.Fatal("already-original idempotence bypassed trusted backup SHA256 or was checked after task import")
  }
  // The runner's synthetic success must NOT consume the real journal.
  state,err:=auditResidentJournal(context.Background(),dir)
