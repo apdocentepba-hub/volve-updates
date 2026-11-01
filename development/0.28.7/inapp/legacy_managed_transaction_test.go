@@ -17,6 +17,10 @@ type signedLegacyDriverLab struct {
     *managedDriverTest
     watchdogCount int
     failWatchdogAt int
+    preparedCount int
+    failPreparedAt int
+    connectivityCount int
+    afterConnectivity func()error
     replaceCandidate bool
     replaceOldMotor string
     afterSnapshot func()error
@@ -39,8 +43,17 @@ func (d *signedLegacyDriverLab) IndependentRecoveryReady(_ context.Context, _ Ve
     return nil
 }
 func (d *signedLegacyDriverLab) VerifyPreparedTarget(_ context.Context, m Manifest) error {
+    d.preparedCount++
     if m.Version!="0.28.7" {return errors.New("invalid signed prepared version")}
-    return d.tick("prepared")
+    if err:=d.tick("prepared");err!=nil{return err}
+    if d.preparedCount==d.failPreparedAt{return errors.New("installed target became untrusted")}
+    return nil
+}
+func (d *signedLegacyDriverLab) ProbeConnectivity(ctx context.Context)error{
+    if err:=d.managedDriverTest.ProbeConnectivity(ctx);err!=nil{return err}
+    d.connectivityCount++
+    if d.connectivityCount==1&&d.afterConnectivity!=nil{return d.afterConnectivity()}
+    return nil
 }
 func (d *signedLegacyDriverLab) InstallVersionedCandidate(ctx context.Context,candidate string) error {
     if err:=d.managedDriverTest.InstallVersionedCandidate(ctx,candidate);err!=nil{return err}
@@ -64,12 +77,12 @@ func TestSignedLegacyTransactionRequiresRevalidationAndIndependentWatchdog(t *te
     err:=runSignedLegacyLab(context.Background(),f,d,testSecureLabFolderBridge,
         func()error{checks++;return nil})
     if err!=nil {t.Fatal(err)}
-    want:=[]string{"preflight","watchdog","snapshot","install","prepared","watchdog","switch","probe","connectivity","commit"}
+    want:=[]string{"preflight","watchdog","snapshot","install","prepared","watchdog","switch","probe","connectivity","prepared","watchdog","commit"}
     if !reflect.DeepEqual(d.calls,want){t.Fatalf("unexpected signed migration order: %v",d.calls)}
     // Each of the TWO signed-proof boundaries now verifies SYSTEM/DNS twice:
     // initial and final immutable-host checks (4 total). The external
     // watchdog itself is independently checked before and after Snapshot.
-    if checks!=4 || d.watchdogCount!=2{t.Fatalf("expected four live SYSTEM/DNS checks and two watchdog checks before switch, got %d/%d",checks,d.watchdogCount)}
+    if checks!=4 || d.watchdogCount!=3||d.preparedCount!=2{t.Fatalf("expected 4 SYSTEM/DNS checks, 3 watchdog checks, and 2 installed target checks before commit; got %d/%d/%d",checks,d.watchdogCount,d.preparedCount)}
 }
 func TestSignedLegacyTransactionBlocksBeforeSnapshotWithoutPermissionOrWatchdog(t *testing.T){
     for _,kind:=range []string{"wrong-publisher","unsafe-parent","no-live-dns","missing-watchdog","no-driver"}{
@@ -243,5 +256,67 @@ func TestSignedLegacyTransactionRestoresIfLiveSYSTEMChangesAtSecondProof(t *test
     t.Fatalf("recovery after changed SYSTEM identity not independently proved: %v",d.calls)
    }
   })
+ }
+}
+
+func TestSignedLegacyTransactionPostDNSFenceFailsClosed(t *testing.T){
+ // No release or SYSTEM changes: ephemeral Ed25519 fixture and fake
+ // driver. These mutations occur AFTER successful local and external
+ // connectivity tests, just before Commit.
+ for _,kind:=range []string{
+  "candidate-replaced-after-DNS",
+  "sealed-original-replaced-after-DNS",
+  "installed-target-changed-after-DNS",
+  "independent-watchdog-down-after-DNS",
+ }{
+  t.Run(kind,func(t *testing.T){
+   f:=newSignedBridge(t)
+   d:=newSignedLegacyDriverLab()
+   switch kind{
+   case "candidate-replaced-after-DNS":
+    d.afterConnectivity=func()error{return os.WriteFile(f.candidate,[]byte("MZ_CHANGED_AFTER_DNS"),0600)}
+   case "sealed-original-replaced-after-DNS":
+    d.afterConnectivity=func()error{
+     return os.WriteFile(filepath.Join(f.backup,legacyBackupExe),[]byte("MZ_BAD_BACKUP_AFTER_DNS"),0600)
+    }
+   case "installed-target-changed-after-DNS":d.failPreparedAt=2
+   case "independent-watchdog-down-after-DNS":d.failWatchdogAt=3
+   }
+   err:=runSignedLegacyLab(context.Background(),f,d,testSecureLabFolderBridge,func()error{return nil})
+   if err==nil{t.Fatalf("post-DNS failure %q was committed",kind)}
+   seenCommit:=false
+   restored:=false
+   for _,call:=range d.calls{
+    if call=="commit"{seenCommit=true}
+    if call=="restore"{restored=true}
+   }
+   if seenCommit{t.Fatalf("invalid post-DNS state committed: %v",d.calls)}
+   if kind=="sealed-original-replaced-after-DNS"{
+    // A corrupted backup is untrusted even for recovery. Must raise
+    // CRITICAL and leave the pending intent to an independent operator.
+    if restored||!strings.Contains(err.Error(),"CRÍTICO"){
+     t.Fatalf("corrupt original was restored or not reported critical: %v calls=%v",err,d.calls)
+    }
+   }else {
+    if !restored||!strings.Contains(err.Error(),"revertida"){
+     t.Fatalf("valid fallback after post-DNS failure not used: %v calls=%v",err,d.calls)
+    }
+    if len(d.calls)<3||!reflect.DeepEqual(d.calls[len(d.calls)-3:],
+      []string{"restore","probe","connectivity"}){
+     t.Fatalf("rollback health not confirmed after DNS success: %v",d.calls)
+    }
+   }
+  })
+ }
+}
+
+func TestSignedLegacyTransactionLastHealthFenceOccursBeforeCommit(t *testing.T){
+ f:=newSignedBridge(t)
+ d:=newSignedLegacyDriverLab()
+ if err:=runSignedLegacyLab(context.Background(),f,d,
+  testSecureLabFolderBridge,func()error{return nil});err!=nil{t.Fatal(err)}
+ wantSuffix:=[]string{"switch","probe","connectivity","prepared","watchdog","commit"}
+ if !reflect.DeepEqual(d.calls[len(d.calls)-len(wantSuffix):],wantSuffix){
+  t.Fatalf("signed target and watchdog were not rechecked AFTER DNS and BEFORE Commit: %v",d.calls)
  }
 }
