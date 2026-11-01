@@ -100,3 +100,19 @@ jobs:
               Write-Host ('CATALOG DETAIL '+($i+1)+': '+$line)
             }
           }
+      - name: Inspect original embedded catalog motor location and asset fingerprint
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $files=Get-ChildItem 'build/codigo' -Filter '*.go' -Recurse -File
+          $matches=@($files | Select-String -Pattern '^func motorLocation\(|^\s*const motorName\s*=')
+          if($matches.Count -eq 0){throw 'Cannot find original catalog motor location'}
+          foreach($match in $matches){
+            $source=Get-Content -LiteralPath $match.Path
+            Write-Host ('PINNED MOTOR SOURCE: '+[IO.Path]::GetFileName($match.Path)+':'+$match.LineNumber)
+            $from=[Math]::Max(0,$match.LineNumber-1);$to=[Math]::Min($source.Length,$match.LineNumber+19)
+            for($i=$from;$i -lt $to;$i++){Write-Host ('MOTOR: '+($i+1)+': '+$source[$i])}
+          }
+          Get-ChildItem 'build/codigo/assets' -File -ErrorAction SilentlyContinue |
+           Where-Object { $_.Name -match '(?i)catalog|motor' } |
+           ForEach-Object { Write-Host ('ASSET: '+$_.Name+' SHA256='+(Get-FileHash -Algorithm SHA256 -LiteralPath $_.FullName).Hash.ToLowerInvariant()) }
