@@ -323,14 +323,21 @@ func TestStandaloneCIWatchdogAtStartupSYSTEMTaskCILab(t *testing.T){
  // a dedicated SYSTEM-only lab bootstrap to recreate ephemeral env values
  // and the runner's temp root. This is a LAB bridge, NOT production boot
  // deployment. The actual separately compiled watchdog runs as SYSTEM.
- logPath:=filepath.Join(root,"CI-WATCHDOG-SYSTEM-DIAGNOSTIC.txt")
+ // Windows SYSTEM can always access its own Windows\\Temp; its token
+ // may NOT have traversal rights on the runner user's private temp root.
+ // This log is DIAGNOSTIC ONLY, never authorization, and is removed by test.
+ logPath:=filepath.Join(os.Getenv("WINDIR"),"Temp",fmt.Sprintf("VOLVE-CI-WATCHDOG-%d.log",suffix))
+ t.Cleanup(func(){_ = os.Remove(logPath)})
  bootstrap:="$ErrorActionPreference='Stop';$ProgressPreference='SilentlyContinue';"+
+  "$log="+q(logPath)+";"+
+  "try{Set-Content -LiteralPath $log -Value ('CI_SYSTEM_BOOTSTRAP_SID='+[Security.Principal.WindowsIdentity]::GetCurrent().User.Value) -Encoding UTF8;"+
   "$env:GITHUB_ACTIONS='true';$env:RUNNER_ENVIRONMENT='github-hosted';"+
   "$env:TMP="+q(filepath.Dir(root))+";$env:TEMP="+q(filepath.Dir(root))+";"+
-  "& "+q(binary)+" '--recover-resident-ci-task' "+q(root)+" "+q(motorTask)+" *> "+q(logPath)+";"+
+  "& "+q(binary)+" '--recover-resident-ci-task' "+q(root)+" "+q(motorTask)+" *>> $log;"+
   "$ciExit=$LASTEXITCODE;"+
-  "Add-Content -LiteralPath "+q(logPath)+" -Value ('CI_WATCHDOG_EXIT='+$ciExit);"+
-  "if($ciExit -ne 0){exit $ciExit}"
+  "Add-Content -LiteralPath $log -Value ('CI_WATCHDOG_EXIT='+$ciExit);"+
+  "if($ciExit -ne 0){exit $ciExit}"+
+  "}catch{Add-Content -LiteralPath $log -Value ('CI_BOOTSTRAP_EXCEPTION='+$_.Exception.Message);exit 99}"
  unicodeUnits:=utf16.Encode([]rune(bootstrap))
  buf:=make([]byte,len(unicodeUnits)*2)
  for i,u:=range unicodeUnits{buf[2*i]=byte(u);buf[2*i+1]=byte(u>>8)}
