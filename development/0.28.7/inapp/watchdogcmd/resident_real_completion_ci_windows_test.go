@@ -94,6 +94,16 @@ func (h *residentCIActualCompletion) ProbeConnectivity(ctx context.Context)error
  return nil
 }
 
+// Injection ONLY for the negative scenario. The SYSTEM process and dual-stack
+// DNS probes remain native/real; a failed external TCP gate must prevent a
+// recovery receipt, even when Task Scheduler and DNS independently work.
+type residentCIForcedOfflineCompletion struct {
+ *residentCIActualCompletion
+}
+func (h *residentCIForcedOfflineCompletion) ProbeConnectivity(context.Context)error{
+ return errors.New("injected CI Internet outage: do not write a terminal receipt")
+}
+
 func certifyActualCIResidentOutcome(
  ctx context.Context,root,journalDir,task string,
  seal,protect func(string)error,
@@ -103,6 +113,28 @@ func certifyActualCIResidentOutcome(
   !pilotTaskPattern.MatchString(task) {
   return errors.New("real completion audit restricted to hosted disposable SYSTEM task")
  }
+ // Negative regression: genuine SYSTEM/task and dual-stack DNS must NOT
+ // produce a terminal receipt when external connectivity is unavailable.
+ offline:=&residentCIForcedOfflineCompletion{
+  residentCIActualCompletion:&residentCIActualCompletion{root:root,disposableTask:task},
+ }
+ if err:=motorupdate.ConfirmResidentRecoveryOutcome(
+  ctx,journalDir,"restored",seal,protect,offline);err==nil{
+  return errors.New("simulated Internet outage wrongly committed a recovery receipt")
+ }
+ if offline.identityChecks!=1 || offline.dnsProbes!=1{
+  return errors.New("disconnected regression did not reach real SYSTEM and DNS before rejecting Internet")
+ }
+ pending,err:=motorupdate.InspectResidentRecoveryJournal(ctx,journalDir,protect)
+ if err!=nil || pending.Status!="recovery-required"{
+  return fmt.Errorf("offline health check corrupted pending recovery: %+v %v",pending,err)
+ }
+ if _,err:=os.Lstat(filepath.Join(journalDir,motorupdate.ResidentResultFile));!os.IsNotExist(err){
+  return fmt.Errorf("offline recovery published a terminal receipt: %v",err)
+ }
+ // Positive path now independently verifies REAL Internet connectivity,
+ // re-probes native SYSTEM identity twice and publishes the create-only
+ // receipt only after all gates pass.
  checks:=&residentCIActualCompletion{root:root,disposableTask:task}
  if err:=motorupdate.ConfirmResidentRecoveryOutcome(
   ctx,journalDir,"restored",seal,protect,checks);err!=nil {
