@@ -188,6 +188,24 @@ func savePhase(path string,j journal) error {
 }
 func run(ctx context.Context,path string) error {
     j,err:=readJournal(path);if err!=nil{return err}
+    // The resident signed-migration coordinator and this independent
+    // watchdog MUST acquire the identical Global\\BootLock object. A fresh
+    // Windows process waits here until the updater commits, relinquishes
+    // ownership for rollback, crashes, or its context expires.
+    suffix:=strings.TrimPrefix(j.TaskName,"VOLVE-CI-ManagedMotor-")
+    if !pilotTaskPattern.MatchString(j.TaskName){
+        return errors.New("watchdog lock refuses unknown motor task")
+    }
+    unlock,err:=acquireCIBootMutex(ctx,"VOLVE-CI-BootLock-"+suffix)
+    if err!=nil{return fmt.Errorf("watchdog cannot acquire shared motor mutex: %w",err)}
+    if unlock==nil{return errors.New("watchdog did not own shared motor mutex")}
+    defer unlock()
+    // Re-read the on-disk journal AFTER acquiring the mutex. The first
+    // read only identified the restricted name and cannot authorize work.
+    afterLock,err:=readJournal(path)
+    if err!=nil||afterLock!=j{
+        return errors.New("recovery journal changed while acquiring shared mutex")
+    }
     // Recovery is privileged, so even "committed" and "restored" markers
     // cannot be trusted if the journal can be changed by an ordinary user.
     // Fail before any Task Scheduler access or journal modification.
