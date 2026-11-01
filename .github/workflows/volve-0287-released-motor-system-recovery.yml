@@ -1,0 +1,104 @@
+name: VOLVE 0.28.7 published binary DNS SYSTEM and independent rollback (VM ONLY)
+on:
+  push:
+    branches: [feature/motor-updater-0287-pilot]
+    paths:
+      - '.github/workflows/volve-0287-released-motor-system-recovery.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  actual-published-binary:
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.x'
+      - name: Verify this is a disposable hosted Windows virtual machine
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          if($env:GITHUB_ACTIONS -ne 'true' -or $env:RUNNER_ENVIRONMENT -ne 'github-hosted'){
+            throw 'Not a disposable GitHub-hosted runner'
+          }
+          $vm=Get-CimInstance Win32_ComputerSystem
+          if(($vm.Manufacturer+' '+$vm.Model) -notmatch '(?i:virtual machine|vmware|hyper-v|qemu|kvm|virtualbox)'){
+            throw 'Not a positively identified disposable VM'
+          }
+          foreach($task in @('VOLVE-DNS-SERVER-0270','VOLVE-DNS-RESCUE-0270')){
+            if(Get-ScheduledTask -TaskName $task -ErrorAction SilentlyContinue){
+              throw 'Unexpected production task present; abort before any test'
+            }
+          }
+      - name: Download exact PUBLIC v0.28.7 Windows EXE and verify original signed channel identity
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference='Stop'
+          New-Item -ItemType Directory -Path published -Force | Out-Null
+          gh release download v0.28.7 --repo "${{ github.repository }}" --pattern VOLVE_0_28_7_CENTRO.exe --dir published
+          if($LASTEXITCODE -ne 0){throw 'Published binary unavailable'}
+          $exe=(Resolve-Path published/VOLVE_0_28_7_CENTRO.exe).Path
+          $sha=(Get-FileHash -Algorithm SHA256 $exe).Hash.ToLowerInvariant()
+          if($sha -cne 'e451b6289116636986ddd67b39dc15f02e471ebde7be9508b38d7bcb0155b414'){
+            throw 'Published EXE differs from original signed 0.28.7 manifest'
+          }
+          if((Get-Item -LiteralPath $exe).Length -ne 18168832){throw 'Published binary length mismatch'}
+          $magic=[IO.File]::ReadAllBytes($exe)
+          if($magic[0] -ne 77 -or $magic[1] -ne 90){throw 'Not a Windows executable'}
+          Write-Host ('PASS: exact v0.28.7 release binary SHA-256 '+$sha)
+      - name: Rebuild pinned test harness; never modify production software
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $chunks=@(Get-ChildItem development/0.28.7/complete-source-parts -Filter 'part-*.bin' -File | Sort-Object Name)
+          if($chunks.Count -ne 10){throw 'Unexpected source chunks'}
+          $zip=Join-Path $PWD 'verified-source.zip'
+          $dst=[IO.File]::Create($zip)
+          try{
+            for($i=0;$i -lt $chunks.Count;$i++){
+              if($chunks[$i].Name -ne ('part-{0:D2}.bin' -f $i)){throw 'Source chunk order incorrect'}
+              $src=[IO.File]::OpenRead($chunks[$i].FullName)
+              try{$src.CopyTo($dst)}finally{$src.Dispose()}
+            }
+          }finally{$dst.Dispose()}
+          if((Get-FileHash -Algorithm SHA256 $zip).Hash.ToLowerInvariant() -ne '92b3536559151260375b17a64eedd009df8399e45460637208027b7ca0587ba5'){
+            throw 'Source ZIP differs from pinned source'
+          }
+          New-Item -ItemType Directory -Path build -Force | Out-Null
+          Expand-Archive -LiteralPath $zip -DestinationPath build -Force
+          $overlays=@(
+            @{name='VOLVE_0287_PRECHECK_RESCATE_OVERLAY_NO_INSTALAR.zip';sha='fdfd31f21df81fe6da6075bfd442354297874576b6dc2c38f19bd35a681d95cd'},
+            @{name='VOLVE_0287_RECUPERACION_INTERRUPCION_FORZADA_NO_INSTALAR_v3.zip';sha='773bd5eb5f1c4883021cc321856636354e964d3605dba9017e2fb5d1a7401b40'}
+          )
+          foreach($item in $overlays){
+            $path=Join-Path development/0.28.7 $item.name
+            if((Get-FileHash -Algorithm SHA256 $path).Hash.ToLowerInvariant() -ne $item.sha){throw 'Overlay digest mismatch'}
+            Expand-Archive -LiteralPath $path -DestinationPath build -Force
+          }
+          Copy-Item development/0.28.7/journal/*.go build/codigo/motorupdate/ -Force
+          go run development/0.28.7/inapp/apply_overlay.go build/codigo
+          if($LASTEXITCODE -ne 0){throw 'Source harness overlay failed'}
+      - name: Build independent SYSTEM watchdog and exercise RELEASED motor as SYSTEM
+        working-directory: build/codigo
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $env:CGO_ENABLED='0'
+          $watch=Join-Path $env:RUNNER_TEMP 'VOLVE-CI-Independent-Watchdog.exe'
+          go build -trimpath -o $watch ./cmd/volve-managed-watchdog
+          if($LASTEXITCODE -ne 0){throw 'Independent watchdog failed to build'}
+          $env:VOLVE_CI_MANAGED_WATCHDOG_EXE=$watch
+          $env:VOLVE_CI_REAL_CENTRO_EXE=(Resolve-Path ../../published/VOLVE_0_28_7_CENTRO.exe).Path
+          $before=Get-DnsClientServerAddress | Sort-Object InterfaceIndex,AddressFamily | Select-Object InterfaceIndex,AddressFamily,ServerAddresses | ConvertTo-Json -Compress -Depth 5
+          try{
+            go test . -run '^TestSignedRealVOLVECandidateRunsDNSAsSYSTEMThenRecovers$' -count=1 -timeout 3m -v
+            if($LASTEXITCODE -ne 0){throw 'RELEASED binary failed actual SYSTEM DNS and watchdog rollback rehearsal'}
+          }finally{
+            $after=Get-DnsClientServerAddress | Sort-Object InterfaceIndex,AddressFamily | Select-Object InterfaceIndex,AddressFamily,ServerAddresses | ConvertTo-Json -Compress -Depth 5
+            if($before -cne $after){throw 'Windows DNS adapter changed during rehearsal'}
+          }
+          Write-Host 'PASS: published signed 0.28.7 binary ran DNS loopback checks under SYSTEM and watchdog restored disposable task'
