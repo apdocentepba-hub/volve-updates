@@ -65,6 +65,11 @@ func TestResidentPilotRecoveryScriptBindsLiveTaskAndBackup(t *testing.T){
  }{
   if !strings.Contains(script,literal){t.Fatalf("recovery plan omitted %q",literal)}
  }
+ if !strings.Contains(script,"$saved=[regex]::Replace($saved") ||
+    !strings.Contains(script,"<\\?xml") ||
+    strings.Contains(script,"$1UTF-8$3") {
+  t.Fatal("Task Scheduler XML import retains conflicting UTF-8 declaration in UTF-16 COM string")
+ }
  if !strings.Contains(script,"Original task XML changed before import") ||
     !strings.Contains(script,"Restored task identity mismatch"){
   t.Fatal("recovery plan omits before/after verification")
