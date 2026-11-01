@@ -177,7 +177,17 @@ func TestPostSwitchRestoredSystemTaskActuallyServesDualStackDNS53CILab(t *testin
   safety:="$ErrorActionPreference='Stop';"+
    "$path="+q(old)+";"+
    "$running=@(Get-CimInstance Win32_Process -ErrorAction Stop | Where-Object {[string]$_.ExecutablePath -ieq $path});"+
-   "foreach($p in $running){Stop-Process -Id $p.ProcessId -Force -ErrorAction Stop};"+
+   // The real motor can exit naturally between enumerating the process
+   // and stopping it. Treat an already-exited PID as clean, but require a
+   // final exact-path inventory to prove that none of OUR processes remain.
+   "$checks=@();foreach($p in $running){"+
+   "$now=Get-CimInstance Win32_Process -Filter ('ProcessId='+$p.ProcessId) -ErrorAction SilentlyContinue;"+
+   "if($null -eq $now -or [string]$now.ExecutablePath -ine $path){continue};"+
+   "try{Stop-Process -Id $p.ProcessId -Force -ErrorAction Stop}catch{"+
+   "$again=Get-CimInstance Win32_Process -Filter ('ProcessId='+$p.ProcessId) -ErrorAction SilentlyContinue;"+
+   "if($null -ne $again -and [string]$again.ExecutablePath -ieq $path){throw}}};"+
+   "$left=@(Get-CimInstance Win32_Process -ErrorAction Stop | Where-Object {[string]$_.ExecutablePath -ieq $path});"+
+   "if($left.Count -ne 0){throw 'Own CI DNS process remains running'};"+
    "Write-Output 'CI_NO_OWN_DNS_PROCESS'"
   if v,e:=ps(cleanCtx,safety);e!=nil||v!="CI_NO_OWN_DNS_PROCESS"{t.Errorf("CI process cleanup not proven: %s %v",v,e)}
  })
