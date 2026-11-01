@@ -19,6 +19,7 @@ type signedLegacyDriverLab struct {
     lockAcquires int
     lockReleases int
     failLock bool
+    nilLockRelease bool
     watchdogCount int
     failWatchdogAt int
     preparedCount int
@@ -38,6 +39,7 @@ func newSignedLegacyDriverLab()*signedLegacyDriverLab {
 func (d *signedLegacyDriverLab) AcquireExclusiveMigration(ctx context.Context)(func(),error){
  if err:=ctx.Err();err!=nil{return nil,err}
  if d.failLock{return nil,errors.New("another updater or SYSTEM watchdog owns the motor mutex")}
+ if d.nilLockRelease{return nil,nil}
  if d.lockHeld{return nil,errors.New("migration lock already held")}
  d.lockHeld=true
  d.lockAcquires++
@@ -400,9 +402,18 @@ func TestSignedLegacyTransactionKeepsLeaseDuringRollbackAndReleasesOnError(t *te
 
 func TestSignedLegacyTransactionRejectsNilExclusiveLease(t *testing.T){
  f:=newSignedBridge(t)
- // This test invokes a fake with a valid lock. An independent OS driver
- // returning a nil unlock is rejected by the production transaction before
- // any live preflight and before the first mutating operation.
+ d:=newSignedLegacyDriverLab()
+ d.nilLockRelease=true
+ probes:=0
+ err:=runSignedLegacyLab(context.Background(),f,d,
+  testSecureLabFolderBridge,func()error{probes++;return nil})
+ if err==nil||!strings.Contains(err.Error(),"liberación del bloqueo exclusivo")||
+  probes!=0||d.lockAcquires!=0||len(d.calls)!=0{
+  t.Fatalf("driver with no exclusive lease obtained migration rights: err=%v probes=%d calls=%v",err,probes,d.calls)
+ }
+}
+func TestSignedLegacyTransactionCancellationBeforeLeaseChangesNothing(t *testing.T){
+ f:=newSignedBridge(t)
  d:=newSignedLegacyDriverLab()
  ctx,cancel:=context.WithCancel(context.Background());cancel()
  err:=runSignedLegacyLab(ctx,f,d,testSecureLabFolderBridge,func()error{return nil})
