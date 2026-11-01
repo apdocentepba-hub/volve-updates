@@ -87,13 +87,7 @@ func TestPostSwitchSystemTaskCILabRestoresRealDisposableSystemTaskAndOriginalByt
  // The recovery helper must be a genuinely different OS process from
  // this test's parent/updater. This proves the sealed NTFS snapshot and
  // pending journal can be reread without parent process memory.
- child:=exec.CommandContext(ctx,os.Args[0],
-  "-test.run=^TestPostSwitchSystemTaskCILabExternalChild$","-test.v")
- child.Env=append(os.Environ(),
-  "VOLVE_CI_TASK_RESTORE_CHILD=1",
-  "VOLVE_CI_TASK_RESTORE_ROOT="+root,
-  "VOLVE_CI_TASK_RESTORE_NAME="+task)
- output,childErr:=child.CombinedOutput()
+ output,childErr:=runIndependentCIRecovery(ctx,root,task)
  if childErr!=nil || !strings.Contains(string(output),"CI_EXTERNAL_RECOVERY_OK") {
   t.Fatalf("separate process file + real SYSTEM task restoration failed: %v %s",
    childErr,output)
@@ -113,13 +107,7 @@ func TestPostSwitchSystemTaskCILabRestoresRealDisposableSystemTaskAndOriginalByt
  // Model a second reboot/crash BEFORE any healthy terminal result: run the
  // SAME independent watchdog process again while the real SYSTEM task is
  // ALREADY restored. This must succeed without re-importing or changing it.
- retry:=exec.CommandContext(ctx,os.Args[0],
-  "-test.run=^TestPostSwitchSystemTaskCILabExternalChild$","-test.v")
- retry.Env=append(os.Environ(),
-  "VOLVE_CI_TASK_RESTORE_CHILD=1",
-  "VOLVE_CI_TASK_RESTORE_ROOT="+root,
-  "VOLVE_CI_TASK_RESTORE_NAME="+task)
- retryOutput,retryErr:=retry.CombinedOutput()
+ retryOutput,retryErr:=runIndependentCIRecovery(ctx,root,task)
  if retryErr!=nil || !strings.Contains(string(retryOutput),"CI_EXTERNAL_RECOVERY_OK"){
   t.Fatalf("already-restored SYSTEM task refused safe independent retry: %v %s",retryErr,retryOutput)
  }
@@ -145,13 +133,7 @@ func TestPostSwitchSystemTaskCILabRestoresRealDisposableSystemTaskAndOriginalByt
  if out,err:=ps(ctx,tamper);err!=nil||out!="CI_TEMPORARY_TASK_TAMPERED"{
   t.Fatalf("could not prepare controlled disposable task tamper case: %s %v",out,err)
  }
- untrusted:=exec.CommandContext(ctx,os.Args[0],
-  "-test.run=^TestPostSwitchSystemTaskCILabExternalChild$","-test.v")
- untrusted.Env=append(os.Environ(),
-  "VOLVE_CI_TASK_RESTORE_CHILD=1",
-  "VOLVE_CI_TASK_RESTORE_ROOT="+root,
-  "VOLVE_CI_TASK_RESTORE_NAME="+task)
- rejected,rejectErr:=untrusted.CombinedOutput()
+ rejected,rejectErr:=runIndependentCIRecovery(ctx,root,task)
  if rejectErr==nil || strings.Contains(string(rejected),"CI_EXTERNAL_RECOVERY_OK"){
   t.Fatalf("unknown SYSTEM task arguments incorrectly authorized automatic rollback: %v %s",rejectErr,rejected)
  }
@@ -213,4 +195,54 @@ func TestPostSwitchSystemTaskCILabExternalChild(t *testing.T){
   t.Fatalf("fresh process could not restore protected original and SYSTEM task: %v",err)
  }
  t.Log("CI_EXTERNAL_RECOVERY_OK: separate process restored original EXE and real disposable SYSTEM task")
+}
+
+func runIndependentCIRecovery(ctx context.Context,root,task string)([]byte,error){
+ binary:=os.Getenv("VOLVE_CI_STANDALONE_RECOVERY_EXE")
+ if binary!=""{
+  // The dedicated workflow MUST supply a real, separately compiled EXE in
+  // the runner's temporary directory. Do not trust a caller-provided path.
+  allowed:=filepath.Join(os.Getenv("RUNNER_TEMP"),"VOLVE_CI_Standalone_Recovery_Watchdog.exe")
+  if !filepath.IsAbs(binary) || !strings.EqualFold(filepath.Clean(binary),filepath.Clean(allowed)) {
+   return nil,errors.New("untrusted compiled watchdog location")
+  }
+  file,err:=os.Lstat(binary)
+  if err!=nil||!file.Mode().IsRegular()||file.Size()<100000{
+   return nil,errors.New("compiled standalone watchdog is absent, linked or incomplete")
+  }
+  cmd:=exec.CommandContext(ctx,binary,"--recover-resident-ci-task",root,task)
+  output,err:=cmd.CombinedOutput()
+  if err==nil{
+   if !strings.Contains(string(output),"VOLVE_CI_STANDALONE_RECOVERED"){
+    return output,errors.New("standalone watchdog did not report verified CI recovery")
+   }
+   return append([]byte("CI_EXTERNAL_RECOVERY_OK: separate compiled watchdog EXE\n"),output...),nil
+  }
+  return output,err
+ }
+ if os.Getenv("VOLVE_CI_REQUIRE_STANDALONE")=="1"{
+  return nil,errors.New("dedicated workflow did not provide compiled independent watchdog")
+ }
+ // Older workflows continue testing the new-process policy as a separate
+ // test executable, but cannot claim they tested the compiled watchdog.
+ cmd:=exec.CommandContext(ctx,os.Args[0],
+  "-test.run=^TestPostSwitchSystemTaskCILabExternalChild$","-test.v")
+ cmd.Env=append(os.Environ(),
+  "VOLVE_CI_TASK_RESTORE_CHILD=1",
+  "VOLVE_CI_TASK_RESTORE_ROOT="+root,
+  "VOLVE_CI_TASK_RESTORE_NAME="+task)
+ return cmd.CombinedOutput()
+}
+
+func TestStandaloneCIRecoveryCLIRejectsNonHostedRunner(t *testing.T){
+ t.Setenv("RUNNER_ENVIRONMENT","self-hosted")
+ if err:=recoverResidentCIFromStandalone(context.Background(),
+  t.TempDir(),disposableResidentTask);err==nil{
+  t.Fatal("standalone CI watchdog accepted a non-hosted environment")
+ }
+ t.Setenv("RUNNER_ENVIRONMENT","github-hosted")
+ if err:=recoverResidentCIFromStandalone(context.Background(),
+  t.TempDir(),"VOLVE-DNS-SERVER-0270");err==nil{
+  t.Fatal("standalone CI watchdog accepted production motor task")
+ }
 }
