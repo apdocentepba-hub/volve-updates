@@ -128,3 +128,70 @@ func TestUnsignedLegacyBaselineFailsClosedOnReadErrorOrCancellation(t *testing.T
  got=buildUnsignedLegacyPublisherBaseline(context.Background(),root,readers)
  if got.Status!="NOT_VERIFIED_NO_CHANGES"||got.FromSHA256!=""{t.Fatal("XML read failure was treated as identity")}
 }
+
+
+func TestUnsignedLegacyBaselineStageCodesAreSafeAndPreciselyClassified(t *testing.T){
+ root,readers:=baselineFixture(t)
+ original:=string(mustTaskRaw(t,readers.Tasks))
+ cases:=[]struct{name,raw,want string}{
+  {"wrong-principal",strings.Replace(original,`"Principal":"SYSTEM"`,`"Principal":"USER"`,1),"FIRST_TASK_OWNER_MISMATCH"},
+  {"wrong-action-path",strings.Replace(original,legacyExpectedExe,"another.exe",1),"FIRST_TASK_ACTION_PATH_MISMATCH"},
+  {"wrong-arguments",strings.Replace(original,"--dns-service","--refresh",1),"FIRST_TASK_ARGUMENTS_MISMATCH"},
+  {"working-directory-nonempty",strings.Replace(original,`"WorkingDirectory":""`,`"WorkingDirectory":"C:\\"`,1),"FIRST_TASK_WORKING_DIR_MISMATCH"},
+  {"working-directory-null",strings.Replace(original,`"WorkingDirectory":""`,`"WorkingDirectory":null`,1),"FIRST_TASK_WORKING_DIR_MISSING"},
+  {"unexpected-field",strings.Replace(original,`"Name":`,`"secret":"SHOULD_NOT_LEAK","Name":`,1),"FIRST_TASK_RESPONSE_INVALID"},
+  {"task-missing","[]","FIRST_TASK_RESPONSE_INVALID"},
+ }
+ for _,tc:=range cases{
+  t.Run(tc.name,func(t *testing.T){
+   c:=readers
+   c.Tasks=func(context.Context,string)([]byte,error){return []byte(tc.raw),nil}
+   got:=buildUnsignedLegacyPublisherBaseline(context.Background(),root,c)
+   if got.Status!="NOT_VERIFIED_NO_CHANGES"||got.FailureStage!=tc.want ||
+    got.FromSHA256!=""||got.FromTaskXMLSHA256!=""||got.MigrationAuthorized ||
+    got.SignatureVerified||got.ReadyToSwitch{
+    t.Fatalf("bad diagnostic stage/authorization: %+v (want %s)",got,tc.want)
+   }
+   data,err:=json.Marshal(got);if err!=nil{t.Fatal(err)}
+   if strings.Contains(string(data),root)||strings.Contains(string(data),"SHOULD_NOT_LEAK"){
+    t.Fatalf("failure stage leaked private task details")
+   }
+  })
+ }
+}
+
+func TestUnsignedLegacyBaselineStageDetectsXMLOrRuntimeDrift(t *testing.T){
+ root,readers:=baselineFixture(t)
+ xmlReads:=0
+ readers.XML=func(context.Context)([]byte,error){
+  xmlReads++
+  if xmlReads==1{return []byte("<Task><Actions>First</Actions></Task>"),nil}
+  return []byte("<Task><Actions>Changed</Actions></Task>"),nil
+ }
+ got:=buildUnsignedLegacyPublisherBaseline(context.Background(),root,readers)
+ if got.FailureStage!="TASK_XML_CHANGED_BETWEEN_READS"||got.FromSHA256!="" {
+  t.Fatalf("XML changed but accepted or wrong stage: %+v",got)
+ }
+ root,readers=baselineFixture(t)
+ owners:=0
+ original:=readers.Owner
+ readers.Owner=func(ctx context.Context)DNSOwnerReport{
+  owners++
+  o:=original(ctx)
+  if owners==2{o.Evidence.SystemOwner=false}
+  return o
+ }
+ got=buildUnsignedLegacyPublisherBaseline(context.Background(),root,readers)
+ if got.FailureStage!="DNS_OWNER_CHANGED_OR_UNVERIFIED"||got.FromSHA256!=""||
+  got.ReadyToSwitch{t.Fatalf("change of native owner evidence was ignored: %+v",got)}
+}
+
+func TestUnsignedLegacyBaselineStageNoHashOnMissingXML(t *testing.T){
+ root,readers:=baselineFixture(t)
+ readers.XML=func(context.Context)([]byte,error){return nil,errors.New("PRIVATE_INTERNAL_PATH")}
+ got:=buildUnsignedLegacyPublisherBaseline(context.Background(),root,readers)
+ if got.FailureStage!="TASK_XML_FIRST_FAILED"||got.FromSHA256!=""||
+  strings.Contains(got.FailureStage,"PRIVATE_INTERNAL_PATH"){
+  t.Fatalf("XML read error leaked path or was misclassified: %+v",got)
+ }
+}
