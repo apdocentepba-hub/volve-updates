@@ -19,7 +19,9 @@ import (
  "volve-browser-protection/motorupdate"
 )
 
-func TestPostSwitchSystemTaskCILabRestoresRealDisposableSystemTaskAndMissingExe(t *testing.T){
+func TestPostSwitchSystemTaskCILabRestoresRealDisposableSystemTaskAndOriginalBytes(t *testing.T){
+ for _,scenario:=range []string{"missing","journal-pinned-replacement"}{
+  t.Run(scenario,func(t *testing.T){
  if os.Getenv("GITHUB_ACTIONS")!="true"||
   os.Getenv("RUNNER_ENVIRONMENT")!="github-hosted"{
   t.Skip("hosted Windows disposable GitHub runner required")
@@ -73,7 +75,14 @@ func TestPostSwitchSystemTaskCILabRestoresRealDisposableSystemTaskAndMissingExe(
  if result,err:=ps(ctx,create);err!=nil||result!="CI_DISPOSABLE_TARGET_REGISTERED"{
   t.Fatalf("disposable SYSTEM task registration failed: %s %v",result,err)
  }
- if err:=os.Remove(old);err!=nil{t.Fatal(err)}
+ switch scenario{
+ case "missing":
+  if err:=os.Remove(old);err!=nil{t.Fatal(err)}
+ case "journal-pinned-replacement":
+  // SHA-256 of these inert bytes is pinned in the protected CI journal.
+  // Do not confuse this fixture with an authentic publisher-signed binary.
+  if err:=os.WriteFile(old,[]byte("publisher-signed candidate CI bytes"),0600);err!=nil{t.Fatal(err)}
+ }
  if err:=restoreMissingOriginalAndDisposableTaskCILab(ctx,root,task,ps);err!=nil{
   t.Fatalf("file + ACTUAL Task Scheduler restore failed: %v",err)
  }
@@ -96,7 +105,9 @@ func TestPostSwitchSystemTaskCILabRestoresRealDisposableSystemTaskAndMissingExe(
  if _,err:=os.Lstat(filepath.Join(journalDir,motorupdate.ResidentResultFile));!os.IsNotExist(err){
   t.Fatalf("restored task falsely wrote DNS/Internet health receipt: %v",err)
  }
- t.Log("PASS: real disposable SYSTEM task and original EXE recovered in Windows VM; journal still pending; DNS untouched")
+ t.Logf("PASS: real disposable SYSTEM task and original EXE recovered (scenario=%s); journal still pending; DNS untouched",scenario)
+  })
+ }
 }
 
 func TestPostSwitchSystemTaskCILabFailsBeforeSchedulerWhenOriginalIsDifferent(t *testing.T){
