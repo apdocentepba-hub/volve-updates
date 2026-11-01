@@ -5,6 +5,7 @@ on:
     paths:
       - 'development/0.28.7/inapp/watchdogcmd/resident_post_switch_file_task_ci_windows.go'
       - 'development/0.28.7/inapp/watchdogcmd/resident_post_switch_file_task_ci_windows_test.go'
+      - 'development/0.28.7/inapp/watchdogcmd/main_windows.go'
       - 'development/0.28.7/inapp/watchdogcmd/resident_pilot_restore_windows.go'
       - 'development/0.28.7/inapp/watchdogcmd/resident_pilot_restore_windows_test.go'
       - 'development/0.28.7/inapp/apply_overlay.go'
@@ -52,11 +53,26 @@ jobs:
           print("Verified source and both rollback overlays; no production installation.")
           PY
           go run development/0.28.7/inapp/apply_overlay.go build/codigo
+      - name: Compile a separate CI watchdog EXE (no test-runner child)
+        shell: pwsh
+        working-directory: build/codigo
+        run: |
+          $ErrorActionPreference='Stop'
+          if($env:GITHUB_ACTIONS -ne 'true' -or $env:RUNNER_ENVIRONMENT -ne 'github-hosted'){throw 'Standalone recovery restricted to disposable GitHub Windows VM'}
+          $out=Join-Path $env:RUNNER_TEMP 'VOLVE_CI_Standalone_Recovery_Watchdog.exe'
+          go build -trimpath -o $out ./cmd/volve-managed-watchdog
+          if($LASTEXITCODE -ne 0){throw 'Independent watchdog EXE failed to compile'}
+          if(-not (Test-Path -LiteralPath $out -PathType Leaf)){throw 'Independent watchdog EXE is absent'}
+          $hash=(Get-FileHash -Algorithm SHA256 -LiteralPath $out).Hash
+          if((Get-Item -LiteralPath $out).Length -lt 100000){throw 'Invalid compiled watchdog size'}
+          Add-Content -LiteralPath $env:GITHUB_ENV -Value ('VOLVE_CI_STANDALONE_RECOVERY_EXE='+$out)
+          Add-Content -LiteralPath $env:GITHUB_ENV -Value 'VOLVE_CI_REQUIRE_STANDALONE=1'
+          Write-Host ('PASS: separate compiled Windows CI watchdog created, SHA256='+$hash)
       - name: Recreate actual missing old EXE and restore genuine disposable SYSTEM task
         shell: bash
         working-directory: build/codigo
         run: |
           test -f cmd/volve-managed-watchdog/resident_post_switch_file_task_ci_windows.go
           test -f cmd/volve-managed-watchdog/resident_post_switch_file_task_ci_windows_test.go
-          go test ./cmd/volve-managed-watchdog -run '^(TestPostSwitchSystemTask|TestResidentPilotRecoveryScriptBindsLiveTaskAndBackup)' -count=1 -timeout 4m -v
-          echo 'PASS: isolated file+real disposable SYSTEM Task Scheduler restoration; no DNS adapter changes.'
+          go test ./cmd/volve-managed-watchdog -run '^(TestPostSwitchSystemTask|TestStandaloneCIRecoveryCLI|TestResidentPilotRecoveryScriptBindsLiveTaskAndBackup)' -count=1 -timeout 6m -v
+          echo 'PASS: compiled independent watchdog executable restored the actual disposable SYSTEM task twice, rejected tampered arguments; no product tasks or DNS adapters changed.'
