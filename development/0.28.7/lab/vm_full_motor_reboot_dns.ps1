@@ -195,6 +195,12 @@ if($Mode -eq 'Prepare'){
     Copy-Item -LiteralPath $MotorExe -Destination $exe -ErrorAction Stop
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'live_dns_boot_event_chain.ps1') -Destination $helper -ErrorAction Stop
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'reboot_event_chain.ps1') -Destination $eventParser -ErrorAction Stop
+    # The protected kit folder already exists; an ordinary DNS start refuses
+    # to guess or generate a missing feed. Bootstrap it explicitly, while
+    # still unprivileged with respect to DNS/53 or Task Scheduler.
+    & $exe --ci-prepare-full-catalog $root VOLVE-CI-GITHUB-HOSTED-VM-DNS53-ONLY
+    if($LASTEXITCODE -ne 0){throw 'The CI-tagged motor refused deterministic Full catalog bootstrap'}
+    Assert-Regular $catalog
     $settings=New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Minutes 35) -AllowStartIfOnBatteries
     $action=New-ScheduledTaskAction -Execute $exe -Argument $arg
     $trigger=New-ScheduledTaskTrigger -AtStartup
