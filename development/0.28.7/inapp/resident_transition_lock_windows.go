@@ -100,17 +100,17 @@ func residentObservedSecurity(handle uintptr)(string,error){
   uintptr(unsafe.Pointer(&raw[0])),uintptr(required),uintptr(unsafe.Pointer(&returned)))
  if ok==0{return "",residentWinErr("GetKernelObjectSecurity",last)}
  if returned==0||returned>required{return "",errors.New("invalid kernel security descriptor length")}
- var sdText uintptr
+ var sdText *uint16
  var characters uint32
  ok,_,last=residentConvertSDToString.Call(uintptr(unsafe.Pointer(&raw[0])),
   residentTransitionSecurityRevision,residentTransitionSecurityInfo,
   uintptr(unsafe.Pointer(&sdText)),uintptr(unsafe.Pointer(&characters)))
  runtime.KeepAlive(raw)
  if ok==0{return "",residentWinErr("ConvertSecurityDescriptorToStringSecurityDescriptorW",last)}
- if sdText==0{return "",errors.New("kernel ACL conversion yielded null")}
- defer residentLocalFree.Call(sdText)
+ if sdText==nil{return "",errors.New("kernel ACL conversion yielded null")}
+ defer residentLocalFree.Call(uintptr(unsafe.Pointer(sdText)))
  if characters==0||characters>2048{return "",errors.New("resident mutex SDDL has invalid length")}
- text:=syscall.UTF16ToString(unsafe.Slice((*uint16)(unsafe.Pointer(sdText)),int(characters)))
+ text:=syscall.UTF16ToString(unsafe.Slice(sdText,int(characters)))
  return text,nil
 }
 
