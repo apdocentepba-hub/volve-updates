@@ -25,6 +25,9 @@ import (
 func windowsDurableGrantFixture(t *testing.T)(string,[]byte,[]byte,ed25519.PublicKey){
  t.Helper()
  root,journal,_,_:=chainFixture(t,false)
+ // The install root in the disposable test fixture must also be protected;
+ // the durable grant reader intentionally rejects an untrusted ancestor.
+ hardenedTestACL(t,root,root)
  pending,err:=auditResidentJournal(context.Background(),journal)
  if err!=nil{t.Fatal(err)}
  backup,err:=auditResidentRollback(context.Background(),root)
