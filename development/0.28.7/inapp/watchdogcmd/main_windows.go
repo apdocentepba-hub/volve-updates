@@ -234,6 +234,17 @@ func main(){
         fmt.Println("VOLVE_CI_STANDALONE_RECOVERED")
         return
     }
+    if len(os.Args)==3 && os.Args[1]=="--audit-resident-signed-boot-admission" {
+        ctx,cancel:=context.WithTimeout(context.Background(),90*time.Second);defer cancel()
+        report,err:=auditResidentSignedBootAdmissionWithPinnedPublisher(ctx,os.Args[2])
+        if err!=nil{
+            fmt.Fprintln(os.Stderr,"VOLVÉ: EVIDENCIA EDITORIAL DE RESCATE RECHAZADA; SIN CAMBIOS:",err)
+            os.Exit(1)
+        }
+        fmt.Printf("VOLVÉ: ADMISION DE RESCATE (SOLO LECTURA)\nEstado: %s\nAcción: %s\nFirma editorial confirmada: %t\nOriginal SHA-256: %s\nNO restaura ni instala el motor productivo.\n",
+            report.Status,report.Action,report.PublisherVerified,report.OriginalSHA256)
+        return
+    }
     if len(os.Args)==3 && os.Args[1]=="--audit-resident-boot-plan" {
         ctx,cancel:=context.WithTimeout(context.Background(),90*time.Second);defer cancel()
         plan,err:=auditResidentBootPlanProtected(ctx,os.Args[2])
