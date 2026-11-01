@@ -18,12 +18,19 @@
 - [#41357474452](https://github.com/apdocentepba-hub/volve-updates/actions/runs/41357474452) SUCCESS: suite piloto Linux, watchdog/Windows y restauración en tareas descartables.
 - **Nuevo** [#41360915352](https://github.com/apdocentepba-hub/volve-updates/actions/runs/41360915352) SUCCESS: descargó **exactamente el binario público v0.28.7**, comprobó sus bytes, lo ejecutó bajo SYSTEM en una tarea desechable de Windows con consultas DNS UDP locales, y otro watchdog SYSTEM independiente restauró la tarea original. Adaptadores DNS intactos. **No fue un motor instalado en producción, puerto 53 productivo ni un reinicio real**.
 
+## Motor DNS firmado con la clave editorial real — 01/11/2026
+
+- **Paquete candidato preparado, NO INSTALAR:** archivo temporal `VOLVE_DNS_Motor_0_28_7.exe` construido como copia byte-exacta del Centro 0.28.7 publicado; manifiesto `component=dns-engine`, versión `0.28.7`, min Centro `0.28.7`, SHA-256 original y firma separada Ed25519 con la clave editorial legítima, verificada sin exponer la clave privada.
+- Manifiesto, firma y política de promoción: `development/0.28.7/motor-release-candidate/`. **No se subió ejecutable a Git ni se modificó el canal estable `motor-stable.json`**; la URL del futuro asset todavía no resuelve a un motor publicado.
+- [#41361613951](https://github.com/apdocentepba-hub/volve-updates/actions/runs/41361613951) **SUCCESS Windows**: descargó el ejecutable oficial de GitHub, verificó su hash/tamaño, reconstruyó el paquete y ejecutó **la función real `motorupdate.VerifyStaged` con la clave pública incorporada**. Aceptó la firma legítima y rechazó por separado modificaciones de ejecutable y firma. Artefacto binario de CI marcado `NO INSTALAR`.
+- Esto elimina la falta de un **candidato de motor auténtico** como bloqueo independiente. NO implica autorización de reemplazo productivo del motor ni demuestra que una tarea SYSTEM instalada en el equipo del usuario corresponda al binario legado identificado.
+
 ## Bloqueo siguiente para la actualización automática del motor
 
 El Centro 0.28.7 instalado ya descarga/valida paquetes de Centro firmados. El canal separado `releases/motor-stable.json` todavía no está publicado y el botón no conmuta un motor vivo. Para habilitarlo hacen falta:
 
 1. Determinar con evidencia actual la **ruta de instalación** del equipo (migración heredada versus motor ya administrado versus ruta desconocida). Las pruebas del usuario acreditan el DNS activo, **no** por sí solas la tarea exacta; usar inspección privilegiada **solo lectura**, sin solicitar al usuario nuevos pasos hasta que haya un candidato firmado y un plan de instalación viable.
-2. Motor de distribución con manifiesto Ed25519 de la **clave editorial auténtica**, paquete verificado con Full catalog, versión y compatibilidad; publicar únicamente con controles finales.
+2. **Candidato firmado y validado en Windows CI**. Todavía falta probar el empaquetado/distribución definitiva y su compatibilidad de datos Full en el contexto de instalación productivo; no publicar canal del motor sin controles finales.
 3. Driver productivo de conmutación/rollback con mutex kernel compartido, autorización editorial para el **hash exacto del motor antiguo**, respaldo sellado de EXE/XML, watchdog SYSTEM instalado, revalidaciones y prueba tras reinicio de **la misma VM persistente**. Las rutas actuales del watchdog siguen explícitamente limitadas a tareas CI; no eliminar esas barreras para apresurar un release.
 4. Verificar DNS IPv4/IPv6, bloques y dominios permitidos, Internet, catálogo, reinicio, fallo forzado y restauración antes de abrir actualización del motor en el Centro.
 
