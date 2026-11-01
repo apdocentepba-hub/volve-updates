@@ -52,6 +52,8 @@ type FreshMotorInstallEvidence struct {
  LocalIPv6DNSConfigured bool
  UDP53IPv4OwnerCount int
  UDP53IPv6OwnerCount int
+ TCP53IPv4OwnerCount int
+ TCP53IPv6OwnerCount int
  RecoveryJournalPresent bool
  PendingRollbackPresent bool
 }
@@ -75,7 +77,8 @@ func CheckFreshMotorInstallReadiness(ctx context.Context, e FreshMotorInstallEvi
   return errors.New("motor already exists: use signed migration/update, never a fresh install")
  }
  if e.VOLVETaskCount<0 || e.VOLVEServiceCount!=0 ||
-    e.UDP53IPv4OwnerCount!=0 || e.UDP53IPv6OwnerCount!=0 {
+    e.UDP53IPv4OwnerCount!=0 || e.UDP53IPv6OwnerCount!=0 ||
+    e.TCP53IPv4OwnerCount!=0 || e.TCP53IPv6OwnerCount!=0 {
   return errors.New("existing/unknown service or occupied DNS/53 prevents clean installation")
  }
  switch e.VOLVETaskCount {
