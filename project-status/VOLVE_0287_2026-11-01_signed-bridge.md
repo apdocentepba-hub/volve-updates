@@ -28,3 +28,12 @@
 Esperar el resultado del ensayo Windows ya iniciado, corregir posibles regresiones del watchdog y desarrollar/ensayar driver real de restauración en entorno aislado. **No pedir reinstalación del Centro**; no ejecutar el permiso firmado ni cambiar DNS en la PC.
 
 Este documento registra un avance verificable, no declara listo el actualizador productivo.
+
+## Continuación — decisión de archivo original bajo permiso firmado
+
+- Commit [e97328c](https://github.com/apdocentepba-hub/volve-updates/commit/e97328c1912cf2dd2b1bd0a879bfe7a022fa73e6) incorpora la clasificación READ-ONLY del archivo del motor original **DESPUÉS de autenticar el permiso editorial** y bajo el mutex de transición: `original-intact`, `missing-original`, `exact-pinned-target-still-present`. Cualquier archivo desconocido, de enlace o fuera de límites rechaza la admisión; se vuelve a comprobar el hash antes de cerrar el informe.
+- No se ejecutan tareas, se detienen procesos ni se modifica DNS. La clasificación de archivos NO puede autorizar la sustitución por sí sola.
+- Workflow específico [#41364443978](https://github.com/apdocentepba-hub/volve-updates/actions/runs/41364443978), casos de firma auténtica, falsificación, inexistente, original intacto, ausente, destino exacto, alteración y symlink. **No declarar aprobado mientras esté in_progress**.
+- El control completo de [CI #41364244698](https://github.com/apdocentepba-hub/volve-updates/actions/runs/41364244698) aprobó Linux y rollback de Scheduler; la parte Windows requiere resultado final.
+- Queda pendiente lo esencial: un driver real SYSTEM que valide tarea y proceso, cierre de forma segura el motor candidato si corresponde, restaure respaldo protegido, recupere DNS local, compruebe Internet, revalide el permiso y finalice sin falsos éxitos. Además, reinicio real en Windows persistente antes de liberar el canal del motor.
+
