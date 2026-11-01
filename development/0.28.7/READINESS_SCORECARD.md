@@ -144,3 +144,12 @@ La primera corrida integral [#41305829291](https://github.com/apdocentepba-hub/v
 **Separación obligatoria:** el candidato firmado mencionado en el fixture son bytes sintéticos cuyo SHA-256 está vinculado al journal; no hay comprobación de una firma real del editor. Todo está confinado a nombres `VOLVE-CI-*`, runner GitHub hosted y ruta temporal. No se tocó VOLVÉ 0.28.6 del usuario. El test adicional de bloqueo de archivo abierto se agregó en commit `2fc3f59c` y requiere su propio resultado verde; no se infiere de la prueba previa.
 
 **Sigue abierto:** permiso editorial auténtico, exclusivo/handles seguros en el controlador productivo, watchdog firmado e independiente que sobreviva reinicio real, salud DNS+Internet de producción, integración desde el botón instalado y migración final. El progreso global permanece **50% (5/10 puertas)**.
+
+
+## 01/11/2026 — Rescate desde un proceso Windows independiente (CI)
+
+**COMPROBADO: [GitHub Actions #41331212545](https://github.com/apdocentepba-hub/volve-updates/actions/runs/41331212545), Windows hosted SUCCESS.** Se corrigió el test `TestPostSwitchSystemTaskCILabRestoresRealDisposableSystemTaskAndOriginalBytes` para lanzar un proceso Windows realmente distinto de su proceso padre, pasando exclusivamente una raíz de laboratorio temporal y un nombre de tarea `VOLVE-CI-ManagedMotor-*`. El hijo vuelve a verificar respaldo NTFS, SHA-256 y journal pendiente, obtiene el mutex global, restituye físicamente el ejecutable original y reimporta una tarea real SYSTEM descartable. El padre valida posteriormente los archivos y la tarea Windows. En ambos escenarios **`missing` y `journal-pinned-replacement` el test pasó**; el journal permaneció `recovery-required` porque aún no se certificó la salud productiva de DNS y conexión.
+
+**Alcance:** proceso independiente real pero sin reinicio de Windows y sin que el padre necesariamente termine; no hay arranque automático del watchdog en el boot, ni firma editorial productiva. La restauración usa nombres y ejecutables de laboratorio, nunca `VOLVE-DNS-SERVER-0270`. Es un **subcontrol completado** del diseño de la puerta 7, no la puerta 7 completa. No hubo modificación del equipo del usuario, DNS de adaptadores o canal de publicación.
+
+**Progreso global sin cambio: 50% (5 de 10 hitos).** El experimento específico de recuperación independiente pasó **2/2 escenarios (100% del ensayo)**, pero las puertas 6–10 no reciben crédito hasta alcanzar sus criterios completos. La batería general posterior al nuevo commit se comprueba por separado y no se presume aprobada.
