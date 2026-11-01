@@ -151,6 +151,33 @@ func ApplySignedLegacyWithRollback(
     if err := driver.ProbeConnectivity(ctx); err != nil {
         return restoreSignedLegacyAndVerify(driver,fmt.Errorf("Internet tras conmutación falló: %w",err),backupDir,protectBackup,proof)
     }
+    // CRITICAL POST-SWITCH FENCE: a working DNS response does not prove the
+    // original remains recoverable. A compromised backup, altered installed
+    // target or stopped SYSTEM watchdog must NEVER be committed as healthy.
+    // Recheck after the LIVE DNS and external connectivity probes, not only
+    // before Switch. Do not attempt a rollback from a corrupted original.
+    if err := ctx.Err(); err != nil { return restoreSignedLegacyAndVerify(driver,err,backupDir,protectBackup,proof) }
+    if err := checkSealedOriginalAtTransactionBoundary(backupDir,protectBackup,proof);err != nil {
+        return restoreSignedLegacyAndVerify(driver,
+            fmt.Errorf("respaldo original cambió después de probar DNS: %w",err),backupDir,protectBackup,proof)
+    }
+    afterDNS,err:=VerifyStaged(candidate,publisherKey)
+    if err != nil || afterDNS!=manifest {
+        return restoreSignedLegacyAndVerify(driver,
+            fmt.Errorf("candidato firmado cambió después de probar DNS: %v",err),backupDir,protectBackup,proof)
+    }
+    if err := driver.VerifyPreparedTarget(ctx,manifest);err != nil {
+        return restoreSignedLegacyAndVerify(driver,
+            fmt.Errorf("copia instalada del motor cambió después de probar DNS: %w",err),backupDir,protectBackup,proof)
+    }
+    if err := driver.IndependentRecoveryReady(ctx,proof);err != nil {
+        return restoreSignedLegacyAndVerify(driver,
+            fmt.Errorf("watchdog independiente no disponible al confirmar: %w",err),backupDir,protectBackup,proof)
+    }
+    if _,err:=parseSignedMigrationPermit(permitJSON,permitSignature,publisherKey);err != nil {
+        return restoreSignedLegacyAndVerify(driver,
+            fmt.Errorf("permiso editorial inválido al confirmar: %w",err),backupDir,protectBackup,proof)
+    }
     if err := ctx.Err(); err != nil { return restoreSignedLegacyAndVerify(driver,err,backupDir,protectBackup,proof) }
     if err := driver.Commit(ctx,manifest); err != nil {
         return restoreSignedLegacyAndVerify(driver,fmt.Errorf("registro administrado no confirmado: %w",err),backupDir,protectBackup,proof)
