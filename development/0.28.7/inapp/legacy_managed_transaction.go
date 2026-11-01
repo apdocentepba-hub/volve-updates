@@ -111,11 +111,11 @@ func ApplySignedLegacyWithRollback(
     }
     // Everything after Snapshot is a transaction. The original user context
     // may be cancelled; restoreManagedAndVerify uses a fresh 90s rescue context.
-    if err := ctx.Err(); err != nil { return restoreSignedLegacyAndVerify(driver,err) }
+    if err := ctx.Err(); err != nil { return restoreSignedLegacyAndVerify(driver,err,backupDir,protectBackup,proof) }
     if err := driver.InstallVersionedCandidate(ctx,candidate); err != nil {
         return restoreSignedLegacyAndVerify(driver,fmt.Errorf("motor versionado no preparado: %w",err),backupDir,protectBackup,proof)
     }
-    if err := ctx.Err(); err != nil { return restoreSignedLegacyAndVerify(driver,err) }
+    if err := ctx.Err(); err != nil { return restoreSignedLegacyAndVerify(driver,err,backupDir,protectBackup,proof) }
     if err := driver.VerifyPreparedTarget(ctx,manifest); err != nil {
         return restoreSignedLegacyAndVerify(driver,fmt.Errorf("copia instalada no auténtica o incompleta: %w",err),backupDir,protectBackup,proof)
     }
@@ -126,14 +126,14 @@ func ApplySignedLegacyWithRollback(
         ctx,liveExe,backupDir,candidate,panelVersion,
         permitJSON,permitSignature,publisherKey,protectBackup,livePreflight,
     )
-    if err != nil { return restoreSignedLegacyAndVerify(driver,fmt.Errorf("identidad o autorización cambió antes de conmutar: %w",err)) }
+    if err != nil { return restoreSignedLegacyAndVerify(driver,fmt.Errorf("identidad o autorización cambió antes de conmutar: %w",err),backupDir,protectBackup,proof) }
     if rechecked != proof {
         return restoreSignedLegacyAndVerify(driver,errors.New("prueba firmada de migración cambió durante la preparación"),backupDir,protectBackup,proof)
     }
     if err := driver.IndependentRecoveryReady(ctx,rechecked); err != nil {
         return restoreSignedLegacyAndVerify(driver,fmt.Errorf("watchdog independiente dejó de estar listo: %w",err),backupDir,protectBackup,proof)
     }
-    if err := ctx.Err(); err != nil { return restoreSignedLegacyAndVerify(driver,err) }
+    if err := ctx.Err(); err != nil { return restoreSignedLegacyAndVerify(driver,err,backupDir,protectBackup,proof) }
     if err := driver.Switch(ctx); err != nil {
         return restoreSignedLegacyAndVerify(driver,fmt.Errorf("conmutación del motor falló: %w",err),backupDir,protectBackup,proof)
     }
@@ -143,7 +143,7 @@ func ApplySignedLegacyWithRollback(
     if err := driver.ProbeConnectivity(ctx); err != nil {
         return restoreSignedLegacyAndVerify(driver,fmt.Errorf("Internet tras conmutación falló: %w",err),backupDir,protectBackup,proof)
     }
-    if err := ctx.Err(); err != nil { return restoreSignedLegacyAndVerify(driver,err) }
+    if err := ctx.Err(); err != nil { return restoreSignedLegacyAndVerify(driver,err,backupDir,protectBackup,proof) }
     if err := driver.Commit(ctx,manifest); err != nil {
         return restoreSignedLegacyAndVerify(driver,fmt.Errorf("registro administrado no confirmado: %w",err),backupDir,protectBackup,proof)
     }
