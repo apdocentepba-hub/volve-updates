@@ -28,8 +28,7 @@ func TestSignedLegacyLabKernelMutexExcludesConcurrentMigration(t *testing.T){
  blocked:=make(chan error,1)
  go func(){
   acquired,e:=AcquireWindowsSignedLegacyLabLease(ctx,name)
-  if acquired!=nil{acquired();blocked<-errors.New("second owner entered critical section")}
-  else{blocked<-e}
+  if acquired!=nil{acquired();blocked<-errors.New("second owner entered critical section")}else{blocked<-e}
  }()
  result:=<-blocked
  if !errors.Is(result,context.DeadlineExceeded) {
