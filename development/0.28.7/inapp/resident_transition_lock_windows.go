@@ -109,7 +109,8 @@ func residentObservedSecurity(handle uintptr)(string,error){
  if ok==0{return "",residentWinErr("ConvertSecurityDescriptorToStringSecurityDescriptorW",last)}
  if sdText==0{return "",errors.New("kernel ACL conversion yielded null")}
  defer residentLocalFree.Call(sdText)
- text:=syscall.UTF16PtrToString((*uint16)(unsafe.Pointer(sdText)))
+ if characters==0||characters>2048{return "",errors.New("resident mutex SDDL has invalid length")}
+ text:=syscall.UTF16ToString(unsafe.Slice((*uint16)(unsafe.Pointer(sdText)),int(characters)))
  return text,nil
 }
 
