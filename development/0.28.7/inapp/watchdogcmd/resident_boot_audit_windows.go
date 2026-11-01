@@ -22,9 +22,11 @@ type residentBootAudit struct{
 
 // auditResidentBootPlan is safe for a new, independent process to invoke
 // after the writer has exited. A valid pending transaction is classified as
-// "recover-original" ONLY if the original EXE, XML and journal hashes/ACLs
-// remain bound. Any ambiguity fails closed; terminal receipts never trigger
-// a new rollback.
+// "recover-original" ONLY if the sealed BACKUP EXE, task XML and pending journal
+// remain bound. The previously installed EXE may be missing or overwritten
+// after a crashed switch: never require it for the post-switch boot decision.
+// This is READ ONLY and never authorizes restoring or switching a live task.
+// Any ambiguity fails closed; terminal receipts never trigger a new rollback.
 func auditResidentBootPlan(ctx context.Context,root string)(residentBootAudit,error){
  var empty residentBootAudit
  if err:=ctx.Err();err!=nil{return empty,err}
@@ -41,7 +43,7 @@ func auditResidentBootPlan(ctx context.Context,root string)(residentBootAudit,er
  case "not-armed","committed","restored":
   return residentBootAudit{Status:state.Status,Action:"no-action",LegacySHA256:state.Intent.LegacySHA256},nil
  case "recovery-required":
-  chain,err:=auditPendingResidentChain(ctx,root)
+  chain,err:=auditPostSwitchResidentRecovery(ctx,root)
   if err!=nil{return empty,fmt.Errorf("pending boot backup/journal chain rejected: %w",err)}
   if chain.LegacySHA256!=state.Intent.LegacySHA256 ||
      chain.TaskXMLSHA256!=state.Intent.TaskXMLSHA256 ||
