@@ -1,0 +1,18 @@
+VOLVÉ 0.28.7 — DIAGNÓSTICO DE SOLO LECTURA (LABORATORIO)
+
+Esta herramienta NO instala ni actualiza el motor, no repara bloqueos, no modifica DNS, ni tareas programadas.
+NO es el instalador 0.28.7 ni una versión productiva firmada.
+
+Para ejecutarla:
+1) Extraer ambos archivos del ZIP juntos.
+2) Doble clic en VOLVE_Diagnostico_Solo_Lectura.cmd.
+3) Aceptar UAC solo si decidís ejecutar este diagnóstico.
+4) Si las comprobaciones funcionan, buscar en Descargas un JSON llamado VOLVE_Diagnostico_Solo_Lectura_*.json.
+
+El reporte incluye únicamente la clasificación, fecha/hora y causa de bloqueo.
+No publica información en Internet ni guarda credenciales.
+Si falta el registro original, permisos o evidencia, devuelve INCOMPLETE y no interpreta la máquina como nueva.
+El registro de políticas de navegadores NO se inspecciona; por eso no indica si los sitios de apuestas siguen bloqueados.
+Este archivo no puede garantizar que las protecciones estén activas o desactivadas.
+No desactives Windows Defender o SmartScreen para ejecutar un binario de laboratorio.
+El código y las pruebas se encuentran en la rama feature/motor-updater-0287-pilot.
