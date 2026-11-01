@@ -94,7 +94,12 @@ func restoreResidentPilotSYSTEMTaskWithRunner(ctx context.Context,root,pilotTask
   `else{$enc=[Text.Encoding]::BigEndianUnicode};`+
   `$saved=$enc.GetString($xmlBytes,2,$xmlBytes.Length-2)`+
   `}else{$utf8=[Text.UTF8Encoding]::new($false,$true);$saved=$utf8.GetString($xmlBytes)};`+
-  `$saved=[regex]::Replace($saved,'(?i)(encoding\s*=\s*["''])(UTF-16LE|UTF-16BE|UTF-16)(["''])','$1UTF-8$3');`+
+  // Task Scheduler's COM import receives a UTF-16 BSTR. A UTF-8 XML
+  // declaration inside that string makes it fail with 0x8004131a:
+  // "unable to switch the encoding". After hashing and validating the
+  // immutable original bytes, remove ONLY the declaration from the
+  // in-memory XML string; never rewrite the protected XML file.
+  `$saved=[regex]::Replace($saved,'(?s)\A\s*<\?xml[^>]*\?>\s*','');`+
   `Register-ScheduledTask -TaskName $taskName -TaskPath '\' -Xml $saved -Force -ErrorAction Stop|Out-Null;`+
   `$restored=Get-ScheduledTask -TaskName $taskName -TaskPath '\' -ErrorAction Stop;`+
   `if($restored.TaskPath -ne '\' -or $restored.Principal.UserId -notin @('SYSTEM','S-1-5-18') `+
