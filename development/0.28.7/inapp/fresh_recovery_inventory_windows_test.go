@@ -110,6 +110,22 @@ func TestWindowsFreshRecoveryInventoryRejectsOrphansACLAndUnknowns(t *testing.T)
  }
 }
 
+func TestWindowsFreshRecoveryRejectsWritableSnapshotChildACL(t *testing.T){
+ root:=t.TempDir()
+ snapshot:=filepath.Join(root,freshRecoveryParentName,freshRecoverySnapshotName)
+ if err:=os.MkdirAll(snapshot,0700);err!=nil{t.Fatal(err)}
+ for _,name:=range []string{legacyBackupExe,legacyBackupXML,legacyBackupReceipt}{
+  if err:=os.WriteFile(filepath.Join(snapshot,name),[]byte("fixture"),0600);err!=nil{t.Fatal(err)}
+ }
+ xml:=filepath.Join(snapshot,legacyBackupXML)
+ rejected:=false
+ _,err:=InspectWindowsFreshRecoveryReadOnly(context.Background(),root,func(_ context.Context,p string)error{
+  if p==xml {rejected=true;return errors.New("Everyone writable task XML")}
+  return nil
+ })
+ if err==nil||!rejected{t.Fatal("per-file recovery ACL was not validated before trusting snapshot receipt")}
+}
+
 func TestWindowsFreshRecoveryInventoryRejectsOrphanTerminal(t *testing.T) {
  root:=t.TempDir()
  createResidentRecoveryFixture(t,root,"empty")
