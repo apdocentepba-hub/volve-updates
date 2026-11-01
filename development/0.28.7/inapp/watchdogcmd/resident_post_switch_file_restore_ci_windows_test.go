@@ -10,6 +10,7 @@ import (
  "path/filepath"
  "strings"
  "testing"
+ "syscall"
 
  "volve-browser-protection/motorupdate"
 )
@@ -136,5 +137,36 @@ func TestPostSwitchCILabNeverOverwritesSymlinkedOrUnknownInstalledCandidate(t *t
  after,err:=os.ReadFile(target)
  if err!=nil||string(after)!="CI_UNOWNED_TARGET"{
   t.Fatalf("symlink target changed by prohibited rollback: %v",err)
+ }
+}
+
+func TestPostSwitchCILabRefusesToReplaceOpenJournalPinnedExecutable(t *testing.T){
+ root,dir,_,protect:=chainFixture(t,false)
+ live:=filepath.Join(root,residentLegacyExe)
+ candidate:=[]byte("publisher-signed candidate CI bytes")
+ if err:=os.WriteFile(live,candidate,0600);err!=nil{t.Fatal(err)}
+ // Model an executable that still has an unshareable NTFS image handle.
+ // This must never be force-killed or replaced behind a running motor.
+ wide,err:=syscall.UTF16PtrFromString(live);if err!=nil{t.Fatal(err)}
+ handle,err:=syscall.CreateFile(wide,syscall.GENERIC_READ,syscall.FILE_SHARE_READ,
+  nil,syscall.OPEN_EXISTING,syscall.FILE_ATTRIBUTE_NORMAL,0)
+ if err!=nil{t.Fatal(err)}
+ err=restoreMissingLegacyExecutableCILab(context.Background(),root,disposableResidentTask)
+ if err==nil{
+  syscall.CloseHandle(handle)
+  t.Fatal("held candidate executable was replaced despite an active deny-delete file handle")
+ }
+ if err:=syscall.CloseHandle(handle);err!=nil{t.Fatal(err)}
+ still,readErr:=os.ReadFile(live)
+ if readErr!=nil||string(still)!=string(candidate){
+  t.Fatalf("locked candidate was modified after denied replacement: %v",readErr)
+ }
+ state,err:=motorupdate.InspectResidentRecoveryJournal(context.Background(),dir,protect)
+ if err!=nil||state.Status!="recovery-required"{
+  t.Fatalf("failed replacement falsely completed recovery: %+v %v",state,err)
+ }
+ // Once the file is closed, retry can complete without harming the rollback.
+ if err:=restoreMissingLegacyExecutableCILab(context.Background(),root,disposableResidentTask);err!=nil{
+  t.Fatalf("idempotent retry after exact handle release was rejected: %v",err)
  }
 }
