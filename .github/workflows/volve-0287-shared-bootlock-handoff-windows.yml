@@ -7,6 +7,9 @@ on:
       - 'development/0.28.7/inapp/signed_legacy_windows_task_lab_test.go'
       - 'development/0.28.7/inapp/watchdogcmd/main_windows.go'
       - 'development/0.28.7/inapp/watchdogcmd/main_windows_test.go'
+      - 'development/0.28.7/inapp/watchdogcmd/resident_boot_driver_ci_windows_test.go'
+      - 'development/0.28.7/inapp/resident_transition_lock_windows.go'
+      - 'development/0.28.7/inapp/resident_protected_boot_driver_windows.go'
       - 'development/0.28.7/inapp/apply_overlay.go'
       - '.github/workflows/volve-0287-shared-bootlock-handoff-windows.yml'
   workflow_dispatch:
@@ -66,7 +69,7 @@ jobs:
           go build -trimpath -o $helper ./cmd/volve-managed-watchdog
           if($LASTEXITCODE -ne 0 -or -not (Test-Path $helper)){throw 'Independent watchdog did not build'}
           $env:VOLVE_CI_MANAGED_WATCHDOG_EXE=$helper
-          go test ./cmd/volve-managed-watchdog -run '^TestIndependentWatchdogUsesMigrationBootLockEvenForTerminalJournal$' -count=1 -timeout 2m -v
+          go test ./cmd/volve-managed-watchdog -run '^(TestIndependentWatchdogUsesMigrationBootLockEvenForTerminalJournal|TestProtectedResidentBootPolicyUsesProductionMutexBeforeReadingJournal)$' -count=1 -timeout 4m -v
           if($LASTEXITCODE -ne 0){throw 'Watchdog did not respect migration-held BootLock'}
           go test . -run '^TestWindowsSignedUnversionedMigrationWithActualSYSTEMRecovery$' -count=1 -timeout 7m -v
           if($LASTEXITCODE -ne 0){throw 'Signed disposable SYSTEM transaction and watchdog rollback failed'}
