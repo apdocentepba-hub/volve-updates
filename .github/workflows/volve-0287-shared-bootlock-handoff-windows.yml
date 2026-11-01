@@ -10,6 +10,8 @@ on:
       - 'development/0.28.7/inapp/watchdogcmd/resident_boot_driver_ci_windows_test.go'
       - 'development/0.28.7/inapp/resident_transition_lock_windows.go'
       - 'development/0.28.7/inapp/resident_protected_boot_driver_windows.go'
+      - 'development/0.28.7/inapp/resident_protected_signed_switch_windows.go'
+      - 'development/0.28.7/inapp/resident_protected_signed_switch_windows_test.go'
       - 'development/0.28.7/inapp/watchdogcmd/resident_boot_audit_windows_test.go'
       - 'development/0.28.7/inapp/watchdogcmd/resident_boot_protected_gate_windows.go'
       - 'development/0.28.7/inapp/apply_overlay.go'
@@ -71,6 +73,8 @@ jobs:
           go build -trimpath -o $helper ./cmd/volve-managed-watchdog
           if($LASTEXITCODE -ne 0 -or -not (Test-Path $helper)){throw 'Independent watchdog did not build'}
           $env:VOLVE_CI_MANAGED_WATCHDOG_EXE=$helper
+          go test ./motorupdate -run '^TestProtected(SignedSwitchAndBootRecoveryShareProductionMutex|AdaptersFailClosedWithoutTrustedOperations)$' -count=1 -timeout 2m -v
+          if($LASTEXITCODE -ne 0){throw 'Production switch and boot recovery did not share protected mutex'}
           go test ./cmd/volve-managed-watchdog -run '^(TestIndependentWatchdogUsesMigrationBootLockEvenForTerminalJournal|TestProtectedResidentBootPolicyUsesProductionMutexBeforeReadingJournal|TestProtectedBootPlanAuditWaitsForProductionUpdateMutex|TestIndependentBootAuditAcrossFreshProcesses)$' -count=1 -timeout 5m -v
           if($LASTEXITCODE -ne 0){throw 'Watchdog did not respect migration-held BootLock'}
           go test . -run '^TestWindowsSignedUnversionedMigrationWithActualSYSTEMRecovery$' -count=1 -timeout 7m -v
