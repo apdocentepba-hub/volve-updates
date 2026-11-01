@@ -15,6 +15,12 @@ import (
 // arm an out-of-process SYSTEM recovery watchdog before touching the motor.
 type SignedLegacySwitchDriver interface {
     ManagedSwitchDriver
+    // This MUST be an OS-wide, cross-process exclusive lock using the SAME
+    // identity as the standalone SYSTEM boot recovery. It must remain held
+    // from the first live publisher check through Switch, probes, Commit and
+    // any independent rollback. A process-local Go mutex is INSUFFICIENT.
+    // The interface is a requirement, not a production implementation.
+    AcquireExclusiveMigration(context.Context) (release func(),err error)
     IndependentRecoveryReady(context.Context, VerifiedLegacyMigrationProof) error
     // Recheck the INSTALLED copy, not just the staged download. This call
     // must validate signed manifest, SHA-256 and size under the versioned
@@ -85,6 +91,15 @@ func ApplySignedLegacyWithRollback(
     if driver == nil || protectBackup == nil || livePreflight == nil {
         return errors.New("migración sin controlador, ACL o preflight confiable")
     }
+    if err := ctx.Err(); err != nil { return err }
+    // Lock BEFORE the first task, backup or publisher observation. All
+    // transaction exits—including cancellation and post-switch rollback—
+    // release it. The real Windows driver must implement a named kernel
+    // mutex shared with the boot-rescue service, not an in-process lock.
+    release,err:=driver.AcquireExclusiveMigration(ctx)
+    if err!=nil{return fmt.Errorf("bloqueo exclusivo de motor no disponible: %w",err)}
+    if release==nil{return errors.New("controlador no entregó liberación del bloqueo exclusivo")}
+    defer release()
     if err := ctx.Err(); err != nil { return err }
     if err := protectBackup(filepath.Dir(backupDir)); err != nil {
         return fmt.Errorf("directorio padre del rescate no seguro: %w", err)
