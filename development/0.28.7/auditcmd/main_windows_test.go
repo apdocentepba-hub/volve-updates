@@ -5,6 +5,7 @@ package main
 import (
  "context"
  "encoding/json"
+ "io"
  "os"
  "path/filepath"
  "strings"
@@ -164,5 +165,55 @@ func TestStandaloneReportReturnsPrivacySafeSixInventoryDetails(t *testing.T){
  raw,err:=json.Marshal(got);if err!=nil{t.Fatal(err)}
  if strings.Contains(string(raw),`C:\\Program Files`) ||strings.Contains(string(raw),`"::1"`) {
   t.Fatal("private executable action path or literal DNS address escaped into report")
+ }
+}
+
+
+func TestStandalonePinnedOriginalCatalogMotorAndTaskRecognizedWithoutDNSMutation(t *testing.T){
+ programData,root:=testStateDirectory(t)
+ source:=filepath.Join("..","..","assets","VOLVE_Motor_0210.exe")
+ input,err:=os.Open(source)
+ if err!=nil{t.Fatalf("original authenticated 0.28.6 catalog asset missing: %v",err)}
+ defer input.Close()
+ motor:=filepath.Join(root,sourceCatalogFilename)
+ output,err:=os.OpenFile(motor,os.O_CREATE|os.O_EXCL|os.O_WRONLY,0600)
+ if err!=nil{t.Fatal(err)}
+ _,copyErr:=io.Copy(output,input)
+ closeErr:=output.Close()
+ if copyErr!=nil||closeErr!=nil{t.Fatalf("asset copy failed: %v %v",copyErr,closeErr)}
+ path,status:=verifyPinnedCatalogFileReadOnly(context.Background(),root)
+ if status!=CatalogSourceMatched||path!=motor{
+  t.Fatalf("authentic catalog bytes not verifiable: status=%s",status)
+ }
+ records:=[]map[string]any{{
+  "Name":"VOLVE-CATALOGO-0230","TaskPath":"\\","Principal":"SYSTEM",
+  "DefinitionSHA256":strings.Repeat("a",64),
+  "Actions":[]map[string]any{{
+   "Execute":motor,"Arguments":"--refresh","WorkingDirectory":"",
+  }},
+ }}
+ raw,err:=json.Marshal(records);if err!=nil{t.Fatal(err)}
+ readers:=fakeReadOnlyHost(false)
+ readers.Host.Tasks=func(context.Context,string)([]byte,error){return raw,nil}
+ got:=diagnosis(context.Background(),programData,true,readers)
+ if got.CatalogSourceStatus!=CatalogSourceMatched||got.Result!="REVIEW_ONLY"||
+  got.Route==nil||got.Route.Route!=motorupdate.MotorRouteCatalogCandidate||
+  got.HostEvidence==nil||!got.HostEvidence.CatalogTaskSeen||
+  !got.HostEvidence.CatalogTaskSourcePinned||got.HostEvidence.CanModifyDNS||
+  got.HostEvidence.SignedUpgradeAuthorized{
+  t.Fatalf("pinned source catalog should be recognized READ ONLY, never upgraded: %+v",got)
+ }
+ // Tamper a byte of the catalog motor: no signature or route is inferred.
+ handle,err:=os.OpenFile(motor,os.O_RDWR,0)
+ if err!=nil{t.Fatal(err)}
+ _,writeErr:=handle.WriteAt([]byte{0x7f},0)
+ if writeErr!=nil{t.Fatal(writeErr)}
+ if err:=handle.Close();err!=nil{t.Fatal(err)}
+ bad:=diagnosis(context.Background(),programData,true,readers)
+ if bad.CatalogSourceStatus!=CatalogSourceMismatch||bad.Route==nil||
+  bad.Route.Route!=motorupdate.MotorRouteUnverified||
+  bad.HostEvidence==nil||bad.HostEvidence.CatalogTaskSourcePinned||
+  bad.HostEvidence.SignedUpgradeAuthorized||bad.HostEvidence.CanModifyDNS{
+  t.Fatalf("catalog tampering incorrectly allowed update or trusted task: %+v",bad)
  }
 }
