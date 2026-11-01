@@ -4,15 +4,15 @@ Esta herramienta NO instala ni actualiza el motor, no repara bloqueos, no modifi
 NO es el instalador 0.28.7 ni una versión productiva firmada.
 
 Para ejecutarla:
-1) Extraer ambos archivos del ZIP juntos.
+1) Extraer TODO el contenido del ZIP en la misma carpeta.
 2) Doble clic en VOLVE_Diagnostico_Solo_Lectura.cmd.
 3) Aceptar UAC solo si decidís ejecutar este diagnóstico.
 4) Si las comprobaciones funcionan, buscar en Descargas un JSON llamado VOLVE_Diagnostico_Solo_Lectura_*.json.
 
-El reporte incluye únicamente la clasificación, fecha/hora y causa de bloqueo.
+El reporte incluye la clasificación, fecha/hora, el resumen anónimo de seis inventarios de Windows y el estado de coincidencia del motor de catálogo con el SHA-256 del código original 0.28.6.\nNo incluye rutas completas de tareas, IP concretas, direcciones bloqueadas ni contenido del registro de estado.
 No publica información en Internet ni guarda credenciales.
 Si falta el registro original, permisos o evidencia, devuelve INCOMPLETE y no interpreta la máquina como nueva.
-El registro de políticas de navegadores NO se inspecciona; por eso no indica si los sitios de apuestas siguen bloqueados.
+Solo se cuentan ENTRADAS de las políticas de Chrome, Edge y Firefox, sin leer ni exportar las URLs bloqueadas. Que existan entradas NO demuestra que el navegador las aplique.\nLa comparación del motor de catálogo prueba coincidencia de bytes con el archivo de la fuente original del piloto, no una firma digital de editor ni autorización para actualizar DNS.
 Este archivo no puede garantizar que las protecciones estén activas o desactivadas.
 No desactives Windows Defender o SmartScreen para ejecutar un binario de laboratorio.
 El código y las pruebas se encuentran en la rama feature/motor-updater-0287-pilot.
