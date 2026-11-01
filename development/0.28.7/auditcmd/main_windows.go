@@ -32,6 +32,8 @@ type Diagnosis struct {
  Result string `json:"result"`
  Explanation string `json:"explanation"`
  Route *motorupdate.MotorInstallRouteReport `json:"route,omitempty"`
+ BrowserPolicies *motorupdate.WindowsBrowserPolicyEvidence `json:"browser_policies,omitempty"`
+ BrowserPoliciesStatus string `json:"browser_policies_status"`
 }
 
 func installedRootFromOriginalStatePath(programData string)(string,error){
@@ -86,6 +88,33 @@ func diagnosis(ctx context.Context,programData string,admin bool,
  return result
 }
 
+// Read browser policy registry independently of the DNS motor. Browser keys
+// are merely configured policy entries: never claim that Chrome, Edge or
+// Firefox actually applied them, or that the DNS engine is running.
+func diagnosisWithBrowserPolicies(
+ ctx context.Context,programData string,admin bool,
+ host motorupdate.WindowsMotorRouteInspectors,
+ policies motorupdate.WindowsBrowserPolicyInspect,
+) Diagnosis {
+ result:=diagnosis(ctx,programData,admin,host)
+ if !admin {
+  result.BrowserPoliciesStatus="NOT_INSPECTED_NO_ADMIN_TOKEN"
+  return result
+ }
+ if err:=ctx.Err();err!=nil{
+  result.BrowserPoliciesStatus="NOT_INSPECTED_CANCELLED"
+  return result
+ }
+ evidence,err:=motorupdate.InspectWindowsBrowserPoliciesReadOnly(ctx,policies)
+ if err!=nil{
+  result.BrowserPoliciesStatus="UNKNOWN_REGISTRY_QUERY_FAILED"
+  return result
+ }
+ result.BrowserPolicies=&evidence
+ result.BrowserPoliciesStatus="REGISTRY_COUNTS_ONLY_NOT_BROWSER_ENFORCEMENT"
+ return result
+}
+
 func outputToDownloads(home string,report Diagnosis)(string,error){
  if home==""||!filepath.IsAbs(home){return "",errors.New("user profile not available")}
  dir:=filepath.Join(home,"Downloads")
@@ -111,7 +140,8 @@ func main(){
  defer cancel()
  admin,err:=motorupdate.InspectWindowsElevatedTokenReadOnly(ctx,motorupdate.DefaultWindowsFreshAdminInspect)
  if err!=nil{admin=false}
- report:=diagnosis(ctx,os.Getenv("ProgramData"),admin,motorupdate.DefaultWindowsMotorRouteInspectors())
+ report:=diagnosisWithBrowserPolicies(ctx,os.Getenv("ProgramData"),admin,
+  motorupdate.DefaultWindowsMotorRouteInspectors(),motorupdate.DefaultWindowsBrowserPolicyInspect)
  if err!=nil{
   report.Result="INCOMPLETE"
   report.Explanation="Windows administrator token could not be authenticated; no modifications made."
