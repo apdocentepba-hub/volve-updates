@@ -274,3 +274,109 @@ func TestStandaloneCIRecoveryCLIExecutableRejectsUnsafeInvocation(t *testing.T){
   })
  }
 }
+
+ // TestStandaloneCIWatchdogAtStartupSYSTEMTaskCILab creates a REAL additional
+ // AtStartup Scheduler task running the separately compiled watchdog as
+ // NT AUTHORITY\SYSTEM. It manually triggers the task in the hosted VM.
+ // NO OS reboot is claimed, and NO production task or adapter is modified.
+func TestStandaloneCIWatchdogAtStartupSYSTEMTaskCILab(t *testing.T){
+ if os.Getenv("VOLVE_CI_REQUIRE_STANDALONE")!="1"{
+  t.Skip("dedicated hosted Windows watchdog executable and task required")
+ }
+ if os.Getenv("GITHUB_ACTIONS")!="true"||os.Getenv("RUNNER_ENVIRONMENT")!="github-hosted"{
+  t.Fatal("real SYSTEM watchdog boot task attempted outside authorized GitHub hosted VM")
+ }
+ binary:=os.Getenv("VOLVE_CI_STANDALONE_RECOVERY_EXE")
+ allowed:=filepath.Join(os.Getenv("RUNNER_TEMP"),"VOLVE_CI_Standalone_Recovery_Watchdog.exe")
+ if !filepath.IsAbs(binary)||!strings.EqualFold(filepath.Clean(binary),filepath.Clean(allowed)){
+  t.Fatal("untrusted path for compiled watchdog SYSTEM boot task")
+ }
+ ctx,cancel:=context.WithTimeout(context.Background(),150*time.Second)
+ defer cancel()
+ preflight:="$ErrorActionPreference='Stop';"+
+  "$p=[Security.Principal.WindowsPrincipal]::new([Security.Principal.WindowsIdentity]::GetCurrent());"+
+  "if(-not $p.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)){throw 'not elevated'};"+
+  "$vm=Get-CimInstance Win32_ComputerSystem -ErrorAction Stop;"+
+  "if(($vm.Manufacturer+' '+$vm.Model) -notmatch '(?i:virtual machine|vmware|hyper-v|kvm|qemu|virtualbox)'){throw 'not a verified hosted VM'};"+
+  "if(Get-ScheduledTask -TaskName 'VOLVE-DNS-SERVER-0270' -ErrorAction SilentlyContinue){throw 'production motor present'};"+
+  "Write-Output 'CI_SYSTEM_BOOT_VM_CONFIRMED'"
+ if out,err:=ps(ctx,preflight);err!=nil||out!="CI_SYSTEM_BOOT_VM_CONFIRMED"{
+  t.Fatalf("refusing independent SYSTEM boot task outside verified disposable VM: %s %v",out,err)
+ }
+ root,journalDir,_,protect:=chainFixture(t,false)
+ suffix:=time.Now().UnixNano()
+ motorTask:=fmt.Sprintf("VOLVE-CI-ManagedMotor-%d",suffix)
+ bootTask:=fmt.Sprintf("VOLVE-CI-WatchdogBoot-%d",suffix)
+ if !pilotTaskPattern.MatchString(motorTask) || !strings.HasPrefix(bootTask,"VOLVE-CI-WatchdogBoot-"){
+  t.Fatal("invalid temporary Scheduler task names")
+ }
+ target,err:=residentPilotTargetPath(root,"0.28.7")
+ if err!=nil{t.Fatal(err)}
+ if err:=os.WriteFile(target,[]byte("CI_TARGET_NOT_RUN"),0600);err!=nil{t.Fatal(err)}
+ old:=filepath.Join(root,residentLegacyExe)
+ protected,err:=digestResidentLive(ctx,old)
+ if err!=nil{t.Fatal(err)}
+ bootArgs:="--recover-resident-ci-task \""+root+"\" "+motorTask
+ create:="$ErrorActionPreference='Stop';"+
+  "$motor="+q(motorTask)+";$boot="+q(bootTask)+";"+
+  "$exe="+q(binary)+";$target="+q(target)+";"+
+  "foreach($n in @($motor,$boot)){if(Get-ScheduledTask -TaskName $n -TaskPath '\\' -ErrorAction SilentlyContinue){throw 'collision with existing task'}};"+
+  "$principal=New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest;"+
+  "$startup=New-ScheduledTaskTrigger -AtStartup;"+
+  "$motorAction=New-ScheduledTaskAction -Execute $target -Argument '--dns-service';"+
+  "Register-ScheduledTask -TaskName $motor -TaskPath '\\' -Principal $principal -Trigger $startup -Action $motorAction -ErrorAction Stop|Out-Null;"+
+  "$bootAction=New-ScheduledTaskAction -Execute $exe -Argument "+q(bootArgs)+";"+
+  "Register-ScheduledTask -TaskName $boot -TaskPath '\\' -Principal $principal -Trigger $startup -Action $bootAction -ErrorAction Stop|Out-Null;"+
+  "Write-Output 'CI_INDEPENDENT_WATCHDOG_SYSTEM_BOOT_TASK_CREATED'"
+ cleanup:="$ErrorActionPreference='Stop';"+
+  "foreach($n in @("+q(bootTask)+","+q(motorTask)+")){"+
+  "$task=Get-ScheduledTask -TaskName $n -TaskPath '\\' -ErrorAction SilentlyContinue;"+
+  "if($null -eq $task){continue};"+
+  "if($task.Principal.UserId -notin @('SYSTEM','S-1-5-18')){throw 'refusing foreign task cleanup'};"+
+  "if($task.State -eq 'Running'){Stop-ScheduledTask -TaskName $n -TaskPath '\\' -ErrorAction Stop};"+
+  "Unregister-ScheduledTask -TaskName $n -TaskPath '\\' -Confirm:$false -ErrorAction Stop};"+
+  "Write-Output 'CI_INDEPENDENT_WATCHDOG_TASKS_CLEANED'"
+ t.Cleanup(func(){
+  cleanupCtx,done:=context.WithTimeout(context.Background(),35*time.Second)
+  defer done()
+  out,err:=ps(cleanupCtx,cleanup)
+  if err!=nil||out!="CI_INDEPENDENT_WATCHDOG_TASKS_CLEANED"{
+   t.Errorf("disposable SYSTEM watchdog task cleanup not verified: %s %v",out,err)
+  }
+ })
+ if out,err:=ps(ctx,create);err!=nil||out!="CI_INDEPENDENT_WATCHDOG_SYSTEM_BOOT_TASK_CREATED"{
+  t.Fatalf("cannot register independent SYSTEM watchdog with boot trigger: %s %v",out,err)
+ }
+ // The journal and immutable backup were armed before the simulated crash.
+ // Delete ONLY the disposable lab original to require actual restoration.
+ if err:=os.Remove(old);err!=nil{t.Fatal(err)}
+ start:="$ErrorActionPreference='Stop';"+
+  "$watch="+q(bootTask)+";$motor="+q(motorTask)+";$original="+q(old)+";"+
+  "$w=Get-ScheduledTask -TaskName $watch -TaskPath '\\' -ErrorAction Stop;"+
+  "if($w.Principal.UserId -notin @('SYSTEM','S-1-5-18') -or @($w.Triggers).Count -ne 1 -or "+
+  "[string]$w.Triggers[0].CimClass.CimClassName -notmatch 'BootTrigger'){throw 'watchdog is not a SYSTEM AtStartup task'};"+
+  "Start-ScheduledTask -TaskName $watch -TaskPath '\\' -ErrorAction Stop;"+
+  "$good=$false;"+
+  "for($i=0;$i -lt 80;$i++){Start-Sleep -Milliseconds 750;"+
+  "$info=Get-ScheduledTaskInfo -TaskName $watch -TaskPath '\\' -ErrorAction Stop;"+
+  "$m=Get-ScheduledTask -TaskName $motor -TaskPath '\\' -ErrorAction Stop;"+
+  "if($info.LastRunTime.Year -ge 2020 -and $info.LastTaskResult -eq 0 -and "+
+  "[string]$m.Actions[0].Execute -ieq $original -and "+
+  "[string]$m.Actions[0].Arguments -ceq '--dns-service'){$good=$true;break}};"+
+  "if(-not $good){throw 'SYSTEM AtStartup watchdog task did not restore exact disposable motor'};"+
+  "Write-Output 'CI_BOOT_WATCHDOG_RAN_AS_SYSTEM_AND_RESTORED'"
+ if out,err:=ps(ctx,start);err!=nil||out!="CI_BOOT_WATCHDOG_RAN_AS_SYSTEM_AND_RESTORED"{
+  t.Fatalf("actual independent SYSTEM AtStartup task did not recover: %s %v",out,err)
+ }
+ if hash,err:=digestResidentLive(ctx,old);err!=nil||hash!=protected{
+  t.Fatalf("independent SYSTEM watchdog restored incorrect original: %s %v",hash,err)
+ }
+ state,err:=motorupdate.InspectResidentRecoveryJournal(ctx,journalDir,protect)
+ if err!=nil||state.Status!="recovery-required"{
+  t.Fatalf("watchdog task improperly finalized without DNS/Internet checks: %+v %v",state,err)
+ }
+ if _,err:=os.Lstat(filepath.Join(journalDir,motorupdate.ResidentResultFile));!os.IsNotExist(err){
+  t.Fatalf("real SYSTEM watchdog created false terminal receipt: %v",err)
+ }
+ t.Log("PASS: compiled EXE ran as a separate REAL SYSTEM ScheduledTask with AtStartup trigger; manually started in disposable VM, restored exact motor and preserved pending journal; NO VM reboot")
+}
