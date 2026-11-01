@@ -4,6 +4,7 @@ package main
 
 import (
  "context"
+ "errors"
  "crypto/sha256"
  "encoding/hex"
  "encoding/json"
