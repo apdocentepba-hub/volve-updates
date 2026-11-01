@@ -65,7 +65,10 @@ func TestSignedLegacyTransactionRequiresRevalidationAndIndependentWatchdog(t *te
     if err!=nil {t.Fatal(err)}
     want:=[]string{"preflight","watchdog","snapshot","install","prepared","watchdog","switch","probe","connectivity","commit"}
     if !reflect.DeepEqual(d.calls,want){t.Fatalf("unexpected signed migration order: %v",d.calls)}
-    if checks!=2 || d.watchdogCount!=2{t.Fatalf("expected proof+watchdog rechecks before switch, got %d/%d",checks,d.watchdogCount)}
+    // Each of the TWO signed-proof boundaries now verifies SYSTEM/DNS twice:
+    // initial and final immutable-host checks (4 total). The external
+    // watchdog itself is independently checked before and after Snapshot.
+    if checks!=4 || d.watchdogCount!=2{t.Fatalf("expected four live SYSTEM/DNS checks and two watchdog checks before switch, got %d/%d",checks,d.watchdogCount)}
 }
 func TestSignedLegacyTransactionBlocksBeforeSnapshotWithoutPermissionOrWatchdog(t *testing.T){
     for _,kind:=range []string{"wrong-publisher","unsafe-parent","no-live-dns","missing-watchdog","no-driver"}{
