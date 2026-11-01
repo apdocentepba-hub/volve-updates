@@ -1,0 +1,41 @@
+name: VOLVE 0.28.7 read-only Windows motor file inventory (NO RELEASE)
+on:
+  push:
+    branches: [feature/motor-updater-0287-pilot]
+    paths:
+      - 'development/0.28.7/inapp/fresh_motor_file_inventory_windows.go'
+      - 'development/0.28.7/inapp/fresh_motor_file_inventory_windows_test.go'
+      - 'development/0.28.7/inapp/fresh_install_policy.go'
+      - 'development/0.28.7/inapp/fresh_install_policy_test.go'
+      - '.github/workflows/volve-0287-fresh-motor-files-readonly.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  windows-readonly-files:
+    runs-on: windows-latest
+    timeout-minutes: 7
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.x'
+      - name: Validate actual Windows files and fail-closed motor identity classification
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $env:GO111MODULE='off'
+          $files=@(
+            'development/0.28.7/inapp/fresh_install_policy.go',
+            'development/0.28.7/inapp/fresh_install_policy_test.go',
+            'development/0.28.7/inapp/fresh_motor_file_inventory_windows.go',
+            'development/0.28.7/inapp/fresh_motor_file_inventory_windows_test.go'
+          )
+          foreach($file in $files){
+            if(-not (Test-Path -LiteralPath $file -PathType Leaf)){
+              throw ('Missing Windows read-only motor source: '+$file)
+            }
+          }
+          go test -count=1 -timeout 4m -v @files
+          if($LASTEXITCODE -ne 0){throw 'Read-only Windows motor file inventory verification FAILED'}
+          Write-Host 'PASS: Windows legacy/versioned motor file and receipt inventory, SHA256 integrity read, missing-root/suspicious-file refusal. No production writes or DNS/task changes.'
