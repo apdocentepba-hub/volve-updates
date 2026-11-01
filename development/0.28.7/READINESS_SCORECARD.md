@@ -285,3 +285,18 @@ Los tests se ejecutaron **solo en Windows hosted CI**, con una VM descartable y 
 
 
 **Compatibilidad futura:** la identidad productiva del mutex es **estable entre versiones** (`Global\\VOLVE-ResidentMotor-Transition`), deliberadamente sin sufijo 0.28.7; cualquier actualizador o watchdog futuro deberá usarla sin variaciones. El cambio de nombre se validará con la batería dedicada [#41350410798](https://github.com/apdocentepba-hub/volve-updates/actions/runs/41350410798); no se debe considerar aprobado hasta que concluya verde.
+
+
+## 01/11/2026 — Adaptadores productivos unidos por mutex protegido y handoff explícito
+
+**IMPLEMENTADO** en `motorupdate` (Go/Windows):
+- `resident_protected_boot_driver_windows.go`: `NewProtectedResidentBootDriver(operations)` obliga a que `RecoverPendingResidentAfterBoot` use `AcquireProtectedResidentTransitionLease(ctx)` y no el mutex opcional/CI del driver inyectado; la implementación real de restauración sigue pendiente.
+- `resident_protected_signed_switch_windows.go`: `NewProtectedSignedLegacySwitchDriver(operations)` obliga a que la migración firmada use el **mismo mutex protegido con identidad estable entre versiones**, y exige que el delegado implemente `ProtectedSignedRecoveryHandoff`. El adaptador no activa producción y rechaza implementaciones sin protocolo de entrega al watchdog.
+- En rollback, `Restore` libera el mutex *antes* de invocar `RestoreAfterProtectedHandoff(ctx)`, espera al watchdog independiente y vuelve a tomar el mutex con el contexto acotado antes de admitir pruebas de DNS local y conexión externa. Una reacquisición fallida reporta estado crítico, no recuperación certificada. La función de liberación final usa el segundo lease, evitando que el primero se cierre dos veces y el nuevo quede bloqueado.
+- `watchdogcmd/resident_boot_protected_gate_windows.go` y el CLI `--audit-resident-boot-plan`: el propio ejecutable independiente debe tomar el mutex productivo **antes** de leer el journal, para no clasificar una conmutación que continúa en curso. Es diagnóstico read-only, no una ruta de mutación productiva.
+- Los archivos se incorporaron al ensamblado de fuentes verificadas en `inapp/apply_overlay.go`. Los tests usan tareas temporales y VM Windows CI; ninguna ruta de producción fue modificada.
+
+**EVIDENCIA FINALIZADA:** [CI Windows #41352149359](https://github.com/apdocentepba-hub/volve-updates/actions/runs/41352149359), **SUCCESS**: pasaron `TestProtectedSignedSwitchAndBootRecoveryShareProductionMutex`, `TestProtectedAdaptersFailClosedWithoutTrustedOperations`, `TestIndependentBootAuditAcrossFreshProcesses`, `TestProtectedBootPlanAuditWaitsForProductionUpdateMutex`, `TestProtectedResidentBootPolicyUsesProductionMutexBeforeReadingJournal` y ambos caminos de la tarea SYSTEM de laboratorio (commit/rollback).
+**Último caso adicional:** pruebas `TestProtectedSignedRollbackHandsOffThenReacquiresBeforeHealth` y `TestProtectedSignedDriverRejectsHandoffMissing` incorporadas y seleccionadas expresamente en [CI Windows #41352402296](https://github.com/apdocentepba-hub/volve-updates/actions/runs/41352402296). **Verificar la conclusión final antes de acreditar esa nueva cobertura.**
+
+**Pendiente:** driver Windows de conmutación productiva con respaldos durables y restaurador SYSTEM firmado; recuperación tras reinicio real de una misma VM persistente; clave y permiso editorial legítimos, paquete distribuible e integración efectiva con el Centro instalado 0.28.6. **Crédito global inalterado 50% (5/10 puertas)**. Los adaptadores no son por sí mismos una migración de un equipo real.
