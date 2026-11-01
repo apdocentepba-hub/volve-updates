@@ -314,6 +314,19 @@ func TestWindowsSignedUnversionedMigrationWithActualSYSTEMRecovery(t *testing.T)
             }
             err=motorupdate.ApplySignedLegacyWithRollback(context.Background(),legacyExe,legacyBackup,candidate,
                 "0.28.7",rawPermit,permitSig,pub,checkLegacyRecoveryACL,preflight,driver)
+            // Both paths must release the FINAL lease. On rollback this is
+            // the newly reacquired lease following the separate SYSTEM
+            // watchdog process, not the old release closure.
+            if driver.migrationUnlock!=nil{
+                t.Fatal("signed migration leaked Windows BootLock after completion or rollback")
+            }
+            probeCtx,stopProbe:=context.WithTimeout(context.Background(),150*time.Millisecond)
+            held,lockErr:=motorupdate.AcquireWindowsSignedLegacyLabLease(probeCtx,name)
+            stopProbe()
+            if lockErr!=nil||held==nil{
+                t.Fatalf("signed migration did not release shared BootLock for future recovery: %v",lockErr)
+            }
+            held()
             exe,args,actionErr:=core.currentAction()
             if actionErr!=nil{t.Fatal(actionErr)}
             if networkFails{
