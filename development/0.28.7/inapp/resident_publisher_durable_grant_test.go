@@ -4,12 +4,12 @@ import (
  "bytes"
  "context"
  "errors"
+ "encoding/base64"
  "os"
  "os/exec"
  "path/filepath"
  "strings"
  "testing"
- "time"
 )
 
 // These are intentionally INERT synthetic source bytes. The fixture's ACL
@@ -30,7 +30,7 @@ func TestDurablePublisherGrantSurvivesNewProcessAndRejectsReplay(t *testing.T){
  child.Env=append(os.Environ(),
   "VOLVE_CI_DURABLE_GRANT_CHILD=1",
   "VOLVE_CI_DURABLE_GRANT_ROOT="+f.root,
-  "VOLVE_CI_DURABLE_GRANT_KEY="+string(f.pub))
+  "VOLVE_CI_DURABLE_GRANT_KEY="+base64.StdEncoding.EncodeToString(f.pub))
  out,err:=child.CombinedOutput()
  if err!=nil||!bytes.Contains(out,[]byte("VOLVE_DURABLE_GRANT_VERIFIED")){
   t.Fatalf("independent process refused sealed publisher grant: %v %s",err,out)
@@ -40,7 +40,8 @@ func TestDurablePublisherGrantSurvivesNewProcessAndRejectsReplay(t *testing.T){
 func TestDurablePublisherGrantReadInNewProcess(t *testing.T){
  if os.Getenv("VOLVE_CI_DURABLE_GRANT_CHILD")!="1"{return}
  root:=os.Getenv("VOLVE_CI_DURABLE_GRANT_ROOT")
- key:=[]byte(os.Getenv("VOLVE_CI_DURABLE_GRANT_KEY"))
+ key,err:=base64.StdEncoding.DecodeString(os.Getenv("VOLVE_CI_DURABLE_GRANT_KEY"))
+ if err!=nil{t.Fatal(err)}
  allow:=func(string)error{return nil}
  result,err:=LoadResidentDurablePublisherGrant(context.Background(),root,key,allow,allow,allow)
  if err!=nil||len(result.Permit)==0||len(result.Signature)==0{
@@ -152,7 +153,4 @@ func TestDurablePublisherGrantRejectsExpiredOrTerminalJournalOnNewRead(t *testin
  if _,err:=LoadResidentDurablePublisherGrant(context.Background(),f.root,f.pub,allow,allow,allow);err==nil{
   t.Fatal("terminal journal authorized another independent recovery")
  }
- // New read still accepts an expired-but-originally-stored grant only for
- // PENDING recovery. That case is covered by the signed recovery fixture.
- _=time.Second
 }
