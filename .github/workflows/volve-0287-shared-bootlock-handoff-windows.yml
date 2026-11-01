@@ -15,6 +15,8 @@ on:
       - 'development/0.28.7/inapp/legacy_migration_permit.go'
       - 'development/0.28.7/inapp/resident_publisher_recovery_binding.go'
       - 'development/0.28.7/inapp/resident_publisher_recovery_binding_test.go'
+      - 'development/0.28.7/inapp/resident_publisher_protected_boot_windows.go'
+      - 'development/0.28.7/inapp/resident_publisher_protected_boot_windows_test.go'
       - 'development/0.28.7/inapp/watchdogcmd/resident_boot_audit_windows_test.go'
       - 'development/0.28.7/inapp/watchdogcmd/resident_boot_protected_gate_windows.go'
       - 'development/0.28.7/inapp/apply_overlay.go'
@@ -76,7 +78,7 @@ jobs:
           go build -trimpath -o $helper ./cmd/volve-managed-watchdog
           if($LASTEXITCODE -ne 0 -or -not (Test-Path $helper)){throw 'Independent watchdog did not build'}
           $env:VOLVE_CI_MANAGED_WATCHDOG_EXE=$helper
-          go test ./motorupdate -run '^TestSignedPublisherBootRecovery' -count=1 -timeout 2m -v
+          go test ./motorupdate -run '^(TestSignedPublisherBootRecovery|TestPublisherBoundProtectedBoot)' -count=1 -timeout 2m -v
           if($LASTEXITCODE -ne 0){throw 'Signed publisher grant and resident journal binding failed'}
           go test ./motorupdate -run '^(TestProtectedSignedSwitchAndBootRecoveryShareProductionMutex|TestProtectedAdaptersFailClosedWithoutTrustedOperations|TestProtectedSignedRollbackHandsOffThenReacquiresBeforeHealth|TestProtectedSignedDriverRejectsHandoffMissing)$' -count=1 -timeout 3m -v
           if($LASTEXITCODE -ne 0){throw 'Production switch and boot recovery did not share protected mutex'}
