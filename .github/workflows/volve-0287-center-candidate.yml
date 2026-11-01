@@ -1,0 +1,119 @@
+name: VOLVE 0.28.7 Centro candidate for original signed launcher (NO RELEASE)
+on:
+  push:
+    branches: [feature/motor-updater-0287-pilot]
+    paths:
+      - '.github/workflows/volve-0287-center-candidate.yml'
+      - 'development/0.28.7/**'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build-panel-candidate:
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.x'
+      - name: Reconstruct pinned original and overlays
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $parts=@(Get-ChildItem development/0.28.7/complete-source-parts -Filter 'part-*.bin' -File | Sort-Object Name)
+          if($parts.Count -ne 10){throw 'Unexpected source chunk count'}
+          $zip=Join-Path $PWD 'source.zip'
+          $stream=[IO.File]::Create($zip)
+          try {
+            for($i=0;$i -lt 10;$i++){
+              if($parts[$i].Name -ne ('part-{0:D2}.bin' -f $i)){throw 'Source order mismatch'}
+              $inputStream=[IO.File]::OpenRead($parts[$i].FullName)
+              try{$inputStream.CopyTo($stream)}finally{$inputStream.Dispose()}
+            }
+          }finally{$stream.Dispose()}
+          $actual=(Get-FileHash -Algorithm SHA256 $zip).Hash.ToLowerInvariant()
+          if($actual -ne '92b3536559151260375b17a64eedd009df8399e45460637208027b7ca0587ba5'){throw 'Original source SHA mismatch'}
+          New-Item -ItemType Directory -Path build -Force | Out-Null
+          Expand-Archive $zip build -Force
+          $overlays=@(
+            @{file='VOLVE_0287_PRECHECK_RESCATE_OVERLAY_NO_INSTALAR.zip';sha='fdfd31f21df81fe6da6075bfd442354297874576b6dc2c38f19bd35a681d95cd'},
+            @{file='VOLVE_0287_RECUPERACION_INTERRUPCION_FORZADA_NO_INSTALAR_v3.zip';sha='773bd5eb5f1c4883021cc321856636354e964d3605dba9017e2fb5d1a7401b40'}
+          )
+          foreach($overlay in $overlays){
+            $f=Join-Path development/0.28.7 $overlay.file
+            if((Get-FileHash -Algorithm SHA256 $f).Hash.ToLowerInvariant() -ne $overlay.sha){throw 'Overlay SHA mismatch'}
+            Expand-Archive $f build -Force
+          }
+          Copy-Item development/0.28.7/journal/*.go build/codigo/motorupdate -Force
+          go run development/0.28.7/inapp/apply_overlay.go build/codigo
+          if($LASTEXITCODE -ne 0){throw 'Authenticated source overlay failed'}
+      - name: Change the actual panel identity to 0.28.7; refuse ambiguous source
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          @'
+          from pathlib import Path
+          import re
+          root=Path('build/codigo')
+          pattern=re.compile(r'(?m)^\s*(?:const|var)\s+version\s*(?:string\s*)?=\s*"([^"]+)"\s*(?://[^\n]*)?$')
+          found=[]
+          for source in root.glob('*.go'):
+              data=source.read_text(encoding='utf-8')
+              for match in pattern.finditer(data):
+                  found.append((source,data,match))
+          if len(found)!=1:
+              raise SystemExit(f'FAIL CLOSED: expected exactly one panel version declaration, got {len(found)}')
+          source,data,match=found[0]
+          if match.group(1)!='0.28.6':
+              raise SystemExit(f'FAIL CLOSED: base version is {match.group(1)!r}, not installed 0.28.6')
+          edited=data[:match.start(1)]+'0.28.7'+data[match.end(1):]
+          source.write_text(edited,encoding='utf-8')
+          print(f'Panel identity upgraded in {source.name}: 0.28.6 -> 0.28.7')
+          '@ | python -
+          if($LASTEXITCODE -ne 0){throw 'Panel version update refused'}
+      - name: Tests and Windows GUI build
+        shell: pwsh
+        working-directory: build/codigo
+        run: |
+          $ErrorActionPreference='Stop'
+          $env:CGO_ENABLED='0'
+          go test ./releaseupdate ./motorupdate -run '^Test(DurablePublisherGrant|SignedUnversionedBridge|PublisherBound|Merge)' -count=1 -timeout 6m
+          if($LASTEXITCODE -ne 0){throw 'Updater and signed grant regression failed'}
+          go test . -run '^Test(MergeUpdateReports|MotorMigrationStatus)' -count=1 -timeout 4m
+          if($LASTEXITCODE -ne 0){throw 'Panel update integration test failed'}
+          go vet ./releaseupdate ./motorupdate
+          if($LASTEXITCODE -ne 0){throw 'Go vet failed'}
+          go build -trimpath -ldflags '-H windowsgui' -o VOLVE_0_28_7_CENTRO_CANDIDATO.exe .
+          if($LASTEXITCODE -ne 0){throw 'Windows GUI build failed'}
+      - name: Validate exact binary and produce distribution evidence
+        shell: pwsh
+        working-directory: build/codigo
+        run: |
+          $ErrorActionPreference='Stop'
+          $file='VOLVE_0_28_7_CENTRO_CANDIDATO.exe'
+          $size=(Get-Item $file).Length
+          $raw=[IO.File]::ReadAllBytes((Resolve-Path $file))
+          if($size -lt 1000000 -or $raw[0] -ne 77 -or $raw[1] -ne 90){throw 'Invalid Windows PE candidate'}
+          $sha=(Get-FileHash -Algorithm SHA256 $file).Hash.ToLowerInvariant()
+          $report=@(
+            'VOLVE 0.28.7 CENTRO - CANDIDATE ONLY'
+            'VERSION=0.28.7'
+            ('SHA256='+$sha)
+            ('SIZE='+$size)
+            ('SOURCE_COMMIT='+$env:GITHUB_SHA)
+            'PUBLISHER_SIGNED_MANIFEST=NOT_YET'
+            'PRODUCTION_DNS_MOTOR_SWITCH=DISABLED'
+            'DO_NOT_INSTALL_UNTIL_MANIFEST_AND_RELEASE_ARE_VERIFIED'
+          )
+          [IO.File]::WriteAllLines('EVIDENCIA_CANDIDATO.txt',$report)
+          Write-Host ('Windows GUI candidate ready, SHA256 '+$sha+' size '+$size)
+      - name: Keep binary as private GitHub Actions candidate artifact; do not publish or install
+        uses: actions/upload-artifact@v4
+        with:
+          name: VOLVE_0_28_7_CENTRO_CANDIDATO_NO_INSTALAR
+          path: |
+            build/codigo/VOLVE_0_28_7_CENTRO_CANDIDATO.exe
+            build/codigo/EVIDENCIA_CANDIDATO.txt
+          if-no-files-found: error
+          retention-days: 7
