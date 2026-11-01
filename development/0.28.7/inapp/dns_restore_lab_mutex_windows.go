@@ -19,7 +19,8 @@ import (
  "unsafe"
 )
 
-var windowsDNSLabLeaseName=regexp.MustCompile(`^VOLVE-CI-(?:DNSLock|BootLock)-[0-9]{12,20}$`)
+var windowsDNSLabLeaseName=regexp.MustCompile(`^VOLVE-CI-DNSLock-[0-9]{12,20}$`)
+var windowsSignedBootLeaseName=regexp.MustCompile(`^VOLVE-CI-BootLock-[0-9]{12,20}$`)
 
 const (
  windowsDNSWaitObject0=0x00000000
@@ -43,6 +44,16 @@ func acquireWindowsDNSLabRecoveryLease(ctx context.Context,name string)(func(),e
  if err:=ctx.Err();err!=nil{return nil,err}
  if !windowsDNSLabLeaseName.MatchString(name){
   return nil,errors.New("only disposable CI Windows DNS recovery locks are allowed")
+ }
+ return acquireAllowlistedWindowsLabKernelLease(ctx,name)
+}
+
+// Keep the original DNS-only API strict. Only the signed migration wrapper
+// may pass a BootLock name to this private Windows kernel acquisition helper.
+func acquireAllowlistedWindowsLabKernelLease(ctx context.Context,name string)(func(),error){
+ if err:=ctx.Err();err!=nil{return nil,err}
+ if !windowsDNSLabLeaseName.MatchString(name) && !windowsSignedBootLeaseName.MatchString(name){
+  return nil,errors.New("invalid lab Windows mutex name")
  }
  runtime.LockOSThread()
  releaseThread:=true
@@ -101,8 +112,8 @@ func AcquireWindowsSignedLegacyLabLease(ctx context.Context, task string)(func()
   return nil,errors.New("signed legacy mutex nonce length invalid")
  }
  name:="VOLVE-CI-BootLock-"+id
- if !windowsDNSLabLeaseName.MatchString(name){
-  return nil,errors.New("signed legacy mutex task nonce not allowlisted")
+ if !windowsSignedBootLeaseName.MatchString(name){
+  return nil,errors.New("signed legacy BootLock task nonce not allowlisted")
  }
- return acquireWindowsDNSLabRecoveryLease(ctx,name)
+ return acquireAllowlistedWindowsLabKernelLease(ctx,name)
 }
