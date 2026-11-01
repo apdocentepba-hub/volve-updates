@@ -85,3 +85,18 @@ jobs:
             Write-Host ('CATALOG: '+[IO.Path]::GetFileName($m.Path)+':'+$m.LineNumber+': '+$line)
           }
           if($hits.Count -eq 0){throw 'No catalog source contract located in source archive'}
+      - name: Inspect trusted 0.28.6 catalog task action and executable source
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $file=Join-Path 'build/codigo' 'catalog_windows.go'
+          if(-not (Test-Path -LiteralPath $file)){throw 'Original catalog source absent'}
+          $src=Get-Content -LiteralPath $file
+          foreach($range in @(@(43,157),@(194,218))){
+            $low=$range[0];$high=[Math]::Min($src.Length,$range[1])
+            for($i=$low-1;$i -lt $high;$i++){
+              $line=$src[$i]
+              if($line.Length -gt 210){$line=$line.Substring(0,210)}
+              Write-Host ('CATALOG DETAIL '+($i+1)+': '+$line)
+            }
+          }
