@@ -191,3 +191,14 @@ El test recupera el ejecutable original desde el respaldo NTFS, restaura una tar
 **Límites de aceptación:** el disparador AtStartup fue **registrado pero ejecutado manualmente**; el sistema operativo NO se reinició. No se comprobó el reinicio real de una VM persistente. El arranque usó un bootstrap de entorno solo CI, no un servicio/autoinicio productivo instalado. La tarea real `VOLVE-DNS-SERVER-0270`, el DNS de adaptadores, el motor 0.28.6 del usuario y la publicación siguieron intactos. Los bytes sintéticos con SHA-256 en el journal no constituyen una firma legítima del editor.
 
 **Porcentajes:** subensayo AtStartup SYSTEM ejecutado manualmente **100% aprobado**. **Progreso global permanece 50% (5/10 puertas)**; faltan autorización editorial auténtica, watchdog productivo y prueba tras reinicio real de VM persistente, publicación firmada y transición completa 0.28.6→0.28.7.
+
+
+## 01/11/2026 — Puerta 6: borrador de permiso editorial sin claves privadas
+
+**Evidencia:** [GitHub Actions #41342896493](https://github.com/apdocentepba-hub/volve-updates/actions/runs/41342896493), **Ubuntu SUCCESS y Windows SUCCESS**, código de rama `feature/motor-updater-0287-pilot`.
+
+**Realizado:** se agregó `motorupdate.PrepareLegacyMigrationDraftReadOnly` y `DraftPermitBytesReadOnly`, archivos `inapp/legacy_migration_draft.go` y `inapp/legacy_migration_draft_test.go`. El procedimiento reconstruye el paquete editorial desde el **respaldo original protegido**, **dos preflights vivos** de motor/tarea/DNS e **identidad del candidato verificada con la clave pública de releases existente**. Rechaza cambios de respaldo, bytes antiguos y candidato, claves públicas ajenas, permisos débiles, panel incompatible y reloj falso. El borrador tiene vigencia propuesta de **24 horas**, SHA-256 reproducible de JSON canónico y huella de su paquete editorial. Se prueban intentos de cambiar huellas, tamaños, versión, editor y flags de autorización. Un borrador sin firma no pasa `VerifySignedUnversionedLegacyMigration`.
+
+**Separación de seguridad:** ningún paso accede a la clave privada editorial, genera una nueva identidad de editor, publica releases, modifica DNS/tareas, cambia el programa instalado o autoriza la transición. La prueba de interoperabilidad utiliza una clave Ed25519 **efímera de CI**; no constituye una firma legítima de producción. Los detalles de la PC del usuario no se cargaron al repositorio.
+
+**Límites de la puerta 6:** no hay un `VOLVE_DNS_Motor_0_28_7.exe` oficialmente publicado con la firma Ed25519 original ni un permiso editorial real emitido para su identidad instalada; las firmas de laboratorio no sustituyen ese requisito. La puerta 6 continúa **sin aprobar**, **0% de crédito**. Aceptación global sigue **50% (5/10 puertas)**. El borrador acelera una revisión firmada cuando existan release y aprobación reales.
