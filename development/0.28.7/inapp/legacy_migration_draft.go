@@ -26,6 +26,7 @@ type UnsignedLegacyMigrationDraft struct {
  Review LegacyPublisherReviewPacket `json:"review"`
  Permit LegacyMigrationPermit `json:"permit"`
  PermitJSONSHA256 string `json:"permit_json_sha256"`
+ ReviewJSONSHA256 string `json:"review_json_sha256"`
  SignaturePresent bool `json:"signature_present"`
  MigrationAuthorized bool `json:"migration_authorized"`
  ReadyToSwitch bool `json:"ready_to_switch"`
@@ -110,11 +111,14 @@ func PrepareLegacyMigrationDraftReadOnly(
   return empty,errors.New("unsigned migration draft improperly accepted as signed")
  }
  digest:=sha256.Sum256(raw)
+ reviewBytes,err:=json.Marshal(review);if err!=nil{return empty,err}
+ reviewDigest:=sha256.Sum256(reviewBytes)
  if err:=ctx.Err();err!=nil{return empty,err}
  return UnsignedLegacyMigrationDraft{
   Schema:1,Component:UnsignedLegacyDraftComponent,
   Disposition:UnsignedLegacyDraftDisposition,
   Review:review,Permit:permit,PermitJSONSHA256:hex.EncodeToString(digest[:]),
+  ReviewJSONSHA256:hex.EncodeToString(reviewDigest[:]),
   SignaturePresent:false,MigrationAuthorized:false,ReadyToSwitch:false,
  },nil
 }
@@ -133,6 +137,12 @@ func DraftPermitBytesReadOnly(draft UnsignedLegacyMigrationDraft)([]byte,error){
  }
  p:=draft.Permit
  r:=draft.Review
+ reviewBytes,err:=json.Marshal(r);if err!=nil{return nil,err}
+ reviewDigest:=sha256.Sum256(reviewBytes)
+ if hex.EncodeToString(reviewDigest[:])!=draft.ReviewJSONSHA256||
+  !hexRe.MatchString(r.PublisherPublicKeySHA256){
+  return nil,errors.New("original editor review or publisher fingerprint altered")
+ }
  if p.FromTask!=r.FromTask||p.FromArgs!=r.FromArgs||
   p.FromExecutable!=r.FromExecutable||
   p.FromSHA256!=r.FromSHA256||p.FromSize!=r.FromSize||
