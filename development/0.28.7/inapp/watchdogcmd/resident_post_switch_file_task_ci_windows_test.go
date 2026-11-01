@@ -305,7 +305,23 @@ func TestStandaloneCIWatchdogAtStartupSYSTEMTaskCILab(t *testing.T){
  if out,err:=ps(ctx,preflight);err!=nil||out!="CI_SYSTEM_BOOT_VM_CONFIRMED"{
   t.Fatalf("refusing independent SYSTEM boot task outside verified disposable VM: %s %v",out,err)
  }
+ // GetTempPath2W isolates the SYSTEM account in Windows\\SystemTemp.
+ // A runner-user TEMP root is deliberately rejected by the standalone
+ // watchdog after privilege transition. Place this disposable fixture in
+ // the trusted SYSTEM temp hierarchy instead of weakening the policy.
+ systemTemp:=filepath.Join(os.Getenv("WINDIR"),"SystemTemp")
+ systemInfo,systemErr:=os.Stat(systemTemp)
+ if systemErr!=nil || !systemInfo.IsDir(){
+  t.Fatalf("Windows SYSTEM temp directory not available for test: %s %v",systemTemp,systemErr)
+ }
+ t.Setenv("TMP",systemTemp)
+ t.Setenv("TEMP",systemTemp)
  root,journalDir,_,protect:=chainFixture(t,false)
+ relative,relErr:=filepath.Rel(systemTemp,root)
+ if relErr!=nil || relative=="." || relative==".." ||
+  strings.HasPrefix(relative,".."+string(filepath.Separator)) || filepath.IsAbs(relative){
+  t.Fatalf("CI SYSTEM recovery fixture not inside verified SystemTemp root: %s",root)
+ }
  suffix:=time.Now().UnixNano()
  motorTask:=fmt.Sprintf("VOLVE-CI-ManagedMotor-%d",suffix)
  bootTask:=fmt.Sprintf("VOLVE-CI-WatchdogBoot-%d",suffix)
