@@ -12,6 +12,7 @@ import (
  "encoding/base64"
  "errors"
  "fmt"
+ "os"
  "path/filepath"
 
  "volve-browser-protection/motorupdate"
@@ -21,7 +22,40 @@ type residentSignedBootAdmission struct {
  Status string
  Action string
  OriginalSHA256 string
+ OriginalFileState string
  PublisherVerified bool
+}
+
+// classifyResidentOriginalFile is a READ-ONLY restoration input, not
+// permission to overwrite an executable. An unrecognized or linked file is
+// a hard stop, even when the signed journal and original backup are valid.
+// The future SYSTEM restorer must separately prove the exact live task,
+// process identity and that no candidate still owns port 53.
+func classifyResidentOriginalFile(ctx context.Context,root string,
+ intent motorupdate.ResidentRecoveryIntent)(string,error){
+ if err:=ctx.Err();err!=nil{return "",err}
+ if !filepath.IsAbs(root)||filepath.Clean(root)!=root{
+  return "",errors.New("installed motor root not canonical")
+ }
+ if intent.LegacySHA256==""||intent.TargetSHA256==""||
+  intent.LegacySHA256==intent.TargetSHA256{
+  return "",errors.New("original and candidate must have distinct signed identities")
+ }
+ path:=filepath.Join(root,residentLegacyExe)
+ info,err:=os.Lstat(path)
+ if errors.Is(err,os.ErrNotExist){return "missing-original",nil}
+ if err!=nil{return "",fmt.Errorf("installed motor cannot be observed: %w",err)}
+ if !info.Mode().IsRegular()||info.Mode()&os.ModeSymlink!=0||
+  info.Size()<1||info.Size()>chainLegacyMax{
+  return "",errors.New("installed motor is a link or an unsupported file")
+ }
+ hash,err:=digestResidentLive(ctx,path)
+ if err!=nil{return "",err}
+ switch hash{
+ case intent.LegacySHA256:return "original-intact",nil
+ case intent.TargetSHA256:return "exact-pinned-target-still-present",nil
+ default:return "",errors.New("unknown installed motor hash: refuse autonomous rollback")
+ }
 }
 
 // auditResidentSignedBootAdmission takes the SAME OS-wide mutex as a future
@@ -67,17 +101,28 @@ func auditResidentSignedBootAdmission(
   state.Intent.LegacySHA256!=before.LegacySHA256{
   return zero,errors.New("signed recovery grant and boot plan disagree")
  }
+ // A signed permission never authorizes overwriting an arbitrary executable.
+ // Distinguish a missing old image, an already restored old image and only the
+ // exact signed candidate hash. The future live task/process still needs a
+ // separate independent SYSTEM gate before any recovery mutation.
+ originalState,err:=classifyResidentOriginalFile(ctx,root,state.Intent)
+ if err!=nil{return zero,fmt.Errorf("installed old motor identity unsafe: %w",err)}
  // The OS-wide lease prevents our cooperating updater from changing state.
  // Re-read the backup and journal after expensive grant signature checks.
  after,err:=auditResidentBootPlan(ctx,root)
  if err!=nil||after!=before{
   return zero,errors.New("protected boot intent changed during editorial admission audit")
  }
+ secondState,err:=classifyResidentOriginalFile(ctx,root,state.Intent)
+ if err!=nil||secondState!=originalState {
+  return zero,errors.New("installed motor changed during signed recovery decision")
+ }
  if err:=ctx.Err();err!=nil{return zero,err}
  return residentSignedBootAdmission{
   Status:"recovery-required",
   Action:"signed-evidence-verified-read-only",
   OriginalSHA256:before.LegacySHA256,
+  OriginalFileState:originalState,
   PublisherVerified:true,
  },nil
 }

@@ -241,8 +241,8 @@ func main(){
             fmt.Fprintln(os.Stderr,"VOLVÉ: EVIDENCIA EDITORIAL DE RESCATE RECHAZADA; SIN CAMBIOS:",err)
             os.Exit(1)
         }
-        fmt.Printf("VOLVÉ: ADMISION DE RESCATE (SOLO LECTURA)\nEstado: %s\nAcción: %s\nFirma editorial confirmada: %t\nOriginal SHA-256: %s\nNO restaura ni instala el motor productivo.\n",
-            report.Status,report.Action,report.PublisherVerified,report.OriginalSHA256)
+        fmt.Printf("VOLVÉ: ADMISION DE RESCATE (SOLO LECTURA)\nEstado: %s\nAcción: %s\nArchivo original: %s\nFirma editorial confirmada: %t\nOriginal SHA-256: %s\nNO restaura ni instala el motor productivo.\n",
+            report.Status,report.Action,report.OriginalFileState,report.PublisherVerified,report.OriginalSHA256)
         return
     }
     if len(os.Args)==3 && os.Args[1]=="--audit-resident-boot-plan" {
