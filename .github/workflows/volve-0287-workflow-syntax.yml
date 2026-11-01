@@ -1,0 +1,47 @@
+name: VOLVE 0.28.7 GitHub Actions and PowerShell syntax (NO RELEASE)
+on:
+  push:
+    branches: [feature/motor-updater-0287-pilot]
+    paths:
+      - '.github/workflows/volve-motor-0287-pilot.yml'
+      - '.github/workflows/volve-0287-workflow-syntax.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  verify-workflow:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Reject malformed pilot workflow and missing watchdog test coverage
+        shell: bash
+        run: |
+          set -euo pipefail
+          ruby -ryaml -e '
+            path=ARGV.fetch(0)
+            size=File.size(path)
+            abort("Unexpected workflow size: #{size}") unless size.between?(20000,60000)
+            workflow=YAML.load_file(path)
+            abort("Missing jobs section") unless workflow.is_a?(Hash) && workflow["jobs"].is_a?(Hash)
+            windows=workflow["jobs"]["windows-build"]
+            abort("Missing Windows job") unless windows.is_a?(Hash)
+            steps=windows.fetch("steps")
+            watchdog=steps.select{|s| s["name"]=="Compile and test standalone Windows watchdog (CI-only tasks)"}
+            abort("Expected exactly one watchdog validation step") unless watchdog.size==1
+            code=watchdog.first.fetch("run")
+            %w[-list -count=1 -timeout].each{|word| abort("Missing test flag: #{word}") unless code.include?(word)}
+            abort("Dynamic watchdog shards are missing") unless code.include?("$group") && code.include?("$executed") && code.include?("go test ./cmd/volve-managed-watchdog -run")
+            File.write(ENV.fetch("RUNNER_TEMP")+"/volve-watchdog-step.ps1",code)
+            puts "PASS: YAML parses, required Windows job preserved, watchdog tests fully discovered and grouped."
+          ' .github/workflows/volve-motor-0287-pilot.yml
+      - name: PowerShell parse gate for watchdog step
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $path=Join-Path $env:RUNNER_TEMP 'volve-watchdog-step.ps1'
+          $tokens=$null
+          $issues=$null
+          [System.Management.Automation.Language.Parser]::ParseFile($path,[ref]$tokens,[ref]$issues)|Out-Null
+          if($issues.Count -ne 0){$issues|Format-List|Out-String|Write-Error;throw 'Pilot watchdog PowerShell syntax invalid'}
+          Write-Host 'PASS: isolated watchdog workflow script parses in PowerShell.'
