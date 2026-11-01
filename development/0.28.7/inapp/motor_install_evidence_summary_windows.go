@@ -17,6 +17,9 @@ type WindowsMotorRouteSummary struct {
  CatalogTaskSeen bool `json:"catalog_task_seen"`
  CatalogTaskActionPinned bool `json:"catalog_task_action_pinned"`
  OtherTaskCount int `json:"other_task_count"`
+ LegacyDNSTaskSeen bool `json:"legacy_dns_task_seen"`
+ PriorCatalog0210TaskSeen bool `json:"prior_catalog_0210_task_seen"`
+ UnrecognizedTaskCount int `json:"unrecognized_task_count"`
  VOLVEServices int `json:"volve_services"`
  LegacyDNSMotorFileSeen bool `json:"legacy_dns_motor_file_seen"`
  VersionedDNSMotorFileSeen bool `json:"versioned_dns_motor_file_seen"`
@@ -84,6 +87,19 @@ func InspectWindowsMotorRouteWithSummaryReadOnly(
   RecoveryArtifactsSeen:e.RecoveryArtifactsPresent,
   RecoveryJournalSeen:e.RecoveryJournalPresent,
   PendingRollbackSeen:e.PendingRollbackPresent,
+ }
+ // The task scanner already returned these names from the same six-way
+ // inventory. Only exact known VOLVE task identifiers are disclosed, never
+ // arbitrary user names, XML definitions, executable paths or arguments.
+ for _,name:=range otherTasks{
+  switch name{
+  case `\VOLVE-DNS-SERVER-0270`:
+   counts.LegacyDNSTaskSeen=true
+  case `\VOLVE-CATALOGO-0210`:
+   counts.PriorCatalog0210TaskSeen=true
+  default:
+   counts.UnrecognizedTaskCount++
+  }
  }
  if counts.UDP53IPv4Listeners<0||counts.UDP53IPv6Listeners<0||
   counts.TCP53IPv4Listeners<0||counts.TCP53IPv6Listeners<0 {
