@@ -59,6 +59,21 @@ Los tests cubren firmas ausentes, otros editores, bytes de motor alterados, resp
 
 **Crédito:** progreso global **50% (5/10)**; puerta 6 permanece **2/4 controles aceptados** porque faltan la identidad concreta del motor instalado y el permiso auténtico firmado por el editor. Este diagnóstico no es un instalador, ni una publicación, ni una actualización productiva.
 
+### Diagnóstico autónomo de Windows 0.28.6 — 31/10/2026 (sin reinstalación)
+
+**Entrega real:** [GitHub Actions #41262649792](https://github.com/apdocentepba-hub/volve-updates/actions/runs/41262649792), trabajo `standalone-readonly-audit` aprobado. Se generó el artefacto `VOLVE_0287_Diagnostico_Windows_SoloLectura_LAB` (ZIP de laboratorio, 4 archivos). **No es el Centro ni una publicación estable**.
+
+- Binario de alcance reducido: `VOLVE_Diagnostico_0_28_7_Solo_Lectura.exe`, **5.514.752 bytes**. SHA-256: `5c2192c155dce26d11f665b254e53ca145f8fa0983cf3c077e8d5f9621c0dd10` (verificado por la CI y también después de descargar el ZIP).
+- Lanzador optativo `VOLVE_Diagnostico_Solo_Lectura.cmd`: pide confirmación UAC para **inspeccionar** Task Scheduler, DNS y servicios; no instala ni arranca motores.
+- Documentación `LEEME_DIAGNOSTICO.txt` y archivo `SHA256_EXE.txt` dentro del ZIP.
+- El ejecutable solo enlaza `motorupdate` y un `main` separado, **sin** el Centro ni las rutas de conmutación, actualización, desinstalación y limpieza.
+- Se revisó la fuente original real: `installRoot() -> filepath.Dir(statePath())`; `statePath() -> %ProgramData%/VOLVE-Browser-Filter/estado.json`. El workflow **verifica ese nombre directamente contra el Centro original** e inyecta la misma constante compilando el diagnóstico; si cambia, aborta. Si falta el marcador no produce una conclusión falsa.
+- Un informe JSON acotado se crea en Descargas con nombre único, **nunca se sobrescribe uno existente**. No contiene credenciales ni los valores detallados de políticas de navegador; esos bloqueos **no se inspeccionan**. El informe solo declara ruta de revisión, no estado de seguridad absoluto.
+- Los tests de Windows y los escenarios adversos de clasificación aprobaron. La CI se hizo en VM efímera, **no se ejecutó en la PC del usuario**.
+- **Advertencia:** es un EXE de laboratorio **sin firma de editor para distribución**. No desactivar SmartScreen/Defender para instalarlo; usar solamente como prueba de diagnóstico con autorización consciente. La herramienta no actualiza el software.
+
+**Progreso global sigue en 50%**. Este binario permite obtener la evidencia concreta que falta para decidir la ruta en la PC del usuario, pero no reemplaza la firma editorial auténtica ni la VM Windows persistente, watchdog o conmutación productiva. El paso 6 sigue abierto.
+
 ### Próximo avance de ingeniería independiente de la firma
 
 Desarrollar el adaptador aislado que obtiene la identidad **real** de tarea SYSTEM y del ejecutable instalado, valida el recibo bajo ACL y pasa esos valores a la función de revisión. Primero ejecutarlo en VM y con guardas de no-mutación; no integrarlo al botón de actualización hasta tener permiso editorial y ensayo de reboot.
