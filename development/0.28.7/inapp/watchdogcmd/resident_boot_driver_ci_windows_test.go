@@ -121,17 +121,20 @@ func TestResidentCIBootDriverRejectsBackupDriftDuringDNSProbe(t *testing.T){
   })
  if err!=nil{t.Fatal(err)}
  health:=&ciBootHealth{}
+ altered:=false
  health.afterDNSProbe=func()error{
   health.afterDNSProbe=nil
   // Synthetic NTFS recovery fixture in the ephemeral Windows CI VM only:
   // corrupt the protected fallback AFTER its first independent verification,
   // not before or during Task Scheduler operation.
-  return os.WriteFile(filepath.Join(root,residentLegacyExe),[]byte("MZ_CI_CHANGED_DURING_NETWORK_HEALTH"),0600)
+  if err:=os.WriteFile(filepath.Join(root,residentLegacyExe),[]byte("MZ_CI_CHANGED_DURING_NETWORK_HEALTH"),0600);err!=nil{return err}
+  altered=true
+  return nil
  }
  outcome,err:=motorupdate.RecoverPendingResidentAfterBoot(context.Background(),
   dir,seal,protect,health,driver)
- if err==nil||outcome!=""{
-  t.Fatalf("changed original falsely finalized as healthy: %s %v",outcome,err)
+ if err==nil||outcome!=""||!altered||!strings.Contains(err.Error(),"original recovery snapshot changed during health checks"){
+  t.Fatalf("second sealed fallback recheck not proven: altered=%v outcome=%s err=%v",altered,outcome,err)
  }
  if restored!=0||health.identityChecks!=3{
   t.Fatalf("changed original caused unapproved restore or skipped health: %d checks=%d",restored,health.identityChecks)
