@@ -46,10 +46,18 @@ func restoreSignedLegacyAndVerify(
  driver SignedLegacySwitchDriver,cause error,backupDir string,
  protect func(string)error,proof VerifiedLegacyMigrationProof,
 )error{
+ // NEVER ask an OS recovery driver to execute or restore from an
+ // untrusted rollback snapshot. This includes post-switch failures. Keep the
+ // in-progress recovery intent unresolved so a trusted external/watchdog
+ // operator can investigate; do not claim the original was recovered.
+ if err:=checkSealedOriginalAtTransactionBoundary(backupDir,protect,proof);err!=nil{
+  return errors.Join(cause,
+   fmt.Errorf("CRÍTICO: recuperación automática detenida: original protegido no verificable: %w",err))
+ }
  rollbackErr:=restoreManagedAndVerify(driver,cause)
  if err:=checkSealedOriginalAtTransactionBoundary(backupDir,protect,proof);err!=nil{
   return errors.Join(rollbackErr,
-   fmt.Errorf("CRÍTICO: respaldo heredado no verificable después de la reversión: %w",err))
+   fmt.Errorf("CRÍTICO: respaldo heredado cambió durante el rescate; estado no certificado: %w",err))
  }
  return rollbackErr
 }
@@ -62,8 +70,8 @@ func restoreSignedLegacyAndVerify(
 // and a ready independent recovery agent. Snapshot must be durable on success.
 // After the staged candidate is prepared, all signed identities and watchdog
 // readiness are checked AGAIN immediately before Switch. An unsuccessful
-// post-snapshot operation always attempts independent-context rollback and
-// probes both local DNS and network connectivity before claiming recovery.
+// post-snapshot operation attempts an independent-context rollback ONLY if the
+// protected original remains trusted; health probes are still required.
 //
 // Production remains BLOCKED until an OS driver can prove candidate immutability
 // across the final check/switch boundary and pass real reboot recovery tests.
@@ -105,9 +113,9 @@ func ApplySignedLegacyWithRollback(
     // Snapshot(). Revalidate the exact protected bytes directly after the
     // callback and BEFORE even installing a new versioned candidate.
     if err := checkSealedOriginalAtTransactionBoundary(backupDir,protectBackup,proof);err != nil {
-        return restoreSignedLegacyAndVerify(driver,
-            fmt.Errorf("respaldo alterado tras Snapshot: %w",err),
-            backupDir,protectBackup,proof)
+        // Snapshot is a backup-only driver call. A corrupt copy must never
+        // be fed into Restore, nor allow candidate preparation to start.
+        return fmt.Errorf("CRÍTICO: respaldo alterado tras Snapshot; actualización detenida antes de instalar motor: %w",err)
     }
     // Everything after Snapshot is a transaction. The original user context
     // may be cancelled; restoreManagedAndVerify uses a fresh 90s rescue context.
