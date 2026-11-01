@@ -1,0 +1,99 @@
+name: VOLVE 0.28.6 live signed launcher to 0.28.7 Windows end-to-end
+on:
+  push:
+    branches: [feature/motor-updater-0287-pilot]
+    paths:
+      - '.github/workflows/volve-0287-live-channel-upgrade.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  public-channel-windows-upgrade:
+    runs-on: windows-latest
+    timeout-minutes: 18
+    steps:
+      - uses: actions/checkout@v4
+      - name: Confirm isolated Windows VM, no production motor task
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          if($env:GITHUB_ACTIONS -ne 'true' -or $env:RUNNER_ENVIRONMENT -ne 'github-hosted'){throw 'Not hosted disposable CI'}
+          $vm=Get-CimInstance Win32_ComputerSystem
+          if(($vm.Manufacturer+' '+$vm.Model) -notmatch '(?i:virtual machine|vmware|hyper-v|kvm|qemu|virtualbox)'){throw 'Host is not a VM'}
+          foreach($task in @('VOLVE-DNS-SERVER-0270','VOLVE-DNS-RESCUE-0270')){
+            if(Get-ScheduledTask -TaskName $task -ErrorAction SilentlyContinue){throw 'Production motor task present'}
+          }
+      - name: Download real signed baseline v0.28.6 and check live v0.28.7 channel
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference='Stop'
+          New-Item -ItemType Directory old -Force | Out-Null
+          gh release download v0.28.6 --repo "${{ github.repository }}" --pattern VOLVE_0_28_6_CENTRO.exe --dir old
+          if($LASTEXITCODE -ne 0){throw 'Baseline 0.28.6 download failed'}
+          $old=(Resolve-Path old/VOLVE_0_28_6_CENTRO.exe).Path
+          if((Get-FileHash -Algorithm SHA256 $old).Hash.ToLowerInvariant() -ne '8659d948427e515e3471508487c81afadb6c9cecfd3633aedc6ea67459f1d72a'){
+            throw 'Installed release v0.28.6 baseline mismatch'
+          }
+          $env:VOLVE_CI_OLD=$old
+          $stage=Join-Path $env:LOCALAPPDATA 'VOLVE/updates/VOLVE_Update_0_28_7.exe'
+          $until=[DateTime]::UtcNow.AddMinutes(4)
+          while([DateTime]::UtcNow -lt $until){
+            $p=Start-Process -FilePath $old -ArgumentList '--check-app-updates' -PassThru
+            $tick=[DateTime]::UtcNow.AddSeconds(40)
+            while([DateTime]::UtcNow -lt $tick -and -not (Test-Path -LiteralPath $stage -PathType Leaf)){
+              Start-Sleep -Seconds 2
+            }
+            if(Test-Path -LiteralPath $stage -PathType Leaf){break}
+            if($p -and -not $p.HasExited){Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue}
+            Start-Sleep -Seconds 5
+          }
+          if(-not (Test-Path -LiteralPath $stage -PathType Leaf)){throw 'Original 0.28.6 launcher did not fetch v0.28.7 from LIVE signed stable channel'}
+          $sha=(Get-FileHash -Algorithm SHA256 $stage).Hash.ToLowerInvariant()
+          if($sha -ne 'e451b6289116636986ddd67b39dc15f02e471ebde7be9508b38d7bcb0155b414'){
+            throw 'LIVE download SHA-256 differs from signed Centro 0.28.7'
+          }
+          if(-not (Test-Path ($stage+'.json')) -or -not (Test-Path ($stage+'.sig'))){
+            throw 'LIVE download missing publisher-signed sidecars'
+          }
+          $liveManifest=[IO.File]::ReadAllBytes($stage+'.json')
+          $pinnedManifest=[IO.File]::ReadAllBytes('release-candidates/v0.28.7/stable.json')
+          if(-not [Linq.Enumerable]::SequenceEqual[byte]($liveManifest,$pinnedManifest)){
+            throw 'LIVE signed manifest differs byte-for-byte from publisher-approved manifest'
+          }
+          $liveSignature=[IO.File]::ReadAllBytes($stage+'.sig')
+          $pinnedSignature=[IO.File]::ReadAllBytes('release-candidates/v0.28.7/stable.json.sig')
+          if(-not [Linq.Enumerable]::SequenceEqual[byte]($liveSignature,$pinnedSignature)){
+            throw 'LIVE Ed25519 signature differs from publisher-approved manifest signature'
+          }
+          Write-Host 'PASS: ORIGINAL 0.28.6 executable fetched authentic v0.28.7 directly from live update channel'
+      - name: Apply live signed download using 0.28.6 built-in updater
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $old=(Resolve-Path old/VOLVE_0_28_6_CENTRO.exe).Path
+          $stage=Join-Path $env:LOCALAPPDATA 'VOLVE/updates/VOLVE_Update_0_28_7.exe'
+          $args='--apply-staged-panel-update "'+$stage+'"'
+          $p=Start-Process -FilePath $old -ArgumentList $args -PassThru
+          try{
+            $installed=Join-Path $env:ProgramData 'VOLVE-Browser-Filter/VOLVE_Centro_Proteccion_0_28_7.exe'
+            $link=Join-Path $env:ProgramData 'Microsoft/Windows/Start Menu/Programs/VOLVE - Centro de proteccion.lnk'
+            $until=[DateTime]::UtcNow.AddSeconds(90)
+            while([DateTime]::UtcNow -lt $until -and (-not (Test-Path $installed) -or -not (Test-Path $link))){
+              Start-Sleep -Seconds 1
+            }
+            if(-not (Test-Path $installed)){throw 'Signed 0.28.7 Center not installed'}
+            if(-not (Test-Path $link)){throw 'Signed 0.28.7 Center shortcut not created'}
+            if((Get-FileHash -Algorithm SHA256 $installed).Hash.ToLowerInvariant() -ne 'e451b6289116636986ddd67b39dc15f02e471ebde7be9508b38d7bcb0155b414'){
+              throw 'Installed Center changed after live download'
+            }
+            $real=(New-Object -ComObject WScript.Shell).CreateShortcut($link).TargetPath
+            if($real -ne $installed){throw '0.28.7 shortcut still points to old version'}
+            foreach($task in @('VOLVE-DNS-SERVER-0270','VOLVE-DNS-RESCUE-0270')){
+              if(Get-ScheduledTask -TaskName $task -ErrorAction SilentlyContinue){throw 'Center update touched DNS task'}
+            }
+            Write-Host 'PASS: LIVE signed 0.28.6 -> 0.28.7 Center auto-download and built-in install; shortcut updated; DNS tasks untouched'
+          }finally{
+            if($p -and -not $p.HasExited){Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue}
+          }
