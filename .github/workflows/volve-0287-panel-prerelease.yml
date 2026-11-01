@@ -1,0 +1,99 @@
+name: VOLVE 0.28.7 signed Centro prerelease and old-launcher VM install test
+on:
+  push:
+    branches: [feature/motor-updater-0287-pilot]
+    paths:
+      - '.github/workflows/volve-0287-panel-prerelease.yml'
+      - 'release-candidates/v0.28.7/**'
+permissions:
+  contents: write
+  actions: read
+jobs:
+  release-and-test:
+    runs-on: windows-latest
+    timeout-minutes: 22
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.x'
+      - name: Download EXACT green 0.28.7 candidate from previous Windows build
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference='Stop'
+          New-Item -ItemType Directory stage -Force | Out-Null
+          gh run download 41358404012 --repo "${{ github.repository }}" --name VOLVE_0_28_7_CENTRO_CANDIDATO_NO_INSTALAR --dir stage
+          if($LASTEXITCODE -ne 0){throw 'Trusted candidate run artifact unavailable'}
+          Copy-Item stage/VOLVE_0_28_7_CENTRO_CANDIDATO.exe stage/VOLVE_0_28_7_CENTRO.exe
+          $evidence=Get-Content stage/EVIDENCIA_CANDIDATO.txt -Raw
+          if(-not $evidence.Contains('SOURCE_COMMIT=99ecd4999118ee9371d101c9a0b877d41b729491')){
+            throw 'Candidate source revision does not match approved build'
+          }
+      - name: Verify original OFFLINE Ed25519 signature and exact Windows bytes
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          go run release-candidates/v0.28.7/verify_manifest.go stage/VOLVE_0_28_7_CENTRO.exe
+          if($LASTEXITCODE -ne 0){throw 'Signed verification failed; no release'}
+      - name: Publish only immutable PRE-RELEASE; do NOT change stable channel
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference='Stop'
+          gh release view v0.28.7 --repo "${{ github.repository }}" *> $null
+          if($LASTEXITCODE -eq 0){throw 'Refusing to replace existing release v0.28.7'}
+          gh release create v0.28.7 stage/VOLVE_0_28_7_CENTRO.exe release-candidates/v0.28.7/stable.json release-candidates/v0.28.7/stable.json.sig --repo "${{ github.repository }}" --target 99ecd4999118ee9371d101c9a0b877d41b729491 --prerelease --title "VOLVÉ 0.28.7 Centro (prueba firmada)" --notes "Centro Windows 0.28.7 firmado con el canal Ed25519 existente. Solo Centro; el motor DNS y las tareas SYSTEM instaladas no se sustituyen. No se activa el canal estable hasta pasar integración 0.28.6 -> 0.28.7."
+          if($LASTEXITCODE -ne 0){throw 'Pre-release creation failed'}
+      - name: Install signed 0.28.7 from REAL 0.28.6 updater in disposable VM only
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference='Stop'
+          if($env:GITHUB_ACTIONS -ne 'true' -or $env:RUNNER_ENVIRONMENT -ne 'github-hosted'){throw 'Hosted isolated VM required'}
+          $vm=Get-CimInstance Win32_ComputerSystem
+          if(($vm.Manufacturer+' '+$vm.Model) -notmatch '(?i:virtual machine|vmware|hyper-v|kvm|qemu|virtualbox)'){throw 'Not a VM'}
+          foreach($name in @('VOLVE-DNS-SERVER-0270','VOLVE-DNS-RESCUE-0270')){
+            if(Get-ScheduledTask -TaskName $name -ErrorAction SilentlyContinue){throw 'Production motor task present; stop test'}
+          }
+          $admin=([Security.Principal.WindowsPrincipal]::new([Security.Principal.WindowsIdentity]::GetCurrent())).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+          if(-not $admin){throw 'Administrator token needed to test existing updater'}
+          New-Item -ItemType Directory stage-old -Force | Out-Null
+          gh release download v0.28.6 --repo "${{ github.repository }}" --pattern VOLVE_0_28_6_CENTRO.exe --dir stage-old
+          if($LASTEXITCODE -ne 0){throw 'Original 0.28.6 release unavailable'}
+          $old=(Resolve-Path stage-old/VOLVE_0_28_6_CENTRO.exe).Path
+          if((Get-FileHash -Algorithm SHA256 $old).Hash.ToLowerInvariant() -ne '8659d948427e515e3471508487c81afadb6c9cecfd3633aedc6ea67459f1d72a'){
+            throw 'Real 0.28.6 EXE does not match pinned installed release'
+          }
+          $dir=Join-Path $env:LOCALAPPDATA 'VOLVE/updates'
+          New-Item -ItemType Directory $dir -Force | Out-Null
+          $staged=Join-Path $dir 'VOLVE_Update_0_28_7.exe'
+          Copy-Item stage/VOLVE_0_28_7_CENTRO.exe $staged -Force
+          Copy-Item release-candidates/v0.28.7/stable.json ($staged+'.json') -Force
+          Copy-Item release-candidates/v0.28.7/stable.json.sig ($staged+'.sig') -Force
+          $arg='--apply-staged-panel-update "'+$staged+'"'
+          $proc=Start-Process -FilePath $old -ArgumentList $arg -PassThru
+          try{
+            $target=Join-Path $env:ProgramData 'VOLVE-Browser-Filter/VOLVE_Centro_Proteccion_0_28_7.exe'
+            $deadline=[DateTime]::UtcNow.AddSeconds(85)
+            while(-not (Test-Path -LiteralPath $target -PathType Leaf) -and [DateTime]::UtcNow -lt $deadline){
+              Start-Sleep -Seconds 1
+            }
+            if(-not (Test-Path $target)){throw '0.28.6 updater did not install signed 0.28.7 Centro'}
+            if((Get-FileHash -Algorithm SHA256 $target).Hash.ToLowerInvariant() -ne 'e451b6289116636986ddd67b39dc15f02e471ebde7be9508b38d7bcb0155b414'){
+              throw 'Installed panel hash does not match signed v0.28.7'
+            }
+            $shortcut=Join-Path $env:ProgramData 'Microsoft/Windows/Start Menu/Programs/VOLVE - Centro de proteccion.lnk'
+            if(-not (Test-Path -LiteralPath $shortcut -PathType Leaf)){throw 'Centro shortcut missing'}
+            $realTarget=(New-Object -ComObject WScript.Shell).CreateShortcut($shortcut).TargetPath
+            if($realTarget -ne $target){throw 'Shortcut does not point to version 0.28.7'}
+            foreach($name in @('VOLVE-DNS-SERVER-0270','VOLVE-DNS-RESCUE-0270')){
+              if(Get-ScheduledTask -TaskName $name -ErrorAction SilentlyContinue){throw 'Panel-only update unexpectedly installed DNS motor task'}
+            }
+            Write-Host 'PASS: ORIGINAL 0.28.6 updater installed publisher-signed 0.28.7 Centro; shortcut correct; no DNS task touched.'
+          }finally{
+            if($proc -and -not $proc.HasExited){Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue}
+          }
