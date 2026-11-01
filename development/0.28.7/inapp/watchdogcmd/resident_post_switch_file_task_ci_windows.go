@@ -2,12 +2,13 @@
 
 package main
 
-// Isolated Windows CI-only integration for a missing original executable
-// followed by restoration of a disposable SYSTEM Scheduler task. No product
+// Isolated Windows CI-only integration for a missing original executable or
+// an exact journal-pinned inert candidate, then disposable SYSTEM task restore.
+// No product
 // task, adapters, DNS, live motor or terminal recovery receipts are touched.
 //
-// This is NOT a production restorer: it cannot overwrite an existing new
-// engine, prove a publisher-signed permission or confirm active DNS health.
+// NOT a production restorer: replacing the exact lab candidate does NOT prove
+// publisher authorization, process lockout or active DNS health.
 import (
  "context"
  "errors"
@@ -32,9 +33,9 @@ func restoreMissingOriginalAndDisposableTaskCILab(
  release,err:=acquireCIBootMutex(ctx,"VOLVE-CI-BootLock-"+suffix)
  if err!=nil{return fmt.Errorf("cannot lock disposable restoration: %w",err)}
  defer release()
- // The missing EXE is prepared from the old sealed backup without clobbering
- // any other installed motor. After that, the existing task import path
- // requires the original EXE to match that protected copy byte for byte.
+ // Recreate missing bytes, or atomically restore only the exact candidate
+ // SHA-256 pinned by the disposable lab journal. Unknown existing binaries
+ // remain untouched; Task Scheduler import then requires the old bytes.
  if err:=restoreMissingLegacyExecutableCILab(ctx,root,pilotTask);err!=nil{
   return fmt.Errorf("original bytes cannot be reconstructed: %w",err)
  }
