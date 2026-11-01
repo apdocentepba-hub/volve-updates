@@ -6,7 +6,6 @@ package motorupdate
 // Test-only synthetic binary/ACL fixture: no actual motor or task changes.
 import (
  "context"
- "errors"
  "os"
  "path/filepath"
  "testing"
@@ -75,7 +74,7 @@ func TestDurablePublisherBoundWindowsBootRequiresPinnedTrust(t *testing.T){
    scenario.protect,allow,allow)
   if err==nil||driver!=nil{t.Fatal("untrusted durable boot configuration accepted")}
  }
- if _,err:=NewDurablePublisherBoundProtectedResidentBootDriver(nil,f.root,f.pub,allow,allow,allow);!errors.Is(err,nil)&&err==nil{
+ if driver,err:=NewDurablePublisherBoundProtectedResidentBootDriver(nil,f.root,f.pub,allow,allow,allow);err==nil||driver!=nil{
   t.Fatal("nil recovery operations accepted")
  }
 }
