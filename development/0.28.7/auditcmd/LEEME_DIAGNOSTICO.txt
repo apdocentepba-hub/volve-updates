@@ -11,6 +11,14 @@ Para ejecutarla:
 
 El reporte incluye la clasificación, fecha/hora, el resumen anónimo de seis inventarios de Windows y el estado de coincidencia del motor de catálogo con el SHA-256 del código original 0.28.6.
 No incluye rutas completas de tareas, IP concretas, direcciones bloqueadas ni contenido del registro de estado.
+Si el motor DNS heredado pertenece al mismo proceso SYSTEM que atiende IPv4 e IPv6
+y su tarea SYSTEM coincide exactamente con la esperada, el reporte incluye
+"legacy_identity_for_publisher": el SHA-256 y tamaño de su ejecutable y el SHA-256
+de la definición XML de su tarea. Solo contiene huellas de identidad: NO incluye
+el XML ni sus argumentos originales, rutas completas, PID o URLs privadas.
+Si algo falta o cambia entre lecturas, informa NOT_VERIFIED_NO_CHANGES, sin huellas.
+El expediente NO está firmado, NO habilita reemplazar el motor, NO incorpora
+un candidato de actualización y NO sustituye el respaldo/recuperador protegido.
 No publica información en Internet ni guarda credenciales.
 Si falta el registro original, permisos o evidencia, devuelve INCOMPLETE y no interpreta la máquina como nueva.
 Solo se cuentan ENTRADAS de las políticas de Chrome, Edge y Firefox, sin leer ni exportar las URLs bloqueadas. Que existan entradas NO demuestra que el navegador las aplique.
