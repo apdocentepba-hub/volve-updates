@@ -31,6 +31,7 @@ import (
 type signedLegacyWindowsTaskLab struct {
     *managedWindowsTaskLab
     watcherName, watchdogExe, watchdogJournal string
+    migrationUnlock func()
 }
 
 // The signed migration lab uses an actual cross-process Windows kernel
@@ -41,7 +42,11 @@ func(d *signedLegacyWindowsTaskLab) AcquireExclusiveMigration(ctx context.Contex
  if !managedLabName.MatchString(d.name){
   return nil,errors.New("exclusive signed migration cannot target production task")
  }
- return motorupdate.AcquireWindowsSignedLegacyLabLease(ctx,d.name)
+ unlock,err:=motorupdate.AcquireWindowsSignedLegacyLabLease(ctx,d.name)
+ if err!=nil{return nil,err}
+ if unlock==nil{return nil,errors.New("Windows signed migration did not acquire mutex")}
+ d.migrationUnlock=unlock
+ return unlock,nil
 }
 
 func (d *signedLegacyWindowsTaskLab) IndependentRecoveryReady(ctx context.Context, proof motorupdate.VerifiedLegacyMigrationProof) error {
@@ -116,6 +121,21 @@ func (d *signedLegacyWindowsTaskLab) Snapshot(ctx context.Context) error {
 // Only the separately compiled watcher, executed by a disposable SYSTEM task,
 // performs rollback. No direct task restoration is allowed in this adapter.
 func (d *signedLegacyWindowsTaskLab) Restore(ctx context.Context) error {
+    if err:=ctx.Err();err!=nil{return err}
+    if d.migrationUnlock==nil{return errors.New("missing migration lease for SYSTEM watchdog handoff")}
+    // A pending journal is required BEFORE releasing the kernel lock. After
+    // handoff the SYSTEM watchdog re-acquires that exact BootLock name and
+    // re-reads the protected journal itself. Never wait on the watchdog
+    // while holding its mutex: that creates a cross-process deadlock.
+    raw,err:=os.ReadFile(d.watchdogJournal)
+    if err!=nil{return err}
+    var pending ciWatchdogJournal
+    if err:=json.Unmarshal(raw,&pending);err!=nil{return err}
+    if pending.Phase!="pending"||pending.TaskName!=d.name{
+        return errors.New("cannot handoff watchdog without exact pending CI journal")
+    }
+    d.migrationUnlock()
+    d.migrationUnlock=nil
     if err:=startSYSTEMWatchdogLabTask(d.watcherName);err!=nil{return err}
     tick:=time.NewTicker(300*time.Millisecond)
     defer tick.Stop()
