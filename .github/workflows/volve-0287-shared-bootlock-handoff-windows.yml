@@ -73,7 +73,7 @@ jobs:
           go build -trimpath -o $helper ./cmd/volve-managed-watchdog
           if($LASTEXITCODE -ne 0 -or -not (Test-Path $helper)){throw 'Independent watchdog did not build'}
           $env:VOLVE_CI_MANAGED_WATCHDOG_EXE=$helper
-          go test ./motorupdate -run '^TestProtected(SignedSwitchAndBootRecoveryShareProductionMutex|AdaptersFailClosedWithoutTrustedOperations)$' -count=1 -timeout 2m -v
+          go test ./motorupdate -run '^(TestProtectedSignedSwitchAndBootRecoveryShareProductionMutex|TestProtectedAdaptersFailClosedWithoutTrustedOperations|TestProtectedSignedRollbackHandsOffThenReacquiresBeforeHealth|TestProtectedSignedDriverRejectsHandoffMissing)$' -count=1 -timeout 3m -v
           if($LASTEXITCODE -ne 0){throw 'Production switch and boot recovery did not share protected mutex'}
           go test ./cmd/volve-managed-watchdog -run '^(TestIndependentWatchdogUsesMigrationBootLockEvenForTerminalJournal|TestProtectedResidentBootPolicyUsesProductionMutexBeforeReadingJournal|TestProtectedBootPlanAuditWaitsForProductionUpdateMutex|TestIndependentBootAuditAcrossFreshProcesses)$' -count=1 -timeout 5m -v
           if($LASTEXITCODE -ne 0){throw 'Watchdog did not respect migration-held BootLock'}
