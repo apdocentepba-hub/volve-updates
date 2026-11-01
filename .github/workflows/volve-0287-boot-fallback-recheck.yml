@@ -1,0 +1,64 @@
+name: VOLVE 0.28.7 independent boot original recheck (NO RELEASE)
+on:
+  push:
+    branches: [feature/motor-updater-0287-pilot]
+    paths:
+      - 'development/0.28.7/inapp/resident_boot_recovery.go'
+      - 'development/0.28.7/inapp/resident_boot_recovery_test.go'
+      - 'development/0.28.7/inapp/watchdogcmd/resident_boot_driver_ci_windows_test.go'
+      - 'development/0.28.7/inapp/apply_overlay.go'
+      - '.github/workflows/volve-0287-boot-fallback-recheck.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  boot-original-recheck:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 13
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.x'
+      - name: Reconstruct authenticated source and apply reviewed code
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import hashlib, zipfile, shutil
+          base=Path("development/0.28.7")
+          parts=sorted((base/"complete-source-parts").glob("part-*.bin"))
+          assert len(parts)==10 and [p.name for p in parts]==[f"part-{i:02d}.bin" for i in range(10)]
+          data=b"".join(p.read_bytes() for p in parts)
+          assert hashlib.sha256(data).hexdigest()=="92b3536559151260375b17a64eedd009df8399e45460637208027b7ca0587ba5"
+          Path("source.zip").write_bytes(data)
+          Path("build").mkdir(exist_ok=True)
+          with zipfile.ZipFile("source.zip") as z:z.extractall("build")
+          patches=[
+            ("VOLVE_0287_PRECHECK_RESCATE_OVERLAY_NO_INSTALAR.zip","fdfd31f21df81fe6da6075bfd442354297874576b6dc2c38f19bd35a681d95cd"),
+            ("VOLVE_0287_RECUPERACION_INTERRUPCION_FORZADA_NO_INSTALAR_v3.zip","773bd5eb5f1c4883021cc321856636354e964d3605dba9017e2fb5d1a7401b40"),
+          ]
+          for name,digest in patches:
+            file=base/name
+            assert hashlib.sha256(file.read_bytes()).hexdigest()==digest
+            with zipfile.ZipFile(file) as z:z.extractall("build")
+          for file in (base/"journal").glob("*.go"):
+            shutil.copy2(file,Path("build/codigo/motorupdate")/file.name)
+          print("Verified source and both rollback overlays; no production installation.")
+          PY
+          go run development/0.28.7/inapp/apply_overlay.go build/codigo
+      - name: Reject original snapshot drift during boot DNS and Internet health checks
+        shell: bash
+        working-directory: build/codigo
+        run: |
+          test -f motorupdate/resident_boot_recovery.go
+          test -f motorupdate/resident_boot_recovery_test.go
+          go test ./motorupdate -run '^TestBootRecovery' -count=1 -timeout 4m -v
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            go test ./cmd/volve-managed-watchdog -run '^TestResidentCIBootDriver' -count=1 -timeout 5m -v
+          fi
+          echo "PASS: sealed original reverified after DNS/network health; no false restored receipt."
