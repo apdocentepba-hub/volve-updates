@@ -133,7 +133,40 @@ func TestPostSwitchSystemTaskCILabRestoresRealDisposableSystemTaskAndOriginalByt
  if _,err:=os.Lstat(filepath.Join(journalDir,motorupdate.ResidentResultFile));!os.IsNotExist(err){
   t.Fatalf("restored task falsely wrote DNS/Internet health receipt: %v",err)
  }
- t.Logf("PASS: real SYSTEM task and old EXE recovered, independent-process retry idempotent (scenario=%s); journal still pending; DNS untouched",scenario)
+ // Anti-clobber regression: deliberately point ONLY our disposable test task
+ // at the synthetic target with unauthorized arguments. An independent
+ // retry must reject it before ANY task registration or terminal receipt.
+ tamper:="$ErrorActionPreference='Stop';$n="+q(task)+";"+
+  "$action=New-ScheduledTaskAction -Execute "+q(target)+" -Argument '--wrong-untrusted-arguments';"+
+  "Set-ScheduledTask -TaskName $n -TaskPath '\\' -Action $action -ErrorAction Stop|Out-Null;"+
+  "$s=Get-ScheduledTask -TaskName $n -TaskPath '\\' -ErrorAction Stop;"+
+  "if([string]$s.Actions[0].Arguments -cne '--wrong-untrusted-arguments'){throw 'disposable tamper fixture not set'};"+
+  "Write-Output 'CI_TEMPORARY_TASK_TAMPERED'"
+ if out,err:=ps(ctx,tamper);err!=nil||out!="CI_TEMPORARY_TASK_TAMPERED"{
+  t.Fatalf("could not prepare controlled disposable task tamper case: %s %v",out,err)
+ }
+ untrusted:=exec.CommandContext(ctx,os.Args[0],
+  "-test.run=^TestPostSwitchSystemTaskCILabExternalChild$","-test.v")
+ untrusted.Env=append(os.Environ(),
+  "VOLVE_CI_TASK_RESTORE_CHILD=1",
+  "VOLVE_CI_TASK_RESTORE_ROOT="+root,
+  "VOLVE_CI_TASK_RESTORE_NAME="+task)
+ rejected,rejectErr:=untrusted.CombinedOutput()
+ if rejectErr==nil || strings.Contains(string(rejected),"CI_EXTERNAL_RECOVERY_OK"){
+  t.Fatalf("unknown SYSTEM task arguments incorrectly authorized automatic rollback: %v %s",rejectErr,rejected)
+ }
+ verifyTamper:="$ErrorActionPreference='Stop';$n="+q(task)+";"+
+  "$s=Get-ScheduledTask -TaskName $n -TaskPath '\\' -ErrorAction Stop;"+
+  "if([string]$s.Actions[0].Arguments -cne '--wrong-untrusted-arguments'){throw 'unknown task unexpectedly overwritten'};"+
+  "Write-Output 'CI_UNKNOWN_ACTION_UNTOUCHED'"
+ if out,err:=ps(ctx,verifyTamper);err!=nil||out!="CI_UNKNOWN_ACTION_UNTOUCHED"{
+  t.Fatalf("rejected retry changed another SYSTEM task action: %s %v",out,err)
+ }
+ still,err:=motorupdate.InspectResidentRecoveryJournal(ctx,journalDir,protect)
+ if err!=nil||still.Status!="recovery-required"{
+  t.Fatalf("rejected task tamper falsely closed pending recovery: %+v %v",still,err)
+ }
+ t.Logf("PASS: already-restored SYSTEM task independent retry idempotent, but unknown task arguments rejected without modification (scenario=%s); journal pending",scenario)
   })
  }
 }
