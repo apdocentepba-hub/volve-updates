@@ -85,13 +85,31 @@ func TestPreparedSignedMigrationValidIsReadOnlyAndNeverClaimsInstalled(t *testin
         context.Background(), f.root, f.candidate, "0.28.7", f.pub,
         true, func()(string,error){ called++; return "CI task and DNS OK",nil }, statusTestACL,
     )
-    if !found || called!=1 || !strings.Contains(report,"permiso editorial firmado") ||
+    // The signed bridge now rechecks real SYSTEM/DNS state twice before reporting readiness.
+    if !found || called!=2 || !strings.Contains(report,"permiso editorial firmado") ||
         !strings.Contains(report,"NO se cambió el motor") ||
         !strings.Contains(report,"bloqueada") {
         t.Fatalf("verified status must never claim installation: %q (found=%v, calls=%d)",report,found,called)
     }
     if _,err:=os.Stat(filepath.Join(f.backup,"VOLVE_DNS_Legacy_Recovery.exe"));err!=nil{t.Fatal(err)}
     if _,err:=os.Stat(filepath.Join(f.root,dnsServiceFile));err!=nil{t.Fatal(err)}
+}
+
+func TestPreparedSignedMigrationRejectsSecondLivePreflightFailure(t *testing.T) {
+    f:=makeMigrationStatusFixture(t)
+    calls:=0
+    report,found:=preparedSignedLegacyMigrationStatus(
+        context.Background(),f.root,f.candidate,"0.28.7",f.pub,true,
+        func()(string,error){
+            calls++
+            if calls==2{return "",errors.New("CI SYSTEM or DNS service changed after first proof")}
+            return "CI initial state healthy",nil
+        },statusTestACL,
+    )
+    if !found||calls!=2||strings.Contains(report,"permiso editorial firmado y respaldo original verificados")||
+        !strings.Contains(report,"rechazado")||!strings.Contains(report,"no se instalar") {
+        t.Fatalf("second live SYSTEM/DNS inspection authorized stale legacy migration: %q (found=%v, calls=%d)",report,found,calls)
+    }
 }
 
 func TestPreparedSignedMigrationRefusesPartialForgedAndUnsafeEvidence(t *testing.T) {
