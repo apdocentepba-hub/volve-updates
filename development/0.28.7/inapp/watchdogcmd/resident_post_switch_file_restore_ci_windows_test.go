@@ -83,3 +83,58 @@ func TestPostSwitchCILabOnlyAcceptsDisposableTaskAndTempRoot(t *testing.T){
   t.Fatal("cancelled CI restore copied any bytes")
  }
 }
+
+func TestPostSwitchCILabRestoresJournalPinnedReplacedExeAndLeavesJournalPending(t *testing.T){
+ root,dir,_,protect:=chainFixture(t,false)
+ live:=filepath.Join(root,residentLegacyExe)
+ original,err:=os.ReadFile(live)
+ if err!=nil{t.Fatal(err)}
+ // This synthetic candidate is the exact SHA-256 bound by chainFixture's
+ // pending journal. It is NOT a publisher-signed release.
+ candidate:=[]byte("publisher-signed candidate CI bytes")
+ if err:=os.WriteFile(live,candidate,0600);err!=nil{t.Fatal(err)}
+ if err:=restoreMissingLegacyExecutableCILab(context.Background(),root,disposableResidentTask);err!=nil{
+  t.Fatalf("byte-exact lab candidate was not replaced with protected original: %v",err)
+ }
+ recovered,err:=os.ReadFile(live)
+ if err!=nil||string(recovered)!=string(original){
+  t.Fatalf("protected original was not restored over exact lab candidate: %v",err)
+ }
+ // A second invocation is harmless and must not rewrite healthy bytes.
+ before,err:=os.Stat(live);if err!=nil{t.Fatal(err)}
+ if err:=restoreMissingLegacyExecutableCILab(context.Background(),root,disposableResidentTask);err!=nil{
+  t.Fatalf("already recovered original became non-idempotent: %v",err)
+ }
+ after,err:=os.Stat(live);if err!=nil{t.Fatal(err)}
+ if !os.SameFile(before,after){t.Fatal("second recovery rewrote already verified original")}
+ state,err:=motorupdate.InspectResidentRecoveryJournal(context.Background(),dir,protect)
+ if err!=nil||state.Status!="recovery-required"{
+  t.Fatalf("file copy falsely certified DNS or network health: %+v %v",state,err)
+ }
+ if _,err:=os.Lstat(filepath.Join(dir,motorupdate.ResidentResultFile));!os.IsNotExist(err){
+  t.Fatalf("file-only replacement wrote a false terminal result: %v",err)
+ }
+}
+
+func TestPostSwitchCILabNeverOverwritesSymlinkedOrUnknownInstalledCandidate(t *testing.T){
+ root,_,_,_:=chainFixture(t,false)
+ live:=filepath.Join(root,residentLegacyExe)
+ unknown:=[]byte("MZ_CI_UNKNOWN_UNVERIFIED_MOTOR")
+ if err:=os.WriteFile(live,unknown,0600);err!=nil{t.Fatal(err)}
+ if err:=restoreMissingLegacyExecutableCILab(context.Background(),root,disposableResidentTask);err==nil{
+  t.Fatal("unrecognized executable overwritten")
+ }
+ now,err:=os.ReadFile(live)
+ if err!=nil||string(now)!=string(unknown){t.Fatalf("unknown candidate changed: %v",err)}
+ if err:=os.Remove(live);err!=nil{t.Fatal(err)}
+ target:=filepath.Join(root,"CI_DIFFERENT_TARGET.exe")
+ if err:=os.WriteFile(target,[]byte("CI_UNOWNED_TARGET"),0600);err!=nil{t.Fatal(err)}
+ if err:=os.Symlink(target,live);err!=nil{t.Skipf("VM symlink creation not available: %v",err)}
+ if err:=restoreMissingLegacyExecutableCILab(context.Background(),root,disposableResidentTask);err==nil{
+  t.Fatal("symlinked executable was overwritten")
+ }
+ after,err:=os.ReadFile(target)
+ if err!=nil||string(after)!="CI_UNOWNED_TARGET"{
+  t.Fatalf("symlink target changed by prohibited rollback: %v",err)
+ }
+}
