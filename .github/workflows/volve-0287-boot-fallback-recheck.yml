@@ -6,6 +6,9 @@ on:
       - 'development/0.28.7/inapp/resident_boot_recovery.go'
       - 'development/0.28.7/inapp/resident_boot_recovery_test.go'
       - 'development/0.28.7/inapp/watchdogcmd/resident_boot_driver_ci_windows_test.go'
+      - 'development/0.28.7/inapp/watchdogcmd/resident_boot_audit_windows.go'
+      - 'development/0.28.7/inapp/watchdogcmd/resident_boot_audit_windows_test.go'
+      - 'development/0.28.7/inapp/watchdogcmd/resident_post_switch_recovery_audit_windows.go'
       - 'development/0.28.7/inapp/apply_overlay.go'
       - '.github/workflows/volve-0287-boot-fallback-recheck.yml'
   workflow_dispatch:
@@ -59,6 +62,7 @@ jobs:
           test -f motorupdate/resident_boot_recovery_test.go
           go test ./motorupdate -run '^TestBootRecovery' -count=1 -timeout 4m -v
           if [[ "$RUNNER_OS" == "Windows" ]]; then
+            go test ./cmd/volve-managed-watchdog -run '^TestIndependentBootAudit|^TestPostSwitchRecovery' -count=1 -timeout 5m -v
             go test ./cmd/volve-managed-watchdog -run '^TestResidentCIBootDriver' -count=1 -timeout 5m -v
           fi
           echo "PASS: sealed original reverified after DNS/network health; no false restored receipt."
