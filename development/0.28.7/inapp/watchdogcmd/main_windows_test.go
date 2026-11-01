@@ -11,6 +11,7 @@ import (
  "path/filepath"
  "strings"
  "testing"
+ "time"
 )
 
 func fixtureJournal(t *testing.T,phase string)(string,journal){
@@ -112,4 +113,31 @@ func TestIndependentWatchdogRejectsLinkedSnapshotParent(t *testing.T){
     raw,err:=json.Marshal(j);if err!=nil{t.Fatal(err)}
     if err:=os.WriteFile(journalPath,raw,0600);err!=nil{t.Fatal(err)}
     if _,err:=readJournal(journalPath);err==nil{t.Fatal("symlinked snapshot parent accepted")}
+}
+
+func TestIndependentWatchdogUsesMigrationBootLockEvenForTerminalJournal(t *testing.T){
+ path,j:=secureFixtureJournal(t,"committed")
+ suffix:=strings.TrimPrefix(j.TaskName,"VOLVE-CI-ManagedMotor-")
+ lockName:="VOLVE-CI-BootLock-"+suffix
+ release,err:=acquireCIBootMutex(context.Background(),lockName)
+ if err!=nil{t.Fatalf("signed migration could not acquire shared recovery lease: %v",err)}
+ held:=true
+ defer func(){if held{release()}}()
+ ctx,cancel:=context.WithTimeout(context.Background(),300*time.Millisecond)
+ defer cancel()
+ results:=make(chan error,1)
+ go func(){results<-run(ctx,path)}()
+ select{
+ case err:=<-results:
+  if !errors.Is(err,context.DeadlineExceeded){
+   t.Fatalf("SYSTEM watchdog bypassed held signed migration BootLock: %v",err)
+  }
+ case <-time.After(4*time.Second):
+  t.Fatal("independent watchdog hung rather than honoring bounded shared lock wait")
+ }
+ release()
+ held=false
+ if err:=run(context.Background(),path);err!=nil{
+  t.Fatalf("watchdog could not revalidate terminal journal after migration released lease: %v",err)
+ }
 }
