@@ -45,8 +45,20 @@ func(d *signedLegacyWindowsTaskLab) AcquireExclusiveMigration(ctx context.Contex
  unlock,err:=motorupdate.AcquireWindowsSignedLegacyLabLease(ctx,d.name)
  if err!=nil{return nil,err}
  if unlock==nil{return nil,errors.New("Windows signed migration did not acquire mutex")}
+ if d.migrationUnlock!=nil {
+  unlock()
+  return nil,errors.New("migration already has an exclusive Windows lease")
+ }
  d.migrationUnlock=unlock
- return unlock,nil
+ // This closure belongs to the transaction and also handles the case where
+ // the SYSTEM watchdog borrowed the mutex for recovery in the meantime.
+ // The final successful lease must be released, not merely the old one.
+ return func(){
+  if d.migrationUnlock!=nil{
+   d.migrationUnlock()
+   d.migrationUnlock=nil
+  }
+ },nil
 }
 
 func (d *signedLegacyWindowsTaskLab) IndependentRecoveryReady(ctx context.Context, proof motorupdate.VerifiedLegacyMigrationProof) error {
@@ -89,6 +101,19 @@ func (d *signedLegacyWindowsTaskLab) IndependentRecoveryReady(ctx context.Contex
         return fmt.Errorf("independent recovery SYSTEM task not ready: %v %s",err,out)
     }
     return nil
+}
+
+// Both health gates run with exclusive Windows ownership. After a SYSTEM
+// watchdog rollback the updater must REACQUIRE BootLock BEFORE rechecking
+// live task identity / DNS / connectivity, not merely after obtaining a
+// "restored" JSON value from an independent process.
+func (d *signedLegacyWindowsTaskLab) Probe(ctx context.Context)error{
+ if d.migrationUnlock==nil{return errors.New("local health probe without restored migration BootLock")}
+ return d.managedWindowsTaskLab.Probe(ctx)
+}
+func (d *signedLegacyWindowsTaskLab) ProbeConnectivity(ctx context.Context)error{
+ if d.migrationUnlock==nil{return errors.New("external health probe without restored migration BootLock")}
+ return d.managedWindowsTaskLab.ProbeConnectivity(ctx)
 }
 
 // VerifyPreparedTarget is a separate check of the VERSIONED INSTALLED COPY.
@@ -134,8 +159,12 @@ func (d *signedLegacyWindowsTaskLab) Restore(ctx context.Context) error {
     if pending.Phase!="pending"||pending.TaskName!=d.name{
         return errors.New("cannot handoff watchdog without exact pending CI journal")
     }
-    d.migrationUnlock()
+    // The signed-updater process releases the kernel mutex before the
+    // independently scheduled SYSTEM recovery starts. The SYSTEM watchdog
+    // MUST acquire and release this very same BootLock itself.
+    releaseOld:=d.migrationUnlock
     d.migrationUnlock=nil
+    releaseOld()
     if err:=startSYSTEMWatchdogLabTask(d.watcherName);err!=nil{return err}
     tick:=time.NewTicker(300*time.Millisecond)
     defer tick.Stop()
@@ -144,7 +173,25 @@ func (d *signedLegacyWindowsTaskLab) Restore(ctx context.Context) error {
         raw,err:=os.ReadFile(d.watchdogJournal)
         if err==nil {
             var j ciWatchdogJournal
-            if json.Unmarshal(raw,&j)==nil && j.Phase=="restored" {
+            if json.Unmarshal(raw,&j)==nil && j.Phase=="restored" &&
+                j.TaskName==d.name && j.SnapshotFile==d.backup &&
+                j.SnapshotSHA256==d.originalHash {
+                // Seeing the watchdog's JSON is NOT enough: it may still
+                // hold its mutex while writing the receipt. Reacquire it
+                // with this fresh independent rescue context. Only then
+                // can the original task and health be checked consistently.
+                reacquire,lockErr:=motorupdate.AcquireWindowsSignedLegacyLabLease(ctx,d.name)
+                if lockErr!=nil{return fmt.Errorf("SYSTEM restored but shared BootLock not reacquired: %w",lockErr)}
+                if reacquire==nil{return errors.New("SYSTEM restored but lease missing for health verification")}
+                current,readErr:=os.ReadFile(d.watchdogJournal)
+                var after ciWatchdogJournal
+                if readErr!=nil || json.Unmarshal(current,&after)!=nil ||
+                    after.Phase!="restored"||after.TaskName!=d.name||
+                    after.SnapshotFile!=d.backup||after.SnapshotSHA256!=d.originalHash {
+                    reacquire()
+                    return errors.New("SYSTEM recovery receipt changed after shared mutex reacquisition")
+                }
+                d.migrationUnlock=reacquire
                 d.restored=true
                 return nil
             }
