@@ -54,6 +54,7 @@ type FreshMotorInstallEvidence struct {
  UDP53IPv6OwnerCount int
  TCP53IPv4OwnerCount int
  TCP53IPv6OwnerCount int
+ RecoveryArtifactsPresent bool
  RecoveryJournalPresent bool
  PendingRollbackPresent bool
 }
@@ -94,7 +95,7 @@ func CheckFreshMotorInstallReadiness(ctx context.Context, e FreshMotorInstallEvi
  if e.LocalIPv4DNSConfigured || e.LocalIPv6DNSConfigured {
   return errors.New("a Windows adapter still points to local DNS; restore original settings first")
  }
- if e.RecoveryJournalPresent || e.PendingRollbackPresent {
+ if e.RecoveryArtifactsPresent || e.RecoveryJournalPresent || e.PendingRollbackPresent {
   return errors.New("old recovery transaction or journal must be resolved, never overwritten")
  }
  return nil
