@@ -232,3 +232,18 @@ El test recupera el ejecutable original desde el respaldo NTFS, restaura una tar
 **Estado honesto del hito:** existe una primitiva **Windows real** de exclusión entre procesos y el contrato de transacción obliga a mantenerla durante rollback; sin embargo, **el watchdog de rescate real aún NO comparte el mismo mutex**, no hay controlador productivo certificado ni reinicio de VM persistente. La prueba entre procesos acredita la primitiva **solo del laboratorio**. Global **50% (5/10 puertas)**; hito 7 permanece abierto.
 
 **Batería general:** la ejecución del código de los cambios más recientes se seguirá desde GitHub Actions; las corridas canceladas por commits posteriores NO cuentan como éxitos. Se necesita una corrida final Windows completa antes de considerar estable la integración.
+
+
+## 01/11/2026 — Verificación DNS local en Windows del usuario (solo lectura)
+
+**Origen de la evidencia:** informe entregado voluntariamente por el usuario `VOLVE_DNS53_LEGIBLE_20261101_173700.json` y ZIP equivalente, inspeccionados en sesión. Los archivos son **privados del equipo y NO fueron incorporados al repositorio**; esta nota resume únicamente verificaciones no identificantes.
+
+**COMPROBADO EN LA PC REAL, SIN ALTERAR INSTALACIÓN:**
+- Tarea original encontrada, principal `SYSTEM`, acción/argumentos de servicio DNS coincidentes; un único proceso del motor en ejecución bajo `SYSTEM`.
+- El proceso inspeccionado era titular de los endpoints UDP/53 y TCP/53 observados.
+- **12/12 consultas DNS locales** respondieron por los servidores loopback IPv4 (`127.0.0.1`) e IPv6 (`::1`). Las 8 consultas A/AAAA a **dos dominios de apuestas del ensayo** devolvieron `NXDOMAIN` con 0 respuestas; las 4 consultas A/AAAA del dominio permitido devolvieron `NOERROR` con respuestas.
+- El ZIP contenía exactamente el JSON de lectura; no había duplicados ni huecos entre las 12 combinaciones servidor/dominio/tipo.
+
+**NO SE HA COMPROBADO:** que el tráfico de todos los navegadores atraviese VOLVÉ, resistencia a DNS-over-HTTPS/VPN/evasión, cobertura integral del catálogo, conectividad externa, recuperación después de un reinicio real ni versión firmada del motor heredado. Tampoco se comprobó que el watchdog productivo y el actualizador compartan mutex y proceso independiente.
+
+**IMPACTO EN LA PLANIFICACIÓN:** el bloqueo DNS de **0.28.6 está activo para los casos consultados**; se descarta como prioridad cambiarlo solo para repetir pruebas funcionales básicas. Esta evidencia ayuda a identificar el estado inicial para un ensayo posterior, pero NO acredita las firmas auténticas ni autoriza cambiar `VOLVE-DNS-SERVER-0270`. **Progreso 50% (5/10 hitos), hitos 6–10 sin aprobación.**
