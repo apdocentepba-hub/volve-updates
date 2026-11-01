@@ -17,7 +17,9 @@ import (
  "unsafe"
 )
 
-const residentTransitionMutexName = "Global\\VOLVE-ResidentMotor-Transition-0287"
+// Stable across releases: old and new independently running watchdogs
+// must contend on the SAME object during every future upgrade.
+const residentTransitionMutexName = "Global\\VOLVE-ResidentMotor-Transition"
 
 // Explicit protected DACL: only LOCAL SYSTEM and BUILTIN Administrators.
 // The object owner is the built-in Administrators group, not the creating
