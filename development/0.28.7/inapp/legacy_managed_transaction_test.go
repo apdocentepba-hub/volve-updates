@@ -17,9 +17,17 @@ type signedLegacyDriverLab struct {
     failWatchdogAt int
     replaceCandidate bool
     replaceOldMotor string
+    afterSnapshot func()error
 }
 func newSignedLegacyDriverLab()*signedLegacyDriverLab {
     return &signedLegacyDriverLab{managedDriverTest:&managedDriverTest{}}
+}
+// Override Snapshot so tests can corrupt the real temp-file backup only
+// after the independent signed permission and readiness checks succeeded.
+func (d *signedLegacyDriverLab) Snapshot(ctx context.Context)error{
+ if err:=d.managedDriverTest.Snapshot(ctx);err!=nil{return err}
+ if d.afterSnapshot!=nil{return d.afterSnapshot()}
+ return nil
 }
 func (d *signedLegacyDriverLab) IndependentRecoveryReady(_ context.Context, _ VerifiedLegacyMigrationProof)error{
     d.watchdogCount++
@@ -145,4 +153,65 @@ func TestSignedLegacyTransactionCannotClaimRecoveryIfInternetStillDown(t *testin
     if err==nil || !strings.Contains(err.Error(),"CRÍTICO"){
         t.Fatalf("false recovery with failed Internet probe: %v",err)
     }
+}
+
+func TestSignedLegacyTransactionRejectsBackupModifiedImmediatelyAfterSnapshot(t *testing.T){
+ for _,kind:=range []string{"binary-corrupt","xml-removed","receipt-corrupt","acl-revoked"}{
+  t.Run(kind,func(t *testing.T){
+   f:=newSignedBridge(t)
+   d:=newSignedLegacyDriverLab()
+   aclBroken:=false
+   checkACL:=func(path string)error{
+    if aclBroken&&path==f.backup{return errors.New("revoked secure snapshot ACL")}
+    return nil // Only the synthetic lab is allowed to assume trusted ACL.
+   }
+   d.afterSnapshot=func()error{
+    switch kind{
+    case "binary-corrupt":
+     return os.WriteFile(filepath.Join(f.backup,legacyBackupExe),[]byte("MZ_CORRUPT_SNAPSHOT"),0600)
+    case "xml-removed":
+     return os.Remove(filepath.Join(f.backup,legacyBackupXML))
+    case "receipt-corrupt":
+     return os.WriteFile(filepath.Join(f.backup,legacyBackupReceipt),[]byte("{}"),0600)
+    case "acl-revoked":
+     aclBroken=true
+    }
+    return nil
+   }
+   err:=runSignedLegacyLab(context.Background(),f,d,checkACL,func()error{return nil})
+   if err==nil||!strings.Contains(err.Error(),"CRÍTICO")||
+    !strings.Contains(err.Error(),"respaldo alterado tras Snapshot"){
+    t.Fatalf("corrupted backup after snapshot was not marked critical: %v",err)
+   }
+   want:=[]string{"preflight","watchdog","snapshot","restore","probe","connectivity"}
+   if !reflect.DeepEqual(d.calls,want){
+    t.Fatalf("modified fallback allowed installation or skipped restoration: %v",d.calls)
+   }
+  })
+ }
+}
+
+func TestSignedLegacyTransactionNeverClaimsSealedRecoveryWhenBackupCorruptsAfterStaging(t *testing.T){
+ f:=newSignedBridge(t)
+ d:=newSignedLegacyDriverLab()
+ d.fail="prepared"
+ d.afterSnapshot=func()error{return nil}
+ // The installed motor mutation is separate from the sealed recovery.
+ // Corrupt the backup only once the (simulated) new motor was prepared.
+ d.replaceCandidate=false
+ // Inject corruption using the second independent watchdog readiness gate;
+ // the signed verifier would reject it before Switch.
+ count:=0
+ acl:=func(path string)error{
+  if path==f.backup {
+   count++
+   if count>=6{return errors.New("recovery ACL changed during transaction")}
+  }
+  return nil
+ }
+ err:=runSignedLegacyLab(context.Background(),f,d,acl,func()error{return nil})
+ if err==nil{t.Fatal("recovery ACL mutation ignored")}
+ for _,step:=range d.calls{
+  if step=="switch"||step=="commit"{t.Fatalf("untrusted backup allowed production switch: %v",d.calls)}
+ }
 }
