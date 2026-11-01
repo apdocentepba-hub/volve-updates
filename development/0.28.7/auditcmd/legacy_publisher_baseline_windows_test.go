@@ -209,7 +209,7 @@ func TestLegacyTaskActionPathSourceExactEquivalenceAndUnsafeRejection(t *testing
   {"quoted",`"`+expected+`"`,"SOURCE_EQUIVALENT_OUTER_QUOTES",true},
   {"forward-slashes",strings.ReplaceAll(expected,`\`,"/"),"SOURCE_EQUIVALENT_SEPARATOR",true},
   {"extended-dos",`\\?\`+expected,"SOURCE_EQUIVALENT_EXTENDED_DOS_PATH",true},
-  {"dot-segment",filepath.Dir(expected)+`\.`+legacyExpectedExe,"SOURCE_EQUIVALENT_DOT_SEGMENT",true},
+  {"dot-segment",filepath.Dir(expected)+`\.\`+legacyExpectedExe,"SOURCE_EQUIVALENT_DOT_SEGMENT",true},
   {"different-root",filepath.Join(`D:\OtherInstall`,legacyExpectedExe),"SAME_EXECUTABLE_NAME_DIFFERENT_LOCATION",false},
   {"relative",legacyExpectedExe,"ACTION_NOT_ABSOLUTE",false},
   {"unbalanced-quote",`"`+expected,"MALFORMED_OUTER_QUOTES",false},
