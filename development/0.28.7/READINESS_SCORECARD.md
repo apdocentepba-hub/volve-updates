@@ -82,3 +82,12 @@ El informe de la PC del usuario ya acreditó los bytes y SHA-256 del motor 0.28.
 Se implementó el enlace de revisión `legacy_observed_candidate_review.go`, que compara un informe **no confiable** con un candidato de actualización firmado, comprueba versión y compatibilidad, y rechaza datos manipulados. [CI Windows/Linux #41269240819](https://github.com/apdocentepba-hub/volve-updates/actions/runs/41269240819) aprobada. Es una etapa de ingeniería de la puerta 6 y no un instalador; todavía se necesitan candidato firmado oficial, permiso firmado de editor, respaldo NTFS protegido y recuperación real.
 
 **Crédito global inalterado: 50% = 5/10 puertas completas.** La puerta 6 permanece pendiente aunque sus comprobaciones parciales de identidad y vinculación ya existen. No se tocó la PC del usuario ni se publicaron sus huellas en GitHub.
+
+
+## Avance del hito 7, verificado el 01/11/2026 — archivo original + tarea SYSTEM real en VM
+
+**CI Windows #41272656067: SUCCESS**. En una VM Windows alojada por GitHub, el controlador de laboratorio restauró el ejecutable original faltante desde un respaldo íntegro, después restauró realmente una tarea SYSTEM descartable mediante XML y comprobó que su acción `--dns-service` apuntaba al ejecutable recuperado. Los tests también demostraron que no se sobrescribe un ejecutable diferente, no se permite el nombre de tarea productiva y no se escribe un recibo `restored` sin comprobar el DNS. Se corrigió el fallo de codificación XML Task Scheduler (`0x8004131a`) demostrado en el primer CI fallido #41272316133.
+
+**Limitaciones:** motor inerte en prueba de tarea, no DNS servido ni cambios en adaptadores. El controlador de laboratorio no constituye un restorer productivo ni puede migrar 0.28.6; faltan firma auténtica de editor, conmutación completa, watchdog independiente aplicado al caso y reinicio de una VM persistente con comprobación DNS real. La prueba de DNS real SYSTEM en VM descartable existente pertenece a otra batería y **no** demuestra aún que el DNS funcione después de esta recuperación conjunta.
+
+**Progreso global permanece 50% (5/10 hitos):** el hito 7 acumula subpruebas completadas pero su criterio íntegro aún no está aprobado. Próxima acción útil: ejecutar recuperación conjunta usando un motor DNS que responda efectivamente por IPv4/IPv6, y luego un reinicio real persistente. No solicitar otro diagnóstico a la PC del usuario para este subpaso.
