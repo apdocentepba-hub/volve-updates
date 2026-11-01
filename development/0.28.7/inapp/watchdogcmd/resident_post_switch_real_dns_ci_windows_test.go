@@ -4,8 +4,8 @@ package main
 
 // Hosted Windows VM ONLY: exercise a real SYSTEM task, an actual executable
 // restored from a sealed NTFS snapshot and real dual-stack UDP/53 responses.
-// The executable compiled here is a MINIMAL CI DNS fixture, NOT VOLVE's
-// production motor. No host adapter, production task or journal receipt
+// The normal case uses a minimal CI DNS fixture. The dedicated full-motor
+// job builds real VOLVE with an injected CI-only alias for the sealed task. No host adapter, production task or journal receipt
 // may be changed by this test.
 import (
  "context"
@@ -63,9 +63,24 @@ func installCILiveDNSBytesIntoProtectedFixture(t *testing.T,root,journalDir stri
  // Go refuses -o when that executable already exists, so compile into a
  // unique temporary target, then replace only our disposable fixture.
  built:=filepath.Join(root,"ci-only-compiled-dns.exe")
- cmd:=exec.Command("go","build","-trimpath","-o",built,source)
- cmd.Dir=root
- if out,err:=cmd.CombinedOutput();err!=nil{t.Fatalf("CI DNS fixture compile failed: %v %s",err,out)}
+ var cmd *exec.Cmd
+ if os.Getenv("VOLVE_CI_FULL_MOTOR_AFTER_RESTORE")=="1" {
+  // A separate hosted-Windows job injects an explicit CI-only source shim
+  // into the real application package. This compiles the COMPLETE VOLVE
+  // binary, with its production DNS parser/server and 400,002-rule fixture.
+  // Without the dedicated shim, fail rather than run a production service.
+  appRoot,err:=filepath.Abs(filepath.Join("..",".."))
+  if err!=nil{t.Fatal(err)}
+  if _,err:=os.Stat(filepath.Join(appRoot,"ci_post_switch_real_motor_shim_windows.go"));err!=nil{
+   t.Fatalf("CI-only full motor integration shim unavailable: %v",err)
+  }
+  cmd=exec.Command("go","build","-tags=volveci","-trimpath","-o",built,".")
+  cmd.Dir=appRoot
+ }else{
+  cmd=exec.Command("go","build","-trimpath","-o",built,source)
+  cmd.Dir=root
+ }
+ if out,err:=cmd.CombinedOutput();err!=nil{t.Fatalf("CI restored DNS binary build failed: %v %s",err,out)}
  data,err:=os.ReadFile(built);if err!=nil{t.Fatal(err)}
  if err:=os.WriteFile(old,data,0600);err!=nil{t.Fatal(err)}
  if err:=os.Remove(built);err!=nil{t.Fatal(err)}
@@ -198,5 +213,9 @@ func TestPostSwitchRestoredSystemTaskActuallyServesDualStackDNS53CILab(t *testin
  if err!=nil||state.Status!="recovery-required"{
   t.Fatalf("synthetic DNS network health incorrectly finalized migration: %+v %v",state,err)
  }
- t.Log("PASS: protected original EXE+real SYSTEM Task Scheduler restored; real UDP/53 IPv4+IPv6 responses; blocked/allowed DNS cases; journal pending")
+ if os.Getenv("VOLVE_CI_FULL_MOTOR_AFTER_RESTORE")=="1" {
+  t.Log("PASS: REAL compiled VOLVE full-catalog motor restored from protected backup + actual SYSTEM task; dual-stack DNS53 blocked/allowed responses; journal pending")
+ }else{
+  t.Log("PASS: protected original EXE+real SYSTEM Task Scheduler restored; CI minimal UDP/53 IPv4+IPv6 responses; journal pending")
+ }
 }
