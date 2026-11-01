@@ -203,11 +203,25 @@ if($Mode -eq 'Prepare'){
     Start-ScheduledTask -TaskName $task -ErrorAction Stop
     try{
         $ok=$false
+        $lastFailure='No DNS probe attempted'
         for($i=0;$i -lt 45;$i++){
             Start-Sleep -Milliseconds 800
-            try{$null=OwnDNSProcess $exe;Assert-RealDNS;$ok=$true;break}catch{}
+            try{
+                $null=OwnDNSProcess $exe
+                Assert-RealDNS
+                $ok=$true
+                break
+            }catch{
+                $lastFailure=$_.Exception.Message
+            }
         }
-        if(-not $ok){throw 'VM actual VOLVE dual-stack DNS not ready; no reboot trial approved'}
+        if(-not $ok){
+            $taskState=Get-ScheduledTask -TaskName $task -ErrorAction Stop
+            $taskInfo=Get-ScheduledTaskInfo -TaskName $task -ErrorAction Stop
+            throw ('VM actual VOLVE dual-stack DNS not ready; task state '+
+                $taskState.State+' result '+$taskInfo.LastTaskResult+
+                '; last local DNS failure: '+$lastFailure)
+        }
         Assert-Regular $catalog
         $count=0
         foreach($line in [IO.File]::ReadLines($catalog)){$count++}
