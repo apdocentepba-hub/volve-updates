@@ -127,3 +127,16 @@ El JSON compartido demuestra que el motor DNS heredado conserva ambos endpoints 
 **CI y paquete:** GitHub Actions https://github.com/apdocentepba-hub/volve-updates/actions/runs/41267081082, éxito en Windows. La primera prueba detectó que el fixture reutilizaba el puntero a evidencia; se corrigió con copia independiente y pasó la regresión de deriva de proceso. Artefacto #13068130647 descargado e inspeccionado: ZIP válido; SHA-256 EXE 72e5bf9e1ae93ea42ce32e9751980ee6b8868925d65753b69055938abf5fbca6. Diagnóstico experimental NO firmado para distribución, no un actualizador.
 
 **Estado:** 50% global (5/10 hitos); hito 6 abierto. No existe permiso editorial productivo ni conmutación/recuperación validada sobre esta PC. Se requiere conocer `failure_stage` del equipo antes de revisar o suavizar cualquier verificación y antes de generar una autorización real de migración.
+
+
+### Corrección del cotejo de ruta Scheduler 0.28.6 — 31/10/2026, 23:13 ART
+
+El informe del Windows real confirmó que el análisis de identidad se interrumpía en `FIRST_TASK_ACTION_PATH_MISMATCH`. No se recibieron ni publicaron rutas de tareas privadas. Los datos independientes mostraban el proceso SYSTEM heredado dueño de los sockets UDP/53 locales IPv4/IPv6.
+
+La auditoría del código original autenticado reconstruido de los diez segmentos fuente, en GitHub Actions #41267914339 y #41267978158, identificó que el propio Centro 0.28.6 crea su tarea con `quoteTaskScriptPath(exe) + " --dns-service"` y valida los comandos XML mediante `normalizedWinPath`. Esa rutina contempla comillas exteriores, separadores equivalentes, prefijo `\\?\` y segmentos `.`. El diagnóstico autónomo nuevo, en cambio, comparaba `Get-ScheduledTask.Actions[0].Execute` con `filepath.IsAbs` y `filepath.Clean` antes de quitar comillas, y podía rechazar una tarea legítima.
+
+**Fix**: el comparador nuevo `compareLegacyTaskActionPath` acepta únicamente representaciones léxicamente equivalentes del MISMO ejecutable en la MISMA carpeta verificada, conservando todos los controles de propietario SYSTEM, exactamente una acción, argumento `--dns-service`, proceso DNS, doble lectura de la identidad y ausencia de permiso editorial. Rechaza carpeta distinta, nombre distinto, ruta relativa, comillas malformadas, expansiones de entorno, `..` y caracteres de comando. Expone solo `task_action_path_form`, una categoría sin rutas. No toca el Task Scheduler de la PC ni cambia el motor.
+
+**Evidencia de CI**: GitHub Actions #41268238838 aprobó Windows nativo y las regresiones positivas/negativas, después de corregir un caso de test que requería tratar el prefijo DOS extendido antes del filtro de `?`. ZIP de laboratorio #13068113389 comprobado íntegramente en container (4 archivos, ningún miembro corrupto), tamaño 3.223.211 bytes, EXE 5.578.240 bytes, SHA-256 3d746c44038f32536c1d3d670ec655ce4853d643aa896ca6a99249a2ee692df7.
+
+**Alcance y pendiente:** esta corrección no demuestra que el usuario tenga solo una diferencia de comillas: el diagnóstico nuevo debe observar el formato real. Si la ubicación difiere, se bloquea y registra la categoría, sin cambiar Windows. Faltan firma editorial, respaldo validado, controlador transaccional, reinicio persistente y revisión del usuario. Progreso global continúa **50% (5/10)**; no existe release o actualización productiva.
