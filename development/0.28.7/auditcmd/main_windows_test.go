@@ -112,3 +112,37 @@ func TestStandaloneReportWritesOnlyNewPersonalDownloadsFile(t *testing.T){
  other:=t.TempDir()
  if _,err:=outputToDownloads(other,report);err==nil{t.Fatal("created a new profile Downloads directory without consent")}
 }
+
+func TestStandaloneAuditSeparateBrowserPoliciesFromDNSMotor(t *testing.T){
+ pd,_:=testStateDirectory(t)
+ browserJSON:=[]byte(`[{"Name":"chrome","Present":true,"NumberedEntries":12,"InvalidEntries":0,"UnexpectedEntries":0},{"Name":"edge","Present":true,"NumberedEntries":10,"InvalidEntries":0,"UnexpectedEntries":0},{"Name":"firefox","Present":false,"NumberedEntries":0,"InvalidEntries":0,"UnexpectedEntries":0}]`)
+ got:=diagnosisWithBrowserPolicies(context.Background(),pd,true,
+  fakeReadOnlyHost(true),func(context.Context,string)([]byte,error){return browserJSON,nil})
+ if got.Result!="REVIEW_ONLY" || got.Route==nil || got.Route.Route!=motorupdate.MotorRouteConflictingResidue ||
+  got.BrowserPolicies==nil || got.BrowserPolicies.TotalNumberedEntries!=22 ||
+  got.BrowserPolicies.BrowserEnforcementVerified || got.BrowserPolicies.DNSMotorVerified ||
+  got.BrowserPoliciesStatus!="REGISTRY_COUNTS_ONLY_NOT_BROWSER_ENFORCEMENT"{
+  t.Fatalf("diagnosis conflated observed browser policy entries with running DNS motor: %+v",got)
+ }
+ raw,err:=json.Marshal(got);if err!=nil{t.Fatal(err)}
+ if strings.Contains(string(raw),"betwarrior")||strings.Contains(string(raw),"example.org"){
+  t.Fatal("browser filter URLs leaked into read-only report")
+ }
+}
+
+func TestStandaloneAuditBrowserPolicyFailureNeverInventsBlocking(t *testing.T){
+ pd,_:=testStateDirectory(t)
+ got:=diagnosisWithBrowserPolicies(context.Background(),pd,true,
+  fakeReadOnlyHost(false),func(context.Context,string)([]byte,error){return []byte("null"),nil})
+ if got.BrowserPolicies!=nil || got.BrowserPoliciesStatus!="UNKNOWN_REGISTRY_QUERY_FAILED" ||
+  got.Result!="REVIEW_ONLY" || got.Route==nil {
+  t.Fatalf("invalid browser evidence yielded fake successful policy status: %+v",got)
+ }
+ noAdmin:=diagnosisWithBrowserPolicies(context.Background(),pd,false,
+  fakeReadOnlyHost(false),func(context.Context,string)([]byte,error){
+   t.Fatal("browser registry queried without admin")
+   return nil,nil
+  })
+ if noAdmin.BrowserPolicies!=nil||noAdmin.BrowserPoliciesStatus!="NOT_INSPECTED_NO_ADMIN_TOKEN"||
+  noAdmin.Result!="INCOMPLETE"{t.Fatalf("admin absence ignored: %+v",noAdmin)}
+}
