@@ -6,6 +6,8 @@ on:
       - 'development/0.28.7/auditcmd/**'
       - 'development/0.28.7/inapp/motor_install_route.go'
       - 'development/0.28.7/inapp/motor_install_route_windows.go'
+      - 'development/0.28.7/inapp/browser_policy_inventory_windows.go'
+      - 'development/0.28.7/inapp/browser_policy_inventory_windows_test.go'
       - 'development/0.28.7/inapp/apply_overlay.go'
       - '.github/workflows/volve-0287-standalone-diagnostic.yml'
   workflow_dispatch:
@@ -69,7 +71,7 @@ jobs:
           $ErrorActionPreference='Stop'
           go test ./cmd/volve-readonly-audit -count=1 -timeout 5m -v
           if($LASTEXITCODE -ne 0){throw 'Standalone read-only diagnostic tests failed'}
-          go test ./motorupdate -count=1 -timeout 6m -run '^(TestMotorRoute|TestWindowsMotorRoute)' 
+          go test ./motorupdate -count=1 -timeout 6m -v -run '^(TestMotorRoute|TestWindowsMotorRoute|TestVOLVEBrowserPolicy)' 
           if($LASTEXITCODE -ne 0){throw 'Core host classification regressions failed'}
           $folder=Get-Content -LiteralPath (Join-Path $env:RUNNER_TEMP 'VOLVE_CI_INSTALLED_FOLDER.txt') -Raw
           $dist=Join-Path (Get-Location) 'dist'
