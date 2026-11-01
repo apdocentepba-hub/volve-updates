@@ -200,3 +200,55 @@ func TestUnsignedLegacyBaselineStageNoHashOnMissingXML(t *testing.T){
   t.Fatalf("XML read error leaked path or was misclassified: %+v",got)
  }
 }
+
+
+func TestLegacyTaskActionPathSourceExactEquivalenceAndUnsafeRejection(t *testing.T){
+ expected:=filepath.Join(`C:\ProgramData\VOLVE-Browser-Filter`,legacyExpectedExe)
+ for _,tc:=range []struct{name,actual,form string;allow bool}{
+  {"exact",expected,"EXACT_EXPECTED_PATH",true},
+  {"quoted",`"`+expected+`"`,"SOURCE_EQUIVALENT_OUTER_QUOTES",true},
+  {"forward-slashes",strings.ReplaceAll(expected,`\`,"/"),"SOURCE_EQUIVALENT_SEPARATOR",true},
+  {"extended-dos",`\\?\`+expected,"SOURCE_EQUIVALENT_EXTENDED_DOS_PATH",true},
+  {"dot-segment",filepath.Dir(expected)+`\.`+legacyExpectedExe,"SOURCE_EQUIVALENT_DOT_SEGMENT",true},
+  {"different-root",filepath.Join(`D:\OtherInstall`,legacyExpectedExe),"SAME_EXECUTABLE_NAME_DIFFERENT_LOCATION",false},
+  {"relative",legacyExpectedExe,"ACTION_NOT_ABSOLUTE",false},
+  {"unbalanced-quote",`"`+expected,"MALFORMED_OUTER_QUOTES",false},
+  {"environment-expansion",`%ProgramData%\VOLVE-Browser-Filter\`+legacyExpectedExe,"UNSAFE_EXECUTE_SYNTAX",false},
+  {"parent-traversal",filepath.Dir(expected)+`\..\VOLVE-Browser-Filter\`+legacyExpectedExe,"PARENT_TRAVERSAL_REJECTED",false},
+  {"different-name",filepath.Join(filepath.Dir(expected),"other.exe"),"DIFFERENT_EXECUTABLE",false},
+  {"embedded-quotes",`"`+expected+`" --other"`,"UNSAFE_EXECUTE_SYNTAX",false},
+ }{
+  t.Run(tc.name,func(t *testing.T){
+   ok,form:=compareLegacyTaskActionPath(tc.actual,expected)
+   if ok!=tc.allow||form!=tc.form{t.Fatalf("got ok=%v form=%s expected ok=%v form=%s",ok,form,tc.allow,tc.form)}
+  })
+ }
+}
+
+func TestUnsignedLegacyPublisherBaselineAcceptsOnlySourceCompatibleQuotedTaskAction(t *testing.T){
+ root,readers:=baselineFixture(t)
+ original:=mustTaskRaw(t,readers.Tasks)
+ var tasks []publisherTaskEntry
+ if err:=json.Unmarshal(original,&tasks);err!=nil{t.Fatal(err)}
+ if len(tasks)!=1||len(tasks[0].Actions)!=1{t.Fatal("bad baseline fixture")}
+ tasks[0].Actions[0].Execute=`"`+filepath.Join(root,legacyExpectedExe)+`"`
+ encoded,err:=json.Marshal(tasks);if err!=nil{t.Fatal(err)}
+ readers.Tasks=func(context.Context,string)([]byte,error){return encoded,nil}
+ got:=buildUnsignedLegacyPublisherBaseline(context.Background(),root,readers)
+ if got.Status!="UNSIGNED_LEGACY_IDENTITY_FOR_PUBLISHER_REVIEW_ONLY"||
+  got.FailureStage!=""||got.FromSHA256==""||
+  got.TaskActionPathForm!="SOURCE_EQUIVALENT_OUTER_QUOTES"||
+  got.SignatureVerified||got.MigrationAuthorized||got.ReadyToSwitch{
+  t.Fatalf("original quoted scheduled command refused or upgrade improperly authorized: %+v",got)
+ }
+ tasks[0].Actions[0].Execute=filepath.Join(t.TempDir(),legacyExpectedExe)
+ foreign,err:=json.Marshal(tasks);if err!=nil{t.Fatal(err)}
+ readers.Tasks=func(context.Context,string)([]byte,error){return foreign,nil}
+ denied:=buildUnsignedLegacyPublisherBaseline(context.Background(),root,readers)
+ if denied.Status!="NOT_VERIFIED_NO_CHANGES"||
+  denied.FailureStage!="FIRST_TASK_ACTION_PATH_MISMATCH"||
+  denied.TaskActionPathForm!="SAME_EXECUTABLE_NAME_DIFFERENT_LOCATION"||
+  denied.FromSHA256!=""||denied.MigrationAuthorized{
+  t.Fatalf("different executable location incorrectly accepted: %+v",denied)
+ }
+}
