@@ -28,6 +28,7 @@ const legacyExpectedTask="VOLVE-DNS-SERVER-0270"
 type LegacyPublisherBaseline struct {
  Status string `json:"status"`
  FailureStage string `json:"failure_stage,omitempty"`
+ TaskActionPathForm string `json:"task_action_path_form,omitempty"`
  Schema int `json:"schema"`
  FromTask string `json:"from_task,omitempty"`
  FromExecutable string `json:"from_executable,omitempty"`
@@ -69,10 +70,56 @@ func defaultLegacyTaskXML(ctx context.Context)([]byte,error){
  return out,nil
 }
 
+// The original 0.28.6 verifySystemTaskXML permits quoted and \\?\-prefixed
+// exact paths. Its new publisher inspector was accidentally stricter. Accept
+// only the pinned installation root, preserving all independent identity,
+// signature, backup and watchdog barriers. No filesystem changes occur.
+func compareLegacyTaskActionPath(actual,expected string)(bool,string){
+ if expected==""||!filepath.IsAbs(expected)||filepath.Clean(expected)!=expected{
+  return false,"EXPECTED_ROOT_INVALID"
+ }
+ if actual==""||len(actual)>8192{return false,"EXECUTE_MISSING_OR_OVERSIZED"}
+ trimmed:=strings.TrimSpace(actual)
+ if trimmed==""{return false,"EXECUTE_MISSING_OR_OVERSIZED"}
+ hadQuotes:=false
+ if strings.HasPrefix(trimmed,`"`)||strings.HasSuffix(trimmed,`"`){
+  if !(len(trimmed)>=2 && trimmed[0]=='"'&&trimmed[len(trimmed)-1]=='"'){
+   return false,"MALFORMED_OUTER_QUOTES"
+  }
+  trimmed=trimmed[1:len(trimmed)-1]
+  hadQuotes=true
+ }
+ if strings.Contains(trimmed,`"`)||strings.ContainsAny(trimmed,"%*?|<>"){
+  return false,"UNSAFE_EXECUTE_SYNTAX"
+ }
+ hadPrefix:=strings.HasPrefix(trimmed,`\\?\`)
+ if hadPrefix{trimmed=strings.TrimPrefix(trimmed,`\\?\`)}
+ hadSlash:=strings.Contains(trimmed,"/")
+ normalized:=strings.ReplaceAll(trimmed,"/",`\`)
+ for _,part:=range strings.Split(normalized,`\`){
+  if part==".."{return false,"PARENT_TRAVERSAL_REJECTED"}
+ }
+ if !filepath.IsAbs(normalized){return false,"ACTION_NOT_ABSOLUTE"}
+ cleaned:=filepath.Clean(normalized)
+ if strings.EqualFold(cleaned,expected){
+  switch{
+  case hadPrefix:return true,"SOURCE_EQUIVALENT_EXTENDED_DOS_PATH"
+  case hadQuotes:return true,"SOURCE_EQUIVALENT_OUTER_QUOTES"
+  case hadSlash:return true,"SOURCE_EQUIVALENT_SEPARATOR"
+  case cleaned!=normalized:return true,"SOURCE_EQUIVALENT_DOT_SEGMENT"
+  default:return true,"EXACT_EXPECTED_PATH"
+  }
+ }
+ if strings.EqualFold(filepath.Base(cleaned),legacyExpectedExe){
+  return false,"SAME_EXECUTABLE_NAME_DIFFERENT_LOCATION"
+ }
+ return false,"DIFFERENT_EXECUTABLE"
+}
+
 // inspectVerifiedLegacyTaskStage returns a finite diagnostic code. No path,
 // principal, task XML or query errors are propagated to the exported JSON.
 // A mismatch never grants authority to install or repair the 0.28.6 motor.
-func inspectVerifiedLegacyTaskStage(ctx context.Context,root string,inspect motorupdate.WindowsFreshTaskInspect)string{
+func inspectVerifiedLegacyTaskStage(ctx context.Context,root string,inspect motorupdate.WindowsFreshTaskInspect,pathForm *string)string{
  if ctx.Err()!=nil{return "CANCELLED"}
  if inspect==nil{return "TASK_READER_MISSING"}
  raw,err:=inspect(ctx,motorupdate.WindowsVOLVETaskInventoryQuery)
@@ -93,9 +140,9 @@ func inspectVerifiedLegacyTaskStage(ctx context.Context,root string,inspect moto
   if task.Principal!="SYSTEM"&&task.Principal!="S-1-5-18"{return "TASK_OWNER_MISMATCH"}
   if len(task.Actions)!=1{return "TASK_ACTION_COUNT_MISMATCH"}
   a:=task.Actions[0]
-  if !filepath.IsAbs(a.Execute)||!strings.EqualFold(filepath.Clean(a.Execute),expected){
-   return "TASK_ACTION_PATH_MISMATCH"
-  }
+  same,form:=compareLegacyTaskActionPath(a.Execute,expected)
+  if pathForm!=nil{*pathForm=form}
+  if !same{return "TASK_ACTION_PATH_MISMATCH"}
   if a.Arguments!="--dns-service"{return "TASK_ARGUMENTS_MISMATCH"}
   if a.WorkingDirectory==nil{return "TASK_WORKING_DIR_MISSING"}
   if *a.WorkingDirectory!=""{return "TASK_WORKING_DIR_MISMATCH"}
@@ -155,16 +202,21 @@ func buildUnsignedLegacyPublisherBaseline(ctx context.Context,root string,reader
  owner:=readers.Owner(ctx)
  if owner.Status!="EXACT_LEGACY_SYSTEM_PROCESS_ON_BOTH_UDP53_SOCKETS_NOT_SIGNED"||
   owner.Evidence==nil||!owner.Safe(){return fail("DNS_OWNER_FIRST_UNVERIFIED")}
- if stage:=inspectVerifiedLegacyTaskStage(ctx,root,readers.Tasks);stage!=""{
+ var firstPathForm string
+ if stage:=inspectVerifiedLegacyTaskStage(ctx,root,readers.Tasks,&firstPathForm);stage!=""{
+  denied.TaskActionPathForm=firstPathForm
   return fail("FIRST_"+stage)
  }
  hash1,size1,err:=digestLegacyInstalledMotor(ctx,root)
  if err!=nil{return fail("MOTOR_DIGEST_FIRST_FAILED")}
  xml1,err:=digestOriginalTaskXML(ctx,readers.XML)
  if err!=nil{return fail("TASK_XML_FIRST_FAILED")}
- if stage:=inspectVerifiedLegacyTaskStage(ctx,root,readers.Tasks);stage!=""{
+ var secondPathForm string
+ if stage:=inspectVerifiedLegacyTaskStage(ctx,root,readers.Tasks,&secondPathForm);stage!=""{
+  denied.TaskActionPathForm=secondPathForm
   return fail("SECOND_"+stage)
  }
+ if firstPathForm!=secondPathForm{return fail("TASK_ACTION_FORMAT_CHANGED_BETWEEN_READS")}
  hash2,size2,err:=digestLegacyInstalledMotor(ctx,root)
  if err!=nil{return fail("MOTOR_DIGEST_SECOND_FAILED")}
  xml2,err:=digestOriginalTaskXML(ctx,readers.XML)
@@ -181,6 +233,7 @@ func buildUnsignedLegacyPublisherBaseline(ctx context.Context,root string,reader
   Schema:1,Status:"UNSIGNED_LEGACY_IDENTITY_FOR_PUBLISHER_REVIEW_ONLY",
   FromTask:legacyExpectedTask,FromExecutable:legacyExpectedExe,
   FromArguments:"--dns-service",
+  TaskActionPathForm:firstPathForm,
   FromSHA256:hash1,FromSize:size1,FromTaskXMLSHA256:xml1,
  }
 }
