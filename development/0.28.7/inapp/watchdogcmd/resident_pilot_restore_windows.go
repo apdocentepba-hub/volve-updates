@@ -25,7 +25,8 @@ func residentPilotTargetPath(root,version string) (string,error) {
 }
 
 // restoreResidentPilotSYSTEMTask requires journal/backup/live motor agreement,
-// validates the original XML again, and restores ONLY a CI-name task. Even if
+// validates the original XML again, and restores ONLY a CI-name task.
+// Retries after Scheduler restore but before receipt are idempotent. Even if
 // the new executable disappeared or became corrupted, rollback still works
 // because the installed original motor and immutable fallback are reverified.
 // The recovery journal stays PENDING until a separate trusted health checker
@@ -74,8 +75,14 @@ func restoreResidentPilotSYSTEMTaskWithRunner(ctx context.Context,root,pilotTask
   `$live=Get-ScheduledTask -TaskName $taskName -TaskPath '\' -ErrorAction Stop;`+
   `if($live.TaskPath -ne '\' -or $live.Principal.UserId -notin @('SYSTEM','S-1-5-18') `+
    `-or @($live.Actions).Count -ne 1){throw 'Unexpected pilot SYSTEM task identity'};`+
-  `if([string]$live.Actions[0].Execute -ine $target -or `+
-   `[string]$live.Actions[0].Arguments -cne '--dns-service'){throw 'Pilot target action changed'};`+
+  // A crash after successful Scheduler import but before the terminal
+  // receipt leaves a PENDING journal with the ORIGINAL action already set.
+  // Treat ONLY the byte-verified original as an idempotent retry; any
+  // unrecognized task action must still fail closed before modifications.
+  `$alreadyOriginal=([string]$live.Actions[0].Execute -ieq $original);`+
+  `$candidateAction=([string]$live.Actions[0].Execute -ieq $target);`+
+  `if((-not ($alreadyOriginal -or $candidateAction)) -or `+
+   `[string]$live.Actions[0].Arguments -cne '--dns-service'){throw 'Pilot task action changed to unrecognized motor'};`+
   `if(-not [IO.File]::Exists($original)){throw 'Legacy motor missing'};`+
   `$motorHasher=[Security.Cryptography.SHA256]::Create();`+
   `try{$motorStream=[IO.File]::Open($original,[IO.FileMode]::Open,[IO.FileAccess]::Read,[IO.FileShare]::Read);`+
@@ -89,6 +96,9 @@ func restoreResidentPilotSYSTEMTaskWithRunner(ctx context.Context,root,pilotTask
   `try{$xmlDigest=[BitConverter]::ToString($hasher.ComputeHash($xmlBytes)).Replace('-','').ToLowerInvariant()}`+
   `finally{$hasher.Dispose()};`+
   `if($xmlDigest -cne $xmlHash){throw 'Original task XML changed before import'};`+
+  // No task import on retry: the journal remains PENDING until the separate
+  // SYSTEM+DNS+Internet health gate writes its durable result.
+  `if($alreadyOriginal){Write-Output 'VOLVE_CI_RESIDENT_RESTORED';return};`+
   `$bom16=($xmlBytes.Length -ge 2 -and `+
    `(($xmlBytes[0] -eq 255 -and $xmlBytes[1] -eq 254) -or `+
    `($xmlBytes[0] -eq 254 -and $xmlBytes[1] -eq 255)));`+
