@@ -11,6 +11,7 @@ import (
 type bootPolicyLab struct{
  lockCalls,unlockCalls,verifyCalls,restoreCalls int
  failStage string
+ failVerifyAt int
  terminalDuringVerify func()
 }
 func(l *bootPolicyLab)AcquireExclusive(context.Context)(func(),error){
@@ -22,7 +23,7 @@ func(l *bootPolicyLab)AcquireExclusive(context.Context)(func(),error){
 func(l *bootPolicyLab)VerifySealedOriginal(context.Context,ResidentRecoveryIntent)error{
  l.verifyCalls++
  if l.terminalDuringVerify!=nil{l.terminalDuringVerify()}
- if l.failStage=="backup"{return errors.New("simulated corrupted protected backup")}
+ if l.failStage=="backup" || (l.failVerifyAt>0 && l.verifyCalls==l.failVerifyAt){return errors.New("simulated corrupted protected backup")}
  return nil
 }
 func(l *bootPolicyLab)RestoreOriginal(context.Context,ResidentRecoveryIntent)error{
@@ -61,7 +62,7 @@ func TestBootRecoveryRestoresInterruptedOriginalAndConfirmsRealChecks(t *testing
  state,err:=RecoverPendingResidentAfterBoot(context.Background(),dir,
   residentLabACL,residentLabACL,checks,lab)
  if err!=nil||state!="restored"{t.Fatalf("recovery not finalized: %s %v",state,err)}
- if lab.lockCalls!=1||lab.unlockCalls!=1||lab.verifyCalls!=1||lab.restoreCalls!=1{
+ if lab.lockCalls!=1||lab.unlockCalls!=1||lab.verifyCalls!=2||lab.restoreCalls!=1{
   t.Fatalf("recovery did not use exclusive lock and one restore: %+v",lab)
  }
  if checks.checks!=3{t.Fatalf("expected preflight plus two post-DNS checks: %d",checks.checks)}
@@ -205,5 +206,48 @@ func TestBootRecoveryRejectsCorruptIntentWithoutTouchingMotor(t *testing.T){
  if lab.verifyCalls!=0||lab.restoreCalls!=0{t.Fatal("corrupt journal triggered privileged task operation")}
  if _,err:=os.Lstat(filepath.Join(dir,ResidentResultFile));!os.IsNotExist(err){
   t.Fatalf("corrupt journal incorrectly finalized: %v",err)
+ }
+}
+
+func TestBootRecoveryRechecksSealedOriginalAfterHealthyDNSBeforeTerminal(t *testing.T){
+ dir:=armBootPolicyJournal(t)
+ lab:=&bootPolicyLab{failVerifyAt:2}
+ checks:=&bootIdentityLab{}
+ state,err:=RecoverPendingResidentAfterBoot(context.Background(),dir,
+  residentLabACL,residentLabACL,checks,lab)
+ if err==nil||state!=""{t.Fatalf("damaged sealed original incorrectly finalized: %s %v",state,err)}
+ if lab.verifyCalls!=2||lab.restoreCalls!=0||lab.unlockCalls!=1{
+  t.Fatalf("second sealed-original recheck not enforced or changed healthy original: %+v",lab)
+ }
+ if checks.checks!=3{t.Fatalf("health checks unexpectedly skipped: %d",checks.checks)}
+ pending,err:=InspectResidentRecoveryJournal(context.Background(),dir,residentLabACL)
+ if err!=nil||pending.Status!="recovery-required"{
+  t.Fatalf("damaged original claimed restored in journal: %+v %v",pending,err)
+ }
+ if _,err:=os.Lstat(filepath.Join(dir,ResidentResultFile));!os.IsNotExist(err){
+  t.Fatalf("terminal receipt written despite lost fallback: %v",err)
+ }
+ // On a subsequent independent boot, only a freshly verified fallback
+ // can allow successful closure. No unnecessary task restore is permitted.
+ lab.failVerifyAt=0
+ state,err=RecoverPendingResidentAfterBoot(context.Background(),dir,
+  residentLabACL,residentLabACL,&bootIdentityLab{},lab)
+ if err!=nil||state!="restored"||lab.restoreCalls!=0||lab.verifyCalls!=4{
+  t.Fatalf("healthy retry did not safely close pending journal: %s %v %+v",state,err,lab)
+ }
+}
+
+func TestBootRecoveryNeverWritesRestoredReceiptWhenOriginalChangesAfterRestore(t *testing.T){
+ dir:=armBootPolicyJournal(t)
+ lab:=&bootPolicyLab{failVerifyAt:2}
+ checks:=&bootIdentityLab{failFirst:true}
+ state,err:=RecoverPendingResidentAfterBoot(context.Background(),dir,
+  residentLabACL,residentLabACL,checks,lab)
+ if err==nil||state!=""||lab.restoreCalls!=1||lab.verifyCalls!=2{
+  t.Fatalf("post-restore corrupted snapshot was incorrectly accepted: %s %v %+v",state,err,lab)
+ }
+ pending,err:=InspectResidentRecoveryJournal(context.Background(),dir,residentLabACL)
+ if err!=nil||pending.Status!="recovery-required"{
+  t.Fatalf("post-restore corrupted fallback consumed pending intent: %+v %v",pending,err)
  }
 }
