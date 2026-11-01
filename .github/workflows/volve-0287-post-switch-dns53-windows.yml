@@ -65,8 +65,6 @@ jobs:
           # Deliberately INJECTED into this one disposable workflow build.
           # apply_overlay.go never includes this source in a released app.
           cp ../../development/0.28.7/inapp/watchdogcmd/ci_post_switch_real_motor_shim_windows.go ci_post_switch_real_motor_shim_windows.go
-          VOLVE_CI_FULL_MOTOR_AFTER_RESTORE=1 VOLVE_CI_POLICY_AFTER_RESTORE=1 go test ./cmd/volve-managed-watchdog -run '^TestPostSwitchRestoredSystemTaskActuallyServesDualStackDNS53CILab
-
- -count=1 -timeout 7m -v
-          echo 'PASS: full VOLVE motor under disposable SYSTEM task; after real IPv4/IPv6 DNS, SYSTEM process/socket identity and external numeric-IP TCP, nonce-bound recovery receipt published (isolated VM only).'
+          VOLVE_CI_FULL_MOTOR_AFTER_RESTORE=1 VOLVE_CI_POLICY_AFTER_RESTORE=1 go test ./cmd/volve-managed-watchdog -run '^TestPostSwitchRestoredSystemTaskActuallyServesDualStackDNS53CILab$' -count=1 -timeout 7m -v
+          echo 'PASS: full engine SYSTEM DNS53, real external TCP health, and create-only journal receipt on isolated Windows VM.'
 
