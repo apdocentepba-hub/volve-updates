@@ -1,0 +1,51 @@
+name: VOLVE 0.28.7 protected production kernel mutex (NO ENGINE WRITES)
+on:
+  push:
+    branches: [feature/motor-updater-0287-pilot]
+    paths:
+      - 'development/0.28.7/inapp/resident_transition_lock_windows.go'
+      - 'development/0.28.7/inapp/resident_transition_lock_windows_test.go'
+      - '.github/workflows/volve-0287-protected-production-transition-mutex.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  production-mutex-no-writes:
+    runs-on: windows-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.x'
+      - name: Verify disposable hosted VM before any Windows kernel object
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          if($env:GITHUB_ACTIONS -ne 'true' -or $env:RUNNER_ENVIRONMENT -ne 'github-hosted'){
+            throw 'production kernel mutex regression requires disposable Windows CI'
+          }
+          $hostVM=Get-CimInstance Win32_ComputerSystem -ErrorAction Stop
+          if(($hostVM.Manufacturer+' '+$hostVM.Model) -notmatch '(?i:virtual machine|vmware|hyper-v|kvm|qemu|virtualbox)'){throw 'not a disposable VM'}
+          foreach($n in @('VOLVE-DNS-SERVER-0270','VOLVE-DNS-RESCUE-0270')){
+            if(Get-ScheduledTask -TaskName $n -ErrorAction SilentlyContinue){throw 'installed productive VOLVE task detected'}
+          }
+      - name: Prove production mutex ACL and interprocess exclusion without touching DNS
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $dir=Join-Path $env:RUNNER_TEMP 'volve-0287-production-mutex-ci'
+          New-Item -ItemType Directory -Path $dir -Force|Out-Null
+          foreach($n in @('resident_transition_lock_windows.go','resident_transition_lock_windows_test.go')){
+            Copy-Item -LiteralPath (Join-Path 'development/0.28.7/inapp' $n) -Destination (Join-Path $dir $n) -ErrorAction Stop
+          }
+          Push-Location $dir
+          try {
+            go mod init volve-0287-production-mutex-ci
+            if($LASTEXITCODE -ne 0){throw 'lab module creation failed'}
+            go test -run '^TestProtectedResident' -count=1 -timeout 2m -v .
+            if($LASTEXITCODE -ne 0){throw 'protected production named mutex did not meet OS security contract'}
+            go vet .
+            if($LASTEXITCODE -ne 0){throw 'Go vet failed'}
+          }finally{Pop-Location}
+          Write-Host 'PASS: protected native Windows mutex, cross-process exclusion, strict ACL and hostile name precreation; no tasks/DNS touched'
