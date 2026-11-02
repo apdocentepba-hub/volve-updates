@@ -12,6 +12,8 @@ on:
       - 'development/0.28.7/inapp/watchdogcmd/resident_signed_original_and_task_transaction_windows_test.go'
       - 'development/0.28.7/inapp/watchdogcmd/resident_signed_combined_publisher_binding_windows.go'
       - 'development/0.28.7/inapp/watchdogcmd/resident_signed_combined_publisher_binding_windows_test.go'
+      - 'development/0.28.7/inapp/watchdogcmd/resident_signed_boot_policy_adapter_windows.go'
+      - 'development/0.28.7/inapp/watchdogcmd/resident_signed_boot_policy_adapter_windows_test.go'
       - 'development/0.28.7/inapp/watchdogcmd/resident_signed_system_stage_ci_windows_test.go'
       - 'development/0.28.7/inapp/apply_overlay.go'
   workflow_dispatch:
@@ -78,7 +80,7 @@ jobs:
               $pattern = '^(TestSignedOriginalSYSTEMTask|TestSignedProductionSYSTEMTaskRestore|TestSignedCombinedPublisherBinding)'
             }
             'combined-success' {
-              $pattern = '^TestSignedCombinedRecovery(MissingExeThenTaskOneMutexNoReceipt|AlreadyOriginalRetriesTaskWithoutOverwritingExe|LockedHandoffDoesNotReacquireMutex)$'
+              $pattern = '^(TestSignedCombinedRecovery(MissingExeThenTaskOneMutexNoReceipt|AlreadyOriginalRetriesTaskWithoutOverwritingExe|LockedHandoffDoesNotReacquireMutex)|TestSignedBootOriginalOps(RejectMissingTrustBeforeOSChanges|UnderProtectedPolicyLeaseLeavesPendingJournal))$'
             }
             'combined-rejections' {
               $pattern = '^TestSignedCombinedRecovery(UnknownExistingImageNoTaskMutation|RejectsLiveDNS53NoTaskOrExeChanges|TaskFailureLeavesOriginalAndPendingJournal|WithoutSYSTEMOrCancelledCannotMutate)$'
