@@ -160,7 +160,10 @@ func TestSignedCombinedRecoveryWithoutSYSTEMOrCancelledCannotMutate(t *testing.T
 
 func TestSignedCombinedRecoveryLockedHandoffDoesNotReacquireMutex(t *testing.T){
  root,deps,key:=combinedRecoveryFixture(t)
- ctx,cancel:=context.WithTimeout(context.Background(),20*time.Second)
+ // The signed ACL/publisher/Scheduler checks are intentionally repeated;
+ // Windows runners can spend tens of seconds on the full encrypted fixture.
+ // Keep a bounded budget that distinguishes real work from a mutex deadlock.
+ ctx,cancel:=context.WithTimeout(context.Background(),150*time.Second)
  defer cancel()
  release,err:=motorupdate.AcquireProtectedResidentTransitionLease(ctx)
  if err!=nil||release==nil{t.Fatalf("CI watchdog cannot acquire shared OS transition lock: %v",err)}
