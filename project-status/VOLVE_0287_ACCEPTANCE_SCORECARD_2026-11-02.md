@@ -207,3 +207,16 @@ Ensayo con token SYSTEM del sellado + integración de tarea original; después v
 - ZIP preparado para el usuario, con tres archivos de código **verificados mediante blob SHA-1 Git coincidente exactamente con el repositorio**, y README. No se habilitó update ni se usó ninguna credencial editorial.
 - [Windows CI sintaxis #41443290278](https://github.com/apdocentepba-hub/volve-updates/actions/runs/41443290278): **SUCCESS**, workflow de 16 grupos de tests completo en ejecución, sin eliminación de tests. El resultado de la regresión general todavía no habilita publicar.
 - **65/100**, migración productiva bloqueada. El usuario NO necesita reinstalar ni reiniciar su PC para ejecutar esta segunda inspección.
+
+
+## 02/11/2026 — Propietario real del DNS53 en la PC: validación positiva
+
+**Fuente:** segundo JSON de diagnóstico enviado por el usuario el 02/11/2026 a las 09:26 (hora local). No almacenar el archivo completo, identidad del equipo ni hash individual del ejecutable en GitHub.
+
+- `schema=1`, `tool=volve-0287-dns53-process-ownership-readonly`, `may_modify_windows=false`, `network_queries_sent=false` y `migration_authorized=false`.
+- `task_exact_system_action=true`, `task_state=Running`; tarea heredada original, no actualización 0.28.7.
+- `loopback_ipv4_udp53_count=1`, `loopback_ipv6_udp53_count=1`, `same_process_owns_both=true`: un mismo PID atiende ambos sockets UDP locales.
+- `process_is_exact_original_exe=true`, `process_is_local_system=true`, `observation_state=observed` y `dns53_identity_verified=true`. **Criterio positivo cerrado: identidad del motor DNS residente y propiedad de ambos sockets en el equipo real.**
+- **No deriva de estos resultados:** respuestas DNS correctas, porcentaje de bloqueos, disponibilidad de Internet, inicio tras nuevo reinicio, actualización exitosa, permisos de editor o firma del motor 0.28.6. Un hash individual sin constancia editorial firmada no habilita cambios.
+- Siguiente paso de validación seguro: ensayo funcional DNS IPv4 e IPv6 dirigido explícitamente al servidor local con dominios testigo permitidos y denegados, sin cambiar DNS del sistema; exigir evidencia separada de Internet y de reinicio persistente. Los tests de laboratorio y la autorización editorial siguen siendo bloqueos independientes.
+- **Progreso global técnico de aceptación conservado en 65/100** hasta obtener una prueba posterior de arranque/restauración y firma de transición. No se tocó la instalación del usuario.
