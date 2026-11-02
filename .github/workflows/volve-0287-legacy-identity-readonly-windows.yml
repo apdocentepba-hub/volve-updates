@@ -7,6 +7,9 @@ on:
       - 'development/0.28.7/motor-release-candidate/VOLVE_0287_Identidad_Motor_Solo_Lectura.ps1'
       - 'development/0.28.7/motor-release-candidate/Ejecutar_y_Guardar_Reporte.ps1'
       - 'development/0.28.7/motor-release-candidate/EJECUTAR_SOLO_LECTURA.cmd'
+      - 'development/0.28.7/motor-release-candidate/VOLVE_0287_Proceso_DNS53_Solo_Lectura.ps1'
+      - 'development/0.28.7/motor-release-candidate/Ejecutar_Proceso_DNS53_Reporte.ps1'
+      - 'development/0.28.7/motor-release-candidate/EJECUTAR_PROCESO_DNS53_SOLO_LECTURA.cmd'
   workflow_dispatch:
 permissions:
   contents: read
@@ -76,3 +79,41 @@ jobs:
             throw 'PC wrapper changed Windows tasks, DNS adapters or hosts'
           }
           Write-Host 'PASS: Windows PC ZIP entrypoint generates privacy-limited JSON and leaves tasks DNS and hosts intact'
+
+      - name: Verify DNS53 process-owner diagnostic emits privacy-limited JSON without mutation
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          if($env:GITHUB_ACTIONS -ne 'true' -or $env:RUNNER_ENVIRONMENT -ne 'github-hosted'){
+            throw 'Only disposable Windows-hosted CI is allowed'
+          }
+          $kit='development/0.28.7/motor-release-candidate'
+          $sources=@('VOLVE_0287_Proceso_DNS53_Solo_Lectura.ps1','Ejecutar_Proceso_DNS53_Reporte.ps1')
+          foreach($file in $sources){
+            $errorsList=$null
+            $tokens=$null
+            [Management.Automation.Language.Parser]::ParseFile((Resolve-Path (Join-Path $kit $file)),[ref]$tokens,[ref]$errorsList)|Out-Null
+            if($errorsList.Count -gt 0){$errorsList|Format-List;throw ('Invalid PowerShell source: '+$file)}
+          }
+          $taskBefore=@(Get-ScheduledTask|Where-Object TaskName -like 'VOLVE-*'|Select-Object TaskName,TaskPath,State|ConvertTo-Json -Compress)
+          $dnsBefore=Get-DnsClientServerAddress|Sort-Object InterfaceIndex,AddressFamily|Select-Object InterfaceIndex,AddressFamily,ServerAddresses|ConvertTo-Json -Depth 5 -Compress
+          $hosts=Join-Path $env:WINDIR 'System32/drivers/etc/hosts'
+          $hostsBefore=(Get-FileHash -LiteralPath $hosts -Algorithm SHA256).Hash
+          $log=& powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File (Join-Path $kit 'Ejecutar_Proceso_DNS53_Reporte.ps1') 2>&1
+          if($LASTEXITCODE -ne 0){throw ('DNS53 read-only diagnostic failed: '+($log|Out-String))}
+          $reports=@(Get-ChildItem -LiteralPath $kit -File -Filter 'VOLVE_PC_PROCESO_DNS53_SOLO_LECTURA_*.json')
+          if($reports.Count -ne 1){throw 'Expected exactly one DNS53 diagnostic report'}
+          $report=Get-Content -LiteralPath $reports[0].FullName -Raw -Encoding UTF8|ConvertFrom-Json
+          if($report.schema -ne 1 -or $report.tool -ne 'volve-0287-dns53-process-ownership-readonly' -or
+             $report.may_modify_windows -ne $false -or $report.network_queries_sent -ne $false -or
+             $report.migration_authorized -ne $false -or $report.task_exact_system_action -ne $false -or
+             $report.dns53_identity_verified -ne $false){
+            throw 'DNS53 report falsely verified a product motor on empty hosted VM'
+          }
+          $taskAfter=@(Get-ScheduledTask|Where-Object TaskName -like 'VOLVE-*'|Select-Object TaskName,TaskPath,State|ConvertTo-Json -Compress)
+          $dnsAfter=Get-DnsClientServerAddress|Sort-Object InterfaceIndex,AddressFamily|Select-Object InterfaceIndex,AddressFamily,ServerAddresses|ConvertTo-Json -Depth 5 -Compress
+          if(($taskBefore -join '') -cne ($taskAfter -join '') -or $dnsBefore -cne $dnsAfter -or
+             $hostsBefore -cne (Get-FileHash -LiteralPath $hosts -Algorithm SHA256).Hash){
+            throw 'Read-only DNS53 probe unexpectedly changed tasks adapters or hosts'
+          }
+          Write-Host 'PASS: process-owner report does not claim positive identity on empty VM and never mutates Windows'
