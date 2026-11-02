@@ -14,6 +14,8 @@ on:
       - 'development/0.28.7/inapp/watchdogcmd/resident_signed_combined_publisher_binding_windows_test.go'
       - 'development/0.28.7/inapp/watchdogcmd/resident_signed_boot_policy_adapter_windows.go'
       - 'development/0.28.7/inapp/watchdogcmd/resident_signed_boot_policy_adapter_windows_test.go'
+      - 'development/0.28.7/inapp/watchdogcmd/resident_pinned_boot_driver_windows.go'
+      - 'development/0.28.7/inapp/watchdogcmd/resident_pinned_boot_driver_windows_test.go'
       - 'development/0.28.7/inapp/watchdogcmd/resident_signed_system_stage_ci_windows_test.go'
       - 'development/0.28.7/inapp/apply_overlay.go'
   workflow_dispatch:
@@ -77,7 +79,7 @@ jobs:
           $scope='${{ matrix.scope }}'
           switch ($scope) {
             'task-only' {
-              $pattern = '^(TestSignedOriginalSYSTEMTask|TestSignedProductionSYSTEMTaskRestore|TestSignedCombinedPublisherBinding)'
+              $pattern = '^(TestSignedOriginalSYSTEMTask|TestSignedProductionSYSTEMTaskRestore|TestSignedCombinedPublisherBinding|TestPinnedResidentBootDriver)'
             }
             'combined-success' {
               $pattern = '^(TestSignedCombinedRecovery(MissingExeThenTaskOneMutexNoReceipt|AlreadyOriginalRetriesTaskWithoutOverwritingExe|LockedHandoffDoesNotReacquireMutex)|TestSignedBootOriginalOps(RejectMissingTrustBeforeOSChanges|UnderProtectedPolicyLeaseLeavesPendingJournal))$'
