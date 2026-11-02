@@ -43,6 +43,8 @@ El kit queda bajo `C:\ProgramData\VOLVE-CI-FreshDNS53-<id>`. La prueba comprueba
 
 En `Verify`, se exige un **nuevo LastBootUpTime**, instancia de Task Scheduler 118/100/200 después de ese arranque, proceso en ejecución realmente propiedad de SYSTEM, posesión de los puertos UDP/53 por ese PID, hashes invariantes del motor y catálogo, consultas DNS dual-stack y DNS de adaptadores/archivo `hosts` inalterados. Sin cualquiera de esos requisitos, no produce aprobación. La prueba nunca reinicia la VM por su cuenta.
 
+Si `Verify` devuelve **lista de eventos vacía**, no se declara éxito: el laboratorio puede conservar un proceso DNS arrancado correctamente, pero sin evidencia de la instancia de inicio de Windows. Antes de repetir el reinicio, ejecutar `VOLVE_VM_DIAGNOSTICO_POSTBOOT.cmd` solo dentro de la VM para recopilar estado de tarea, proceso SYSTEM, propietarios UDP53 y resumen de eventos (sin alterar el sistema). No ejecutar de nuevo `Prepare` ni `Cleanup` mientras se investigan los eventos. Si pasaron 30 minutos desde el arranque, el protocolo de certificación temporal expira y requerirá una nueva prueba controlada.
+
 Se escribe `boot-dns-after.json` **solo tras una verificación positiva**. `Cleanup` elimina únicamente la tarea `VOLVE-CI-FreshMotor-<id>`; conserva el kit/evidencia para auditoría.
 
 ## CI y alcance de lo demostrado
