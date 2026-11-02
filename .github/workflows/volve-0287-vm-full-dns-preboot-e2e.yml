@@ -5,6 +5,7 @@ on:
     paths:
       - 'development/0.28.7/lab/vm_full_motor_reboot_dns.ps1'
       - 'development/0.28.7/lab/live_dns_boot_event_chain.ps1'
+      - 'development/0.28.7/lab/vm_dns_reply_contract.ps1'
       - 'development/0.28.7/inapp/ci_fresh_dns53_windows.go'
       - 'development/0.28.7/inapp/apply_overlay.go'
       - '.github/workflows/volve-0287-vm-full-dns-preboot-e2e.yml'
