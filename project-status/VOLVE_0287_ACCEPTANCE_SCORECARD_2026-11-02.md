@@ -94,3 +94,15 @@ Ensayo con token SYSTEM del sellado + integración de tarea original; después v
 - **Puntaje general inalterado: 65/100**. El hito de integración productiva y recuperación autónoma posterior a reboot continúa sin aprobar; el motor no fue publicado en `releases/motor-stable.json`.
 
 **Siguiente prueba obligatoria:** VM Windows persistente con concesión editorial válida y protegida, proceso watchdog SYSTEM independiente, corte/reinicio y reanudación real de la transacción original EXE + Scheduler XML, arranque y verificación de bloqueo DNS IPv4/IPv6, conectividad y recibo de salud sin falsos positivos. No instalar ni sustituir el motor del usuario antes de superar esa barrera.
+
+
+## 02/11/2026 10:38 UTC — Salud de Internet comprobable tras reinicio: contrato CI aprobado (sin reinicio)
+
+- Nuevo verificador [\`vm_direct_internet_probe.ps1\`](../development/0.28.7/lab/vm_direct_internet_probe.ps1): el modo \`Verify\` del laboratorio de VM persistente requiere al menos una conexión **TCP real, directa, a IP numérica** a dos destinos alternativos (\`1.1.1.1:443\` y \`9.9.9.9:443\`). No confunde una respuesta DNS sintética con conectividad exterior, no modifica DNS/hosts/adaptadores y limita cada intento a 2,5 segundos.
+- El artefacto de prueba registra \`directInternetTCPVerified\` y el destino alcanzado. **No** representa navegación HTTP, conectividad completa, seguridad del navegador, uso de IPv6 ni protección contra bypass por VPN/DoH.
+- La VM conserva en su paquete prearranque el nuevo verificador junto con su SHA-256 protegido y lo revalida antes de ejecutar el modo \`Verify\`; un paquete anterior sin ese recurso **no obtiene certificación retrospectiva**.
+- Tests sintéticos: una conexión positiva alternativa; rechazo de dos fallas, texto ambiguo y respuesta inexistente. Todos son locales y no abren sockets.
+- [CI #41430279600](https://github.com/apdocentepba-hub/volve-updates/actions/runs/41430279600): **SUCCESS**, PowerShell 5.1 parseó los cinco archivos del contrato; aprobaron la correlación de eventos de arranque y los tres rechazos de conectividad, y se rechazó verificar una VM no preparada. **Ningún reboot real ocurrió en esta CI**.
+- **Progreso permanece 65/100**: el avance consiste en mejorar el criterio de salud que deberá verificarse durante un reboot real de VM persistente. No demuestra transición productiva ni habilita \`releases/motor-stable.json\`. El nuevo motor permanece **sin instalar en el equipo del usuario**.
+
+**Siguiente barrera no superada:** completar una ejecución real \`Prepare → reboot del mismo Windows → Verify → Cleanup\` en VM aislada persistente, además de integrar watchdog y transacción de rollback del motor bajo permiso editorial firmado. Mientras no haya evidencia de esos eventos y salud DNS/Internet post-reboot, los puntos de integración y liberación siguen en cero.
