@@ -35,10 +35,11 @@ function ConvertTo-VolvSchedulerEvent {
 
 function Assert-VolvBootEventChain {
     param(
-        [Parameter(Mandatory=$true)][object[]]$Events,
+        [Parameter(Mandatory=$true)][AllowEmptyCollection()][object[]]$Events,
         [Parameter(Mandatory=$true)][string]$TaskName,
         [Parameter(Mandatory=$true)][datetime]$BootUTC
     )
+    if($Events.Count -eq 0){throw 'NOT VERIFIED: no matching Task Scheduler records available after VM reboot'}
     if($TaskName -cnotmatch '^\\VOLVE-CI-BootRecovery-[0-9]{14,18}$'){
         throw 'NOT VERIFIED: boot recovery task name is outside VM-only allowlist'
     }
@@ -118,11 +119,21 @@ function Get-VolvRealBootChain {
         [Parameter(Mandatory=$true)][string]$TaskName,
         [Parameter(Mandatory=$true)][datetime]$BootUTC
     )
-    $events=@(Get-WinEvent -FilterHashtable @{
-        LogName='Microsoft-Windows-TaskScheduler/Operational'
-        Id=@(118,100,201,102)
-        StartTime=$BootUTC.ToUniversalTime().AddSeconds(-3)
-    } -ErrorAction SilentlyContinue)
-    $normalized=@($events | ForEach-Object {ConvertTo-VolvSchedulerEvent $_})
+    # Read raw Operational history; the provider's StartTime UTC filter can
+    # return zero results even when the true boot event chain is present.
+    # Restrict by UTC and IDs after retrieving, then require one exact GUID.
+    $events=@()
+    try {
+        $events=@(Get-WinEvent -LogName 'Microsoft-Windows-TaskScheduler/Operational' -MaxEvents 4096 -ErrorAction Stop)
+    } catch {
+        if($_.FullyQualifiedErrorId -notmatch 'NoMatchingEventsFound'){
+            throw ('NOT VERIFIED: cannot read Windows Task Scheduler event journal: '+$_.Exception.Message)
+        }
+    }
+    $lower=$BootUTC.ToUniversalTime().AddSeconds(-3)
+    $normalized=@($events | Where-Object {
+        $_.Id -in @(118,100,201,102) -and
+        ([datetime]$_.TimeCreated).ToUniversalTime() -ge $lower
+    } | ForEach-Object {ConvertTo-VolvSchedulerEvent $_})
     return Assert-VolvBootEventChain -Events $normalized -TaskName $TaskName -BootUTC $BootUTC
 }
