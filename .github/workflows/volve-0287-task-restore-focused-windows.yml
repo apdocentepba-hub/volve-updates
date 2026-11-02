@@ -98,7 +98,6 @@ jobs:
             go test -c -o $testExe ./cmd/volve-managed-watchdog
             if($LASTEXITCODE -ne 0){throw 'Cannot compile independent Go test binary for SYSTEM token lab'}
             $env:VOLVE_CI_STAGE_EXEC='1'
-            & $testExe -test.run '^TestResidentCIStageSealerActualDisposableSYSTEMTask
- -test.timeout 3m -test.v
+            & $testExe -test.run '^TestResidentCIStageSealerActualDisposableSYSTEMTask$' -test.timeout 3m -test.v
             if($LASTEXITCODE -ne 0){throw 'Actual SYSTEM NTFS stage sealing test failed'}
           }
