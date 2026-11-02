@@ -1,0 +1,72 @@
+name: VOLVE 0.28.7 focused Windows SYSTEM recovery mutex regression (NO RELEASE)
+on:
+  push:
+    branches: [feature/motor-updater-0287-pilot]
+    paths:
+      - '.github/workflows/volve-0287-watchdog-targeted-mutex-regression.yml'
+      - 'development/0.28.7/inapp/watchdogcmd/resident_signed_original_and_task_transaction_windows.go'
+      - 'development/0.28.7/inapp/watchdogcmd/resident_signed_original_and_task_transaction_windows_test.go'
+      - 'development/0.28.7/inapp/watchdogcmd/resident_signed_task_restore_windows.go'
+      - 'development/0.28.7/inapp/watchdogcmd/resident_signed_task_restore_windows_test.go'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  isolated-signed-lock-regression:
+    runs-on: windows-latest
+    timeout-minutes: 32
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.x'
+      - name: Rebuild source with SHA256-verified overlays, no production release
+        shell: bash
+        run: |
+          python - <<'PY'
+          import hashlib,zipfile,shutil
+          from pathlib import Path
+          root=Path("development/0.28.7")
+          parts=sorted((root/"complete-source-parts").glob("part-*.bin"))
+          assert [p.name for p in parts]==[f"part-{i:02d}.bin" for i in range(10)]
+          blob=b"".join(p.read_bytes() for p in parts)
+          assert hashlib.sha256(blob).hexdigest()=="92b3536559151260375b17a64eedd009df8399e45460637208027b7ca0587ba5"
+          Path("source.zip").write_bytes(blob)
+          Path("build").mkdir(exist_ok=True)
+          with zipfile.ZipFile("source.zip") as z:z.extractall("build")
+          for name,digest in (
+            ("VOLVE_0287_PRECHECK_RESCATE_OVERLAY_NO_INSTALAR.zip","fdfd31f21df81fe6da6075bfd442354297874576b6dc2c38f19bd35a681d95cd"),
+            ("VOLVE_0287_RECUPERACION_INTERRUPCION_FORZADA_NO_INSTALAR_v3.zip","773bd5eb5f1c4883021cc321856636354e964d3605dba9017e2fb5d1a7401b40")
+          ):
+            p=root/name
+            assert hashlib.sha256(p.read_bytes()).hexdigest()==digest
+            with zipfile.ZipFile(p) as z:z.extractall("build")
+          for p in (root/"journal").glob("*.go"):
+            shutil.copy2(p,Path("build/codigo/motorupdate")/p.name)
+          PY
+          go run development/0.28.7/inapp/apply_overlay.go build/codigo
+      - name: Signed recovery under pre-held Windows mutex is independently bounded
+        shell: pwsh
+        working-directory: build/codigo
+        run: |
+          $ErrorActionPreference='Stop'
+          $env:CGO_ENABLED='0'
+          go test ./cmd/volve-managed-watchdog -run '^TestSignedCombinedRecoveryLockedHandoffDoesNotReacquireMutex$' -count=1 -timeout 8m -v
+          if($LASTEXITCODE -ne 0){throw 'Protected boot handoff failed or deadlocked'}
+          Write-Host 'PASS: signed recovery under already-held OS mutex did not reenter the lock'
+      - name: Exact original binary and task are recovered under same mutex
+        shell: pwsh
+        working-directory: build/codigo
+        run: |
+          $ErrorActionPreference='Stop'
+          go test ./cmd/volve-managed-watchdog -run '^TestSignedCombinedRecoveryMissingExeThenTaskOneMutexNoReceipt$' -count=1 -timeout 8m -v
+          if($LASTEXITCODE -ne 0){throw 'Combined file/task restore failed'}
+          Write-Host 'PASS: file/task transaction preserved pending journal until DNS health check'
+      - name: Candidate rollback only finalizes after healthy probes
+        shell: pwsh
+        working-directory: build/codigo
+        run: |
+          $ErrorActionPreference='Stop'
+          go test ./cmd/volve-managed-watchdog -run '^TestSignedExactCandidateBootPolicyFinalizesOnlyAfterHealthyProbes$' -count=1 -timeout 8m -v
+          if($LASTEXITCODE -ne 0){throw 'Signed exact candidate rollback did not pass health gate'}
+          Write-Host 'PASS: recovery completion requires validated health'
