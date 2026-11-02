@@ -417,7 +417,40 @@ if($Mode -eq 'Verify'){
  return
 }
 if($Mode -eq 'Cleanup'){
+ # A recovery receipt can exist before Verify (e.g. DNS health passed but
+ # Scheduler event correlation or direct Internet failed). Never destroy
+ # the watchdog or stop the original motor until the postboot proof exists.
+ $verifiedProof=Join-Path $root 'real-candidate-rollback-proof.json'
+ if($bootAfter -le $bootBefore.AddSeconds(5)){
+  throw 'NOT VERIFIED: cleanup requires an actual reboot'
+ }
  RequireFile $receiptPath
+ if(-not (Test-Path -LiteralPath $verifiedProof -PathType Leaf)){
+  throw 'NOT VERIFIED: cannot cleanup without successful Verify proof'
+ }
+ RequireFile $verifiedProof
+ $e=Get-Content -LiteralPath $verifiedProof -Raw|ConvertFrom-Json -ErrorAction Stop
+ if($e.schema -ne 1 -or
+    $e.kind -cne 'VOLVE_VM_REAL_CANDIDATE_DNS_ROLLBACK_PROOF' -or
+    $e.labId -cne $LabId -or $e.computer -cne $env:COMPUTERNAME -or
+    $e.watchdog -cne $watch -or $e.motorTask -cne $task -or
+    $e.watchdogEventIds -cne '118,100,201,102' -or
+    $e.watchdogLastTaskResult -ne 0 -or
+    $e.motorSHA256 -cne $plan.motorSHA256 -or
+    $e.catalogSHA256 -cne $plan.catalogSHA256 -or
+    $e.originalTaskXMLSHA256 -cne $plan.xmlSHA256 -or
+    $e.candidateSHA256 -cne $plan.candidateSHA256 -or
+    $e.candidateProofSHA256 -cne (SHA $candidateProof) -or
+    $e.prebootReceiptSHA256 -cne (SHA $candidateStageProof) -or
+    $e.receiptSHA256 -cne (SHA $receiptPath) -or
+    $e.dnsIPv4IPv6Expected -ne 6 -or $e.dnsCorrect -ne 6 -or
+    $e.directInternetTCP -ne $true -or
+    $e.candidateMode -cne 'REAL_FULL_CI_DNS_EXIT_83' -or
+    $e.signedProductionMigrationProven -ne $false){
+  throw 'NOT VERIFIED: recovery proof is inconsistent; retaining watchdog and evidence'
+ }
+ # Verify that the process is still the genuine original SYSTEM DNS motor.
+ $null=EngineIdentity $motor
  $null=TaskExact $task $motor $oldArg $true
  $wd=TaskExact $watch $winPS $watchArgs $true
  $t=Get-ScheduledTask -TaskName $task -TaskPath '\'
