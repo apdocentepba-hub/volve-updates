@@ -10,6 +10,8 @@ on:
       - 'development/0.28.7/inapp/watchdogcmd/resident_signed_boot_admission_windows_test.go'
       - 'development/0.28.7/inapp/watchdogcmd/resident_signed_missing_original_restore_windows.go'
       - 'development/0.28.7/inapp/watchdogcmd/resident_signed_missing_original_restore_windows_test.go'
+      - 'development/0.28.7/inapp/watchdogcmd/resident_signed_task_restore_windows.go'
+      - 'development/0.28.7/inapp/watchdogcmd/resident_signed_task_restore_windows_test.go'
       - 'development/0.28.7/inapp/apply_overlay.go'
   workflow_dispatch:
 permissions:
@@ -65,7 +67,7 @@ jobs:
         run: |
           $ErrorActionPreference='Stop'
           $env:CGO_ENABLED='0'
-          go test ./cmd/volve-managed-watchdog -run '^(TestResidentQuiescence|TestSignedBootAdmissionQuiescenceProbe|TestSignedBootAdmissionRejectsLiveDNS53|TestSignedMissingOriginalRestore)' -count=1 -timeout 7m -v
+          go test ./cmd/volve-managed-watchdog -run '^(TestResidentQuiescence|TestSignedBootAdmissionQuiescenceProbe|TestSignedBootAdmissionRejectsLiveDNS53|TestSignedMissingOriginalRestore|TestSignedOriginalSYSTEMTask)' -count=1 -timeout 7m -v
           if($LASTEXITCODE -ne 0){throw 'Task/process/DNS port 53 fail-closed gate did not pass'}
           go build -trimpath -o (Join-Path $env:RUNNER_TEMP 'VOLVE_0287_Quiescence_Watchdog_CI.exe') ./cmd/volve-managed-watchdog
           if($LASTEXITCODE -ne 0){throw 'Independent watchdog does not compile'}

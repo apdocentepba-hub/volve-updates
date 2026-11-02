@@ -111,7 +111,7 @@ func restoreSignedOriginalSYSTEMTaskWindows(ctx context.Context,root string,
   "$t=Get-ScheduledTask -TaskName $task -TaskPath '\\' -ErrorAction Stop;"+
   "if($t.TaskPath -ne '\\' -or $t.Principal.UserId -notin @('SYSTEM','S-1-5-18') -or @($t.Actions).Count -ne 1){throw 'Unexpected live SYSTEM task'};"+
   "$act=[string]$t.Actions[0].Execute;$arg=[string]$t.Actions[0].Arguments;"+
-  "if($arg -cne '--dns-service' -or $act -inotmatch '.*'){throw 'Wrong DNS task args'};"+
+  "if($arg -cne '--dns-service'){throw 'Wrong DNS task args'};"+
   "$isOriginal=($act -ieq $old);"+
   "$isTarget=($act -ieq $target -or $act -ieq $altTarget);"+
   "if(-not ($isOriginal -or $isTarget)){throw 'Unrecognized SYSTEM executable action'};"+
