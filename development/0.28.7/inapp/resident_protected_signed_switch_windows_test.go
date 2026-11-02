@@ -238,3 +238,60 @@ func TestProtectedSignedLeaseStaleFinalizerCannotUnlockLaterTransaction(t *testi
  if err!=nil{t.Fatalf("new lease failed to release: %v",err)}
  last()
 }
+
+
+type blockedProtectedSwitchSpy struct{
+ unsafeLeaseStub
+ started chan struct{}
+ proceed chan struct{}
+}
+func(s *blockedProtectedSwitchSpy)Switch(ctx context.Context)error{
+ close(s.started)
+ select{
+ case <-s.proceed:return nil
+ case <-ctx.Done():return ctx.Err()
+ }
+}
+
+// A release callback racing with an in-flight OS switch must wait until the
+// switch is finished. Otherwise a second process could take the kernel mutex
+// while the old engine task is still being changed.
+func TestProtectedSignedLeaseFinalizerWaitsForInFlightSwitch(t *testing.T){
+ if os.Getenv("GITHUB_ACTIONS")!="true"||os.Getenv("RUNNER_ENVIRONMENT")!="github-hosted"{
+  t.Skip("real protected mutex test runs only on hosted Windows CI")
+ }
+ spy:=&blockedProtectedSwitchSpy{
+  started:make(chan struct{}),proceed:make(chan struct{}),
+ }
+ wrapped,err:=NewProtectedSignedLegacySwitchDriver(spy)
+ if err!=nil{t.Fatal(err)}
+ release,err:=wrapped.AcquireExclusiveMigration(context.Background())
+ if err!=nil{t.Fatal(err)}
+ defer release()
+ ctx,cancel:=context.WithTimeout(context.Background(),5*time.Second)
+ defer cancel()
+ switchDone:=make(chan error,1)
+ go func(){switchDone<-wrapped.Switch(ctx)}()
+ select{
+ case <-spy.started:
+ case <-ctx.Done():t.Fatal("protected switch never entered driver")
+ }
+ released:=make(chan struct{})
+ go func(){release();close(released)}()
+ select{
+ case <-released:t.Fatal("kernel lease released while protected switch still running")
+ case <-time.After(150*time.Millisecond):
+ }
+ close(spy.proceed)
+ select{
+ case err:=<-switchDone:if err!=nil{t.Fatal(err)}
+ case <-ctx.Done():t.Fatal("protected switch did not finish")
+ }
+ select{
+ case <-released:
+ case <-ctx.Done():t.Fatal("release callback stayed blocked after switch ended")
+ }
+ reacquired,err:=AcquireProtectedResidentTransitionLease(ctx)
+ if err!=nil{t.Fatalf("lease remains locked after serialized release: %v",err)}
+ reacquired()
+}
