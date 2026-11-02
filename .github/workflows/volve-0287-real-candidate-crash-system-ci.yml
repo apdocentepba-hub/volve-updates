@@ -1,0 +1,139 @@
+name: VOLVE 0.28.7 REAL DNS candidate deliberate failure under SYSTEM (CI ONLY)
+on:
+  push:
+    branches: [feature/motor-updater-0287-pilot]
+    paths:
+      - '.github/workflows/volve-0287-real-candidate-crash-system-ci.yml'
+      - 'development/0.28.7/inapp/ci_failing_candidate_dns53_windows.go'
+      - 'development/0.28.7/inapp/ci_fresh_dns53_windows.go'
+      - 'development/0.28.7/inapp/apply_overlay.go'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  real-candidate-crashes-after-six-dns-under-system:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.x'
+      - name: Reconstruct pinned complete VOLVE source and overlays
+        shell: bash
+        run: |
+          python - <<'PY'
+          import hashlib,zipfile,shutil
+          from pathlib import Path
+          root=Path("development/0.28.7")
+          parts=sorted((root/"complete-source-parts").glob("part-*.bin"))
+          assert [x.name for x in parts]==[f"part-{i:02d}.bin" for i in range(10)]
+          original=b"".join(x.read_bytes() for x in parts)
+          assert hashlib.sha256(original).hexdigest()=="92b3536559151260375b17a64eedd009df8399e45460637208027b7ca0587ba5"
+          Path("source.zip").write_bytes(original)
+          Path("build").mkdir(exist_ok=True)
+          with zipfile.ZipFile("source.zip") as z:z.extractall("build")
+          for filename,digest in (
+            ("VOLVE_0287_PRECHECK_RESCATE_OVERLAY_NO_INSTALAR.zip","fdfd31f21df81fe6da6075bfd442354297874576b6dc2c38f19bd35a681d95cd"),
+            ("VOLVE_0287_RECUPERACION_INTERRUPCION_FORZADA_NO_INSTALAR_v3.zip","773bd5eb5f1c4883021cc321856636354e964d3605dba9017e2fb5d1a7401b40")
+          ):
+            p=root/filename
+            assert hashlib.sha256(p.read_bytes()).hexdigest()==digest
+            with zipfile.ZipFile(p) as z:z.extractall("build")
+          for f in (root/"journal").glob("*.go"):
+            shutil.copy2(f,Path("build/codigo/motorupdate")/f.name)
+          PY
+          go run development/0.28.7/inapp/apply_overlay.go build/codigo
+      - name: Build distinct marked real DNS candidate, no product release
+        shell: pwsh
+        working-directory: build/codigo
+        run: |
+          $ErrorActionPreference='Stop'
+          $candidate=Join-Path $env:RUNNER_TEMP 'VOLVE_CI_Failing_RealDNS53_Candidate.exe'
+          go build -tags volveci -trimpath -ldflags '-X main.ciCandidateBuildIdentity=VOLVE-0287-VM-FAIL-CANDIDATE' -o $candidate .
+          if($LASTEXITCODE -ne 0){throw 'Failed to compile distinct real Full DNS CI candidate'}
+          $envFile='VOLVE_CI_CANDIDATE_EXE='+$candidate
+          Add-Content -LiteralPath $env:GITHUB_ENV -Value $envFile
+          if((Get-Item -LiteralPath $candidate).Length -lt 1048576){throw 'Candidate binary is incomplete'}
+      - name: Run real 400k-catalog motor candidate as SYSTEM, prove dual-stack 6 of 6 and intentional exit 83
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          if($env:GITHUB_ACTIONS -ne 'true' -or $env:RUNNER_ENVIRONMENT -ne 'github-hosted'){throw 'Not GitHub-hosted disposable Windows runner'}
+          $cs=Get-CimInstance Win32_ComputerSystem -ErrorAction Stop
+          if(($cs.Manufacturer+' '+$cs.Model) -notmatch '(?i:virtual machine|hyper-v)'){throw 'Refusing non-VM Windows'}
+          $id=([DateTime]::UtcNow.ToString('yyyyMMddHHmmss'))+('000'+$env:GITHUB_RUN_ATTEMPT)
+          $root=Join-Path $env:ProgramData ('VOLVE-CI-FreshDNS53-'+$id)
+          $task='VOLVE-CI-RealCandidateFail-'+$id
+          $candidate=$env:VOLVE_CI_CANDIDATE_EXE
+          $exe=Join-Path $root 'VOLVE_CI_Failing_Candidate.exe'
+          $proof=Join-Path $root 'ci-candidate-dns53-confirmed.json'
+          $argsText='--ci-failing-candidate-dns53 "'+$root+'" VOLVE-CI-GITHUB-HOSTED-VM-DNS53-ONLY'
+          $before=(Get-DnsClientServerAddress|Sort-Object InterfaceIndex,AddressFamily|Select-Object InterfaceIndex,AddressFamily,ServerAddresses|ConvertTo-Json -Depth 6 -Compress)
+          if(Get-ScheduledTask -TaskName $task -ErrorAction SilentlyContinue){throw 'Refusing task collision'}
+          if(Test-Path -LiteralPath $root){throw 'Refusing existing CI test root'}
+          foreach($ip in @('127.0.0.1','::1')){
+            if(@(Get-NetUDPEndpoint -LocalAddress $ip -LocalPort 53 -ErrorAction SilentlyContinue).Count -ne 0){throw 'DNS53 occupied before candidate test'}
+          }
+          $registered=$false
+          try {
+            New-Item -ItemType Directory -Path $root -ErrorAction Stop|Out-Null
+            & icacls.exe $root /inheritance:r /grant:r '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F' | Out-Null
+            if($LASTEXITCODE -ne 0){throw 'Cannot protect VM CI root ACL'}
+            Copy-Item -LiteralPath $candidate -Destination $exe -ErrorAction Stop
+            & $exe --ci-prepare-full-catalog $root VOLVE-CI-GITHUB-HOSTED-VM-DNS53-ONLY
+            if($LASTEXITCODE -ne 0){throw 'Could not initialize real Full CI catalog'}
+            $trigger=New-ScheduledTaskTrigger -Once -At (Get-Date).AddHours(1)
+            $action=New-ScheduledTaskAction -Execute $exe -Argument $argsText
+            Register-ScheduledTask -TaskName $task -Action $action -Trigger $trigger -User SYSTEM -RunLevel Highest -ErrorAction Stop|Out-Null
+            $registered=$true
+            $entry=Get-ScheduledTask -TaskName $task -ErrorAction Stop
+            if($entry.Principal.UserId -notin @('SYSTEM','S-1-5-18') -or [string]$entry.Actions[0].Execute -ine $exe -or
+              [string]$entry.Actions[0].Arguments -cne $argsText){throw 'Task not precisely bound to dedicated SYSTEM candidate'}
+            $started=[DateTime]::UtcNow.AddSeconds(-2)
+            Start-ScheduledTask -TaskName $task -ErrorAction Stop
+            $ok=$false
+            $last='candidate receipt missing'
+            $until=(Get-Date).AddSeconds(65)
+            do{
+              Start-Sleep -Milliseconds 450
+              $entry=Get-ScheduledTask -TaskName $task -ErrorAction Stop
+              $info=Get-ScheduledTaskInfo -TaskName $task -ErrorAction Stop
+              if($info.LastRunTime.ToUniversalTime() -gt $started -and
+                $entry.State -ne 'Running' -and $info.LastTaskResult -eq 83){
+                $ok=$true
+                break
+              }
+              $last='task state '+$entry.State+' result '+$info.LastTaskResult
+              if($info.LastRunTime.ToUniversalTime() -gt $started -and $entry.State -ne 'Running' -and
+                $info.LastTaskResult -notin @(0,267009)){
+                throw ('Candidate exited incorrectly: '+$last)
+              }
+            }while((Get-Date) -lt $until)
+            if(-not $ok){throw ('Real candidate did not crash with expected exit83: '+$last)}
+            if(-not (Test-Path -LiteralPath $proof -PathType Leaf)){throw 'Real candidate DNS proof was not durably written'}
+            $report=Get-Content -LiteralPath $proof -Raw|ConvertFrom-Json
+            $hash=(Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash.ToLowerInvariant()
+            if($report.schema -ne 1 -or $report.kind -cne 'VOLVE_CI_REAL_CANDIDATE_FAIL_DNS53' -or
+              $report.dns_checks -ne 6 -or $report.simulated_exit_code -ne 83 -or
+              $report.publisher_signed -ne $false -or $report.motor_sha256 -cne $hash -or
+              $report.pid -le 0){throw 'Candidate DNS report hash/identity/deliberate failure mismatch'}
+            foreach($ip in @('127.0.0.1','::1')){
+              if(@(Get-NetUDPEndpoint -LocalAddress $ip -LocalPort 53 -ErrorAction SilentlyContinue).Count -ne 0){
+                throw ('Candidate failed but still owns DNS53: '+$ip)
+              }
+            }
+            Write-Host 'PASS: ACTUAL complete VOLVE DNS engine as SYSTEM answered 6/6 IPv4/IPv6, then its DISTINCT lab EXE exited with 83 and released DNS53'
+          } finally {
+            if($registered){
+              $entry=Get-ScheduledTask -TaskName $task -ErrorAction SilentlyContinue
+              if($null -ne $entry){
+                if($entry.Principal.UserId -notin @('SYSTEM','S-1-5-18') -or
+                  [string]$entry.Actions[0].Execute -ine $exe){throw 'Refusing to remove unexpected task'}
+                if($entry.State -eq 'Running'){Stop-ScheduledTask -TaskName $task -ErrorAction Stop}
+                Unregister-ScheduledTask -TaskName $task -Confirm:$false -ErrorAction Stop
+              }
+            }
+            $after=(Get-DnsClientServerAddress|Sort-Object InterfaceIndex,AddressFamily|Select-Object InterfaceIndex,AddressFamily,ServerAddresses|ConvertTo-Json -Depth 6 -Compress)
+            if($after -cne $before){throw 'Candidate modified adapter DNS (prohibited)'}
+          }
