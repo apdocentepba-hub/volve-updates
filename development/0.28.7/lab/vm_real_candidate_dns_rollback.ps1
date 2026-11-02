@@ -449,8 +449,12 @@ if($Mode -eq 'Cleanup'){
     $e.signedProductionMigrationProven -ne $false){
   throw 'NOT VERIFIED: recovery proof is inconsistent; retaining watchdog and evidence'
  }
- # Verify that the process is still the genuine original SYSTEM DNS motor.
- $null=EngineIdentity $motor
+ # The Full CI motor exits naturally after 30 minutes. Validated evidence
+ # must still permit safe task cleanup later; do not require it to be alive.
+ # If it IS alive, confirm the exact executable, SYSTEM and owned UDP53.
+ $running=@(Get-CimInstance Win32_Process -ErrorAction Stop |
+  Where-Object {[string]$_.ExecutablePath -ieq $motor})
+ if($running.Count -gt 0){$null=EngineIdentity $motor}
  $null=TaskExact $task $motor $oldArg $true
  $wd=TaskExact $watch $winPS $watchArgs $true
  $t=Get-ScheduledTask -TaskName $task -TaskPath '\'
