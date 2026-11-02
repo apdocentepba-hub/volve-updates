@@ -34,6 +34,7 @@ function MustReject([string]$name,[object[]]$sample,[string]$taskName=$task,[dat
         Write-Host ('REJECTED: '+$name)
     }
 }
+MustReject 'zero observed scheduler records' @()
 MustReject 'missing boot trigger (manual recovery)' @($good | Where-Object Id -ne 118)
 MustReject 'missing task start' @($good | Where-Object Id -ne 100)
 MustReject 'missing action success' @($good | Where-Object Id -ne 201)
@@ -111,5 +112,5 @@ $withMissing102=Assert-VolvBootEventChain -Events $successNo102Result -TaskName 
 if($withMissing102.EventIds -ne '118,100,201,102'){
     throw 'Windows EventID 102 without ResultCode incorrectly rejected'
 }
-if($script:rejections -ne 17){throw ('Expected 17 rejection cases, got '+$script:rejections)}
+if($script:rejections -ne 18){throw ('Expected 18 rejection cases, got '+$script:rejections)}
 Write-Host ('PASS: same-instance boot proof, plausible clock ordering, no future/late events and '+$script:rejections+' adversarial rejection cases')
