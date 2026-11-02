@@ -173,7 +173,7 @@ jobs:
             $group=@(for($j=$i;$j -lt $names.Count;$j+=16){$names[$j]})
             if($group.Count -eq 0){throw ('Empty watchdog test group '+($i+1))}
             $pattern='^('+($group -join '|')+')$'
-            Write-Host ('Watchdog group '+($i+1)+'/16: +$group.Count+' tests')
+            Write-Host ('Watchdog group '+($i+1)+'/16: '+$group.Count+' tests')
             go test ./cmd/volve-managed-watchdog -run $pattern -count=1 -timeout 6m -v
             if($LASTEXITCODE -ne 0){throw ('Independent watchdog tests failed in group '+($i+1))}
             $executed+=$group.Count
