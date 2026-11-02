@@ -5,6 +5,8 @@ on:
     paths:
       - '.github/workflows/volve-0287-legacy-identity-readonly-windows.yml'
       - 'development/0.28.7/motor-release-candidate/VOLVE_0287_Identidad_Motor_Solo_Lectura.ps1'
+      - 'development/0.28.7/motor-release-candidate/Ejecutar_y_Guardar_Reporte.ps1'
+      - 'development/0.28.7/motor-release-candidate/EJECUTAR_SOLO_LECTURA.cmd'
   workflow_dispatch:
 permissions:
   contents: read
@@ -43,3 +45,34 @@ jobs:
           $dnsAfter=Get-DnsClientServerAddress | Sort-Object InterfaceIndex,AddressFamily | Select-Object InterfaceIndex,AddressFamily,ServerAddresses | ConvertTo-Json -Compress -Depth 5
           if(($taskBefore -join '') -cne ($taskAfter -join '') -or $dnsBefore -cne $dnsAfter){throw 'Inspection unexpectedly modified OS state'}
           Write-Host 'PASS: read-only legacy motor fingerprint report, unknown actual legacy state preserved; no DNS or tasks changed'
+
+      - name: Verify Windows PC kit writes a safe, parseable JSON without touching tasks DNS or hosts
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          if($env:GITHUB_ACTIONS -ne 'true' -or $env:RUNNER_ENVIRONMENT -ne 'github-hosted'){
+            throw 'Wrapper trial is restricted to a disposable Windows runner'
+          }
+          $base='development/0.28.7/motor-release-candidate'
+          $testScript=Join-Path $base 'Ejecutar_y_Guardar_Reporte.ps1'
+          $taskBefore=@(Get-ScheduledTask | Where-Object TaskName -like 'VOLVE-*' | Select-Object TaskName,TaskPath,State | ConvertTo-Json -Compress)
+          $dnsBefore=Get-DnsClientServerAddress | Sort-Object InterfaceIndex,AddressFamily | Select-Object InterfaceIndex,AddressFamily,ServerAddresses | ConvertTo-Json -Compress -Depth 5
+          $hosts=Join-Path $env:WINDIR 'System32/drivers/etc/hosts'
+          $hostsHash=(Get-FileHash -LiteralPath $hosts -Algorithm SHA256).Hash
+          $output=& powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $testScript 2>&1
+          if($LASTEXITCODE -ne 0){throw ('PC diagnostic wrapper failed: '+($output|Out-String))}
+          $reports=@(Get-ChildItem -LiteralPath $base -File -Filter 'VOLVE_PC_IDENTIDAD_SOLO_LECTURA_*.json')
+          if($reports.Count -ne 1){throw 'PC wrapper produced zero/multiple reports'}
+          $record=Get-Content -LiteralPath $reports[0].FullName -Raw -Encoding UTF8 | ConvertFrom-Json
+          if($record.schema -ne 1 -or $record.tool -ne 'volve-0287-legacy-engine-review-readonly' -or
+             $record.may_modify_windows -ne $false -or $record.migration_authorized -ne $false -or
+             $record.legacy_task_status -ne 'not_verified' -or $record.identity_review_possible -ne $false){
+            throw 'PC wrapper report trusted an absent task or claimed authorization'
+          }
+          $taskAfter=@(Get-ScheduledTask | Where-Object TaskName -like 'VOLVE-*' | Select-Object TaskName,TaskPath,State | ConvertTo-Json -Compress)
+          $dnsAfter=Get-DnsClientServerAddress | Sort-Object InterfaceIndex,AddressFamily | Select-Object InterfaceIndex,AddressFamily,ServerAddresses | ConvertTo-Json -Compress -Depth 5
+          if(($taskBefore -join '') -cne ($taskAfter -join '') -or $dnsBefore -cne $dnsAfter -or
+             $hostsHash -cne (Get-FileHash -LiteralPath $hosts -Algorithm SHA256).Hash){
+            throw 'PC wrapper changed Windows tasks, DNS adapters or hosts'
+          }
+          Write-Host 'PASS: Windows PC ZIP entrypoint generates privacy-limited JSON and leaves tasks DNS and hosts intact'
