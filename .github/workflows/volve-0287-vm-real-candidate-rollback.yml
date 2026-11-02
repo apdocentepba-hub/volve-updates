@@ -127,7 +127,22 @@ jobs:
               else{throw}
             }
             if(-not $rejected){throw 'UNSAFE: integrated trial accepted a fake reboot'}
-            Write-Host 'PASS: real CI Full DNS candidate ran six dual-stack probes as SYSTEM and exited83; watchdog prearmed; fake reboot rejected'
+            $badCleanup=$false
+            try {& $integrated -Mode Cleanup -LabId $id}
+            catch {
+              if($_.Exception.Message -match '^NOT VERIFIED: cleanup requires an actual reboot'){$badCleanup=$true}
+              else{throw}
+            }
+            if(-not $badCleanup){throw 'UNSAFE: cleanup accepted incomplete real candidate/boot evidence'}
+            $badSystem=$false
+            try {& $integrated -Mode Recover -LabId $id}
+            catch {
+              if($_.Exception.Message -match '^REFUSED: independent boot restorer requires SYSTEM'){$badSystem=$true}
+              else{throw}
+            }
+            if(-not $badSystem){throw 'UNSAFE: a non-SYSTEM administrator invoked the watchdog'}
+            Write-Host 'PASS: false boot, premature cleanup and manual non-SYSTEM recovery all rejected'
+            Write-Host 'PASS: real CI DNS candidate 6/6 under SYSTEM exited83; watchdog prearmed; false boot, early cleanup and manual recovery rejected'
           } finally {
             # GitHub-hosted Windows runner is temporary. Do not leave any
             # tasks running, or alter the runner DNS configuration.
