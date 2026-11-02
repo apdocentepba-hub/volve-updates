@@ -248,3 +248,45 @@ func TestSignedExactCandidateRollbackQuiescenceChangesBeforeRenameCannotMutate(t
   t.Fatalf("late DNS change consumed pending journal: %+v %v",state,err)
  }
 }
+
+
+// The last quiescence observation is separate from the two signed-journal
+// audits: a real task can restart asynchronously while we verify the old
+// backup. It must never race the final NTFS executable rename.
+func TestSignedExactCandidateRollbackRefusesLastMomentDNS53Restart(t *testing.T){
+ root,deps,key:=combinedRecoveryFixture(t)
+ original:=filepath.Join(root,residentLegacyExe)
+ candidate:=installExactSignedCandidateFixture(t,root)
+ observations:=0
+ deps.File.ProbeQuiescence=func(context.Context,string)(residentQuiescenceDecision,error){
+  observations++
+  if observations>=3{
+   return residentQuiescenceDecision{
+    TaskIdentityVerified:true,DNSPortFree:false,
+    MotorProcessesStopped:false,ReadyForFurtherChecks:false,
+   },errors.New("Task Scheduler restarted DNS at last mutation boundary")
+  }
+  return residentQuiescenceDecision{
+   TaskIdentityVerified:true,DNSPortFree:true,
+   MotorProcessesStopped:true,ReadyForFurtherChecks:true,
+  },nil
+ }
+ ctx,cancel:=context.WithTimeout(context.Background(),240*time.Second)
+ defer cancel()
+ unlock,err:=motorupdate.AcquireProtectedResidentTransitionLease(ctx)
+ if err!=nil||unlock==nil{t.Fatalf("cannot enter signed Windows recovery lease: %v",err)}
+ defer unlock()
+ if err:=restoreSignedExactCandidateLockedWindows(ctx,root,key,deps.File);err==nil{
+  t.Fatal("real DNS53 activation just before atomic rename went unobserved")
+ }
+ if observations!=3{t.Fatalf("expected both signed audits and final live DNS53 fence; got %d",observations)}
+ seen,err:=os.ReadFile(original)
+ if err!=nil||string(seen)!=string(candidate){
+  t.Fatalf("last-moment DNS restart nevertheless rewrote original path: %v",err)
+ }
+ journalDir:=filepath.Join(root,residentRecoveryParent,residentJournalDirName)
+ status,err:=motorupdate.InspectResidentRecoveryJournal(ctx,journalDir,durableWindowsACL)
+ if err!=nil||status.Status!="recovery-required"{
+  t.Fatalf("last-moment DNS restart consumed original signed intent: %+v %v",status,err)
+ }
+}
