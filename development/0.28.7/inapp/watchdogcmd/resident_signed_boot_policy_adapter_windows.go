@@ -67,13 +67,16 @@ func(o *residentSignedBootOriginalOps)VerifySealedOriginal(
   evidence.IntentNonce!=intent.Nonce{
   return errors.New("signed boot original differs from policy recovery intent")
  }
+ // Signed backup verification must be READ-ONLY and permit an already
+ // healthy original DNS motor to be running after boot. The live SYSTEM
+ // process/DNS53 quiescence fence belongs to RestoreOriginal immediately
+ // before MUTATION, and is rechecked there under the same held mutex.
  a,err:=auditResidentSignedBootAdmissionLocked(ctx,o.root,o.publisher,
-  o.deps.File.VerifyACL,o.deps.File.VerifyACL,o.deps.File.VerifyACL,
-  o.deps.File.ProbeQuiescence)
+  o.deps.File.VerifyACL,o.deps.File.VerifyACL,o.deps.File.VerifyACL,nil)
  if err!=nil{return fmt.Errorf("signed boot evidence refused: %w",err)}
  if a.Status!="recovery-required"||
   a.Action!="signed-evidence-verified-read-only"||
-  !a.PublisherVerified||!a.QuiescenceVerified||
+  !a.PublisherVerified||
   (a.OriginalFileState!="missing-original"&&a.OriginalFileState!="original-intact")||
   evidence.LegacySHA256!=a.OriginalSHA256{
   return errors.New("boot original is not recoverable under signed quiescent grant")
@@ -83,6 +86,7 @@ func(o *residentSignedBootOriginalOps)VerifySealedOriginal(
 
 // Called ONLY after the same boot-policy mutex has been acquired and the
 // policy has decided that its running-original identity check failed.
+// Only this mutating stage enforces task/process/DNS53 quiescence.
 // The coordinator itself re-checks SYSTEM, publisher, ACL, quiescence, hashes
 // and the journal before touching the original EXE or Scheduler action.
 // A successful import leaves the journal PENDING until DNS + Internet health.
