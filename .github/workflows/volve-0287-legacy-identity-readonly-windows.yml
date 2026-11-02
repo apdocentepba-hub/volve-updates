@@ -10,6 +10,9 @@ on:
       - 'development/0.28.7/motor-release-candidate/VOLVE_0287_Proceso_DNS53_Solo_Lectura.ps1'
       - 'development/0.28.7/motor-release-candidate/Ejecutar_Proceso_DNS53_Reporte.ps1'
       - 'development/0.28.7/motor-release-candidate/EJECUTAR_PROCESO_DNS53_SOLO_LECTURA.cmd'
+      - 'development/0.28.7/motor-release-candidate/VOLVE_0287_Respuestas_DNS_Loopback_Solo_Lectura.ps1'
+      - 'development/0.28.7/motor-release-candidate/Ejecutar_DNS_Local_Reporte.ps1'
+      - 'development/0.28.7/motor-release-candidate/EJECUTAR_DNS_LOCAL_SOLO_LECTURA.cmd'
   workflow_dispatch:
 permissions:
   contents: read
@@ -117,3 +120,42 @@ jobs:
             throw 'Read-only DNS53 probe unexpectedly changed tasks adapters or hosts'
           }
           Write-Host 'PASS: process-owner report does not claim positive identity on empty VM and never mutates Windows'
+
+      - name: Fail-closed DNS functional kit when there is no original SYSTEM-owned resolver
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          if($env:GITHUB_ACTIONS -ne 'true' -or $env:RUNNER_ENVIRONMENT -ne 'github-hosted'){throw 'Disposable CI only'}
+          $base='development/0.28.7/motor-release-candidate'
+          foreach($name in @('VOLVE_0287_Respuestas_DNS_Loopback_Solo_Lectura.ps1','Ejecutar_DNS_Local_Reporte.ps1')){
+            $tokens=$null
+            $errs=$null
+            [Management.Automation.Language.Parser]::ParseFile((Resolve-Path (Join-Path $base $name)),[ref]$tokens,[ref]$errs)|Out-Null
+            if($errs.Count -ne 0){throw ('DNS kit PowerShell parser rejected '+$name+': '+($errs|Out-String))}
+          }
+          $source=Get-Content -LiteralPath (Join-Path $base 'VOLVE_0287_Respuestas_DNS_Loopback_Solo_Lectura.ps1') -Raw
+          foreach($forbidden in @('Set-DnsClientServerAddress','Register-ScheduledTask','Start-ScheduledTask','Stop-ScheduledTask','Stop-Process','netsh ','Restart-Computer','Invoke-WebRequest','Invoke-RestMethod')){
+            if($source.Contains($forbidden)){throw ('Read-only DNS kit contains forbidden operation: '+$forbidden)}
+          }
+          $taskBefore=@(Get-ScheduledTask|Where-Object TaskName -like 'VOLVE-*'|Select-Object TaskName,TaskPath,State|ConvertTo-Json -Compress)
+          $dnsBefore=Get-DnsClientServerAddress|Sort-Object InterfaceIndex,AddressFamily|Select-Object InterfaceIndex,AddressFamily,ServerAddresses|ConvertTo-Json -Depth 5 -Compress
+          $hosts=Join-Path $env:WINDIR 'System32/drivers/etc/hosts'
+          $hostsBefore=(Get-FileHash -LiteralPath $hosts -Algorithm SHA256).Hash
+          $result=& powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File (Join-Path $base 'Ejecutar_DNS_Local_Reporte.ps1') 2>&1
+          if($LASTEXITCODE -ne 0){throw ('Read-only functional DNS wrapper failed: '+($result|Out-String))}
+          $reports=@(Get-ChildItem -LiteralPath $base -File -Filter 'VOLVE_PC_DNS_LOCAL_SOLO_LECTURA_*.json')
+          if($reports.Count -ne 1){throw 'Expected one DNS result file'}
+          $json=Get-Content -LiteralPath $reports[0].FullName -Encoding UTF8 -Raw | ConvertFrom-Json
+          if($json.schema -ne 1 -or $json.tool -ne 'volve-0287-local-dualstack-dns-functional-readonly' -or
+             $json.may_modify_windows -ne $false -or $json.migration_authorized -ne $false -or
+             $json.queries_attempted -ne 0 -or $json.dns_functional_observed -ne $false -or
+             $json.identity_verified_before -ne $false){
+             throw 'Local DNS kit tried to query or claim success without publisher-pinned SYSTEM process'
+          }
+          $taskAfter=@(Get-ScheduledTask|Where-Object TaskName -like 'VOLVE-*'|Select-Object TaskName,TaskPath,State|ConvertTo-Json -Compress)
+          $dnsAfter=Get-DnsClientServerAddress|Sort-Object InterfaceIndex,AddressFamily|Select-Object InterfaceIndex,AddressFamily,ServerAddresses|ConvertTo-Json -Depth 5 -Compress
+          if(($taskBefore -join '') -cne ($taskAfter -join '') -or $dnsBefore -cne $dnsAfter -or
+             $hostsBefore -cne (Get-FileHash -LiteralPath $hosts -Algorithm SHA256).Hash){
+            throw 'Read-only DNS kit modified Windows task/DNS adapter/hosts'
+          }
+          Write-Host 'PASS: no DNS queries without real SYSTEM process; Windows task, adapters, hosts intact'
