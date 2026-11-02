@@ -52,3 +52,13 @@ El desarrollo de Android queda **fuera de este indicador** y necesita su propia 
 - Confirmado en logs: **combined-rejections: SUCCESS (4 de 4)**. Rechaza EXE desconocido, puerto DNS53 activo, token SYSTEM ausente/cancelación; una falla de importación deja el respaldo y journal PENDING sin registrar éxito falso.
 - **task-only (regresión firmada de Scheduler): en ejecución** al momento de este registro. No registrar el workflow completo como aprobado hasta confirmación de ese tercer job.
 - **Marcador general permanece 65/100.** No elevarlo por tests de CI que no constituyen una operación instalada y recuperada tras reboot persistente. Canal de motor público NO publicado.
+
+## CI Windows definitivo del coordinador: 3 de 3 PASS
+
+- [`272701d`](https://github.com/apdocentepba-hub/volve-updates/commit/272701dece723a09fa6365ea5eb40761752c725b) reparó la sintaxis de PowerShell del workflow dividido, que antes fallaba sin ejecutar tests.
+- [CI #41374570067](https://github.com/apdocentepba-hub/volve-updates/actions/runs/41374570067): **SUCCESS en sus tres jobs Windows**. Logs verificados:
+  - **combined-success: 2/2 PASS**. Archivo faltante restituido y posterior tarea SYSTEM bajo un solo mutex; recuperación reiniciada con EXE original intacto y sin sobrescritura.
+  - **combined-rejections: 4/4 PASS**. EXE desconocido, DNS53 ocupado, falla al importar tarea (journal sigue PENDING y EXE restaurado conservado), ausencia de SYSTEM o cancelación.
+  - **task-only: SUCCESS**. Restauración firmada de tarea, bloqueo de XML/EXE adulterado, puerto DNS53 ocupado y administrador no SYSTEM; watchdog Windows compila.
+- La batería del coordinador queda aprobada **en fixture Windows de CI, no en producción**. Se mantiene el indicador global **65/100**, dado que los puntos de integración productiva exigen un watchdog realmente instalado bajo SYSTEM, reinicio persistente, verificación DNS/Internet y liberación segura.
+- Bloqueo siguiente: unir el coordinador aprobado a una identidad SYSTEM auténtica y un método de sellado DACL del nuevo EXE, y ejecutarlo con respaldo/editor real en VM persistente. Las funciones todavía son privadas/sin CLI productiva y no se publicaron.
