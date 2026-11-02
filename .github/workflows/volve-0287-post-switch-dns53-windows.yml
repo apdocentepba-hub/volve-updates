@@ -18,7 +18,7 @@ jobs:
       matrix:
         os: [windows-latest]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 13
+    timeout-minutes: 22
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -67,4 +67,15 @@ jobs:
           cp ../../development/0.28.7/inapp/watchdogcmd/ci_post_switch_real_motor_shim_windows.go ci_post_switch_real_motor_shim_windows.go
           VOLVE_CI_FULL_MOTOR_AFTER_RESTORE=1 VOLVE_CI_POLICY_AFTER_RESTORE=1 go test ./cmd/volve-managed-watchdog -run '^TestPostSwitchRestoredSystemTaskActuallyServesDualStackDNS53CILab$' -count=1 -timeout 7m -v
           echo 'PASS: full engine SYSTEM DNS53, real external TCP health, and create-only journal receipt on isolated Windows VM.'
+
+      - name: Prove entire protected boot policy under real disposable SYSTEM DNS53 and direct Internet
+        shell: bash
+        working-directory: build/codigo
+        run: |
+          test -f cmd/volve-managed-watchdog/resident_real_completion_ci_windows_test.go
+          # Existing full-motor shim was injected in the preceding job step.
+          # This is a NEW ephemeral fixture: no existing task, no product DNS.
+          VOLVE_CI_FULL_MOTOR_AFTER_RESTORE=1 VOLVE_CI_POLICY_AFTER_RESTORE=1 VOLVE_CI_FULL_BOOT_POLICY=1 go test ./cmd/volve-managed-watchdog -run '^TestPostSwitchRestoredSystemTaskActuallyServesDualStackDNS53CILab$' -count=1 -timeout 8m -v
+          echo 'PASS: complete protected boot policy verified real SYSTEM task, restored original hash, DNS IPv4/IPv6 and external TCP, then sealed receipt.'
+
 
