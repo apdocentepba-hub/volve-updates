@@ -121,6 +121,21 @@ jobs:
           }
           Write-Host 'PASS: process-owner report does not claim positive identity on empty VM and never mutates Windows'
 
+      - name: Regression - DNS RD=1 valid response cannot be misclassified as invalid
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $source='development/0.28.7/motor-release-candidate/VOLVE_0287_Respuestas_DNS_Loopback_Solo_Lectura.ps1'
+          $tokens=$null
+          $errorsFound=$null
+          [Management.Automation.Language.Parser]::ParseFile((Resolve-Path $source),[ref]$tokens,[ref]$errorsFound)|Out-Null
+          if($errorsFound.Count -ne 0){throw ('Invalid PowerShell DNS parser: '+($errorsFound|Out-String))}
+          $selfTest=@(& powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $source -SelfTest 2>&1)
+          if($LASTEXITCODE -ne 0 -or ($selfTest -join '').Trim() -cne 'VOLVE_DNS_RD1_RESPONSE_PARSER_PASS'){
+            throw ('Real Windows PowerShell DNS RD=1 regression test failed: '+($selfTest|Out-String))
+          }
+          Write-Host 'PASS: valid DNS response 0x81 with RD=1 and NXDOMAIN/NOERROR; rejected invalid ID/opcode'
+ 
       - name: Fail-closed DNS functional kit when there is no original SYSTEM-owned resolver
         shell: pwsh
         run: |
