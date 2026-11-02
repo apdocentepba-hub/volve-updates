@@ -77,7 +77,9 @@ func(o *residentSignedBootOriginalOps)VerifySealedOriginal(
  if a.Status!="recovery-required"||
   a.Action!="signed-evidence-verified-read-only"||
   !a.PublisherVerified||
-  (a.OriginalFileState!="missing-original"&&a.OriginalFileState!="original-intact")||
+  (a.OriginalFileState!="missing-original"&&
+   a.OriginalFileState!="original-intact"&&
+   a.OriginalFileState!="exact-pinned-target-still-present")||
   evidence.LegacySHA256!=a.OriginalSHA256{
   return errors.New("boot original is not recoverable under signed quiescent grant")
  }
