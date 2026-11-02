@@ -1,0 +1,142 @@
+name: VOLVE 0.28.7 persistent VM SYSTEM watchdog recovery kit (NO RELEASE)
+on:
+  push:
+    branches: [feature/motor-updater-0287-pilot]
+    paths:
+      - '.github/workflows/volve-0287-vm-recovery-persistent-kit.yml'
+      - 'development/0.28.7/lab/vm_reboot_proof.ps1'
+      - 'development/0.28.7/lab/boot_recovery_lab.ps1'
+      - 'development/0.28.7/lab/reboot_event_chain.ps1'
+      - 'development/0.28.7/lab/test_reboot_event_chain.ps1'
+      - 'development/0.28.7/lab/VM_ROLLBACK_BOOT_PACK_README.md'
+      - 'development/0.28.7/complete-source-parts/**'
+      - 'development/0.28.7/inapp/apply_overlay.go'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  vm-recovery-lab-kit:
+    runs-on: windows-latest
+    timeout-minutes: 18
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.x'
+      - name: Reconstruct hash-pinned VOLVE source; never publish a motor
+        shell: bash
+        run: |
+          python - <<'PY'
+          import hashlib, zipfile, shutil
+          from pathlib import Path
+          root=Path("development/0.28.7")
+          parts=sorted((root/"complete-source-parts").glob("part-*.bin"))
+          assert [p.name for p in parts]==[f"part-{i:02d}.bin" for i in range(10)]
+          data=b"".join(p.read_bytes() for p in parts)
+          assert hashlib.sha256(data).hexdigest()=="92b3536559151260375b17a64eedd009df8399e45460637208027b7ca0587ba5"
+          Path("source.zip").write_bytes(data)
+          Path("build").mkdir(exist_ok=True)
+          with zipfile.ZipFile("source.zip") as z:z.extractall("build")
+          for name,sha in [
+            ("VOLVE_0287_PRECHECK_RESCATE_OVERLAY_NO_INSTALAR.zip","fdfd31f21df81fe6da6075bfd442354297874576b6dc2c38f19bd35a681d95cd"),
+            ("VOLVE_0287_RECUPERACION_INTERRUPCION_FORZADA_NO_INSTALAR_v3.zip","773bd5eb5f1c4883021cc321856636354e964d3605dba9017e2fb5d1a7401b40"),
+          ]:
+            p=root/name
+            assert hashlib.sha256(p.read_bytes()).hexdigest()==sha
+            with zipfile.ZipFile(p) as z:z.extractall("build")
+          for p in (root/"journal").glob("*.go"):
+            shutil.copy2(p,Path("build/codigo/motorupdate")/p.name)
+          PY
+          go run development/0.28.7/inapp/apply_overlay.go build/codigo
+      - name: Build standalone VM-only journal helper
+        shell: powershell
+        working-directory: build/codigo
+        run: |
+          $ErrorActionPreference='Stop'
+          $out=Join-Path $env:RUNNER_TEMP 'volve-journal-lab.exe'
+          & go build -trimpath -o $out ./cmd/volve-journal-lab
+          if($LASTEXITCODE -ne 0){throw 'Could not compile the lab journal helper'}
+          if((Get-Item -LiteralPath $out).Length -lt 1048576){throw 'Unexpectedly short lab helper'}
+          Write-Host 'PASS: compiled lab journal helper; not a product executable'
+      - name: Parse legacy Windows PowerShell scripts and run event chain contract
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $root='development/0.28.7/lab'
+          foreach($name in @('vm_reboot_proof.ps1','boot_recovery_lab.ps1','reboot_event_chain.ps1','test_reboot_event_chain.ps1')){
+            $tokens=$null;$errors=$null
+            [Management.Automation.Language.Parser]::ParseFile((Resolve-Path (Join-Path $root $name)).Path,[ref]$tokens,[ref]$errors)|Out-Null
+            if($errors.Count -ne 0){throw "Invalid PowerShell syntax in $name"}
+          }
+          & (Join-Path $root 'test_reboot_event_chain.ps1')
+          if($LASTEXITCODE -and $LASTEXITCODE -ne 0){throw 'Boot event chain tests failed'}
+      - name: Prove VM Prepare and reject Verify without actual reboot
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          if($env:GITHUB_ACTIONS -ne 'true' -or $env:RUNNER_ENVIRONMENT -ne 'github-hosted'){throw 'Not an isolated CI VM'}
+          $id=$env:GITHUB_RUN_ID+'123'
+          if($id -cnotmatch '^[0-9]{14,18}$'){throw 'Invalid unique trial identifier'}
+          $base='development/0.28.7/lab'
+          $script=Join-Path $base 'vm_reboot_proof.ps1'
+          $journal=Join-Path $env:RUNNER_TEMP 'volve-journal-lab.exe'
+          $lab=Join-Path $base 'boot_recovery_lab.ps1'
+          & wevtutil.exe sl Microsoft-Windows-TaskScheduler/Operational /e:true
+          if($LASTEXITCODE -ne 0){throw 'Cannot enable ephemeral VM task history'}
+          $taskNames=@('VOLVE-CI-StartupMotor-'+$id,'VOLVE-CI-BootRecovery-'+$id)
+          try{
+            & $script -Mode Probe
+            & $script -Mode Prepare -RunId $id -LabScript $lab -JournalExe $journal
+            $rejected=$false
+            try { & $script -Mode Verify -RunId $id }
+            catch { if($_.Exception.Message -like '*VM has not undergone a new boot*'){$rejected=$true}else{throw} }
+            if(-not $rejected){throw 'False success: same-session staged task passed Verify'}
+            Write-Host 'PASS: staged disposable SYSTEM boot watchdog + journal; refused fake reboot'
+          } finally {
+            foreach($name in $taskNames){
+              $t=Get-ScheduledTask -TaskName $name -TaskPath '\' -ErrorAction SilentlyContinue
+              if($null -eq $t){continue}
+              if($t.TaskPath -ne '\' -or $t.Principal.UserId -notin @('SYSTEM','S-1-5-18')){
+                throw 'Refusing cleanup of unexpected CI task'
+              }
+              if($t.State -eq 'Running'){Stop-ScheduledTask -TaskName $name -TaskPath '\' -ErrorAction Stop}
+              Unregister-ScheduledTask -TaskName $name -TaskPath '\' -Confirm:$false -ErrorAction Stop
+            }
+          }
+      - name: Package VM-only recovery kit with SHA256 manifest
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $out=Join-Path $env:RUNNER_TEMP 'VOLVE_VM_RECOVERY_BOOT_LAB'
+          New-Item -ItemType Directory -Path $out -ErrorAction Stop|Out-Null
+          $source='development/0.28.7/lab'
+          $names=@('vm_reboot_proof.ps1','boot_recovery_lab.ps1','reboot_event_chain.ps1','VM_ROLLBACK_BOOT_PACK_README.md')
+          foreach($name in $names){
+            Copy-Item -LiteralPath (Join-Path $source $name) -Destination (Join-Path $out $name) -ErrorAction Stop
+          }
+          Copy-Item -LiteralPath (Join-Path $env:RUNNER_TEMP 'volve-journal-lab.exe') -Destination (Join-Path $out 'volve-journal-lab.exe') -ErrorAction Stop
+          $manifest=[ordered]@{
+            schema=1;kind='VOLVE_CI_REAL_VM_TASK_ROLLBACK_KIT';source_revision=$env:GITHUB_SHA;
+            run_id=$env:GITHUB_RUN_ID;vm_only=$true;product_release=$false;
+            real_motor_upgrade_proven=$false;real_reboot_performed_by_ci=$false;
+            publisher_authorized=$false;files=@()
+          }
+          foreach($file in @('volve-journal-lab.exe')+$names){
+            $item=Get-Item -LiteralPath (Join-Path $out $file) -ErrorAction Stop
+            $manifest.files+=([ordered]@{name=$file;bytes=[int64]$item.Length;sha256=(Get-FileHash -Algorithm SHA256 -LiteralPath $item.FullName).Hash.ToLowerInvariant()})
+          }
+          $manifestPath=Join-Path $out 'SHA256_MANIFEST.json'
+          $manifest|ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $manifestPath -Encoding UTF8
+          $check=Get-Content -LiteralPath $manifestPath -Raw|ConvertFrom-Json
+          if($check.files.Count -ne 5 -or $check.vm_only -ne $true -or $check.product_release -ne $false){throw 'Invalid manifest'}
+          foreach($entry in $check.files){
+            $path=Join-Path $out $entry.name
+            if((Get-FileHash -Algorithm SHA256 -LiteralPath $path).Hash.ToLowerInvariant() -cne $entry.sha256){throw 'SHA256 mismatch'}
+          }
+          Write-Host 'PASS: VM-only recovery kit manifest: 5 exact files; no release, no reboot'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: VOLVE-0287-VM-RECOVERY-BOOT-LAB-NO-INSTALL
+          path: ${{ runner.temp }}/VOLVE_VM_RECOVERY_BOOT_LAB/
+          if-no-files-found: error
+          retention-days: 7
