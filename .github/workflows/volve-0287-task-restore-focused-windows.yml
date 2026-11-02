@@ -17,7 +17,11 @@ permissions:
 jobs:
   actual-windows-quiescence:
     runs-on: windows-latest
-    timeout-minutes: 12
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        scope: [task-only, combined-success, combined-rejections]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -65,8 +69,35 @@ jobs:
         run: |
           $ErrorActionPreference='Stop'
           $env:CGO_ENABLED='0'
-          go test ./cmd/volve-managed-watchdog -run '^(TestSignedOriginalSYSTEMTask|TestSignedProductionSYSTEMTaskRestore|TestSignedCombinedRecovery)' -count=1 -timeout 8m -v
-          if($LASTEXITCODE -ne 0){throw 'Publisher-signed SYSTEM task restoration unit tests failed'}
+          $scope='${{ matrix.scope }}'
+          switch($scope){
+            'task-only' {
+              $pattern='^(TestSignedOriginalSYSTEMTask|TestSignedProductionSYSTEMTaskRestore)'
+            }
+            'combined-success' {
+              $pattern='^TestSignedCombinedRecovery(MissingExeThenTaskOneMutexNoReceipt|AlreadyOriginalRetriesTaskWithoutOverwritingExe)
+          go build -trimpath -o (Join-Path $env:RUNNER_TEMP 'VOLVE_0287_Quiescence_Watchdog_CI.exe') ./cmd/volve-managed-watchdog
+          if($LASTEXITCODE -ne 0){throw 'Independent watchdog does not compile'}
+          if(Get-ScheduledTask -TaskName 'VOLVE-DNS-SERVER-0270' -ErrorAction SilentlyContinue){
+            throw 'Disposable task leaked into CI runner'
+          }
+          Write-Host 'PASS: signed exact SYSTEM task restoration test groups passed; no production task, DNS or installation changed'
+
+            }
+            'combined-rejections' {
+              $pattern='^TestSignedCombinedRecovery(UnknownExistingImageNoTaskMutation|RejectsLiveDNS53NoTaskOrExeChanges|TaskFailureLeavesOriginalAndPendingJournal|WithoutSYSTEMOrCancelledCannotMutate)
+          go build -trimpath -o (Join-Path $env:RUNNER_TEMP 'VOLVE_0287_Quiescence_Watchdog_CI.exe') ./cmd/volve-managed-watchdog
+          if($LASTEXITCODE -ne 0){throw 'Independent watchdog does not compile'}
+          if(Get-ScheduledTask -TaskName 'VOLVE-DNS-SERVER-0270' -ErrorAction SilentlyContinue){
+            throw 'Disposable task leaked into CI runner'
+          }
+          Write-Host 'PASS: signed exact SYSTEM task restoration test groups passed; no production task, DNS or installation changed'
+
+            }
+            default { throw 'Unexpected test matrix selector' }
+          }
+          go test ./cmd/volve-managed-watchdog -run $pattern -count=1 -timeout 13m -v
+          if($LASTEXITCODE -ne 0){throw ('Publisher-signed Windows tests failed in '+$scope)}
           go build -trimpath -o (Join-Path $env:RUNNER_TEMP 'VOLVE_0287_Quiescence_Watchdog_CI.exe') ./cmd/volve-managed-watchdog
           if($LASTEXITCODE -ne 0){throw 'Independent watchdog does not compile'}
           if(Get-ScheduledTask -TaskName 'VOLVE-DNS-SERVER-0270' -ErrorAction SilentlyContinue){
