@@ -90,10 +90,10 @@ jobs:
               $pattern = '^(TestSignedCombinedRecovery(UnknownExistingImageNoTaskMutation|RejectsLiveDNS53NoTaskOrExeChanges|TaskFailureLeavesOriginalAndPendingJournal|WithoutSYSTEMOrCancelledCannotMutate)|TestSignedBootOriginalOpsHealthyRunningOriginalCanBeAuditedButNotMutated)$'
             }
             'candidate-success' {
-              $pattern = '^TestSignedExactCandidateRollbackRestoresOriginalThenTaskAndLeavesPending$'
+              $pattern = '^(TestSignedExactCandidateRollbackRestoresOriginalThenTaskAndLeavesPending|TestSignedExactCandidateBootPolicyFinalizesOnlyAfterHealthyProbes)$'
             }
             'candidate-rejections' {
-              $pattern = '^(TestSignedExactCandidateRollbackRejectsActiveDNSWithoutTouchingCandidate|TestSignedBootPolicyAuditsExactCandidateUnderProtectedMutexButRejectsUnknown)$'
+              $pattern = '^(TestSignedExactCandidateRollbackRejectsActiveDNSWithoutTouchingCandidate|TestSignedBootPolicyAuditsExactCandidateUnderProtectedMutexButRejectsUnknown|TestSignedExactCandidateBootPolicyUnhealthyDNSLeavesPendingOriginal|TestSignedExactCandidateRollbackQuiescenceChangesBeforeRenameCannotMutate)$'
             }
             default { throw 'Unexpected test matrix selector' }
           }
