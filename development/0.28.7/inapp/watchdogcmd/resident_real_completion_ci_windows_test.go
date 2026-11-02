@@ -165,3 +165,68 @@ func certifyActualCIResidentOutcome(
 // The constructor and probe interface are test-scoped only; the production
 // watchdog is deliberately NOT wired to this CI adapter.
 var _ motorupdate.ResidentCompletionChecks=(*residentCIActualCompletion)(nil)
+
+
+// In contrast with ConfirmResidentRecoveryOutcome (which audits an already
+// restored task), this CI-only path runs the COMPLETE protected reboot-policy
+// state machine while the restored original executable is actually running as
+// SYSTEM and serving genuine UDP/53 on both loopbacks. It must NOT replay the
+// Scheduler import when the original is healthy. This test proves a same-boot
+// health contract, NOT an actual persisted Windows reboot.
+func certifyActualCIResidentViaProtectedBootPolicy(
+ ctx context.Context,root,journalDir,task string,
+ seal,protect func(string)error,
+)error{
+ if os.Getenv("GITHUB_ACTIONS")!="true"||
+  os.Getenv("RUNNER_ENVIRONMENT")!="github-hosted"||
+  !pilotTaskPattern.MatchString(task){
+  return errors.New("full boot policy lab cannot access product task or non-CI host")
+ }
+ bare,err:=newResidentCIBootDriver(root,task,ps)
+ if err!=nil{return err}
+ driver,err:=motorupdate.NewProtectedResidentBootDriver(bare)
+ if err!=nil{return err}
+ // The CURRENT original is already live. If its identity is correct,
+ // RestoreOriginal must be skipped. Unexpected restoration is an error.
+ // Prove by withholding a task mutation executor.
+ bare.runner=func(context.Context,string)(string,error){
+  return "",errors.New("already healthy original must not be re-imported")
+ }
+ offline:=&residentCIForcedOfflineCompletion{
+  residentCIActualCompletion:&residentCIActualCompletion{root:root,disposableTask:task},
+ }
+ result,err:=motorupdate.RecoverPendingResidentAfterBoot(
+  ctx,journalDir,seal,protect,offline,driver)
+ if err==nil||result!=""{
+  return fmt.Errorf("offline original boot policy wrote success: %q, %v",result,err)
+ }
+ if offline.identityChecks<2||offline.dnsProbes!=1{
+  return fmt.Errorf("offline run bypassed real SYSTEM/DNS53 proof: %+v",offline.residentCIActualCompletion)
+ }
+ pending,err:=motorupdate.InspectResidentRecoveryJournal(ctx,journalDir,protect)
+ if err!=nil||pending.Status!="recovery-required"{
+  return fmt.Errorf("offline protected boot lost pending journal: %+v %v",pending,err)
+ }
+ if _,err:=os.Lstat(filepath.Join(journalDir,motorupdate.ResidentResultFile));!os.IsNotExist(err){
+  return fmt.Errorf("offline protected boot wrote a false terminal receipt: %v",err)
+ }
+ healthy:=&residentCIActualCompletion{root:root,disposableTask:task}
+ result,err=motorupdate.RecoverPendingResidentAfterBoot(
+  ctx,journalDir,seal,protect,healthy,driver)
+ if err!=nil||result!="restored"||healthy.identityChecks<3||
+  healthy.dnsProbes!=1||healthy.internetProbes!=1 {
+  return fmt.Errorf("actual protected boot policy could not attest true SYSTEM/DNS/Internet: status=%q checks=%+v err=%v",
+   result,healthy,err)
+ }
+ completed,err:=motorupdate.InspectResidentRecoveryJournal(ctx,journalDir,protect)
+ if err!=nil||completed.Status!="restored"{
+  return fmt.Errorf("actual health did not create terminal journal: %+v %v",completed,err)
+ }
+ before:=healthy.identityChecks
+ repeated,err:=motorupdate.RecoverPendingResidentAfterBoot(ctx,journalDir,
+  seal,protect,healthy,driver)
+ if err!=nil||repeated!="restored"||healthy.identityChecks!=before{
+  return fmt.Errorf("terminal boot policy rechecked health or attempted replay: %q %v",repeated,err)
+ }
+ return nil
+}
