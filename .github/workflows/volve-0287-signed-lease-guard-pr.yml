@@ -5,6 +5,8 @@ on:
     paths:
       - 'development/0.28.7/inapp/resident_protected_signed_switch_windows.go'
       - 'development/0.28.7/inapp/resident_protected_signed_switch_windows_test.go'
+      - 'development/0.28.7/inapp/resident_transition_lock_windows.go'
+      - 'development/0.28.7/inapp/resident_transition_lock_windows_test.go'
       - '.github/workflows/volve-0287-signed-lease-guard-pr.yml'
   workflow_dispatch:
 permissions:
@@ -62,11 +64,11 @@ jobs:
         working-directory: build/codigo
         run: |
           $ErrorActionPreference='Stop'
-          go test ./motorupdate -run '^TestProtectedSigned' -count=1 -timeout 10m -v
+          go test ./motorupdate -run '^TestProtected(Signed|ResidentMutexReleaseOnDifferentGoroutine)' -count=1 -timeout 10m -v
           if($LASTEXITCODE -ne 0){throw 'signed transition lock regression failed'}
           go vet ./motorupdate
           if($LASTEXITCODE -ne 0){throw 'Go vet found errors'}
-          Write-Host 'PASS: signed lease is enforced; stale finalizer cannot unlock a later OS lease; no DNS or productive tasks modified'
+          Write-Host 'PASS: signed lease and true native OS-thread ownership, cross-goroutine release, and stale finalizer; DNS and productive tasks untouched'
       - name: General regression of signed migration and independent watchdog (NO RELEASE)
         shell: pwsh
         working-directory: build/codigo
