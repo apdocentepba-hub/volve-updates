@@ -202,9 +202,28 @@ if($Mode -eq 'Arm'){
  }
  $original=TaskExact $task $motor $oldArg $true
  if($original.State -eq 'Running'){throw 'Refusing to switch a running Full DNS motor'}
- foreach($ip in @('127.0.0.1','::1')){
-  if(@(Get-NetUDPEndpoint -LocalAddress $ip -LocalPort 53 -ErrorAction SilentlyContinue).Count -ne 0){throw 'DNS53 occupied before simulated interruption'}
- }
+ # The preparer stops the exact original SYSTEM motor, but Task Scheduler
+ # may say Ready before Windows finishes releasing the UDP socket. Never
+ # stop/kill another process or assume that a foreign DNS53 owner is safe.
+ $free=$false
+ $deadline=(Get-Date).AddSeconds(15)
+ do{
+  $ports=@(foreach($ip in @('127.0.0.1','::1')){
+    Get-NetUDPEndpoint -LocalAddress $ip -LocalPort 53 -ErrorAction SilentlyContinue
+  })
+  if($ports.Count -eq 0){$free=$true;break}
+  $owners=@($ports|Select-Object -ExpandProperty OwningProcess -Unique)
+  $running=@(Get-CimInstance Win32_Process -ErrorAction Stop)
+  foreach($ownerId in $owners){
+   $match=@($running|Where-Object{$_.ProcessId -eq $ownerId -and
+     [string]$_.ExecutablePath -ieq $motor})
+   if($match.Count -ne 1){
+    throw ('REFUSED: foreign or inaccessible DNS53 owner PID '+$ownerId)
+   }
+  }
+  Start-Sleep -Milliseconds 400
+ }while((Get-Date) -lt $deadline)
+ if(-not $free){throw 'REFUSED: original motor did not release dual-stack UDP53 after stop'}
  if(Get-ScheduledTask -TaskName $watch -ErrorAction SilentlyContinue){throw 'Watchdog task already exists'}
  foreach($path in @($planPath,$oldXML,$recoverScript,$receiptPath,$candidateExe,$candidateProof,$candidateStageProof)){
   if(Test-Path -LiteralPath $path){throw ('Refusing existing lab recovery asset: '+$path)}
