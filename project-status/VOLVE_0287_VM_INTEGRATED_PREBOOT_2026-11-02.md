@@ -26,3 +26,20 @@ Fecha: 2026-11-02. Rama: feature/motor-updater-0287-pilot.
 5. Si se aprueba, siguiente pendiente: candidato motor real y permiso editorial productivo de migración desde SHA exacto 0.28.6, integrados con watchdog y pruebas posteriores a reinicio.
 
 **Indicador de aceptación técnica del actualizador de producción: 65/100, sin cambio.**
+
+## Resultado posterior — reinicio integrado REAL reportado por operador
+
+**Fecha:** 2026-11-02. **LabId:** `20261102000301`. El operador ejecutó, dentro de su máquina virtual Hyper-V, `Probe`, `Prepare` y `Arm` con los resultados `PASS`, `PREPARED` y `ARMED`. El motor Full CI generó 400.005 líneas de catálogo. El operador reinició Windows invitado y ejecutó `vm_integrated_real_dns_rollback.ps1 -Mode Verify -LabId 20261102000301`.
+
+**Salida textual aportada directamente por operador:**
+
+```text
+PASS: real Windows VM reboot; independent SYSTEM restored REAL Full DNS motor, IPv4+IPv6 6/6 and TCP Internet. Evidence: C:\ProgramData\VOLVE-CI-FreshDNS53-20261102000301\integrated-rollback-proof.json
+NOT a production signed 0.28.6 -> 0.28.7 migration.
+```
+
+**COMPROBADO EN SALIDA DE LA HERRAMIENTA:** ensayo integrado real después del reinicio aprobado según el verificador Windows en VM; recuperador SYSTEM repuso la tarea del motor Full CI, 6/6 DNS dual-stack, TCP Internet. **PENDIENTE AUDITORÍA DE ARCHIVO:** el JSON `integrated-rollback-proof.json` aún no fue adjuntado, por lo tanto no se examinaron independientemente el GUID, los eventos y los hashes concretos; tampoco se confirmó `Cleanup` de este tercer ensayo. Preservar recibo y plan hasta verificar JSON.
+
+**LÍMITES:** candidato fallido es `cmd.exe /C exit 83`, motor anterior es un compilado CI, no la 0.28.6 del usuario; no se ha probado transición productiva firmada 0.28.6 → 0.28.7 ni recuperación de un motor firmado real. Actualizador productivo permanece bloqueado; aceptación técnica general 65/100, sin cambios.
+
+**SIGUIENTE PASO:** adjuntar JSON, auditar campos y después limpiar únicamente tareas de laboratorio mediante `vm_integrated_real_dns_rollback.ps1 -Mode Cleanup -LabId 20261102000301` en la VM, sin borrar evidencia. Próxima prueba de desarrollo: sustituir `cmd.exe` por un ejecutable de motor candidato CI que falle de forma controlada; exigir autorización firmada sólo en un circuito separado con clave editorial auténtica. No habilitar `motor-stable.json`.
