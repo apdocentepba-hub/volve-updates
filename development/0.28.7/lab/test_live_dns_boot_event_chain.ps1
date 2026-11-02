@@ -27,6 +27,7 @@ function MustReject([string]$label,[object[]]$events,[string]$taskName=$task,
         $script:rejected++
     }
 }
+MustReject 'no scheduler events captured after actual boot' @()
 MustReject 'manual task start without event 118' @((NewRecord 100 102 -seconds 2),(NewRecord 200 103 -seconds 3))
 MustReject 'missing task start' @((NewRecord 118 101 -seconds 1),(NewRecord 200 103 -seconds 3))
 MustReject 'missing process/action start' @((NewRecord 118 101 -seconds 1),(NewRecord 100 102 -seconds 2))
@@ -48,5 +49,5 @@ MustReject 'finished prior instance and manual restart' @($good+(NewRecord 201 1
   (NewRecord 100 105 -instance '0b1d7e73-ff66-4e8e-984f-bd51218c0003' -seconds 9)+
   (NewRecord 200 106 -instance '0b1d7e73-ff66-4e8e-984f-bd51218c0003' -seconds 10))
 MustReject 'zero event record ID' @((NewRecord 118 0 -seconds 1),(NewRecord 100 1 -seconds 2),(NewRecord 200 2 -seconds 3))
-if($script:rejected -ne 17){throw ('Expected 17 negative cases, got '+$script:rejected)}
-Write-Host ('PASS: live SYSTEM DNS boot instance correlation, 17 negative cases, no host changes')
+if($script:rejected -ne 18){throw ('Expected 18 negative cases, got '+$script:rejected)}
+Write-Host ('PASS: live SYSTEM DNS boot instance correlation, 18 negative cases, no host changes')
