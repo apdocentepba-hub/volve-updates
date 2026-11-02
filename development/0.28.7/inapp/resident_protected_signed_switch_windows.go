@@ -23,7 +23,7 @@ type ProtectedSignedRecoveryHandoff interface {
 }
 
 type protectedSignedLegacyDriver struct {
- SignedLegacySwitchDriver
+ operations SignedLegacySwitchDriver
  handoff ProtectedSignedRecoveryHandoff
 
  // The Go lock serializes wrapper calls and finalizers; the named Windows
@@ -42,11 +42,11 @@ func NewProtectedSignedLegacySwitchDriver(operations SignedLegacySwitchDriver)(S
  if !ok||handoff==nil{
   return nil,errors.New("signed migration driver lacks independent protected watchdog handoff")
  }
- return &protectedSignedLegacyDriver{SignedLegacySwitchDriver:operations,handoff:handoff},nil
+ return &protectedSignedLegacyDriver{operations:operations,handoff:handoff},nil
 }
 
 func(d *protectedSignedLegacyDriver)AcquireExclusiveMigration(ctx context.Context)(func(),error){
- if d==nil||d.SignedLegacySwitchDriver==nil||d.handoff==nil{
+ if d==nil||d.operations==nil||d.handoff==nil{
   return nil,errors.New("missing protected signed migration adapter")
  }
  d.stateMu.Lock()
@@ -75,9 +75,10 @@ func(d *protectedSignedLegacyDriver)AcquireExclusiveMigration(ctx context.Contex
 // withProtectedLease holds the local state mutex for the entire delegate
 // operation, preventing a concurrent finalizer or rollback handoff from
 // releasing the named system mutex in the middle of a write or health probe.
-// Embedded driver methods must NOT bypass this gate.
+// A named, non-embedded delegate prevents new interface methods from being
+// silently promoted into unguarded write operations.
 func(d *protectedSignedLegacyDriver)withProtectedLease(ctx context.Context,action func()error)error{
- if d==nil||d.SignedLegacySwitchDriver==nil{return errors.New("missing protected signed migration adapter")}
+ if d==nil||d.operations==nil{return errors.New("missing protected signed migration adapter")}
  d.stateMu.Lock()
  defer d.stateMu.Unlock()
  if d.currentRelease==nil{return errors.New("signed migration operation refused without protected system mutex")}
@@ -86,25 +87,25 @@ func(d *protectedSignedLegacyDriver)withProtectedLease(ctx context.Context,actio
 }
 
 func(d *protectedSignedLegacyDriver)Preflight(ctx context.Context,manifest Manifest)error{
- return d.withProtectedLease(ctx,func()error{return d.SignedLegacySwitchDriver.Preflight(ctx,manifest)})
+ return d.withProtectedLease(ctx,func()error{return d.operations.Preflight(ctx,manifest)})
 }
 func(d *protectedSignedLegacyDriver)IndependentRecoveryReady(ctx context.Context,proof VerifiedLegacyMigrationProof)error{
- return d.withProtectedLease(ctx,func()error{return d.SignedLegacySwitchDriver.IndependentRecoveryReady(ctx,proof)})
+ return d.withProtectedLease(ctx,func()error{return d.operations.IndependentRecoveryReady(ctx,proof)})
 }
 func(d *protectedSignedLegacyDriver)Snapshot(ctx context.Context)error{
- return d.withProtectedLease(ctx,func()error{return d.SignedLegacySwitchDriver.Snapshot(ctx)})
+ return d.withProtectedLease(ctx,func()error{return d.operations.Snapshot(ctx)})
 }
 func(d *protectedSignedLegacyDriver)InstallVersionedCandidate(ctx context.Context,candidate string)error{
- return d.withProtectedLease(ctx,func()error{return d.SignedLegacySwitchDriver.InstallVersionedCandidate(ctx,candidate)})
+ return d.withProtectedLease(ctx,func()error{return d.operations.InstallVersionedCandidate(ctx,candidate)})
 }
 func(d *protectedSignedLegacyDriver)VerifyPreparedTarget(ctx context.Context,manifest Manifest)error{
- return d.withProtectedLease(ctx,func()error{return d.SignedLegacySwitchDriver.VerifyPreparedTarget(ctx,manifest)})
+ return d.withProtectedLease(ctx,func()error{return d.operations.VerifyPreparedTarget(ctx,manifest)})
 }
 func(d *protectedSignedLegacyDriver)Switch(ctx context.Context)error{
- return d.withProtectedLease(ctx,func()error{return d.SignedLegacySwitchDriver.Switch(ctx)})
+ return d.withProtectedLease(ctx,func()error{return d.operations.Switch(ctx)})
 }
 func(d *protectedSignedLegacyDriver)Commit(ctx context.Context,manifest Manifest)error{
- return d.withProtectedLease(ctx,func()error{return d.SignedLegacySwitchDriver.Commit(ctx,manifest)})
+ return d.withProtectedLease(ctx,func()error{return d.operations.Commit(ctx,manifest)})
 }
 
 // Restore hands off the OS mutex to a DIFFERENT SYSTEM watchdog process.
@@ -132,8 +133,8 @@ func(d *protectedSignedLegacyDriver)Restore(ctx context.Context)error{
 }
 
 func(d *protectedSignedLegacyDriver)Probe(ctx context.Context)error{
- return d.withProtectedLease(ctx,func()error{return d.SignedLegacySwitchDriver.Probe(ctx)})
+ return d.withProtectedLease(ctx,func()error{return d.operations.Probe(ctx)})
 }
 func(d *protectedSignedLegacyDriver)ProbeConnectivity(ctx context.Context)error{
- return d.withProtectedLease(ctx,func()error{return d.SignedLegacySwitchDriver.ProbeConnectivity(ctx)})
+ return d.withProtectedLease(ctx,func()error{return d.operations.ProbeConnectivity(ctx)})
 }
