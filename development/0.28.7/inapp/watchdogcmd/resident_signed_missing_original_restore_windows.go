@@ -56,7 +56,20 @@ func restoreSignedMissingOriginalWindows(ctx context.Context,root string,
  if err!=nil{return fmt.Errorf("cannot acquire protected recovery mutex: %w",err)}
  if lease==nil{return errors.New("recovery mutex returned no release function")}
  defer lease()
+ return restoreSignedMissingOriginalLocked(ctx,root,publisherKey,deps)
+}
 
+// Caller MUST own the protected global transition mutex. This function may
+// be composed with task restoration without releasing that mutex.
+func restoreSignedMissingOriginalLocked(ctx context.Context,root string,
+ publisherKey ed25519.PublicKey,deps residentMissingOriginalRestoreDeps,
+)error{
+ if err:=ctx.Err();err!=nil{return err}
+ if deps.VerifySystem==nil||deps.VerifyACL==nil||deps.SealNew==nil||
+  deps.ProbeQuiescence==nil||len(publisherKey)!=ed25519.PublicKeySize||
+  !filepath.IsAbs(root)||filepath.Clean(root)!=root{
+  return errors.New("locked original restore requires canonical root, signed publisher and all guards")
+ }
  admission,err:=auditResidentSignedBootAdmissionLocked(ctx,root,publisherKey,
   deps.VerifyACL,deps.VerifyACL,deps.VerifyACL,deps.ProbeQuiescence)
  if err!=nil{return fmt.Errorf("signed boot recovery rejected: %w",err)}

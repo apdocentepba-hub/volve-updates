@@ -49,7 +49,22 @@ func restoreSignedOriginalSYSTEMTaskWindows(ctx context.Context,root string,
  if err!=nil{return fmt.Errorf("cannot lock recovery transition: %w",err)}
  if lease==nil{return errors.New("no protected transition lock release")}
  defer lease()
+ return restoreSignedOriginalSYSTEMTaskLocked(ctx,root,publisher,deps)
+}
 
+// Caller MUST hold the SAME protected mutex used by the signed original
+// restore. Calling the public wrapper here would deadlock the nonreentrant
+// global mutex and could leave the SYSTEM task partially migrated.
+func restoreSignedOriginalSYSTEMTaskLocked(ctx context.Context,root string,
+ publisher ed25519.PublicKey,deps residentSignedTaskRestoreDeps,
+)error{
+ if err:=ctx.Err();err!=nil{return err}
+ if deps.VerifySystem==nil||deps.VerifyACL==nil||
+  deps.ProbeQuiescence==nil||deps.RunWindowsTask==nil||
+  len(publisher)!=ed25519.PublicKeySize||
+  !filepath.IsAbs(root)||filepath.Clean(root)!=root{
+  return errors.New("locked task restore requires canonical root, signed publisher and all guards")
+ }
  admission,err:=auditResidentSignedBootAdmissionLocked(ctx,root,publisher,
   deps.VerifyACL,deps.VerifyACL,deps.VerifyACL,deps.ProbeQuiescence)
  if err!=nil{return fmt.Errorf("publisher protected rollback not authorized: %w",err)}

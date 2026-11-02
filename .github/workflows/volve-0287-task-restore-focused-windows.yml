@@ -8,6 +8,8 @@ on:
       - 'development/0.28.7/inapp/watchdogcmd/resident_signed_task_restore_windows_test.go'
       - 'development/0.28.7/inapp/watchdogcmd/resident_signed_task_restore_system_binding_windows.go'
       - 'development/0.28.7/inapp/watchdogcmd/resident_signed_task_restore_system_binding_windows_test.go'
+      - 'development/0.28.7/inapp/watchdogcmd/resident_signed_original_and_task_transaction_windows.go'
+      - 'development/0.28.7/inapp/watchdogcmd/resident_signed_original_and_task_transaction_windows_test.go'
       - 'development/0.28.7/inapp/apply_overlay.go'
   workflow_dispatch:
 permissions:
@@ -63,7 +65,7 @@ jobs:
         run: |
           $ErrorActionPreference='Stop'
           $env:CGO_ENABLED='0'
-          go test ./cmd/volve-managed-watchdog -run '^(TestSignedOriginalSYSTEMTask|TestSignedProductionSYSTEMTaskRestore)' -count=1 -timeout 8m -v
+          go test ./cmd/volve-managed-watchdog -run '^(TestSignedOriginalSYSTEMTask|TestSignedProductionSYSTEMTaskRestore|TestSignedCombinedRecovery)' -count=1 -timeout 8m -v
           if($LASTEXITCODE -ne 0){throw 'Publisher-signed SYSTEM task restoration unit tests failed'}
           go build -trimpath -o (Join-Path $env:RUNNER_TEMP 'VOLVE_0287_Quiescence_Watchdog_CI.exe') ./cmd/volve-managed-watchdog
           if($LASTEXITCODE -ne 0){throw 'Independent watchdog does not compile'}
