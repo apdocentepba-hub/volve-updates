@@ -224,7 +224,13 @@ func TestPostSwitchRestoredSystemTaskActuallyServesDualStackDNS53CILab(t *testin
  // process/task/socket ownership twice, live dual-stack DNS blocking and
  // direct external-IP TCP reachability before writing a terminal receipt.
  if os.Getenv("VOLVE_CI_POLICY_AFTER_RESTORE")=="1" {
-  if err:=certifyActualCIResidentOutcome(ctx,root,journalDir,task,seal,protect);err!=nil{
+  var err error
+  if os.Getenv("VOLVE_CI_FULL_BOOT_POLICY")=="1" {
+   err=certifyActualCIResidentViaProtectedBootPolicy(ctx,root,journalDir,task,seal,protect)
+  }else{
+   err=certifyActualCIResidentOutcome(ctx,root,journalDir,task,seal,protect)
+  }
+  if err!=nil{
    t.Fatalf("real SYSTEM/DNS53/external connectivity did NOT qualify for recovery receipt: %v",err)
   }
   t.Log("PASS: create-only recovered terminal receipt after TWO true SYSTEM identity checks, actual blocked/allowed DNS v4/v6 and external numeric TCP from disposable Windows VM")
