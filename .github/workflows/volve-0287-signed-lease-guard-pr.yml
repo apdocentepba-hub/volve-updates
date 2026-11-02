@@ -67,3 +67,16 @@ jobs:
           go vet ./motorupdate
           if($LASTEXITCODE -ne 0){throw 'Go vet found errors'}
           Write-Host 'PASS: signed lease is enforced; stale finalizer cannot unlock a later OS lease; no DNS or productive tasks modified'
+      - name: General regression of signed migration and independent watchdog (NO RELEASE)
+        shell: pwsh
+        working-directory: build/codigo
+        run: |
+          $ErrorActionPreference='Stop'
+          # Run the complete two packages, not just regex-selected tests;
+          # catches incompatibilities with journal, release permits and the
+          # independent SYSTEM boot recovery. CI only, no production tasks.
+          go test ./motorupdate ./cmd/volve-managed-watchdog -count=1 -timeout 14m
+          if($LASTEXITCODE -ne 0){throw 'General signed migration/watchdog regression failed'}
+          go vet ./motorupdate ./cmd/volve-managed-watchdog
+          if($LASTEXITCODE -ne 0){throw 'General signed migration/watchdog static analysis failed'}
+          Write-Host 'PASS: full signed transaction and independent watchdog packages; productive motor remains untouched'
