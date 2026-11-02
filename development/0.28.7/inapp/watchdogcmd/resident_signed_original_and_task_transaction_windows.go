@@ -46,6 +46,31 @@ func recoverSignedLegacyOriginalAndSYSTEMTaskWindows(
  if err!=nil{return fmt.Errorf("cannot acquire protected original recovery transaction: %w",err)}
  if lease==nil{return errors.New("protected original recovery mutex returned nil release")}
  defer lease()
+ return recoverSignedLegacyOriginalAndSYSTEMTaskLockedWindows(ctx,root,key,deps)
+}
+
+// recoverSignedLegacyOriginalAndSYSTEMTaskLockedWindows is the handoff
+// for an independent boot watchdog that ALREADY OWNS the protected Windows
+// transition mutex. It MUST NEVER acquire the non-reentrant lease again.
+// This remains private and unavailable to the product launcher or CLI.
+// The caller must hold the lease for the full file+Scheduler transition.
+func recoverSignedLegacyOriginalAndSYSTEMTaskLockedWindows(
+ ctx context.Context,root string,key ed25519.PublicKey,
+ deps residentSignedCombinedRecoveryDeps,
+)error{
+ if err:=ctx.Err();err!=nil{return err}
+ if len(key)!=ed25519.PublicKeySize||
+  !filepath.IsAbs(root)||filepath.Clean(root)!=root||
+  deps.File.VerifySystem==nil||deps.File.VerifyACL==nil||
+  deps.File.SealNew==nil||deps.File.ProbeQuiescence==nil||
+  deps.Task.VerifySystem==nil||deps.Task.VerifyACL==nil||
+  deps.Task.ProbeQuiescence==nil||deps.Task.RunWindowsTask==nil{
+  return errors.New("locked recovery requires complete SYSTEM, NTFS and DNS safeguards")
+ }
+ // Verify both OS identities under the already-held mutex, not only
+ // before acquisition by a previous owner.
+ if err:=deps.File.VerifySystem(ctx);err!=nil{return fmt.Errorf("locked file recovery lacks SYSTEM: %w",err)}
+ if err:=deps.Task.VerifySystem(ctx);err!=nil{return fmt.Errorf("locked task recovery lacks SYSTEM: %w",err)}
 
  // An independent signed backup/journal check is deliberately repeated
  // by EACH locked primitive. Every decision stays under this one mutex.
