@@ -55,6 +55,18 @@ func(o *residentSignedBootOriginalOps)VerifySealedOriginal(
  if err:=o.deps.File.VerifySystem(ctx);err!=nil{
   return fmt.Errorf("signed boot recovery requires SYSTEM: %w",err)
  }
+ // Compare the immutable journal/backup identity first. A different
+ // transaction nonce is rejected before expensive signed-grant and ACL
+ // admission checks, but no mutation occurs until BOTH checks succeed.
+ evidence,err:=auditPostSwitchResidentRecovery(ctx,o.root)
+ if err!=nil{return err}
+ if evidence.LegacySHA256!=intent.LegacySHA256||
+  evidence.TaskXMLSHA256!=intent.TaskXMLSHA256||
+  evidence.TargetSHA256!=intent.TargetSHA256||
+  evidence.TargetVersion!=intent.TargetVersion||
+  evidence.IntentNonce!=intent.Nonce{
+  return errors.New("signed boot original differs from policy recovery intent")
+ }
  a,err:=auditResidentSignedBootAdmissionLocked(ctx,o.root,o.publisher,
   o.deps.File.VerifyACL,o.deps.File.VerifyACL,o.deps.File.VerifyACL,
   o.deps.File.ProbeQuiescence)
@@ -62,18 +74,9 @@ func(o *residentSignedBootOriginalOps)VerifySealedOriginal(
  if a.Status!="recovery-required"||
   a.Action!="signed-evidence-verified-read-only"||
   !a.PublisherVerified||!a.QuiescenceVerified||
-  (a.OriginalFileState!="missing-original"&&a.OriginalFileState!="original-intact"){
-  return errors.New("boot original is not recoverable under signed quiescent grant")
- }
- evidence,err:=auditPostSwitchResidentRecovery(ctx,o.root)
- if err!=nil{return err}
- if evidence.LegacySHA256!=intent.LegacySHA256||
-  evidence.TaskXMLSHA256!=intent.TaskXMLSHA256||
-  evidence.TargetSHA256!=intent.TargetSHA256||
-  evidence.TargetVersion!=intent.TargetVersion||
-  evidence.IntentNonce!=intent.Nonce||
+  (a.OriginalFileState!="missing-original"&&a.OriginalFileState!="original-intact")||
   evidence.LegacySHA256!=a.OriginalSHA256{
-  return errors.New("signed boot original differs from policy recovery intent")
+  return errors.New("boot original is not recoverable under signed quiescent grant")
  }
  return ctx.Err()
 }
