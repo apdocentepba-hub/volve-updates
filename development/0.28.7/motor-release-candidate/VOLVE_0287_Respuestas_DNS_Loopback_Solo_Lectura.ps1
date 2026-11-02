@@ -4,7 +4,7 @@
 # La consulta permitida puede ser reenviada a resolutores configurados.
 # Esta prueba NO verifica recuperación tras reinicio ni autoriza migración.
 [CmdletBinding()]
-param()
+param([switch]$SelfTest)
 Set-StrictMode -Version Latest
 $ErrorActionPreference='Stop'
 $here=Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -22,6 +22,42 @@ function Verify-Owner {
        $result.dns53_identity_verified -ne $true){
         throw 'No se comprobó el proceso original SYSTEM en IPv4 e IPv6; no se consultó DNS'
     }
+}
+function Get-DnsRCodeFromReply([byte[]]$request,[byte[]]$reply) {
+    # DNS high header byte: QR is bit 7, OPCODE occupies bits 6..3;
+    # RD is bit 0, and a normal recursive reply echoes RD=1.
+    # The previous probe mistakenly required bits 3..0 == 0 and
+    # therefore rejected valid responses (e.g., 0x81, even NXDOMAIN).
+    if($request.Length -lt 12 -or $reply.Length -lt $request.Length -or
+       $reply[0] -ne $request[0] -or $reply[1] -ne $request[1] -or
+       ($reply[2] -band 0x80) -eq 0 -or
+       ($reply[2] -band 0x78) -ne 0 -or
+       ($reply[2] -band 0x02) -ne 0 -or
+       $reply[4] -ne 0 -or $reply[5] -ne 1){
+        throw 'DNS_INVALID_RESPONSE_HEADER'
+    }
+    for($i=12;$i -lt $request.Length;$i++){
+        if($reply[$i] -ne $request[$i]){throw 'DNS_INVALID_RESPONSE_QUESTION'}
+    }
+    return [int]($reply[3] -band 15)
+}
+if($SelfTest){
+    [byte[]]$req=@(0,66,1,0,0,1,0,0,0,0,0,0)
+    [byte[]]$nxdomain=@(0,66,129,131,0,1,0,0,0,0,0,0)
+    [byte[]]$noerror=@(0,66,129,128,0,1,0,0,0,0,0,0)
+    if((Get-DnsRCodeFromReply $req $nxdomain) -ne 3 -or
+       (Get-DnsRCodeFromReply $req $noerror) -ne 0){
+        throw 'Valid RD=1 DNS reply wrongly rejected'
+    }
+    [byte[]]$wrongId=@(0,67,129,131,0,1,0,0,0,0,0,0)
+    [byte[]]$wrongOpcode=@(0,66,137,131,0,1,0,0,0,0,0,0)
+    foreach($bad in @($wrongId,$wrongOpcode)){
+        $rejected=$false
+        try{$null=Get-DnsRCodeFromReply $req $bad}catch{$rejected=$true}
+        if(-not $rejected){throw 'Unrelated or non-query DNS response accepted'}
+    }
+    Write-Output 'VOLVE_DNS_RD1_RESPONSE_PARSER_PASS'
+    return
 }
 function Query-DNS([string]$Address,[string]$Name){
     $ip=[Net.IPAddress]::Parse($Address)
@@ -49,18 +85,12 @@ function Query-DNS([string]$Address,[string]$Name){
         $remote=[Net.IPEndPoint]::new(
           $(if($ip.AddressFamily -eq [Net.Sockets.AddressFamily]::InterNetworkV6){[Net.IPAddress]::IPv6Any}else{[Net.IPAddress]::Any}),0)
         [byte[]]$reply=$client.Receive([ref]$remote)
-        if($reply.Length -lt 12 -or
-           $reply[0] -ne $query[0] -or $reply[1] -ne $query[1] -or
-           ($reply[2] -band 128) -eq 0 -or
-           ($reply[2] -band 15) -ne 0 -or
-           $reply[4] -ne 0 -or $reply[5] -ne 1){
-            throw 'Respuesta DNS sin coincidencia de consulta o encabezado'
-        }
-        return [int]($reply[3] -band 15)
+        return Get-DnsRCodeFromReply $query $reply
     } finally {$client.Dispose()}
 }
 $report=[ordered]@{
     schema=1
+    diagnostic_revision=2
     tool='volve-0287-local-dualstack-dns-functional-readonly'
     may_modify_windows=$false
     migration_authorized=$false
@@ -96,7 +126,20 @@ try{
                     else {$report.allowed_noerror_observations++}
                 } else {$status='unexpected_rcode'}
             } catch {
-                $status='timeout_or_invalid_response'
+                # Fail closed, but separate real socket timeout from a
+                # malformed DNS reply and from a PowerShell/runtime error.
+                # Do not export path, process ID, or raw exception details.
+                $socket=$_.Exception
+                while($null -ne $socket -and -not ($socket -is [Net.Sockets.SocketException])){
+                    $socket=$socket.InnerException
+                }
+                if($null -ne $socket){
+                    $status=$(if($socket.SocketErrorCode -eq [Net.Sockets.SocketError]::TimedOut){'timeout'}else{'socket_error'})
+                }elseif($_.Exception.Message -like 'DNS_INVALID_RESPONSE_*'){
+                    $status='invalid_response'
+                }else{
+                    $status='probe_error'
+                }
             }
             $report.results+=([ordered]@{
                 address_family=$(if($addr -eq '::1'){'IPv6'}else{'IPv4'})
