@@ -27,8 +27,16 @@ func TestResidentCIStageSealerSYSTEMChild(t *testing.T){
   t.Fatalf("independent scheduled process was not SYSTEM: %v",err)
  }
  path:=filepath.Join(root,".volve-signed-original-recovery-system-ci")
- ctx,cancel:=context.WithTimeout(context.Background(),40*time.Second)
+ ctx,cancel:=context.WithTimeout(context.Background(),65*time.Second)
  defer cancel()
+ // Positive half of the production-identity constructor contract. This
+ // executable is actually launched from a DISPOSABLE Windows LocalSystem
+ // Scheduled Task, not merely an elevated administrator test process.
+ // Construct only; NEVER invoke RestoreOriginal or register product tasks.
+ driver,err:=newPinnedResidentBootRecoveryDriverWindows(ctx,root)
+ if err!=nil||driver==nil{
+  t.Fatalf("actual SYSTEM could not construct sealed publisher boot driver: %v",err)
+ }
  if err:=sealResidentOriginalRecoveryStageNTFS(ctx,root,path);err!=nil{
   t.Fatalf("SYSTEM could not seal bounded original stage with protected ACL: %v",err)
  }
