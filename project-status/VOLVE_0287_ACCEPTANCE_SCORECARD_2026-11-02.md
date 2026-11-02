@@ -116,3 +116,11 @@ Ensayo con token SYSTEM del sellado + integración de tarea original; después v
 - **Validación todavía pendiente de resultado definitivo en esta anotación:** [Windows #41431312048](https://github.com/apdocentepba-hub/volve-updates/actions/runs/41431312048). No declarar el test nuevo aprobado hasta comprobar los tres trabajos y su conclusión final.
 
 **Puntuación invariable: 65/100.** La interfaz interna no constituye conexión efectiva al watchdog en el equipo, recuperación tras reboot ni habilitación del canal de motor.
+
+
+### Corrección posterior del ensayo del handoff firmado
+
+- [Windows #41431312048](https://github.com/apdocentepba-hub/volve-updates/actions/runs/41431312048) **FAIL**: los rechazos de seguridad aprobaron, pero el nuevo test \`LockedHandoffDoesNotReacquireMutex\` agotó su plazo de 20 segundos antes de completar todas las verificaciones de autorización editorial/ACL; el journal permaneció pendiente y no se afirmó éxito. **No es aprobación del handoff**.
+- [Commit \`752514b\`](https://github.com/apdocentepba-hub/volve-updates/commit/752514be4797d4197ec29c869698e75fae24475c): presupuesto de ejecución del test ampliado a 150 segundos, sin modificar el comportamiento del motor ni relajar condiciones de firma, NTFS, SYSTEM o quiescencia. [Nueva ejecución Windows #41431985874](https://github.com/apdocentepba-hub/volve-updates/actions/runs/41431985874) fue iniciada y su veredicto deberá revisarse por separado.
+- Las ejecuciones previas con ParserError en el YAML fueron corregidas desde la última versión aprobada, no representan evidencia de un fallo del motor desplegado.
+- Progreso 65/100 y motor bloqueado para liberación hasta cerrar todos los criterios de aceptación.
