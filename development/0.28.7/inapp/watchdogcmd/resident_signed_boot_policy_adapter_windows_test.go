@@ -115,3 +115,69 @@ func TestSignedBootOriginalOpsHealthyRunningOriginalCanBeAuditedButNotMutated(t 
   t.Fatalf("busy DNS rejection modified pending recovery evidence: %+v %v",pending,err)
  }
 }
+
+
+// The policy-level contract is materially stronger than separately calling
+// VerifySealedOriginal and RestoreOriginal. It holds one actual Windows kernel
+// lease across signed grant verification, task import, synthetic DNS/Internet
+// health and terminal receipt, then refuses to replay the recovery on retry.
+// This lab fixture has REAL NTFS ACL verification and a signed disposable
+// publisher grant, but simulated identity/health/Scheduler operations.
+// It does NOT prove a real reboot, start a DNS process or touch product tasks.
+func TestSignedBootPolicyFullRecoveryUnderSharedMutexSealsExactlyOnce(t *testing.T){
+ root,deps,key:=combinedRecoveryFixture(t)
+ ctx,cancel:=context.WithTimeout(context.Background(),280*time.Second)
+ defer cancel()
+ journalDir:=filepath.Join(root,residentRecoveryParent,residentJournalDirName)
+ before,err:=motorupdate.InspectResidentRecoveryJournal(ctx,journalDir,durableWindowsACL)
+ if err!=nil||before.Status!="recovery-required"{
+  t.Fatalf("test fixture missing pending protected journal: %+v %v",before,err)
+ }
+ calls:=0
+ deps.Task.RunWindowsTask=func(_ context.Context,script string)(string,error){
+  calls++
+  if !containsCombinedTokens(script){
+   return "",errors.New("policy original task re-import lost signed SYSTEM/DNS53 fences")
+  }
+  // Prove the policy still holds the global Win32 mutex at the actual
+  // Scheduler mutation boundary, not only during its initial audit.
+  blockedCtx,done:=context.WithTimeout(context.Background(),90*time.Millisecond)
+  defer done()
+  blocked:=make(chan error,1)
+  go func(){
+   unlock,err:=motorupdate.AcquireProtectedResidentTransitionLease(blockedCtx)
+   if unlock!=nil{unlock()}
+   blocked<-err
+  }()
+  if err:=<-blocked;!errors.Is(err,context.DeadlineExceeded){
+   return "",errors.New("policy released transition mutex before signed Scheduler restore")
+  }
+  return "VOLVE_SIGNED_ORIGINAL_TASK_RESTORED",nil
+ }
+ ops,err:=newResidentSignedBootOriginalOps(root,ed25519.PublicKey(key),deps)
+ if err!=nil{t.Fatal(err)}
+ driver,err:=motorupdate.NewProtectedResidentBootDriver(ops)
+ if err!=nil{t.Fatal(err)}
+ sealed:=func(path string)error{
+  hardenedTestACL(t,path,path)
+  return nil
+ }
+ health:=&ciBootHealth{firstOriginalMissing:true}
+ result,err:=motorupdate.RecoverPendingResidentAfterBoot(ctx,journalDir,
+  sealed,durableWindowsACL,health,driver)
+ if err!=nil||result!="restored"||calls!=1{
+  t.Fatalf("signed protected boot policy did not finish once: result=%q tasks=%d err=%v",result,calls,err)
+ }
+ if health.identityChecks<3{
+  t.Fatalf("boot policy did not verify running original identity after signed restore: %d",health.identityChecks)
+ }
+ journal,err:=motorupdate.InspectResidentRecoveryJournal(ctx,journalDir,durableWindowsACL)
+ if err!=nil||journal.Status!="restored"{
+  t.Fatalf("synthetic healthy DNS/Internet did not yield terminal protected receipt: %+v %v",journal,err)
+ }
+ again,err:=motorupdate.RecoverPendingResidentAfterBoot(ctx,journalDir,
+  sealed,durableWindowsACL,&ciBootHealth{},driver)
+ if err!=nil||again!="restored"||calls!=1{
+  t.Fatalf("terminal original boot recovery replayed or rejected: %q calls=%d err=%v",again,calls,err)
+ }
+}
