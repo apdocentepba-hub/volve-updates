@@ -158,6 +158,7 @@ $proof=Join-Path $root 'boot-dns-after.json'
 $catalog=Join-Path $root 'catalog\feeds\hagezi_gambling_full.txt'
 $helper=Join-Path $root 'live_dns_boot_event_chain.ps1'
 $eventParser=Join-Path $root 'reboot_event_chain.ps1'
+$internetHelper=Join-Path $root 'vm_direct_internet_probe.ps1'
 
 if($Mode -eq 'Prepare'){
     if([string]::IsNullOrWhiteSpace($MotorExe) -or
@@ -195,6 +196,7 @@ if($Mode -eq 'Prepare'){
     Copy-Item -LiteralPath $MotorExe -Destination $exe -ErrorAction Stop
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'live_dns_boot_event_chain.ps1') -Destination $helper -ErrorAction Stop
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'reboot_event_chain.ps1') -Destination $eventParser -ErrorAction Stop
+    Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'vm_direct_internet_probe.ps1') -Destination $internetHelper -ErrorAction Stop
     # The protected kit folder already exists; an ordinary DNS start refuses
     # to guess or generate a missing feed. Bootstrap it explicitly, while
     # still unprivileged with respect to DNS/53 or Task Scheduler.
@@ -237,6 +239,7 @@ if($Mode -eq 'Prepare'){
             bootBeforeUtc=$boot;motorTask=$task;
             motorSHA256=(Digest $exe);catalogSHA256=(Digest $catalog);
             helperSHA256=(Digest $helper);parserSHA256=(Digest $eventParser);
+            internetHelperSHA256=(Digest $internetHelper);
             networkJSON=$beforeNetwork;hostsSHA256=$beforeHosts;
             rules=$count;mode='VM_ONLY_CI_UNSIGNED_NO_PRODUCTION';
         }
@@ -263,11 +266,12 @@ if($before.schema -ne 1 -or $before.labId -cne $LabId -or
    $before.rules -ne 400005 -or $before.mode -cne 'VM_ONLY_CI_UNSIGNED_NO_PRODUCTION'){
     throw 'VM boot trial identity is inconsistent'
 }
-foreach($p in @($exe,$catalog,$helper,$eventParser)){Assert-Regular $p}
+foreach($p in @($exe,$catalog,$helper,$eventParser,$internetHelper)){Assert-Regular $p}
 if((Digest $exe) -cne $before.motorSHA256 -or
    (Digest $catalog) -cne $before.catalogSHA256 -or
    (Digest $helper) -cne $before.helperSHA256 -or
-   (Digest $eventParser) -cne $before.parserSHA256){
+   (Digest $eventParser) -cne $before.parserSHA256 -or
+   (Digest $internetHelper) -cne $before.internetHelperSHA256){
     throw 'VM boot trial files changed after the pre-boot snapshot'
 }
 $null=Assert-Task $task $exe $arg
@@ -279,6 +283,7 @@ if($Mode -eq 'Verify'){
     if([DateTime]::UtcNow -gt $current.AddMinutes(30)){throw 'NOT VERIFIED: boot test engine observation window expired'}
     . $eventParser
     . $helper
+    . $internetHelper
     $log='Microsoft-Windows-TaskScheduler/Operational'
     $logStatus=Get-WinEvent -ListLog $log -ErrorAction Stop
     if(-not $logStatus.IsEnabled){throw 'Task Scheduler event history disabled'}
@@ -291,6 +296,10 @@ if($Mode -eq 'Verify'){
     if($t.State -ne 'Running'){throw 'Full motor SYSTEM task is not running after reboot'}
     $process=OwnDNSProcess $exe
     Assert-RealDNS
+    $internet=Assert-VolvDirectInternetTCP
+    if(-not $internet.Verified -or $internet.Transport -cne 'direct-ipv4-tcp'){
+        throw 'NOT VERIFIED: direct TCP Internet probe failed after reboot'
+    }
     $hosts=Join-Path $env:WINDIR 'System32\drivers\etc\hosts'
     if((CurrentNetwork) -cne $before.networkJSON -or (Digest $hosts) -cne $before.hostsSHA256){
         throw 'Windows DNS adapters/hosts differ from the pre-boot snapshot'
@@ -304,6 +313,7 @@ if($Mode -eq 'Verify'){
         schedulerInstance=$chain.InstanceId;schedulerEvents=$chain.EventIds;
         schedulerRecordIds=$chain.RecordIds;dnsTransport=@('127.0.0.1:53','[::1]:53');
         blocked=@('stake.com','betwarrior.bet.ar');allowed=@('example.org');
+        directInternetTCPVerified=$true;directInternetTCPEndpoint=$internet.Endpoint;
         productionMigrationProven=$false;editorSignedPermitProven=$false;
     }
     $result|ConvertTo-Json -Depth 6|Set-Content -LiteralPath $proof -Encoding UTF8
