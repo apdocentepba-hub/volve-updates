@@ -44,7 +44,11 @@ func newPinnedResidentBootHealthWindows(ctx context.Context,root string)(
  return &residentPinnedBootHealthWindows{
   root:root,
   verifySystem:verifyResidentActualSYSTEM,
-  verifyACL:func(path string)error{return checkResidentJournalNTFS(ctx,path)},
+  verifyACL:func(path string)error{
+   aclCtx,cancel:=context.WithTimeout(context.Background(),30*time.Second)
+   defer cancel()
+   return checkResidentJournalNTFS(aclCtx,path)
+  },
   queryWindows:ps,
  },nil
 }
