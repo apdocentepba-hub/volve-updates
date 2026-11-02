@@ -48,3 +48,13 @@ Destino TCP443
 **Siguiente paso seguro:** conservar estos resultados y limpiar **únicamente** la tarea de laboratorio `VOLVE-CI-FreshMotor-202611020001` ejecutando `vm_full_motor_reboot_dns.ps1 -Mode Cleanup -LabId 202611020001` dentro de la VM, tal como el código restringe explícitamente; el comando detiene la tarea si está corriendo y la desregistra, preservando evidencia. Crear checkpoint limpio de la VM después de comprobar la limpieza y ANTES de experimentar con migración simulada. No restaurar ni eliminar evidencias originales de manera implícita.
 
 **Puntaje total de aceptación técnica del actualizador: se mantiene 65/100** hasta completar prueba separada de recuperación tras actualización interrumpida, con autorización editorial y recuperador independiente SYSTEM.
+
+## Cierre operativo: tarea CI retirada tras comprobaciones
+
+El operador confirmó en PowerShell de la VM el mensaje **`LIMPIEZA OK: tarea temporal eliminada. Evidencia conservada.`**, después de ejecutar un bloque de limpieza independiente que exigió identificación positiva de máquina virtual, tarea con nombre exacto `VOLVE-CI-FreshMotor-202611020001`, principal `SYSTEM`, disparador AtStartup y acción/ruta/argumentos exactos; detuvo la tarea si estaba Running y la desregistró con verificación de ausencia. **No** dependió de un `vm_full_motor_reboot_dns.ps1` ausente en `C:\Lab` al momento de limpiar. La evidencia del ensayo anterior permanece en ProgramData.
+
+Se solicitó apagar `VOLVE-LAB-0287` y crear un punto de control **`ANTES-PRUEBA-ROLLBACK-0287`**, **pendiente de confirmación del operador**. No se debe modificar ni limpiar la VM hasta disponer de un checkpoint antes de la nueva prueba de rollback. 
+
+Nuevo test separado en preparación: `vm_reboot_proof.ps1` (con journal Go `volve-journal-lab.exe`) en tarea ficticia con watchdog SYSTEM AtStartup; permitirá probar restauración de XML original tras reboot real mediante eventos 118/100/201/102. Es un **ensayo parcial**, no restauración del motor DNS 0.28.6 ni una migración 0.28.7 firmada. Se está validando un kit empaquetado en el workflow `volve-0287-vm-recovery-persistent-kit.yml`; no declararlo descargable/aprobado hasta GitHub Actions `success`.
+
+**Aceptación técnica permanece 65/100**, sin liberar motor estable.
