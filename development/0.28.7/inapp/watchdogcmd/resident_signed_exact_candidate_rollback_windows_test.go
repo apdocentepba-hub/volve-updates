@@ -121,3 +121,130 @@ func TestSignedBootPolicyAuditsExactCandidateUnderProtectedMutexButRejectsUnknow
   t.Fatal("unknown replacement binary wrongly permitted by signed boot audit")
  }
 }
+
+
+// This exercises the FULL boot policy rather than invoking the candidate
+// helper alone. Real NTFS protection and the fixed Windows transition mutex
+// remain active, but the SYSTEM task executor and post-boot probes are
+// simulated. No task, DNS adapter, production binary or real port53 changes.
+func TestSignedExactCandidateBootPolicyFinalizesOnlyAfterHealthyProbes(t *testing.T){
+ root,deps,key:=combinedRecoveryFixture(t)
+ old:=filepath.Join(root,residentLegacyExe)
+ sealedBackup:=filepath.Join(root,residentRecoveryParent,residentRecoveryFolder,residentRecoveryExe)
+ expected,err:=os.ReadFile(sealedBackup)
+ if err!=nil{t.Fatal(err)}
+ installExactSignedCandidateFixture(t,root)
+ ctx,cancel:=context.WithTimeout(context.Background(),320*time.Second)
+ defer cancel()
+ journalDir:=filepath.Join(root,residentRecoveryParent,residentJournalDirName)
+ actions:=0
+ deps.Task.RunWindowsTask=func(context.Context,string)(string,error){
+  actions++
+  got,err:=os.ReadFile(old)
+  if err!=nil||string(got)!=string(expected){
+   return "",errors.New("policy reached task restore before signed original file rollback")
+  }
+  return "VOLVE_SIGNED_ORIGINAL_TASK_RESTORED",nil
+ }
+ ops,err:=newResidentSignedBootOriginalOps(root,key,deps)
+ if err!=nil{t.Fatal(err)}
+ driver,err:=motorupdate.NewProtectedResidentBootDriver(ops)
+ if err!=nil{t.Fatal(err)}
+ seal:=func(path string)error{hardenedTestACL(t,path,path);return nil}
+ health:=&ciBootHealth{firstOriginalMissing:true}
+ status,err:=motorupdate.RecoverPendingResidentAfterBoot(ctx,journalDir,
+  seal,durableWindowsACL,health,driver)
+ if err!=nil||status!="restored"||actions!=1||health.identityChecks<3{
+  t.Fatalf("signed candidate did not recover through complete boot policy: status=%q actions=%d identity=%d err=%v",
+   status,actions,health.identityChecks,err)
+ }
+ restored,err:=os.ReadFile(old)
+ if err!=nil||string(restored)!=string(expected){
+  t.Fatalf("terminal receipt preceded original byte-exact restoration: %v",err)
+ }
+ after,err:=motorupdate.InspectResidentRecoveryJournal(ctx,journalDir,durableWindowsACL)
+ if err!=nil||after.Status!="restored"{
+  t.Fatalf("healthy signed candidate did not leave terminal receipt: %+v %v",after,err)
+ }
+ repeat,err:=motorupdate.RecoverPendingResidentAfterBoot(ctx,journalDir,
+  seal,durableWindowsACL,&ciBootHealth{},driver)
+ if err!=nil||repeat!="restored"||actions!=1{
+  t.Fatalf("completed candidate recovery replayed: status=%q actions=%d err=%v",repeat,actions,err)
+ }
+}
+
+func TestSignedExactCandidateBootPolicyUnhealthyDNSLeavesPendingOriginal(t *testing.T){
+ root,deps,key:=combinedRecoveryFixture(t)
+ old:=filepath.Join(root,residentLegacyExe)
+ backup:=filepath.Join(root,residentRecoveryParent,residentRecoveryFolder,residentRecoveryExe)
+ expected,err:=os.ReadFile(backup)
+ if err!=nil{t.Fatal(err)}
+ installExactSignedCandidateFixture(t,root)
+ ctx,cancel:=context.WithTimeout(context.Background(),320*time.Second)
+ defer cancel()
+ journalDir:=filepath.Join(root,residentRecoveryParent,residentJournalDirName)
+ calls:=0
+ deps.Task.RunWindowsTask=func(context.Context,string)(string,error){
+  calls++
+  return "VOLVE_SIGNED_ORIGINAL_TASK_RESTORED",nil
+ }
+ ops,err:=newResidentSignedBootOriginalOps(root,key,deps)
+ if err!=nil{t.Fatal(err)}
+ driver,err:=motorupdate.NewProtectedResidentBootDriver(ops)
+ if err!=nil{t.Fatal(err)}
+ seal:=func(path string)error{hardenedTestACL(t,path,path);return nil}
+ status,err:=motorupdate.RecoverPendingResidentAfterBoot(ctx,journalDir,
+  seal,durableWindowsACL,&ciBootHealth{firstOriginalMissing:true,rejectDNS:true},driver)
+ if err==nil||status!=""||calls!=1{
+  t.Fatalf("unhealthy post-rollback DNS incorrectly finished: status=%q calls=%d err=%v",status,calls,err)
+ }
+ got,err:=os.ReadFile(old)
+ if err!=nil||string(got)!=string(expected){
+  t.Fatalf("failed DNS probe discarded recovered original bytes: %v",err)
+ }
+ state,err:=motorupdate.InspectResidentRecoveryJournal(ctx,journalDir,durableWindowsACL)
+ if err!=nil||state.Status!="recovery-required"{
+  t.Fatalf("unhealthy DNS wrote terminal signed recovery: %+v %v",state,err)
+ }
+ if _,err:=os.Lstat(filepath.Join(journalDir,motorupdate.ResidentResultFile));!errors.Is(err,os.ErrNotExist){
+  t.Fatalf("false receipt after DNS health rejection: %v",err)
+ }
+}
+
+func TestSignedExactCandidateRollbackQuiescenceChangesBeforeRenameCannotMutate(t *testing.T){
+ root,deps,key:=combinedRecoveryFixture(t)
+ old:=filepath.Join(root,residentLegacyExe)
+ exact:=installExactSignedCandidateFixture(t,root)
+ checks:=0
+ changing:=func(context.Context,string)(residentQuiescenceDecision,error){
+  checks++
+  if checks>=3 {
+   return residentQuiescenceDecision{TaskIdentityVerified:true,DNSPortFree:false,
+    MotorProcessesStopped:false,ReadyForFurtherChecks:false},
+    errors.New("DNS53 became active before signed rename")
+  }
+  return residentQuiescenceDecision{TaskIdentityVerified:true,DNSPortFree:true,
+   MotorProcessesStopped:true,ReadyForFurtherChecks:true},nil
+ }
+ deps.File.ProbeQuiescence=changing
+ deps.Task.ProbeQuiescence=changing
+ writes:=0
+ deps.Task.RunWindowsTask=func(context.Context,string)(string,error){
+  writes++
+  return "VOLVE_SIGNED_ORIGINAL_TASK_RESTORED",nil
+ }
+ ctx,cancel:=context.WithTimeout(context.Background(),240*time.Second)
+ defer cancel()
+ if err:=recoverSignedLegacyOriginalAndSYSTEMTaskWindows(ctx,root,key,deps);err==nil{
+  t.Fatal("late DNS53 activation allowed publisher-signed candidate overwrite")
+ }
+ after,err:=os.ReadFile(old)
+ if err!=nil||string(after)!=string(exact)||writes!=0||checks<3{
+  t.Fatalf("candidate changed after late quiescence refusal: err=%v scheduler=%d checks=%d",err,writes,checks)
+ }
+ journalDir:=filepath.Join(root,residentRecoveryParent,residentJournalDirName)
+ state,err:=motorupdate.InspectResidentRecoveryJournal(ctx,journalDir,durableWindowsACL)
+ if err!=nil||state.Status!="recovery-required"{
+  t.Fatalf("late DNS change consumed pending journal: %+v %v",state,err)
+ }
+}
