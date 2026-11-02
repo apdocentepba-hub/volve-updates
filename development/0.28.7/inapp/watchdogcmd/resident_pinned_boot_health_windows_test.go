@@ -118,3 +118,24 @@ func TestPinnedBootHealthQueriesLiveTaskProcessAndBothDNS53Owners(t *testing.T){
  }
  if calls!=2{t.Fatal("untrusted NTFS ACL reached process-owner probe")}
 }
+
+
+func TestPinnedBootComponentsOnlyConstructUnderActualSYSTEMAndCanonicalRoot(t *testing.T){
+ ctx,cancel:=context.WithCancel(context.Background())
+ cancel()
+ if value,err:=newPinnedResidentBootComponentsWindows(ctx,t.TempDir());err==nil||
+  value.Driver!=nil||value.Health!=nil||value.JournalDir!=""{
+  t.Fatalf("cancelled component construction did not fail closed: %+v %v",value,err)
+ }
+ if value,err:=newPinnedResidentBootComponentsWindows(context.Background(),"relative");err==nil||
+  value.Driver!=nil||value.Health!=nil||value.JournalDir!=""{
+  t.Fatalf("relative component root accepted: %+v %v",value,err)
+ }
+ if err:=verifyResidentActualSYSTEM(context.Background());err==nil{
+  t.Skip("actual SYSTEM positive constructor is covered by disposable SYSTEM task test")
+ }
+ if value,err:=newPinnedResidentBootComponentsWindows(context.Background(),t.TempDir());err==nil||
+  value.Driver!=nil||value.Health!=nil||value.JournalDir!=""{
+  t.Fatalf("non-SYSTEM constructed signed recovery/health pair: %+v %v",value,err)
+ }
+}
