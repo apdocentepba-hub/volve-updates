@@ -14,6 +14,7 @@ import (
  "errors"
  "fmt"
  "path/filepath"
+ "time"
 
  "volve-browser-protection/motorupdate"
 )
@@ -36,13 +37,23 @@ func newPinnedResidentBootRecoveryDriverWindows(
  if err!=nil||len(key)!=ed25519.PublicKeySize{
   return nil,errors.New("watchdog embedded editor key is invalid")
  }
- acl:=func(path string)error{return checkResidentJournalNTFS(ctx,path)}
+ // A boot controller may be constructed before its first journal recovery.
+ // Never retain the constructor context: it can already have expired when a
+ // future boot event requests ACL verification. Each operation has its OWN
+ // bounded context and continues to fail closed on PowerShell/NTFS errors.
+ acl:=func(path string)error{
+  checkCtx,cancel:=context.WithTimeout(context.Background(),30*time.Second)
+  defer cancel()
+  return checkResidentJournalNTFS(checkCtx,path)
+ }
  deps:=residentSignedCombinedRecoveryDeps{
   File:residentMissingOriginalRestoreDeps{
    VerifySystem:verifyResidentActualSYSTEM,
    VerifyACL:acl,
    SealNew:func(path string)error{
-    return sealResidentOriginalRecoveryStageNTFS(ctx,root,path)
+    sealCtx,cancel:=context.WithTimeout(context.Background(),30*time.Second)
+    defer cancel()
+    return sealResidentOriginalRecoveryStageNTFS(sealCtx,root,path)
    },
    ProbeQuiescence:auditResidentQuiescenceReadOnly,
   },
