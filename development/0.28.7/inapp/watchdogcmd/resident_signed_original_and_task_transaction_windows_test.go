@@ -156,3 +156,30 @@ func TestSignedCombinedRecoveryWithoutSYSTEMOrCancelledCannotMutate(t *testing.T
   ctx,root,key,deps);!errors.Is(err,context.Canceled){t.Fatalf("cancelled recovery accepted: %v",err)}
  if calls!=0{t.Fatal("SYSTEM/cancellation failed closed after task import")}
 }
+
+
+func TestSignedCombinedRecoveryLockedHandoffDoesNotReacquireMutex(t *testing.T){
+ root,deps,key:=combinedRecoveryFixture(t)
+ ctx,cancel:=context.WithTimeout(context.Background(),20*time.Second)
+ defer cancel()
+ release,err:=motorupdate.AcquireProtectedResidentTransitionLease(ctx)
+ if err!=nil||release==nil{t.Fatalf("CI watchdog cannot acquire shared OS transition lock: %v",err)}
+ defer release()
+ taskCalls:=0
+ deps.Task.RunWindowsTask=func(_ context.Context,script string)(string,error){
+  taskCalls++
+  if !containsCombinedTokens(script){t.Fatal("lock-held task import lost its live DNS and Scheduler guards")}
+  return "VOLVE_SIGNED_ORIGINAL_TASK_RESTORED",nil
+ }
+ // If the locked handoff accidentally tries to acquire the same non-
+ // reentrant Windows mutex again, it blocks until this test's deadline.
+ if err:=recoverSignedLegacyOriginalAndSYSTEMTaskLockedWindows(ctx,root,key,deps);err!=nil{
+  t.Fatalf("signed watchdog handoff under existing mutex failed: %v",err)
+ }
+ if taskCalls!=1{t.Fatalf("expected one signed task operation under held lease, got %d",taskCalls)}
+ if state,err:=auditResidentJournal(ctx,
+  filepath.Join(root,residentRecoveryParent,residentJournalDirName));err!=nil ||
+  state.Status!="recovery-required"{
+  t.Fatalf("lock-held handoff falsely finalized DNS health: %+v %v",state,err)
+ }
+}
