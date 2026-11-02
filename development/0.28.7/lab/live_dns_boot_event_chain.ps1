@@ -7,7 +7,7 @@ $ErrorActionPreference='Stop'
 
 function Assert-VolvLiveDNSBootChain {
     param(
-        [Parameter(Mandatory=$true)][object[]]$Events,
+        [Parameter(Mandatory=$true)][AllowEmptyCollection()][object[]]$Events,
         [Parameter(Mandatory=$true)][string]$TaskName,
         [Parameter(Mandatory=$true)][datetime]$BootUTC,
         [datetime]$ObservationUTC=[datetime]::UtcNow
@@ -15,6 +15,7 @@ function Assert-VolvLiveDNSBootChain {
     if($TaskName -cnotmatch '^\\VOLVE-CI-FreshMotor-[0-9]{6,20}$'){
         throw 'NOT VERIFIED: unsupported non-disposable DNS task name'
     }
+    if($Events.Count -eq 0){throw 'NOT VERIFIED: no Task Scheduler Operational events captured after boot; inspect VM event logging and SYSTEM task'}
     $boot=$BootUTC.ToUniversalTime()
     $now=$ObservationUTC.ToUniversalTime()
     if($boot -gt $now -or $now -gt $boot.AddMinutes(30)){
