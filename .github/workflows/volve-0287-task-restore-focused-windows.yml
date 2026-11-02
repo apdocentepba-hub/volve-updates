@@ -78,7 +78,8 @@ jobs:
               $pattern = '^(TestSignedOriginalSYSTEMTask|TestSignedProductionSYSTEMTaskRestore|TestSignedCombinedPublisherBinding)'
             }
             'combined-success' {
-              $pattern = '^TestSignedCombinedRecovery(MissingExeThenTaskOneMutexNoReceipt|AlreadyOriginalRetriesTaskWithoutOverwritingExe|LockedHandoffDoesNotReacquireMutex)            }
+              $pattern = '^TestSignedCombinedRecovery(MissingExeThenTaskOneMutexNoReceipt|AlreadyOriginalRetriesTaskWithoutOverwritingExe|LockedHandoffDoesNotReacquireMutex)$'
+            }
             'combined-rejections' {
               $pattern = '^TestSignedCombinedRecovery(UnknownExistingImageNoTaskMutation|RejectsLiveDNS53NoTaskOrExeChanges|TaskFailureLeavesOriginalAndPendingJournal|WithoutSYSTEMOrCancelledCannotMutate)$'
             }
