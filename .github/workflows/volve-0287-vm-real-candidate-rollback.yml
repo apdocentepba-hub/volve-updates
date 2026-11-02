@@ -1,0 +1,190 @@
+name: VOLVE 0.28.7 REAL candidate DNS-to-rollback persistent VM kit (NO RELEASE)
+on:
+  push:
+    branches: [feature/motor-updater-0287-pilot]
+    paths:
+      - '.github/workflows/volve-0287-vm-real-candidate-rollback.yml'
+      - 'development/0.28.7/lab/vm_real_candidate_dns_rollback.ps1'
+      - 'development/0.28.7/lab/VM_REAL_CANDIDATE_ROLLBACK.md'
+      - 'development/0.28.7/lab/vm_full_motor_reboot_dns.ps1'
+      - 'development/0.28.7/lab/reboot_event_chain.ps1'
+      - 'development/0.28.7/lab/vm_dns_reply_contract.ps1'
+      - 'development/0.28.7/lab/pack_vm_persistent_reboot_kit.ps1'
+      - 'development/0.28.7/inapp/ci_fresh_dns53_windows.go'
+      - 'development/0.28.7/inapp/ci_failing_candidate_dns53_windows.go'
+      - 'development/0.28.7/inapp/apply_overlay.go'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  integrated-full-dns-preboot-contract:
+    runs-on: windows-latest
+    timeout-minutes: 23
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.x'
+      - name: Rebuild hash-pinned real complete VOLVE motor (CI only)
+        shell: bash
+        run: |
+          python - <<'PY'
+          import hashlib,zipfile,shutil
+          from pathlib import Path
+          root=Path("development/0.28.7")
+          parts=sorted((root/"complete-source-parts").glob("part-*.bin"))
+          assert [p.name for p in parts]==[f"part-{i:02d}.bin" for i in range(10)]
+          source=b"".join(p.read_bytes() for p in parts)
+          assert hashlib.sha256(source).hexdigest()=="92b3536559151260375b17a64eedd009df8399e45460637208027b7ca0587ba5"
+          Path("source.zip").write_bytes(source)
+          Path("build").mkdir(exist_ok=True)
+          with zipfile.ZipFile("source.zip") as z:z.extractall("build")
+          for name,digest in (
+            ("VOLVE_0287_PRECHECK_RESCATE_OVERLAY_NO_INSTALAR.zip","fdfd31f21df81fe6da6075bfd442354297874576b6dc2c38f19bd35a681d95cd"),
+            ("VOLVE_0287_RECUPERACION_INTERRUPCION_FORZADA_NO_INSTALAR_v3.zip","773bd5eb5f1c4883021cc321856636354e964d3605dba9017e2fb5d1a7401b40")
+          ):
+            p=root/name
+            assert hashlib.sha256(p.read_bytes()).hexdigest()==digest
+            with zipfile.ZipFile(p) as z:z.extractall("build")
+          for f in (root/"journal").glob("*.go"):
+            shutil.copy2(f,Path("build/codigo/motorupdate")/f.name)
+          PY
+          go run development/0.28.7/inapp/apply_overlay.go build/codigo
+      - name: Compile actual original and DISTINCT intentionally failing CI-only real DNS53 motors
+        shell: powershell
+        working-directory: build/codigo
+        run: |
+          $ErrorActionPreference='Stop'
+          go build -tags volveci -trimpath -o "$env:RUNNER_TEMP\VOLVE_CI_FreshDNS53.exe" .
+          if($LASTEXITCODE -ne 0){throw 'Could not compile Full lab motor'}
+          if((Get-Item -LiteralPath "$env:RUNNER_TEMP\VOLVE_CI_FreshDNS53.exe").Length -lt 1048576){throw 'CI motor too short'}
+          go build -tags volveci -trimpath -ldflags '-X main.ciCandidateBuildIdentity=VOLVE-0287-VM-FAIL-CANDIDATE' -o "$env:RUNNER_TEMP\VOLVE_CI_Failing_Candidate.exe" .
+          if($LASTEXITCODE -ne 0){throw 'Could not compile real distinct failing candidate'}
+          $m=(Get-FileHash -LiteralPath "$env:RUNNER_TEMP\VOLVE_CI_FreshDNS53.exe" -Algorithm SHA256).Hash
+          $c=(Get-FileHash -LiteralPath "$env:RUNNER_TEMP\VOLVE_CI_Failing_Candidate.exe" -Algorithm SHA256).Hash
+          if($m -eq $c -or (Get-Item -LiteralPath "$env:RUNNER_TEMP\VOLVE_CI_Failing_Candidate.exe").Length -lt 1048576){
+            throw 'Separate full DNS motor and candidate are not uniquely compiled'
+          }
+      - name: Syntax of integrated recovery and core motor scripts
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $root='development/0.28.7/lab'
+          foreach($name in @(
+            'vm_real_candidate_dns_rollback.ps1','vm_full_motor_reboot_dns.ps1',
+            'reboot_event_chain.ps1','vm_dns_reply_contract.ps1'
+          )){
+            $tok=$null;$errors=$null
+            $null=[Management.Automation.Language.Parser]::ParseFile((Resolve-Path (Join-Path $root $name)).Path,[ref]$tok,[ref]$errors)
+            if($errors.Count -ne 0){throw ('Invalid Windows PowerShell code '+$name+': '+($errors|Out-String))}
+          }
+          & (Join-Path $root 'test_vm_dns_reply_contract.ps1')
+          & (Join-Path $root 'test_reboot_event_chain.ps1')
+      - name: Stage original Full DNS and REAL SYSTEM candidate crash 83; require independent watchdog and reject false reboot
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          if($env:GITHUB_ACTIONS -ne 'true' -or $env:RUNNER_ENVIRONMENT -ne 'github-hosted'){
+            throw 'Refusing to test outside a disposable GitHub VM'
+          }
+          & wevtutil.exe sl 'Microsoft-Windows-TaskScheduler/Operational' /e:true
+          if($LASTEXITCODE -ne 0){throw 'Cannot enable disposable Scheduler history'}
+          $lab='development/0.28.7/lab'
+          $full=Join-Path $lab 'vm_full_motor_reboot_dns.ps1'
+          $integrated=Join-Path $lab 'vm_real_candidate_dns_rollback.ps1'
+          $id=[DateTime]::UtcNow.ToString('yyyyMMddHHmmss')+('000'+$env:GITHUB_RUN_ATTEMPT)
+          if($id -cnotmatch '^[0-9]{14,18}$'){throw 'Unexpected integrated test ID'}
+          $motor=Join-Path $env:RUNNER_TEMP 'VOLVE_CI_FreshDNS53.exe'
+          $candidate=Join-Path $env:RUNNER_TEMP 'VOLVE_CI_Failing_Candidate.exe'
+          $root=Join-Path $env:ProgramData ('VOLVE-CI-FreshDNS53-'+$id)
+          $task='VOLVE-CI-FreshMotor-'+$id
+          $watch='VOLVE-CI-BootRecovery-'+$id
+          $original=Join-Path $root 'original-task.xml'
+          $exe=Join-Path $root 'VOLVE_CI_FreshDNS53.exe'
+          $was=(Get-DnsClientServerAddress|Sort-Object InterfaceIndex,AddressFamily|Select-Object InterfaceIndex,AddressFamily,ServerAddresses|ConvertTo-Json -Depth 6 -Compress)
+          try {
+            & $full -Mode Probe
+            & $full -Mode Prepare -LabId $id -MotorExe $motor
+            & $integrated -Mode Probe
+            & $integrated -Mode Arm -LabId $id -SourceCandidate $candidate
+            $t=Get-ScheduledTask -TaskName $task -TaskPath '\' -ErrorAction Stop
+            $w=Get-ScheduledTask -TaskName $watch -TaskPath '\' -ErrorAction Stop
+            if($t.Principal.UserId -notin @('SYSTEM','S-1-5-18') -or
+              $w.Principal.UserId -notin @('SYSTEM','S-1-5-18') -or
+              [string]$t.Actions[0].Execute -ine (Join-Path $root 'VOLVE_CI_Failing_Candidate.exe') -or
+              [string]$t.Actions[0].Arguments -cne ('--ci-failing-candidate-dns53 "'+$root+'" VOLVE-CI-GITHUB-HOSTED-VM-DNS53-ONLY') -or
+              $t.Triggers[0].CimClass.CimClassName -ne 'MSFT_TaskTimeTrigger' -or
+              (Get-ScheduledTaskInfo -TaskName $task).LastTaskResult -ne 83 -or
+              -not (Test-Path -LiteralPath (Join-Path $root 'ci-real-candidate-preboot.json') -PathType Leaf) -or
+              [string]$w.Actions[0].Arguments -notlike '*-Mode Recover*' -or
+              -not (Test-Path -LiteralPath $original -PathType Leaf)){
+              throw 'Integrated SYSTEM/candidate/backup preboot assertions failed'
+            }
+            $rejected=$false
+            try {& $integrated -Mode Verify -LabId $id}
+            catch {
+              if($_.Exception.Message -match '^NOT VERIFIED: no actual Windows restart'){$rejected=$true}
+              else{throw}
+            }
+            if(-not $rejected){throw 'UNSAFE: integrated trial accepted a fake reboot'}
+            Write-Host 'PASS: real CI Full DNS candidate ran six dual-stack probes as SYSTEM and exited83; watchdog prearmed; fake reboot rejected'
+          } finally {
+            # GitHub-hosted Windows runner is temporary. Do not leave any
+            # tasks running, or alter the runner DNS configuration.
+            foreach($n in @($watch,$task)){
+              $t=Get-ScheduledTask -TaskName $n -TaskPath '\' -ErrorAction SilentlyContinue
+              if($null -eq $t){continue}
+              if($t.TaskPath -ne '\' -or $t.Principal.UserId -notin @('SYSTEM','S-1-5-18')){
+                throw 'Refusing CI task cleanup with unexpected identity'
+              }
+              if($t.State -eq 'Running'){Stop-ScheduledTask -TaskName $n -TaskPath '\' -ErrorAction Stop}
+              Unregister-ScheduledTask -TaskName $n -TaskPath '\' -Confirm:$false -ErrorAction Stop
+            }
+            $live=@(Get-CimInstance Win32_Process|Where-Object {[string]$_.ExecutablePath -ieq $exe})
+            if($live.Count -ne 0){throw 'Disposable DNS process still active after CI cleanup'}
+            $after=(Get-DnsClientServerAddress|Sort-Object InterfaceIndex,AddressFamily|Select-Object InterfaceIndex,AddressFamily,ServerAddresses|ConvertTo-Json -Depth 6 -Compress)
+            if($after -cne $was){throw 'Unexpected change to Windows DNS adapters'}
+          }
+      - name: Package source + compiled Full motor with manifest, VM-only
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $out=Join-Path $env:RUNNER_TEMP 'VOLVE_VM_REAL_CANDIDATE_ROLLBACK'
+          & 'development/0.28.7/lab/pack_vm_persistent_reboot_kit.ps1' -MotorExe (Join-Path $env:RUNNER_TEMP 'VOLVE_CI_FreshDNS53.exe') -OutRoot $out
+          $added=@('vm_real_candidate_dns_rollback.ps1','VM_REAL_CANDIDATE_ROLLBACK.md')
+          foreach($file in $added){
+            Copy-Item -LiteralPath (Join-Path 'development/0.28.7/lab' $file) -Destination (Join-Path $out $file) -ErrorAction Stop
+          }
+          Copy-Item -LiteralPath (Join-Path $env:RUNNER_TEMP 'VOLVE_CI_Failing_Candidate.exe') -Destination (Join-Path $out 'VOLVE_CI_Failing_Candidate.exe') -ErrorAction Stop
+          $added+=@('VOLVE_CI_Failing_Candidate.exe')
+          $manifestPath=Join-Path $out 'SHA256_MANIFEST.json'
+          $manifest=Get-Content -LiteralPath $manifestPath -Raw|ConvertFrom-Json
+          foreach($file in $added){
+            $item=Get-Item -LiteralPath (Join-Path $out $file)
+            $manifest.files+=([pscustomobject]@{
+              name=$file
+              bytes=[int64]$item.Length
+              sha256=(Get-FileHash -Algorithm SHA256 -LiteralPath $item.FullName).Hash.ToLowerInvariant()
+            })
+          }
+          $manifest | Add-Member -MemberType NoteProperty -Name integrated_rollback_boot_proven -Value $false
+          $manifest | Add-Member -MemberType NoteProperty -Name real_candidate_exits_83 -Value $true
+          $manifest | Add-Member -MemberType NoteProperty -Name real_original_dns_restore_pending -Value $true
+          $manifest|ConvertTo-Json -Depth 8|Set-Content -LiteralPath $manifestPath -Encoding UTF8
+          $read=Get-Content -LiteralPath $manifestPath -Raw|ConvertFrom-Json
+          if($read.files.Count -ne 11 -or $read.product_release -ne $false -or
+            $read.vm_only -ne $true -or $read.publisher_signed -ne $false -or
+            $read.integrated_rollback_boot_proven -ne $false -or
+            $read.real_candidate_exits_83 -ne $true){throw 'Misleading or incomplete VM package manifest'}
+          foreach($item in @($read.files)){
+            $path=Join-Path $out $item.name
+            if((Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant() -cne $item.sha256){throw ('File integrity mismatch '+$item.name)}
+          }
+          if(@(Get-ChildItem -LiteralPath $out -File).Count -ne 12){throw 'Unexpected VM recovery ZIP content'}
+          Write-Host 'PASS: 12 VM-only files: original + distinct real candidate + recovery scripts with SHA256 manifest, NOT product release'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: VOLVE-0287-VM-REAL-CANDIDATE-ROLLBACK-NO-INSTALL
+          path: ${{ runner.temp }}/VOLVE_VM_REAL_CANDIDATE_ROLLBACK/
+          retention-days: 7
+          if-no-files-found: error
