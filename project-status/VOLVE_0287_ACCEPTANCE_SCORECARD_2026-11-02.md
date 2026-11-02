@@ -43,3 +43,12 @@ El desarrollo de Android queda **fuera de este indicador** y necesita su propia 
 - La funcionalidad no está conectada al watchdog SYSTEM de producción. Además, no se ha demostrado recuperación con Windows realmente reiniciado y la misma VM persistente. Ningún permiso para activar `releases/motor-stable.json`.
 
 **Siguiente criterio bloqueante:** restaurador completo original EXE+XML+arranque DNS e informe de salud tras reinicio persistente. No confundir la aprobación de los tests unitarios con despliegue.
+
+## 02/11/2026 01:56 UTC — Coordinador conjunto probado bajo Windows
+
+- [`8fc9ac8`](https://github.com/apdocentepba-hub/volve-updates/commit/8fc9ac8061dae17eafaf8caa85b9049796fe8234): operación combinada de recuperación del EXE original y tarea SYSTEM bajo **una única adquisición y liberación del mutex del kernel**; las funciones internas no vuelven a adquirirlo. Sigue **sin CLI productiva**, no arranca DNS ni declara recuperación completada.
+- [`272701d`](https://github.com/apdocentepba-hub/volve-updates/commit/272701dece723a09fa6365ea5eb40761752c725b): reparación del workflow y separación en tres trabajos Windows para evitar timeouts opacos. Prueba [#41374570067](https://github.com/apdocentepba-hub/volve-updates/actions/runs/41374570067).
+- Confirmado en logs: **combined-success: SUCCESS (2 de 2)**. Restituye los bytes originales + invoca importación de tarea mientras el mutex está retenido y reintenta sin reescribir un EXE que ya es correcto.
+- Confirmado en logs: **combined-rejections: SUCCESS (4 de 4)**. Rechaza EXE desconocido, puerto DNS53 activo, token SYSTEM ausente/cancelación; una falla de importación deja el respaldo y journal PENDING sin registrar éxito falso.
+- **task-only (regresión firmada de Scheduler): en ejecución** al momento de este registro. No registrar el workflow completo como aprobado hasta confirmación de ese tercer job.
+- **Marcador general permanece 65/100.** No elevarlo por tests de CI que no constituyen una operación instalada y recuperada tras reboot persistente. Canal de motor público NO publicado.
