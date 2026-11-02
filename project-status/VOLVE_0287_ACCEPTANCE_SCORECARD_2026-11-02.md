@@ -83,3 +83,14 @@ Ensayo con token SYSTEM del sellado + integración de tarea original; después v
 - **65/100 puntos mantenidos**, y liberación del motor no autorizada. Centro 0.28.7 estable; canal público `releases/motor-stable.json` ausente. Ningún paso modificó la instalación del usuario.
 
 **Próximo hito bloqueante:** que el ensayo SYSTEM/NTFS con tarea descartable realmente se ejecute y compruebe el sellado. Luego enlazar arranque/reinicio persistente con verificación de bloqueo DNS v4/v6 y conectividad; nunca inferir éxito de un solo resultado CI.
+
+## 02/11/2026 UTC — Tarea SYSTEM real y sellado NTFS: aprobado
+
+- La ejecución [#41376176541](https://github.com/apdocentepba-hub/volve-updates/actions/runs/41376176541) había cerrado con **2/3 jobs SUCCESS**; `task-only` falló **después de aprobar los tests anteriores**, porque el proceso Go de ensayo recibía mal sus argumentos.
+- El intento [`2400563`](https://github.com/apdocentepba-hub/volve-updates/commit/24005636c23115769833b7c4378ca1e9c6589d8d) generó un YAML malformado. Corregido reconstruyendo el bloque en [`795a58f`](https://github.com/apdocentepba-hub/volve-updates/commit/795a58fb27698e4fc377054c8e993c0e600c4ba9).
+- **[Windows #41377525166](https://github.com/apdocentepba-hub/volve-updates/actions/runs/41377525166): SUCCESS, 3/3 jobs**. `combined-success`, `combined-rejections` y `task-only` concluyeron exitosamente.
+- Se verificó además dentro de `task-only`: `--- PASS: TestResidentCIStageSealerActualDisposableSYSTEMTask (4.08s)`; la prueba creó/arrancó una tarea de Windows descartable realmente ejecutada como SID SYSTEM, selló un EXE sintético en NTFS y comprobó que el archivo quedó con permisos protegidos. No modificó ninguna tarea del producto ni el DNS configurado en la PC.
+- **Criterio superado:** identidad SYSTEM auténtica y sellado del archivo temporal protegido en VM Windows de CI. **No equivale** a recuperación completa después de reiniciar un Windows persistente, ni a una migración del motor desde el Centro.
+- **Puntaje general inalterado: 65/100**. El hito de integración productiva y recuperación autónoma posterior a reboot continúa sin aprobar; el motor no fue publicado en `releases/motor-stable.json`.
+
+**Siguiente prueba obligatoria:** VM Windows persistente con concesión editorial válida y protegida, proceso watchdog SYSTEM independiente, corte/reinicio y reanudación real de la transacción original EXE + Scheduler XML, arranque y verificación de bloqueo DNS IPv4/IPv6, conectividad y recibo de salud sin falsos positivos. No instalar ni sustituir el motor del usuario antes de superar esa barrera.
