@@ -106,3 +106,13 @@ Ensayo con token SYSTEM del sellado + integración de tarea original; después v
 - **Progreso permanece 65/100**: el avance consiste en mejorar el criterio de salud que deberá verificarse durante un reboot real de VM persistente. No demuestra transición productiva ni habilita \`releases/motor-stable.json\`. El nuevo motor permanece **sin instalar en el equipo del usuario**.
 
 **Siguiente barrera no superada:** completar una ejecución real \`Prepare → reboot del mismo Windows → Verify → Cleanup\` en VM aislada persistente, además de integrar watchdog y transacción de rollback del motor bajo permiso editorial firmado. Mientras no haya evidencia de esos eventos y salud DNS/Internet post-reboot, los puntos de integración y liberación siguen en cero.
+
+
+## 02/11/2026 UTC — Handoff de recuperación firmada bajo un mutex ya adquirido
+
+- [Commit \`457462d\`](https://github.com/apdocentepba-hub/volve-updates/commit/457462df22bbc24f8df7f2099c2ba63935f8683b): la operación de restauración firmada original EXE+SYSTEM XML separa la adquisición de mutex de la función interna \`recoverSignedLegacyOriginalAndSYSTEMTaskLockedWindows\`. Un watchdog independiente puede invocar la variante interna **solamente si ya posee** el bloqueo global; la variante autónoma sigue obteniéndolo ella misma. Ambas conservan verificaciones de SYSTEM, ACL, firma editorial, quiescencia, hashes y journal pendiente.
+- [Prueba agregada \`de1bad6\`](https://github.com/apdocentepba-hub/volve-updates/commit/de1bad6b566137d3f8311b0dfadeab72b1891432): un test Windows adquiere antes el mutex y llama la ruta interna. Si la función reingresa al mutex no reentrante, el test falla por timeout. Se conserva journal PENDING; no hay constancia de DNS sano ni receipt de recuperación.
+- La suite Windows enfocada fue reconstruida desde el último YAML que había aprobado, corrigiendo duplicaciones accidentales del selector PowerShell; [commit \`f637061\`](https://github.com/apdocentepba-hub/volve-updates/commit/f6370616b8e981b3125fd4951758c720873c1fec).
+- **Validación todavía pendiente de resultado definitivo en esta anotación:** [Windows #41431312048](https://github.com/apdocentepba-hub/volve-updates/actions/runs/41431312048). No declarar el test nuevo aprobado hasta comprobar los tres trabajos y su conclusión final.
+
+**Puntuación invariable: 65/100.** La interfaz interna no constituye conexión efectiva al watchdog en el equipo, recuperación tras reboot ni habilitación del canal de motor.
