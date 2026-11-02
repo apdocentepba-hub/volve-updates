@@ -91,3 +91,17 @@ Implementar la envoltura SYSTEM real (no inyectada), el driver de tarea original
 - [04d54f2](https://github.com/apdocentepba-hub/volve-updates/commit/04d54f2b0b8edb5b25de60f054c0636269b88652): comprobación de disparadores no nulos (evita que PowerShell cuente `$null` como un trigger válido).
 - [Windows #41370706279](https://github.com/apdocentepba-hub/volve-updates/actions/runs/41370706279): batería de ese último commit iniciada; no afirmar PASS antes del resultado definitivo.
 - Este hito aún NO prueba restauración de la tarea real como SYSTEM después de un reinicio del SO. No subir al canal estable ni cambiar tareas/DNS en PC.
+
+## Siguiente tanda, 01/11/2026 Argentina — Disparador de inicio y vínculo a SID SYSTEM
+
+**REALIZADO**
+- [`acb8121`](https://github.com/apdocentepba-hub/volve-updates/commit/acb812132e85d1ac52f9087a4da742edd47f4f59): al reimportar el XML original, rechazo de tarea restaurada sin un `MSFT_TaskBootTrigger` válido, incluso si la ruta de EXE, SYSTEM y Settings.Enabled parecen correctos. Nunca usar el solo conteo de triggers como prueba de inicio automático.
+- [`c44693b`](https://github.com/apdocentepba-hub/volve-updates/commit/c44693bca2de7775467b301efc3c282a9caa5093): workflow Windows **enfocado** con reconstrucción de fuente autenticada para acortar el ciclo de feedback de los tests del restaurador, separado de la batería general.
+- [`ee69eee`](https://github.com/apdocentepba-hub/volve-updates/commit/ee69eee8a36458bc6b2ca591a04f6050005facf8): adaptador de restauración **no expuesto** al público: `verifyResidentActualSYSTEM` exige SID auténtico `S-1-5-18` antes de consultar el journal; fija la clave pública editorial incorporada, usa NTFS ACL protegido y consulta DNS53 bajo mutex. Un usuario interactivo/admin común debe ser rechazado. Sin nuevas claves privadas en Git.
+- [Windows #41371447005](https://github.com/apdocentepba-hub/volve-updates/actions/runs/41371447005): prueba focalizada que incluye rechazos SID y fuente publicada. **En ejecución al último control**, no declarar completada.
+- [Windows #41371190651](https://github.com/apdocentepba-hub/volve-updates/actions/runs/41371190651): batería de regresión completa en ejecución al último control.
+- Anterior [Windows #41370050773](https://github.com/apdocentepba-hub/volve-updates/actions/runs/41370050773) **SUCCESS**: cuatro grupos originales del restaurador SYSTEM; no extrapolar esa aprobación a los nuevos controles de disparador/SID.
+
+**PENDIENTE**: completar CI del último commit, ejercicio real de importación de tarea original bajo SYSTEM en VM desechable con permiso editorial y XML exacto, iniciar DNS después de restaurar, comprobar filtros IPv4/IPv6 e Internet y reiniciar una VM persistente para validar recuperación autónoma. Solo entonces habilitar actualización del motor desde el Centro.
+
+**SEGURIDAD**: centro estable 0.28.7 y `releases/motor-stable.json` deshabilitado. Ningún comando productivo se expuso ni se modificó la instalación del usuario.
