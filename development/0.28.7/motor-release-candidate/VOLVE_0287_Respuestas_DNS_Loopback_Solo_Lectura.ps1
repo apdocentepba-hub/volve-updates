@@ -51,9 +51,9 @@ if($SelfTest){
     }
     [byte[]]$wrongId=@(0,67,129,131,0,1,0,0,0,0,0,0)
     [byte[]]$wrongOpcode=@(0,66,137,131,0,1,0,0,0,0,0,0)
-    foreach($bad in @($wrongId,$wrongOpcode)){
+    foreach($bad in @(@{packet=$wrongId},@{packet=$wrongOpcode})){
         $rejected=$false
-        try{$null=Get-DnsRCodeFromReply $req $bad}catch{$rejected=$true}
+        try{$null=Get-DnsRCodeFromReply $req $bad.packet}catch{$rejected=$true}
         if(-not $rejected){throw 'Unrelated or non-query DNS response accepted'}
     }
     Write-Output 'VOLVE_DNS_RD1_RESPONSE_PARSER_PASS'
