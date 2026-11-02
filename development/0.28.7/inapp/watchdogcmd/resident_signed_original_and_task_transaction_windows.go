@@ -91,6 +91,14 @@ func recoverSignedLegacyOriginalAndSYSTEMTaskLockedWindows(
  case "original-intact":
   // Resume after an interrupted earlier file restoration; do NOT rewrite
   // an already installed original executable.
+ case "exact-pinned-target-still-present":
+  // The only overwritable case: exact target SHA-256 appears in the signed
+  // publisher grant, backed by an independent sealed original on the same
+  // volume. The helper repeats all ACL, SYSTEM, task/DNS53 and hash gates
+  // immediately before an atomic replacement under this SAME OS mutex.
+  if err:=restoreSignedExactCandidateLockedWindows(ctx,root,key,deps.File);err!=nil{
+   return fmt.Errorf("signed exact-candidate original rollback failed: %w",err)
+  }
  default:
   return errors.New("signed combined recovery refuses any candidate or unknown live executable")
  }
