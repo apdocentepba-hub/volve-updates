@@ -58,3 +58,11 @@ Se solicitó apagar `VOLVE-LAB-0287` y crear un punto de control **`ANTES-PRUEBA
 Nuevo test separado en preparación: `vm_reboot_proof.ps1` (con journal Go `volve-journal-lab.exe`) en tarea ficticia con watchdog SYSTEM AtStartup; permitirá probar restauración de XML original tras reboot real mediante eventos 118/100/201/102. Es un **ensayo parcial**, no restauración del motor DNS 0.28.6 ni una migración 0.28.7 firmada. Se está validando un kit empaquetado en el workflow `volve-0287-vm-recovery-persistent-kit.yml`; no declararlo descargable/aprobado hasta GitHub Actions `success`.
 
 **Aceptación técnica permanece 65/100**, sin liberar motor estable.
+
+## Kit de segunda prueba: CI de watchdog de rollback simulado
+
+- Creado kit adicional (sin tocar motor real): [workflow `volve-0287-vm-recovery-persistent-kit.yml`](https://github.com/apdocentepba-hub/volve-updates/actions/runs/41510058799). **GitHub Actions #41510058799: SUCCESS** en Windows.
+- Reconstrucción Go con SHA-256 del código completo, build `volve-journal-lab.exe`, análisis de sintaxis PowerShell y tests negativos del historial: **SUCCESS**.
+- **Stage real del watchdog en Windows CI:** `vm_reboot_proof.ps1 -Mode Prepare` creó tareas ficticias SYSTEM + journal y `Verify` sin reinicio fue expresamente rechazado: **SUCCESS**. Las tareas CI se limpiaron en el runner efímero.
+- Artefacto `VOLVE-0287-VM-RECOVERY-BOOT-LAB-NO-INSTALL`, GitHub Artifact ID **13171404621**, SHA-256 del ZIP informado por GitHub `ba0f206376afcbf90df4ab1d29940cd519ea1c80bffe3ed87e5a4e9a3d26a118`, disponible hasta 2026-11-09. Incluye auxiliar Go, tres scripts PS, README y SHA256_MANIFEST para 5 archivos. **La prueba de arranque real de este nuevo recuperador todavía NO se ejecutó en la VM del usuario**.
+- El próximo paso del operador requiere un punto de control `ANTES-PRUEBA-ROLLBACK-0287` creado **antes de preparar este segundo ensayo**. RunId propuesto `20261102000201`, comandos documentados en `development/0.28.7/lab/VM_ROLLBACK_BOOT_PACK_README.md`. Solo restaura tarea simulada XML/journal, **no** motor anterior 0.28.6 ni migración firmada 0.28.7. No se suman puntos al scorecard.
