@@ -5,6 +5,7 @@ on:
     paths:
       - '.github/workflows/volve-0287-vm-integrated-full-dns-rollback.yml'
       - 'development/0.28.7/lab/vm_integrated_real_dns_rollback.ps1'
+      - 'development/0.28.7/lab/VM_INTEGRATED_FULL_DNS_ROLLBACK.md'
       - 'development/0.28.7/lab/vm_full_motor_reboot_dns.ps1'
       - 'development/0.28.7/lab/reboot_event_chain.ps1'
       - 'development/0.28.7/lab/vm_dns_reply_contract.ps1'
@@ -138,21 +139,26 @@ jobs:
           $ErrorActionPreference='Stop'
           $out=Join-Path $env:RUNNER_TEMP 'VOLVE_VM_INTEGRATED_FULL_DNS_ROLLBACK'
           & 'development/0.28.7/lab/pack_vm_persistent_reboot_kit.ps1' -MotorExe (Join-Path $env:RUNNER_TEMP 'VOLVE_CI_FreshDNS53.exe') -OutRoot $out
-          $file='vm_integrated_real_dns_rollback.ps1'
-          Copy-Item -LiteralPath ('development/0.28.7/lab/'+$file) -Destination (Join-Path $out $file) -ErrorAction Stop
+          $added=@('vm_integrated_real_dns_rollback.ps1','VM_INTEGRATED_FULL_DNS_ROLLBACK.md')
+          foreach($file in $added){
+            Copy-Item -LiteralPath (Join-Path 'development/0.28.7/lab' $file) -Destination (Join-Path $out $file) -ErrorAction Stop
+          }
           $manifestPath=Join-Path $out 'SHA256_MANIFEST.json'
           $manifest=Get-Content -LiteralPath $manifestPath -Raw|ConvertFrom-Json
-          $manifest.files+=([pscustomobject]@{
-            name=$file
-            bytes=[int64](Get-Item -LiteralPath (Join-Path $out $file)).Length
-            sha256=(Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $out $file)).Hash.ToLowerInvariant()
-          })
+          foreach($file in $added){
+            $item=Get-Item -LiteralPath (Join-Path $out $file)
+            $manifest.files+=([pscustomobject]@{
+              name=$file
+              bytes=[int64]$item.Length
+              sha256=(Get-FileHash -Algorithm SHA256 -LiteralPath $item.FullName).Hash.ToLowerInvariant()
+            })
+          }
           $manifest | Add-Member -MemberType NoteProperty -Name integrated_rollback_boot_proven -Value $false
           $manifest | Add-Member -MemberType NoteProperty -Name simulated_candidate_only -Value $true
           $manifest | Add-Member -MemberType NoteProperty -Name real_original_dns_restore_pending -Value $true
           $manifest|ConvertTo-Json -Depth 8|Set-Content -LiteralPath $manifestPath -Encoding UTF8
           $read=Get-Content -LiteralPath $manifestPath -Raw|ConvertFrom-Json
-          if($read.files.Count -ne 9 -or $read.product_release -ne $false -or
+          if($read.files.Count -ne 10 -or $read.product_release -ne $false -or
             $read.vm_only -ne $true -or $read.publisher_signed -ne $false -or
             $read.integrated_rollback_boot_proven -ne $false -or
             $read.simulated_candidate_only -ne $true){throw 'Misleading or incomplete VM package manifest'}
@@ -160,8 +166,8 @@ jobs:
             $path=Join-Path $out $item.name
             if((Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant() -cne $item.sha256){throw ('File integrity mismatch '+$item.name)}
           }
-          if(@(Get-ChildItem -LiteralPath $out -File).Count -ne 10){throw 'Unexpected VM recovery ZIP content'}
-          Write-Host 'PASS: 10 VM-only files with SHA256 manifest, no signed product claim'
+          if(@(Get-ChildItem -LiteralPath $out -File).Count -ne 11){throw 'Unexpected VM recovery ZIP content'}
+          Write-Host 'PASS: 11 VM-only files with SHA256 manifest, no signed product claim'
       - uses: actions/upload-artifact@v4
         with:
           name: VOLVE-0287-INTEGRATED-VM-REAL-DNS-ROLLBACK-NO-INSTALL
