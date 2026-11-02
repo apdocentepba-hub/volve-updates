@@ -137,3 +137,12 @@ Ensayo con token SYSTEM del sellado + integración de tarea original; después v
 - Ningún nuevo CLI, tarea de arranque, botón, canal público o archivo productivo modificado. Sin alteración del equipo del usuario. **Puntuación reconocida sigue en 65/100; liberación del motor 0% aprobada**.
 
 **Bloqueo siguiente:** después de cerrar CI del adaptador y la regresión, implementar secuencia supervisada por SYSTEM real para reiniciar el motor restaurado y comprobar bloqueo DNS IPv4/IPv6 y conectividad; completar `Prepare → reboot real de VM persistente → Verify → Cleanup` antes de autorizar la instalación de motor.
+
+
+### Corrección: motor original ya activo no debe impedir la auditoría firmada
+
+- [Commit `ccbda76`](https://github.com/apdocentepba-hub/volve-updates/commit/ccbda7667b0ee20701c2b385c338d4b27ec809a9): en el nuevo adaptador de política, la verificación **de solo lectura** del respaldo/journal/publisher deja de exigir puerto DNS53 libre. Esto es necesario cuando el motor original ya funciona correctamente tras boot y la política sólo quiere verificar identidad y salud, sin restaurar.
+- La ejecución **mutadora** `RestoreOriginal` continúa usando `recoverSignedLegacyOriginalAndSYSTEMTaskLockedWindows`, que exige proceso detenido, puerto53 libre, identidad SYSTEM, firma/editor, ACL y tarea exacta bajo el mismo mutex antes de modificar EXE/tarea. No se alteran esos límites.
+- [Commit `1677548`](https://github.com/apdocentepba-hub/volve-updates/commit/1677548aec88e13ea0ffc27d6ca1ebc33dd27de1): nueva regresión Windows con DNS53 simulado ocupado: la auditoría firmada debe aceptar el original sano, pero cualquier restauración debe rechazar la mutación de Scheduler, manteniendo journal PENDING.
+- [GitHub Actions #41436974914](https://github.com/apdocentepba-hub/volve-updates/actions/runs/41436974914): ejecución de pruebas nuevas iniciada; **sin dictamen final al registrar**. La secuencia no hace reboot ni permite una migración real.
+- **65/100** sigue siendo el porcentaje reconocido; falta integrar un SYSTEM watchdog independiente instalado, arranque DNS y verificación real de Internet después de reinicio persistente. No hay canal público de motor.
