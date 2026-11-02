@@ -24,6 +24,9 @@ import (
 )
 
 const ciCandidateFailFlag="--ci-failing-candidate-dns53"
+// The failing test candidate is deliberately a distinct binary from the
+// stable Full-CI motor; the normal VM binary has this value unset.
+var ciCandidateBuildIdentity="UNSET"
 const ciCandidateProof="ci-candidate-dns53-confirmed.json"
 
 func init() {
@@ -79,6 +82,9 @@ func ciCandidateSixDNS()error{
  return nil
 }
 func runCIFailingCandidateDNS53(root,token string)error{
+ if ciCandidateBuildIdentity!="VOLVE-0287-VM-FAIL-CANDIDATE"{
+  return errors.New("only dedicated CI failing-candidate binary may run this destructive rehearsal")
+ }
  if err:=assertCIFreshVM(root,token);err!=nil{return err}
  // The candidate must be a distinct SYSTEM-run executable in a disposable
  // VM; do not permit this CLI from an interactive administrator shell.
