@@ -75,3 +75,43 @@ func TestSignedBootOriginalOpsUnderProtectedPolicyLeaseLeavesPendingJournal(t *t
   t.Fatalf("false terminal recovery receipt created without real DNS health: %v",err)
  }
 }
+
+
+func TestSignedBootOriginalOpsHealthyRunningOriginalCanBeAuditedButNotMutated(t *testing.T){
+ root,deps,key:=combinedRecoveryFixture(t)
+ ctx,cancel:=context.WithTimeout(context.Background(),200*time.Second)
+ defer cancel()
+ journalDir:=filepath.Join(root,residentRecoveryParent,residentJournalDirName)
+ state,err:=motorupdate.InspectResidentRecoveryJournal(ctx,journalDir,deps.File.VerifyACL)
+ if err!=nil||state.Status!="recovery-required"{t.Fatalf("missing signed recovery intent: %v",err)}
+ // A correct already-running DNS service MUST NOT block a read-only signed
+ // recovery attestation. It MUST block actual task/EXE modification.
+ portBusy:=func(context.Context,string)(residentQuiescenceDecision,error){
+  return residentQuiescenceDecision{TaskIdentityVerified:true,
+   DNSPortFree:false,MotorProcessesStopped:false,ReadyForFurtherChecks:false},
+   errors.New("healthy original already owns DNS53")
+ }
+ deps.File.ProbeQuiescence=portBusy
+ deps.Task.ProbeQuiescence=portBusy
+ schedulerWrites:=0
+ deps.Task.RunWindowsTask=func(context.Context,string)(string,error){
+  schedulerWrites++
+  return "VOLVE_SIGNED_ORIGINAL_TASK_RESTORED",nil
+ }
+ ops,err:=newResidentSignedBootOriginalOps(root,key,deps)
+ if err!=nil{t.Fatal(err)}
+ lease,err:=motorupdate.AcquireProtectedResidentTransitionLease(ctx)
+ if err!=nil||lease==nil{t.Fatalf("cannot lock signed boot admission: %v",err)}
+ defer lease()
+ if err:=ops.VerifySealedOriginal(ctx,state.Intent);err!=nil{
+  t.Fatalf("healthy original blocked immutable signed publisher verification: %v",err)
+ }
+ if err:=ops.RestoreOriginal(ctx,state.Intent);err==nil{
+  t.Fatal("active DNS listener allowed a mutating signed recovery")
+ }
+ if schedulerWrites!=0{t.Fatal("read-only healthy audit reached Windows task mutation")}
+ pending,err:=auditResidentJournal(ctx,journalDir)
+ if err!=nil||pending.Status!="recovery-required"{
+  t.Fatalf("busy DNS rejection modified pending recovery evidence: %+v %v",pending,err)
+ }
+}
