@@ -73,7 +73,7 @@ jobs:
           go test -race ./motorupdate ./releaseupdate -count=1
   windows-build:
     runs-on: windows-latest
-    timeout-minutes: 60
+    timeout-minutes: 75
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -160,7 +160,7 @@ jobs:
         working-directory: build/codigo
         run: |
           $ErrorActionPreference='Stop'
-          # All discovered tests run once across eight bounded groups; no omissions.
+          # All discovered tests run once across sixteen bounded groups; no omissions.
           # A single package test can exceed Go's default 10m on Windows due
           # to real NTFS DACL + PowerShell probes in each test fixture.
           $listed=@(go test ./cmd/volve-managed-watchdog -list '^Test')
@@ -169,11 +169,11 @@ jobs:
           if($names.Count -lt 30){throw ('Watchdog test count unexpectedly small: '+$names.Count)}
           if(@($names|Sort-Object -Unique).Count -ne $names.Count){throw 'Duplicate watchdog tests discovered'}
           $executed=0
-          for($i=0;$i -lt 8;$i++){
-            $group=@(for($j=$i;$j -lt $names.Count;$j+=8){$names[$j]})
+          for($i=0;$i -lt 16;$i++){
+            $group=@(for($j=$i;$j -lt $names.Count;$j+=16){$names[$j]})
             if($group.Count -eq 0){throw ('Empty watchdog test group '+($i+1))}
             $pattern='^('+($group -join '|')+')$'
-            Write-Host ('Watchdog group '+($i+1)+'/8: '+$group.Count+' tests')
+            Write-Host ('Watchdog group '+($i+1)+'/16: +$group.Count+' tests')
             go test ./cmd/volve-managed-watchdog -run $pattern -count=1 -timeout 6m -v
             if($LASTEXITCODE -ne 0){throw ('Independent watchdog tests failed in group '+($i+1))}
             $executed+=$group.Count
