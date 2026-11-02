@@ -96,7 +96,7 @@ jobs:
               $pattern = '^(TestSignedExactCandidateRollbackRestoresOriginalThenTaskAndLeavesPending|TestSignedExactCandidateBootPolicyFinalizesOnlyAfterHealthyProbes)$'
             }
             'candidate-rejections' {
-              $pattern = '^(TestSignedExactCandidateRollbackRejectsActiveDNSWithoutTouchingCandidate|TestSignedBootPolicyAuditsExactCandidateUnderProtectedMutexButRejectsUnknown|TestSignedExactCandidateBootPolicyUnhealthyDNSLeavesPendingOriginal|TestSignedExactCandidateRollbackQuiescenceChangesBeforeRenameCannotMutate)$'
+              $pattern = '^(TestSignedExactCandidateRollbackRejectsActiveDNSWithoutTouchingCandidate|TestSignedBootPolicyAuditsExactCandidateUnderProtectedMutexButRejectsUnknown|TestSignedExactCandidateBootPolicyUnhealthyDNSLeavesPendingOriginal|TestSignedExactCandidateRollbackQuiescenceChangesBeforeRenameCannotMutate|TestSignedExactCandidateRollbackRefusesLastMomentDNS53Restart)$'
             }
             default { throw 'Unexpected test matrix selector' }
           }
