@@ -234,6 +234,17 @@ func main(){
         fmt.Println("VOLVE_CI_STANDALONE_RECOVERED")
         return
     }
+    if len(os.Args)==3 && os.Args[1]=="--audit-resident-signed-recovery-quiescence" {
+        ctx,cancel:=context.WithTimeout(context.Background(),90*time.Second);defer cancel()
+        report,err:=auditResidentSignedBootAdmissionWithPinnedPublisherAndQuiescence(ctx,os.Args[2])
+        if err!=nil{
+            fmt.Fprintln(os.Stderr,"VOLVÉ: RESCATE PRODUCTIVO NO AUTORIZADO. Evaluación de solo lectura rechazada:",err)
+            os.Exit(1)
+        }
+        fmt.Printf("VOLVÉ: EVIDENCIA DE RESCATE FIRMADA Y SIN MOTOR ACTIVO (SOLO LECTURA)\nEstado: %s\nOriginal: %s\nFirma: %t\nSYSTEM, procesos y DNS53 inactivos: %t\nNo instala, detiene ni restaura el motor.\n",
+            report.Status,report.OriginalFileState,report.PublisherVerified,report.QuiescenceVerified)
+        return
+    }
     if len(os.Args)==3 && os.Args[1]=="--audit-resident-signed-boot-admission" {
         ctx,cancel:=context.WithTimeout(context.Background(),90*time.Second);defer cancel()
         report,err:=auditResidentSignedBootAdmissionWithPinnedPublisher(ctx,os.Args[2])

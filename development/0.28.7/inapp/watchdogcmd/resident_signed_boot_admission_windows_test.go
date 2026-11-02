@@ -140,3 +140,57 @@ func TestSignedBootAdmissionRejectsSymlinkedOriginalWithoutModifyingTarget(t *te
  unchanged,err:=os.ReadFile(foreign)
  if err!=nil||string(unchanged)!=string(payload){t.Fatalf("read-only admission changed foreign file: %v",err)}
 }
+
+func TestSignedBootAdmissionQuiescenceProbeHoldsPublisherBootMutex(t *testing.T){
+ root,raw,sig,pub:=windowsDurableGrantFixture(t)
+ ctx:=context.Background()
+ seal:=func(p string)error{hardenedTestACL(t,p,p);return nil}
+ if err:=motorupdate.PersistResidentDurablePublisherGrant(ctx,root,raw,sig,pub,
+  seal,durableWindowsACL,durableWindowsACL,durableWindowsACL);err!=nil{t.Fatal(err)}
+ called:=0
+ report,err:=auditResidentSignedBootAdmissionWithQuiescenceProbe(ctx,root,pub,
+  durableWindowsACL,durableWindowsACL,durableWindowsACL,
+  func(ctx context.Context,observedRoot string)(residentQuiescenceDecision,error){
+   called++
+   if observedRoot!=root{t.Fatal("probe was given unrelated installation")}
+   blockedCtx,cancel:=context.WithTimeout(context.Background(),70*time.Millisecond)
+   defer cancel()
+   done:=make(chan error,1)
+   go func(){
+    release,lockErr:=motorupdate.AcquireProtectedResidentTransitionLease(blockedCtx)
+    if release!=nil{release()}
+    done<-lockErr
+   }()
+   if lockErr:=<-done;!errors.Is(lockErr,context.DeadlineExceeded){
+    t.Fatalf("publisher grant/quiescence probe did not retain protected mutex: %v",lockErr)
+   }
+   return residentQuiescenceDecision{TaskIdentityVerified:true,DNSPortFree:true,
+    MotorProcessesStopped:true,ReadyForFurtherChecks:true},nil
+  })
+ if err!=nil||called!=1||!report.PublisherVerified||!report.QuiescenceVerified{
+  t.Fatalf("genuine signed and quiescent system rejected: %+v %v",report,err)
+ }
+}
+
+func TestSignedBootAdmissionRejectsLiveDNS53EvenWhenPublisherGrantIsAuthentic(t *testing.T){
+ root,raw,sig,pub:=windowsDurableGrantFixture(t)
+ ctx:=context.Background()
+ seal:=func(p string)error{hardenedTestACL(t,p,p);return nil}
+ if err:=motorupdate.PersistResidentDurablePublisherGrant(ctx,root,raw,sig,pub,
+  seal,durableWindowsACL,durableWindowsACL,durableWindowsACL);err!=nil{t.Fatal(err)}
+ report,err:=auditResidentSignedBootAdmissionWithQuiescenceProbe(ctx,root,pub,
+  durableWindowsACL,durableWindowsACL,durableWindowsACL,
+  func(context.Context,string)(residentQuiescenceDecision,error){
+   return residentQuiescenceDecision{TaskIdentityVerified:true,
+    DNSPortFree:false,MotorProcessesStopped:true,ReadyForFurtherChecks:false},
+    errors.New("DNS53 still active")
+  })
+ if err==nil||report.PublisherVerified||report.QuiescenceVerified{
+  t.Fatalf("live DNS bypassed signed recovery fence: %+v %v",report,err)
+ }
+ journal:=filepath.Join(root,residentRecoveryParent,residentJournalDirName)
+ state,err:=auditResidentJournal(ctx,journal)
+ if err!=nil||state.Status!="recovery-required"{
+  t.Fatalf("rejecting active DNS changed recovery journal: %+v %v",state,err)
+ }
+}
