@@ -73,3 +73,13 @@ El desarrollo de Android queda **fuera de este indicador** y necesita su propia 
 
 ### Siguiente barrera
 Ensayo con token SYSTEM del sellado + integración de tarea original; después verificar arranque real DNS IPv4 e IPv6 y respuesta de bloqueo, seguido de interrupción con reboot de VM persistente. Solo con esos criterios y diagnóstico actualizado del equipo se podrá autorizar un upgrade de motor por el Centro.
+
+## 02/11/2026 UTC — Última barrera SYSTEM/NTFS: diagnóstico y corrección del ensayo
+
+- [Windows #41376176541](https://github.com/apdocentepba-hub/volve-updates/actions/runs/41376176541): resultado final **FAIL 1/3**. Los jobs `combined-success` y `combined-rejections` fueron **SUCCESS**. `task-only` aprobó sus tests del restaurador firmado, pero falló **antes de ejecutar el ensayo extra SYSTEM/NTFS**: el binario de pruebas recibió `-test` en lugar de argumentos completos. No es falla confirmada de la recuperación instalada.
+- [`2400563`](https://github.com/apdocentepba-hub/volve-updates/commit/24005636c23115769833b7c4378ca1e9c6589d8d): intento de corrección del PowerShell. Generó un YAML incompleto por sustitución de cadena y GitHub rechazó [#41377452415](https://github.com/apdocentepba-hub/volve-updates/actions/runs/41377452415) sin crear jobs. **No atribuirle aprobación**.
+- [`795a58f`](https://github.com/apdocentepba-hub/volve-updates/commit/795a58fb27698e4fc377054c8e993c0e600c4ba9): reconstruido el bloque final de YAML sin sustituciones; argumentos individuales `'-test.run=^TestResidentCIStageSealerActualDisposableSYSTEMTask$'`, `'-test.timeout=3m'`, `'-test.v'`. GitHub aceptó el workflow [#41377525166](https://github.com/apdocentepba-hub/volve-updates/actions/runs/41377525166) y programó los tres jobs Windows.
+- En la última revisión de #41377525166: `combined-success` **SUCCESS**; `combined-rejections` y `task-only` todavía estaban en ejecución, por lo tanto **NO declarar 3/3 ni una prueba SYSTEM NTFS exitosa**.
+- **65/100 puntos mantenidos**, y liberación del motor no autorizada. Centro 0.28.7 estable; canal público `releases/motor-stable.json` ausente. Ningún paso modificó la instalación del usuario.
+
+**Próximo hito bloqueante:** que el ensayo SYSTEM/NTFS con tarea descartable realmente se ejecute y compruebe el sellado. Luego enlazar arranque/reinicio persistente con verificación de bloqueo DNS v4/v6 y conectividad; nunca inferir éxito de un solo resultado CI.
