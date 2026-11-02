@@ -10,6 +10,7 @@ Además, la función de liberación capturaba un puntero de adaptador mutable. U
 
 ## Corrección propuesta (PR no publicado)
 
+- Se eliminó la interfaz anónima embebida, usando un delegado privado nombrado para que futuros métodos del contrato no se promocionen automáticamente sin verificación.
 - Se interpusieron envoltorios a **todas** las operaciones del contrato de migración firmada. Rechazan invocaciones sin una sesión protegida de Windows activa.
 - Se agregó `stateMu` para serializar finalizadores y métodos delegados, evitando soltar el mutex mientras un método del adaptador sigue ejecutándose.
 - La devolución de `AcquireExclusiveMigration` se asocia a un número de sesión; un finalizador de una sesión anterior no afecta un bloqueo posterior.
@@ -19,7 +20,7 @@ Además, la función de liberación capturaba un puntero de adaptador mutable. U
 
 ## Estado de aceptación
 
-**Código propuesto, revisión y CI pendientes.** Esta modificación no incorpora un controlador OS completo para conmutar 0.28.6 → 0.28.7, ni sustituye la prueba de migración real firmada. No cambiar `releases/motor-stable.json`; no activar automáticamente el motor. El indicador de aceptación productiva permanece en **65/100** hasta superar su matriz de pruebas.
+**Código propuesto y CI Windows enfocada APROBADA; PR todavía sin integrar.** Esta modificación no incorpora un controlador OS completo para conmutar 0.28.6 → 0.28.7, ni sustituye la prueba de migración real firmada. No cambiar `releases/motor-stable.json`; no activar automáticamente el motor. El indicador de aceptación productiva permanece en **65/100** hasta superar su matriz de pruebas.
 
 ## Requisitos antes de integrar
 
@@ -27,3 +28,12 @@ Además, la función de liberación capturaba un puntero de adaptador mutable. U
 2. Inspeccionar `Restore` con falla y cancelación, y revisar que el wrapper no habilite operaciones sin permiso editorial.
 3. Mantener bloqueado el cambio productivo de tarea DNS y ensayar migración real firmada en VM persistente con snapshot, conmutación/reinicio/rollback, DNS53 dual-stack y conectividad TCP.
 4. Revisar y aprobar la integración a la rama piloto; el PR nunca debe fusionarse solo ni disparar despliegues.
+
+## Evidencia final CI enfocada
+
+- [GitHub Actions #41548175169](https://github.com/apdocentepba-hub/volve-updates/actions/runs/41548175169) completada con **SUCCESS** sobre commit `d02886f7b86a72713878cf1e92b8ad90b5a14655`.
+- Reconstrucción de fuentes desde ZIP SHA-256 fijado y dos overlays con huellas verificadas: **PASS**.
+- Pruebas `go test ./motorupdate -run '^TestProtectedSigned' -count=1 -timeout 10m -v`: **PASS**, incluidas negativas de 10 operaciones sin mutex, finalizadores obsoletos, handoff/reacquisición y la carrera entre finalizador y `Switch` en curso.
+- `go vet ./motorupdate`: **PASS**.
+- El run anterior #41547867800 también fue **SUCCESS**; #41548091997 se canceló por una nueva revisión, no es evidencia de fallo.
+- Este CI específico no ejercita el cambio DNS real, no instala un motor nuevo y no prueba aún recuperación firmada tras reboot; mantiene `motor-stable.json` ausente y el progreso en **65/100**.
