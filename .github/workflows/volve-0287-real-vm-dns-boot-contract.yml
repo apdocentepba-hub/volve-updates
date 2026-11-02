@@ -6,6 +6,8 @@ on:
       - 'development/0.28.7/lab/vm_full_motor_reboot_dns.ps1'
       - 'development/0.28.7/lab/live_dns_boot_event_chain.ps1'
       - 'development/0.28.7/lab/test_live_dns_boot_event_chain.ps1'
+      - 'development/0.28.7/lab/vm_direct_internet_probe.ps1'
+      - 'development/0.28.7/lab/test_vm_direct_internet_probe.ps1'
       - 'development/0.28.7/inapp/ci_fresh_dns53_windows.go'
       - '.github/workflows/volve-0287-real-vm-dns-boot-contract.yml'
   workflow_dispatch:
@@ -24,7 +26,9 @@ jobs:
           $scripts=@(
             'development/0.28.7/lab/vm_full_motor_reboot_dns.ps1',
             'development/0.28.7/lab/live_dns_boot_event_chain.ps1',
-            'development/0.28.7/lab/test_live_dns_boot_event_chain.ps1'
+            'development/0.28.7/lab/test_live_dns_boot_event_chain.ps1',
+            'development/0.28.7/lab/vm_direct_internet_probe.ps1',
+            'development/0.28.7/lab/test_vm_direct_internet_probe.ps1'
           )
           foreach($script in $scripts) {
             $tokens=$null; $syntax=$null
@@ -32,13 +36,15 @@ jobs:
               (Resolve-Path -LiteralPath $script).Path,[ref]$tokens,[ref]$syntax)
             if(@($syntax).Count -ne 0) { throw ('Invalid PowerShell 5.1 syntax in '+$script+': '+@($syntax)[0]) }
           }
-          Write-Host 'PASS: native Windows PowerShell 5.1 parses all 3 VM-only files.'
+          Write-Host 'PASS: native Windows PowerShell 5.1 parses all 5 VM-only files.'
       - name: Verify positive event chain and 17 negative attacks without a reboot
         shell: powershell
         run: |
           $ErrorActionPreference='Stop'
           & ./development/0.28.7/lab/test_live_dns_boot_event_chain.ps1
           if(-not $?) { throw 'Boot event proof contract rejected' }
+          & ./development/0.28.7/lab/test_vm_direct_internet_probe.ps1
+          if(-not $?) { throw 'Direct Internet proof contract rejected' }
       - name: Reject an unprepared hosted VM instead of changing any task or DNS
         shell: powershell
         run: |
