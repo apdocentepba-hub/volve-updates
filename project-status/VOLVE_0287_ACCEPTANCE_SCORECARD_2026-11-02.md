@@ -33,3 +33,13 @@ Actualizado: 2026-11-02 UTC. **Rama piloto** `feature/motor-updater-0287-pilot`.
 4. Solo luego preparar release de motor y autorización en el equipo, con reversión y consentimiento antes de cambiar tareas reales.
 
 El desarrollo de Android queda **fuera de este indicador** y necesita su propia auditoría de estado; no inferir progreso de Windows.
+
+## Control actualizado — integrador bajo un único mutex
+
+- [CI #41373231157](https://github.com/apdocentepba-hub/volve-updates/actions/runs/41373231157): **FAIL por timeout de 8 min** durante el grupo anterior de pruebas firmadas de tarea SYSTEM. Los trabajos Linux y Scheduler del piloto aprobaron, el Windows falló. No computar esta prueba como aceptación de la recuperación combinada.
+- [`622884c`](https://github.com/apdocentepba-hub/volve-updates/commit/622884c4eaf6826ccff92fcd804b17209dfa8978): corregida una importación de `time` en un test del mutex, sin cambios en el motor en producción.
+- [`edaaa7d`](https://github.com/apdocentepba-hub/volve-updates/commit/edaaa7d31f722142d1434143482c33b1901bd482): suite enfocada separada en **tres trabajos Windows independientes** (tarea original; recuperación combinada exitosa; rechazos por corrupción/port53/SYSTEM y fallo parcial). No se alteran criterios criptográficos ni permisos; cada conjunto tiene presupuesto y resultado propios.
+- [CI #41374392594](https://github.com/apdocentepba-hub/volve-updates/actions/runs/41374392594): **tres trabajos en ejecución** al registrar este control. Sólo si los tres finalizan `success`, se considerará la integración de pruebas superada. **Avance reconocido: 65/100** hasta esa evidencia.
+- La funcionalidad no está conectada al watchdog SYSTEM de producción. Además, no se ha demostrado recuperación con Windows realmente reiniciado y la misma VM persistente. Ningún permiso para activar `releases/motor-stable.json`.
+
+**Siguiente criterio bloqueante:** restaurador completo original EXE+XML+arranque DNS e informe de salud tras reinicio persistente. No confundir la aprobación de los tests unitarios con despliegue.
