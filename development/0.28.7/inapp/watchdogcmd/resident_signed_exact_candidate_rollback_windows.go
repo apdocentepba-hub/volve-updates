@@ -94,6 +94,17 @@ func restoreSignedExactCandidateLockedWindows(ctx context.Context,root string,
   return errors.New("existing motor no longer equals the exact signed target")
  }
  if err:=deps.VerifySystem(ctx);err!=nil{return err}
+ // The kernel mutex excludes cooperating updater/watchdog processes, but
+ // Task Scheduler is asynchronous. A service may restart AFTER the signed
+ // journal and SHA checks. Immediately before rename, repeat the REAL
+ // Scheduler/process/TCP53/UDP53 observation under the same lease.
+ finalFence,err:=deps.ProbeQuiescence(ctx,root)
+ if err!=nil||!finalFence.ReadyForFurtherChecks||
+  !finalFence.TaskIdentityVerified||!finalFence.DNSPortFree||
+  !finalFence.MotorProcessesStopped{
+  return fmt.Errorf("DNS motor reactivated at final candidate rollback boundary: %w",
+   errors.Join(err,errors.New("last quiescence fence rejected replacement")))
+ }
  if err:=ctx.Err();err!=nil{return err}
  // Windows MoveFileEx(REPLACE_EXISTING) from os.Rename is a single same-volume
  // replacement. An executable in use normally prevents this operation.
