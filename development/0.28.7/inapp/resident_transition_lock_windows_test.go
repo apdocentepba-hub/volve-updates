@@ -149,3 +149,37 @@ func TestProtectedResidentMutexRecoversAfterOwnerProcessDies(t *testing.T){
  release()
  release() // idempotent even after crash recovery
 }
+
+
+// A real Win32 mutex is thread-owned. The finalizer may be dispatched by a
+// different Go goroutine (e.g. cancellation or watchdog handoff) and MUST
+// still release the original OS thread's lock. This test would time out under
+// the old direct ReleaseMutex callback and is intentionally Windows-native.
+func TestProtectedResidentMutexReleaseOnDifferentGoroutine(t *testing.T){
+ residentProtectedCITest(t)
+ ctx,cancel:=context.WithTimeout(context.Background(),5*time.Second)
+ defer cancel()
+ release,err:=AcquireProtectedResidentTransitionLease(ctx)
+ if err!=nil||release==nil{t.Fatalf("protected lock not acquired: %v",err)}
+ released:=make(chan struct{})
+ go func(){release();close(released)}()
+ select{
+ case <-released:
+ case <-ctx.Done():t.Fatal("cross-goroutine release hung")
+ }
+ // Another goroutine, on a distinct OS thread, must now acquire the named
+ // mutex. Reentrant acquisition from the original goroutine is NOT a proof.
+ acquired:=make(chan error,1)
+ go func(){
+  nextRelease,nextErr:=AcquireProtectedResidentTransitionLease(ctx)
+  if nextRelease!=nil{nextRelease()}
+  acquired<-nextErr
+ }()
+ select{
+ case err:=<-acquired:
+  if err!=nil{t.Fatalf("ReleaseMutex did not unlock across goroutines: %v",err)}
+ case <-ctx.Done():
+  t.Fatal("kernel mutex stayed owned by an abandoned Windows thread")
+ }
+ release() // idempotent, including after handoff.
+}
