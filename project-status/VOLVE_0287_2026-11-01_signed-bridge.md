@@ -37,3 +37,15 @@ Este documento registra un avance verificable, no declara listo el actualizador 
 - El control completo de [CI #41364244698](https://github.com/apdocentepba-hub/volve-updates/actions/runs/41364244698) aprobó Linux y rollback de Scheduler; la parte Windows requiere resultado final.
 - Queda pendiente lo esencial: un driver real SYSTEM que valide tarea y proceso, cierre de forma segura el motor candidato si corresponde, restaure respaldo protegido, recupere DNS local, compruebe Internet, revalide el permiso y finalice sin falsos éxitos. Además, reinicio real en Windows persistente antes de liberar el canal del motor.
 
+
+## Actualización técnica 02/11/2026 UTC — Task Scheduler y quiescencia DNS53
+
+**REALIZADO:** agregado control de solo lectura de tarea `VOLVE-DNS-SERVER-0270` bajo SYSTEM, acción y argumentos exactos, inventario de procesos y puertos UDP/TCP 53. Rechaza datos incompletos, permisos insuficientes, otro ejecutable o puerto ocupado. Commit `fec7d0c` (código), `321472b` (ensayo real).
+
+**REALIZADO:** integración del control anterior con firma Ed25519, hashes del journal/respaldo y doble comprobación del ejecutable **dentro del mismo mutex Windows**. Commit `b4e1618`. No habilita ninguna escritura productiva.
+
+**COMPROBADO:** [Windows #41365598655](https://github.com/apdocentepba-hub/volve-updates/actions/runs/41365598655) SUCCESS, tarea SYSTEM descartable, rechazo de tarea modificada, borrado de fixture. [Windows #41366011213](https://github.com/apdocentepba-hub/volve-updates/actions/runs/41366011213) SUCCESS: bloqueo compartido, autorización firmada y rechazo si DNS53 sigue ocupado. Corrigió el import faltante del test en commit `dec7872`; el fallo de CI previo no es una aprobación.
+
+**PENDIENTE:** controlador SYSTEM restaurador (copiar respaldo sellado, restituir XML exacto, reiniciar tarea, comprobar DNS e Internet), validación tras un reinicio verdadero en VM persistente y revalidación final del motor instalado en PC. El canal público del motor permanece apagado. La ejecución general #41366011021 estaba en progreso al último control; la prueba dirigida nueva sí aprobó.
+
+**SIGUIENTE PASO:** integrar la operación concreta de restauración con estas precondiciones, ejecutar pruebas de interrupción/reinicio y no publicar el motor hasta cumplirlas.
