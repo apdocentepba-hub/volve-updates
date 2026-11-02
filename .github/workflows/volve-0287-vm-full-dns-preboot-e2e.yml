@@ -6,6 +6,7 @@ on:
       - 'development/0.28.7/lab/vm_full_motor_reboot_dns.ps1'
       - 'development/0.28.7/lab/live_dns_boot_event_chain.ps1'
       - 'development/0.28.7/lab/vm_dns_reply_contract.ps1'
+      - 'development/0.28.7/lab/pack_vm_persistent_reboot_kit.ps1'
       - 'development/0.28.7/inapp/ci_fresh_dns53_windows.go'
       - 'development/0.28.7/inapp/apply_overlay.go'
       - '.github/workflows/volve-0287-vm-full-dns-preboot-e2e.yml'
@@ -120,3 +121,27 @@ jobs:
               if($LASTEXITCODE -ne 0){throw 'Could not restore original disposable event history setting'}
             }
           }
+      - name: Package full-motor test kit for a separately owned persistent Windows VM
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $output=Join-Path $env:RUNNER_TEMP 'VOLVE_VM_PERSISTENT_LAB_KIT'
+          $motor=Join-Path $env:RUNNER_TEMP 'VOLVE_CI_FreshDNS53.exe'
+          & ./development/0.28.7/lab/pack_vm_persistent_reboot_kit.ps1 -MotorExe $motor -OutRoot $output
+          if($LASTEXITCODE -and $LASTEXITCODE -ne 0){throw 'VM lab packaging failed'}
+          $items=@(Get-ChildItem -LiteralPath $output -File)
+          if($items.Count -ne 9){throw 'Unexpected VM lab kit file count'}
+          $manifest=Get-Content -LiteralPath (Join-Path $output 'SHA256_MANIFEST.json') -Raw -Encoding UTF8|ConvertFrom-Json
+          if($manifest.product_release -ne $false -or $manifest.vm_only -ne $true -or
+             $manifest.publisher_signed -ne $false -or $manifest.persistent_reboot_proven -ne $false -or
+             $manifest.post_reboot_rollback_proven -ne $false){
+            throw 'VM lab kit claimed unsafe production or reboot proof'
+          }
+          Write-Host 'PASS: CI-only full-motor persistent VM kit assembled; SHA256 manifest and safety gates verified.'
+      - name: Upload VM-only persistent reboot test kit (NOT INSTALLER)
+        uses: actions/upload-artifact@v4
+        with:
+          name: VOLVE-0287-PERSISTENT-VM-LAB-NO-INSTALL
+          path: ${{ runner.temp }}/VOLVE_VM_PERSISTENT_LAB_KIT/
+          if-no-files-found: error
+          retention-days: 7
