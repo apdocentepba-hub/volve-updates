@@ -82,7 +82,7 @@ jobs:
               $pattern = '^(TestSignedOriginalSYSTEMTask|TestSignedProductionSYSTEMTaskRestore|TestSignedCombinedPublisherBinding|TestPinnedResidentBootDriver)'
             }
             'combined-success' {
-              $pattern = '^(TestSignedCombinedRecovery(MissingExeThenTaskOneMutexNoReceipt|AlreadyOriginalRetriesTaskWithoutOverwritingExe|LockedHandoffDoesNotReacquireMutex)|TestSignedBootOriginalOps(RejectMissingTrustBeforeOSChanges|UnderProtectedPolicyLeaseLeavesPendingJournal))$'
+              $pattern = '^(TestSignedCombinedRecovery(MissingExeThenTaskOneMutexNoReceipt|AlreadyOriginalRetriesTaskWithoutOverwritingExe|LockedHandoffDoesNotReacquireMutex)|TestSignedBootOriginalOps(RejectMissingTrustBeforeOSChanges|UnderProtectedPolicyLeaseLeavesPendingJournal)|TestSignedBootPolicyFullRecoveryUnderSharedMutexSealsExactlyOnce)$'
             }
             'combined-rejections' {
               $pattern = '^(TestSignedCombinedRecovery(UnknownExistingImageNoTaskMutation|RejectsLiveDNS53NoTaskOrExeChanges|TaskFailureLeavesOriginalAndPendingJournal|WithoutSYSTEMOrCancelledCannotMutate)|TestSignedBootOriginalOpsHealthyRunningOriginalCanBeAuditedButNotMutated)$'
