@@ -33,9 +33,10 @@ func TestResidentCIStageSealerSYSTEMChild(t *testing.T){
  // executable is actually launched from a DISPOSABLE Windows LocalSystem
  // Scheduled Task, not merely an elevated administrator test process.
  // Construct only; NEVER invoke RestoreOriginal or register product tasks.
- driver,err:=newPinnedResidentBootRecoveryDriverWindows(ctx,root)
- if err!=nil||driver==nil{
-  t.Fatalf("actual SYSTEM could not construct sealed publisher boot driver: %v",err)
+ paired,err:=newPinnedResidentBootComponentsWindows(ctx,root)
+ if err!=nil||paired.Driver==nil||paired.Health==nil||
+  paired.JournalDir!=filepath.Join(root,residentRecoveryParent,residentJournalDirName){
+  t.Fatalf("actual SYSTEM could not construct bound rollback/health/journal: %v",err)
  }
  if err:=sealResidentOriginalRecoveryStageNTFS(ctx,root,path);err!=nil{
   t.Fatalf("SYSTEM could not seal bounded original stage with protected ACL: %v",err)
