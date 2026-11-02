@@ -83,7 +83,7 @@ jobs:
               $pattern = '^(TestSignedCombinedRecovery(MissingExeThenTaskOneMutexNoReceipt|AlreadyOriginalRetriesTaskWithoutOverwritingExe|LockedHandoffDoesNotReacquireMutex)|TestSignedBootOriginalOps(RejectMissingTrustBeforeOSChanges|UnderProtectedPolicyLeaseLeavesPendingJournal))$'
             }
             'combined-rejections' {
-              $pattern = '^TestSignedCombinedRecovery(UnknownExistingImageNoTaskMutation|RejectsLiveDNS53NoTaskOrExeChanges|TaskFailureLeavesOriginalAndPendingJournal|WithoutSYSTEMOrCancelledCannotMutate)$'
+              $pattern = '^(TestSignedCombinedRecovery(UnknownExistingImageNoTaskMutation|RejectsLiveDNS53NoTaskOrExeChanges|TaskFailureLeavesOriginalAndPendingJournal|WithoutSYSTEMOrCancelledCannotMutate)|TestSignedBootOriginalOpsHealthyRunningOriginalCanBeAuditedButNotMutated)$'
             }
             default { throw 'Unexpected test matrix selector' }
           }
