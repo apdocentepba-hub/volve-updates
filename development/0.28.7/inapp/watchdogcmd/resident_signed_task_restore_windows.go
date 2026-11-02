@@ -140,9 +140,10 @@ func restoreSignedOriginalSYSTEMTaskWindows(ctx context.Context,root string,
   "Register-ScheduledTask -TaskName $task -TaskPath '\\' -Xml $xml -Force -ErrorAction Stop|Out-Null;"+
   "$restored=Get-ScheduledTask -TaskName $task -TaskPath '\\' -ErrorAction Stop;"+
   "$validTriggers=@($restored.Triggers | Where-Object{ $null -ne $_ });"+
+  "$bootTriggers=@($validTriggers | Where-Object{ $_.CimClass.CimClassName -eq 'MSFT_TaskBootTrigger' });"+
   "if($restored.TaskPath -ne '\\' -or $restored.Principal.UserId -notin @('SYSTEM','S-1-5-18') -or @($restored.Actions).Count -ne 1 -or "+
    "[string]$restored.Actions[0].Execute -ine $old -or [string]$restored.Actions[0].Arguments -cne '--dns-service' -or "+
-   "$validTriggers.Count -lt 1 -or -not $restored.Settings.Enabled){throw 'Restored SYSTEM task identity differs from original'};"+
+   "$validTriggers.Count -lt 1 -or $bootTriggers.Count -lt 1 -or -not $restored.Settings.Enabled){throw 'Restored SYSTEM task identity differs from original'};"+
   "Write-Output 'VOLVE_SIGNED_ORIGINAL_TASK_RESTORED'"
  result,err:=deps.RunWindowsTask(ctx,script)
  if err!=nil{return fmt.Errorf("signed original SYSTEM task import failed: %w (%s)",err,result)}
