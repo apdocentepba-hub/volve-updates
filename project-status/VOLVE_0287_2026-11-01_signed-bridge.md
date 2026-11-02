@@ -83,3 +83,11 @@ Implementar la envoltura SYSTEM real (no inyectada), el driver de tarea original
 - [14ae51f](https://github.com/apdocentepba-hub/volve-updates/commit/14ae51f6704896f6e8593cb30b50fec9daefa4a4): elimina el atajo de éxito si la tarea ya apunta al EXE original. Se reimporta el **XML completo y firmado** para recuperar los disparadores y ajustes; comprueba al finalizar que la tarea SYSTEM tiene la acción original, al menos un disparador y está habilitada.
 - [CI #41370287439](https://github.com/apdocentepba-hub/volve-updates/actions/runs/41370287439): batería correspondiente al último cambio, iniciada; **no declarar PASS antes de verificar `conclusion=success`**.
 - La nueva función todavía utiliza ejecución inyectada para pruebas y no está conectada a un ejecutable productivo. Un sistema con DNS operativo debe permanecer intacto. Siguiente requisito: prueba como SYSTEM con una tarea descartable real usando permisos protegidos y recuperación DNS IPv4/IPv6 después del arranque; recuperación tras reboot persistente sigue pendiente.
+
+## Resultado posterior — restauración SYSTEM, corrección de DACL
+
+- [Windows #41370050773](https://github.com/apdocentepba-hub/volve-updates/actions/runs/41370050773): **SUCCESS**, ya con fixture EXE protegido. El log confirmó PASS en los cuatro grupos nuevos de tests `TestSignedOriginalSYSTEMTask*`: lectura del XML editorial respaldado, rechazos por EXE/XML alterado, ausencia de SYSTEM/puerto53 ocupado, revalidación de cambios durante la operación y salida no confiable del Scheduler.
+- [14ae51f](https://github.com/apdocentepba-hub/volve-updates/commit/14ae51f6704896f6e8593cb30b50fec9daefa4a4): evita falso éxito si la acción ya apunta a la ruta antigua; siempre reimporta XML de respaldo para recuperar disparadores/privilegios.
+- [04d54f2](https://github.com/apdocentepba-hub/volve-updates/commit/04d54f2b0b8edb5b25de60f054c0636269b88652): comprobación de disparadores no nulos (evita que PowerShell cuente `$null` como un trigger válido).
+- [Windows #41370706279](https://github.com/apdocentepba-hub/volve-updates/actions/runs/41370706279): batería de ese último commit iniciada; no afirmar PASS antes del resultado definitivo.
+- Este hito aún NO prueba restauración de la tarea real como SYSTEM después de un reinicio del SO. No subir al canal estable ni cambiar tareas/DNS en PC.
