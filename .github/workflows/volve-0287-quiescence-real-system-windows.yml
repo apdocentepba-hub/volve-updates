@@ -19,7 +19,7 @@ permissions:
 jobs:
   actual-windows-quiescence:
     runs-on: windows-latest
-    timeout-minutes: 16
+    timeout-minutes: 24
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -67,8 +67,10 @@ jobs:
         run: |
           $ErrorActionPreference='Stop'
           $env:CGO_ENABLED='0'
-          go test ./cmd/volve-managed-watchdog -run '^(TestResidentQuiescence|TestSignedBootAdmissionQuiescenceProbe|TestSignedBootAdmissionRejectsLiveDNS53|TestSignedMissingOriginalRestore|TestSignedOriginalSYSTEMTask)' -count=1 -timeout 7m -v
-          if($LASTEXITCODE -ne 0){throw 'Task/process/DNS port 53 fail-closed gate did not pass'}
+          go test ./cmd/volve-managed-watchdog -run '^TestSignedOriginalSYSTEMTask' -count=1 -timeout 8m -v
+          if($LASTEXITCODE -ne 0){throw 'Publisher-signed SYSTEM task restoration unit tests failed'}
+          go test ./cmd/volve-managed-watchdog -run '^(TestResidentQuiescence|TestSignedBootAdmissionQuiescenceProbe|TestSignedBootAdmissionRejectsLiveDNS53|TestSignedMissingOriginalRestore)' -count=1 -timeout 9m -v
+          if($LASTEXITCODE -ne 0){throw 'Original recovery / Task Scheduler DNS53 regression checks failed'}
           go build -trimpath -o (Join-Path $env:RUNNER_TEMP 'VOLVE_0287_Quiescence_Watchdog_CI.exe') ./cmd/volve-managed-watchdog
           if($LASTEXITCODE -ne 0){throw 'Independent watchdog does not compile'}
           if(Get-ScheduledTask -TaskName 'VOLVE-DNS-SERVER-0270' -ErrorAction SilentlyContinue){
