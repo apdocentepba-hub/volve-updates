@@ -90,7 +90,26 @@ func auditResidentSignedBootAdmissionWithQuiescenceProbe(
  if err!=nil{return zero,fmt.Errorf("protected boot mutex denied: %w",err)}
  if release==nil{return zero,errors.New("protected boot mutex has no release callback")}
  defer release()
+ return auditResidentSignedBootAdmissionLocked(ctx,root,key,
+  protectGrant,protectJournal,protectBackup,probe)
+}
+
+// Never call this without holding the original shared protected kernel mutex.
+// It exists so a future resident restorer can keep SAME mutex across signed
+// authorization, live process/DNS check and one bounded recovery mutation.
+// It must NOT itself acquire that non-reentrant mutex again.
+func auditResidentSignedBootAdmissionLocked(
+ ctx context.Context,root string,key ed25519.PublicKey,
+ protectGrant,protectJournal,protectBackup func(string)error,
+ probe func(context.Context,string)(residentQuiescenceDecision,error),
+)(residentSignedBootAdmission,error){
+ var zero residentSignedBootAdmission
  if err:=ctx.Err();err!=nil{return zero,err}
+ if !filepath.IsAbs(root)||filepath.Clean(root)!=root||
+  len(key)!=ed25519.PublicKeySize||
+  protectGrant==nil||protectJournal==nil||protectBackup==nil{
+  return zero,errors.New("locked signed audit requires canonical root, key and trusted ACL checks")
+ }
  before,err:=auditResidentBootPlan(ctx,root)
  if err!=nil{return zero,fmt.Errorf("boot journal/backup invalid: %w",err)}
  if before.Action=="no-action"{
