@@ -48,15 +48,23 @@ function ProtectedRoot([string]$root){
   }
  }
 }
-function TaskExact([string]$name,[string]$path,[string]$args,[bool]$boot){
+function TaskExact([string]$name,[string]$expectedExecutable,[string]$expectedArguments,[bool]$boot){
  $t=Get-ScheduledTask -TaskName $name -TaskPath '\' -ErrorAction Stop
- if($t.TaskPath -ne '\' -or $t.Principal.UserId -notin @('SYSTEM','S-1-5-18') -or
-   @($t.Actions).Count -ne 1 -or
-   [string]$t.Actions[0].Execute -ine $path -or [string]$t.Actions[0].Arguments -cne $args -or
-   @($t.Triggers).Count -ne 1){
-   throw ('Untrusted disposable task '+$name)
+ if($t.TaskPath -ne '\' -or $t.Principal.UserId -notin @('SYSTEM','S-1-5-18')){
+  throw ('Untrusted disposable task path or principal '+$name)
  }
- if($boot -and $t.Triggers[0].CimClass.CimClassName -ne 'MSFT_TaskBootTrigger'){throw 'Missing startup trigger'}
+ if(@($t.Actions).Count -ne 1 -or @($t.Triggers).Count -ne 1){
+  throw ('Unexpected disposable task action/trigger count '+$name)
+ }
+ if([string]$t.Actions[0].Execute -ine $expectedExecutable){
+  throw ('Untrusted disposable task executable '+$name)
+ }
+ if([string]$t.Actions[0].Arguments -cne $expectedArguments){
+  throw ('Untrusted disposable task arguments '+$name)
+ }
+ if($boot -and $t.Triggers[0].CimClass.CimClassName -ne 'MSFT_TaskBootTrigger'){
+  throw ('Untrusted disposable task startup trigger '+$name)
+ }
  return $t
 }
 function NetworkSnapshot{
