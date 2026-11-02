@@ -78,7 +78,8 @@ func restoreSignedMissingOriginalWindows(ctx context.Context,root string,
  if !info.Mode().IsRegular()||info.Size()<1||info.Size()>chainLegacyMax{
   return errors.New("sealed original snapshot is not regular or bounded")
  }
- if _,err:=os.Lstat(original);err==nil{return errors.New("original file unexpectedly appeared")}
+ _,err=os.Lstat(original)
+ if err==nil{return errors.New("original file unexpectedly appeared")}
  if !errors.Is(err,os.ErrNotExist){return fmt.Errorf("original cannot be safely checked: %w",err)}
 
  input,err:=os.Open(snapshot)
