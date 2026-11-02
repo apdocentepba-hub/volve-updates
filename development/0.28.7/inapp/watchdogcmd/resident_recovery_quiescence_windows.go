@@ -80,6 +80,9 @@ func residentQuiescenceWithQuery(ctx context.Context,root,version string,
  // Query ALL port endpoints so a missing port 53 is an empty result,
  // not a suppressed access error. Errors must fail closed.
  script:="$ErrorActionPreference='Stop';$ProgressPreference='SilentlyContinue';"+
+  "$user=[Security.Principal.WindowsIdentity]::GetCurrent();"+
+  "$admin=[Security.Principal.WindowsPrincipal]::new($user);"+
+  "if(-not $admin.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)){throw 'Elevated Windows access required for reliable process/DNS observation'};"+
   "$r="+q(root)+";"+
   "$t=Get-ScheduledTask -TaskName 'VOLVE-DNS-SERVER-0270' -TaskPath '\\' -ErrorAction Stop;"+
   "if(@($t).Count -ne 1){throw 'Ambiguous DNS task'};"+
