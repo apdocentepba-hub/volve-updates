@@ -46,7 +46,7 @@ func TestSignedOriginalSYSTEMTaskRestoresOnlyAuthenticatedPendingXMLAndDoesNotFi
     "Sealed original Scheduler XML changed","Original executable bytes changed",
     "VOLVE_SIGNED_ORIGINAL_TASK_RESTORED","--dns-service",
     "Restored SYSTEM task identity differs from original",
-    "@($restored.Triggers).Count -lt 1", "-not $restored.Settings.Enabled",
+    "$validTriggers.Count -lt 1", "Where-Object{ $null -ne $_ }", "-not $restored.Settings.Enabled",
    }
    for _,q:=range required{if !strings.Contains(script,q){t.Errorf("missing required privilege check: %s",q)}}
    if strings.Contains(script,"if($isOriginal){Write-Output 'VOLVE_SIGNED_ORIGINAL_TASK_RESTORED';return}"){
