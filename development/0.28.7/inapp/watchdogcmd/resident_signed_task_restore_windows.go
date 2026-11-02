@@ -128,7 +128,11 @@ func restoreSignedOriginalSYSTEMTaskWindows(ctx context.Context,root string,
   "$sha=[Security.Cryptography.SHA256]::Create();"+
   "try{$actualXML=[BitConverter]::ToString($sha.ComputeHash($bytes)).Replace('-','').ToLowerInvariant()}finally{$sha.Dispose()};"+
   "if($actualXML -cne $xmlSHA){throw 'Sealed original Scheduler XML changed'};"+
-  "if($isOriginal){Write-Output 'VOLVE_SIGNED_ORIGINAL_TASK_RESTORED';return};"+
+  // Even when the action already points to the original EXE, a previous
+  // partial recovery may have left triggers, run level or Settings altered.
+  // Re-import the sealed original XML to restore the WHOLE Scheduler task.
+  // Never call action identity alone a successful task restoration.
+  ""+
   "$isUTF16=($bytes.Length -ge 2 -and (($bytes[0] -eq 255 -and $bytes[1] -eq 254) -or ($bytes[0] -eq 254 -and $bytes[1] -eq 255)));"+
   "if($isUTF16){if($bytes[0] -eq 255){$enc=[Text.Encoding]::Unicode}else{$enc=[Text.Encoding]::BigEndianUnicode};$xml=$enc.GetString($bytes,2,$bytes.Length-2)}"+
   "else{$enc=[Text.UTF8Encoding]::new($false,$true);$xml=$enc.GetString($bytes)};"+
@@ -136,7 +140,8 @@ func restoreSignedOriginalSYSTEMTaskWindows(ctx context.Context,root string,
   "Register-ScheduledTask -TaskName $task -TaskPath '\\' -Xml $xml -Force -ErrorAction Stop|Out-Null;"+
   "$restored=Get-ScheduledTask -TaskName $task -TaskPath '\\' -ErrorAction Stop;"+
   "if($restored.TaskPath -ne '\\' -or $restored.Principal.UserId -notin @('SYSTEM','S-1-5-18') -or @($restored.Actions).Count -ne 1 -or "+
-   "[string]$restored.Actions[0].Execute -ine $old -or [string]$restored.Actions[0].Arguments -cne '--dns-service'){throw 'Restored SYSTEM task identity differs from original'};"+
+   "[string]$restored.Actions[0].Execute -ine $old -or [string]$restored.Actions[0].Arguments -cne '--dns-service' -or "+
+   "@($restored.Triggers).Count -lt 1 -or -not $restored.Settings.Enabled){throw 'Restored SYSTEM task identity differs from original'};"+
   "Write-Output 'VOLVE_SIGNED_ORIGINAL_TASK_RESTORED'"
  result,err:=deps.RunWindowsTask(ctx,script)
  if err!=nil{return fmt.Errorf("signed original SYSTEM task import failed: %w (%s)",err,result)}
