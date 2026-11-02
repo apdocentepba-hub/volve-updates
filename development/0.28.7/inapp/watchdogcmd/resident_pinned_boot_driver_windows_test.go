@@ -24,7 +24,7 @@ func TestPinnedResidentBootDriverRejectsCancelledOrRelativeRoot(t *testing.T){
  if driver,err:=newPinnedResidentBootRecoveryDriverWindows(ctx,"relative");driver!=nil||err==nil {
   t.Fatalf("noncanonical root permitted to construct signed SYSTEM driver: driver=%v err=%v",driver,err)
  }
- if driver,err:=newPinnedResidentBootRecoveryDriverWindows(ctx,filepath.Join(t.TempDir(),".."));driver!=nil||err==nil {
+ if driver,err:=newPinnedResidentBootRecoveryDriverWindows(ctx,t.TempDir()+string(filepath.Separator)+"..");driver!=nil||err==nil {
   t.Fatalf("non-clean root permitted to construct signed SYSTEM driver: driver=%v err=%v",driver,err)
  }
 }
