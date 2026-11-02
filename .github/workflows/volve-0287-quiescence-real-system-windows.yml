@@ -1,0 +1,71 @@
+name: VOLVE 0.28.7 REAL SYSTEM task and DNS53 quiescence read-only gate (CI ONLY)
+on:
+  push:
+    branches: [feature/motor-updater-0287-pilot]
+    paths:
+      - '.github/workflows/volve-0287-quiescence-real-system-windows.yml'
+      - 'development/0.28.7/inapp/watchdogcmd/resident_recovery_quiescence_windows.go'
+      - 'development/0.28.7/inapp/watchdogcmd/resident_recovery_quiescence_windows_test.go'
+      - 'development/0.28.7/inapp/apply_overlay.go'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  actual-windows-quiescence:
+    runs-on: windows-latest
+    timeout-minutes: 16
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.x'
+      - name: Verify isolated runner and pinned original code
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          if($env:GITHUB_ACTIONS -ne 'true' -or $env:RUNNER_ENVIRONMENT -ne 'github-hosted'){throw 'Not hosted CI'}
+          $vm=Get-CimInstance Win32_ComputerSystem
+          if(($vm.Manufacturer+' '+$vm.Model) -notmatch '(?i:virtual machine|hyper-v|vmware|kvm|qemu|virtualbox)'){throw 'Not a verified VM'}
+          if(Get-ScheduledTask -TaskName 'VOLVE-DNS-SERVER-0270' -ErrorAction SilentlyContinue){throw 'Real motor task exists; refusing test'}
+          if(Get-ScheduledTask -TaskName 'VOLVE-DNS-RESCUE-0270' -ErrorAction SilentlyContinue){throw 'Real rescue task exists'}
+          $parts=@(Get-ChildItem development/0.28.7/complete-source-parts -Filter part-*.bin -File|Sort-Object Name)
+          if($parts.Count -ne 10){throw 'Wrong number of source segments'}
+          $source=[IO.File]::Create((Join-Path $PWD 'pinned-source.zip'))
+          try {
+            for($i=0;$i -lt 10;$i++){
+              if($parts[$i].Name -ne ('part-{0:D2}.bin' -f $i)){throw 'Unexpected source ordering'}
+              $from=[IO.File]::OpenRead($parts[$i].FullName)
+              try{$from.CopyTo($source)}finally{$from.Dispose()}
+            }
+          }finally{$source.Dispose()}
+          if((Get-FileHash -Algorithm SHA256 pinned-source.zip).Hash.ToLowerInvariant() -cne '92b3536559151260375b17a64eedd009df8399e45460637208027b7ca0587ba5'){
+            throw 'Source hash changed'
+          }
+          New-Item -ItemType Directory build -Force|Out-Null
+          Expand-Archive pinned-source.zip build -Force
+          $patches=@(
+            @{n='VOLVE_0287_PRECHECK_RESCATE_OVERLAY_NO_INSTALAR.zip';h='fdfd31f21df81fe6da6075bfd442354297874576b6dc2c38f19bd35a681d95cd'},
+            @{n='VOLVE_0287_RECUPERACION_INTERRUPCION_FORZADA_NO_INSTALAR_v3.zip';h='773bd5eb5f1c4883021cc321856636354e964d3605dba9017e2fb5d1a7401b40'}
+          )
+          foreach($patch in $patches){
+            $p=Join-Path development/0.28.7 $patch.n
+            if((Get-FileHash -Algorithm SHA256 $p).Hash.ToLowerInvariant() -cne $patch.h){throw 'Overlay hash mismatch'}
+            Expand-Archive $p build -Force
+          }
+          Copy-Item development/0.28.7/journal/*.go build/codigo/motorupdate/ -Force
+          go run development/0.28.7/inapp/apply_overlay.go build/codigo
+          if($LASTEXITCODE -ne 0){throw 'Source overlay generation failed'}
+      - name: Verify exact stopped motor task and live DNS53 evidence in Windows
+        shell: pwsh
+        working-directory: build/codigo
+        run: |
+          $ErrorActionPreference='Stop'
+          $env:CGO_ENABLED='0'
+          go test ./cmd/volve-managed-watchdog -run '^TestResidentQuiescence' -count=1 -timeout 5m -v
+          if($LASTEXITCODE -ne 0){throw 'Task/process/DNS port 53 fail-closed gate did not pass'}
+          go build -trimpath -o (Join-Path $env:RUNNER_TEMP 'VOLVE_0287_Quiescence_Watchdog_CI.exe') ./cmd/volve-managed-watchdog
+          if($LASTEXITCODE -ne 0){throw 'Independent watchdog does not compile'}
+          if(Get-ScheduledTask -TaskName 'VOLVE-DNS-SERVER-0270' -ErrorAction SilentlyContinue){
+            throw 'Disposable task leaked into CI runner'
+          }
+          Write-Host 'PASS: exact SYSTEM task allowed when quiescent, active DNS/process denied, foreign task action denied; no production changes'
