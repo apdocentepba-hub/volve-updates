@@ -4,6 +4,7 @@ package main
 
 import (
  "context"
+ "crypto/ed25519"
  "errors"
  "os"
  "path/filepath"
@@ -13,8 +14,23 @@ import (
  "volve-browser-protection/motorupdate"
 )
 
+// The task-restore path is intentionally stricter than the missing-file
+// path: an already installed EXE must have an explicit protected Windows DACL.
+// The fixture must model that property rather than weakening production checks.
+func signedTaskRecoveryFixture(t *testing.T)(
+ string,ed25519.PublicKey,residentMissingOriginalRestoreDeps){
+ t.Helper()
+ root,key,deps:=signedMissingRecoveryFixture(t)
+ installed:=filepath.Join(root,residentLegacyExe)
+ hardenedTestACL(t,installed,installed)
+ if err:=deps.VerifyACL(installed);err!=nil{
+  t.Fatalf("signed task fixture installed EXE DACL is not protected: %v",err)
+ }
+ return root,key,deps
+}
+
 func TestSignedOriginalSYSTEMTaskRestoresOnlyAuthenticatedPendingXMLAndDoesNotFinish(t *testing.T){
- root,key,d:=signedMissingRecoveryFixture(t)
+ root,key,d:=signedTaskRecoveryFixture(t)
  xmlPath:=filepath.Join(root,residentRecoveryParent,residentRecoveryFolder,residentRecoveryTask)
  xml,err:=os.ReadFile(xmlPath);if err!=nil{t.Fatal(err)}
  calls:=0
@@ -53,7 +69,7 @@ func TestSignedOriginalSYSTEMTaskRestoresOnlyAuthenticatedPendingXMLAndDoesNotFi
 func TestSignedOriginalSYSTEMTaskNeverReachesSchedulerWhenOriginalMissingOrModified(t *testing.T){
  for _,scenario:=range []string{"missing","foreign","bad-xml"}{
   t.Run(scenario,func(t *testing.T){
-   root,key,d:=signedMissingRecoveryFixture(t)
+   root,key,d:=signedTaskRecoveryFixture(t)
    old:=filepath.Join(root,residentLegacyExe)
    xml:=filepath.Join(root,residentRecoveryParent,residentRecoveryFolder,residentRecoveryTask)
    switch scenario{
@@ -74,7 +90,7 @@ func TestSignedOriginalSYSTEMTaskNeverReachesSchedulerWhenOriginalMissingOrModif
 }
 
 func TestSignedOriginalSYSTEMTaskRejectsPort53AndUnprivilegedToken(t *testing.T){
- root,key,probe:=signedMissingRecoveryFixture(t)
+ root,key,probe:=signedTaskRecoveryFixture(t)
  tried:=0
  deps:=residentSignedTaskRestoreDeps{
   VerifySystem:func(context.Context)error{return errors.New("not SYSTEM")},
@@ -96,7 +112,7 @@ func TestSignedOriginalSYSTEMTaskRejectsPort53AndUnprivilegedToken(t *testing.T)
 }
 
 func TestSignedOriginalSYSTEMTaskRechecksQuiescenceAndRefusesAmbiguousPowerShell(t *testing.T){
- root,key,p:=signedMissingRecoveryFixture(t)
+ root,key,p:=signedTaskRecoveryFixture(t)
  checks:=0
  runs:=0
  deps:=residentSignedTaskRestoreDeps{
