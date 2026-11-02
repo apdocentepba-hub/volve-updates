@@ -20,3 +20,31 @@
 - Siguiente actuación en VM: consulta TCP directa a `1.1.1.1:443` y alternativo `9.9.9.9:443` sin modificar adaptadores. Luego preparar un laboratorio aparte de **rollback tras migración interrumpida** bajo watchdog SYSTEM con evidencias de firma editorial. Antes de ello preservar checkpoint y evidencia, y retirar solo las tareas descartables anteriores una vez verificado todo.
 
 **Resultado:** persistencia del motor DNS completo bajo SYSTEM tras un reinicio real de VM Windows, con correlación fuerte de eventos y bloqueo IPv4/IPv6, **COMPROBADA**. Actualización productiva del motor 0.28.7: **NO APROBADA**.
+
+## Anexo — Dos conexiones TCP externas reales desde la misma VM
+
+El operador ejecutó manualmente **dentro del Windows invitado** de la VM, una vez terminada la auditoría V4:
+
+```powershell
+"1.1.1.1","9.9.9.9" | ForEach-Object {
+  [pscustomobject]@{
+    Destino = $_
+    TCP443 = (Test-NetConnection -ComputerName $_ -Port 443 -InformationLevel Quiet)
+  }
+} | Format-Table -AutoSize
+```
+
+Resultado aportado directamente en la conversación:
+
+```text
+Destino TCP443
+------- ------
+1.1.1.1   True
+9.9.9.9   True
+```
+
+**Criterio:** existen dos conexiones de salida TCP a endpoints IPv4 numéricos en el puerto 443 (`True` ambas). Esta es **evidencia del operador**, no incluye una captura horaria firmada ni demuestra conectividad HTTP/IPv6 externa, ni que el DNS del adaptador use el motor VOLVÉ. Unido a las seis consultas V4, demuestra disponibilidad de DNS local controlado y conectividad IP externa **en el mismo laboratorio**. No aporta prueba de una migración firmada 0.28.6→0.28.7 ni del rollback después de un corte.
+
+**Siguiente paso seguro:** conservar estos resultados y limpiar **únicamente** la tarea de laboratorio `VOLVE-CI-FreshMotor-202611020001` ejecutando `vm_full_motor_reboot_dns.ps1 -Mode Cleanup -LabId 202611020001` dentro de la VM, tal como el código restringe explícitamente; el comando detiene la tarea si está corriendo y la desregistra, preservando evidencia. Crear checkpoint limpio de la VM después de comprobar la limpieza y ANTES de experimentar con migración simulada. No restaurar ni eliminar evidencias originales de manera implícita.
+
+**Puntaje total de aceptación técnica del actualizador: se mantiene 65/100** hasta completar prueba separada de recuperación tras actualización interrumpida, con autorización editorial y recuperador independiente SYSTEM.
