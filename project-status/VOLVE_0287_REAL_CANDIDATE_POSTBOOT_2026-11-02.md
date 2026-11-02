@@ -21,3 +21,10 @@ El candidato era binario exclusivo de CI con fallo intencional, no un motor prod
 1. Auditoría del archivo `real-candidate-rollback-proof.json`.
 2. Una vez auditado, limpieza controlada `-Mode Cleanup -LabId 20261102000401` dentro de la VM y constancia `CLEAN`.
 3. Pruebas pendientes de migración productiva firmada y compatibilidad del Centro.
+
+## CIERRE CONFIRMADO POR OPERADOR
+El operador adjuntó y se revisó `real-candidate-rollback-proof.json` del LabId `20261102000401`: reinicio VM real, instancia de watchdog correlacionada con eventos 118/100/201/102, estado 0, motor original y candidato con SHA-256 diferentes, DNS IPv4/IPv6 6/6 y TCP Internet. No se recalcularon hashes sobre binarios.
+
+También ejecutó `-Mode Cleanup -LabId 20261102000401` dentro de la VM. Salida reportada: `CLEAN: two disposable real-candidate VM tasks removed; all protected evidence retained.` Por tanto el ensayo de laboratorio de candidato DNS real y rollback SYSTEM queda **CERRADO**, sin tareas temporales. La instalación física Windows 0.28.6 no fue modificada por estas pruebas.
+
+**Límite:** sigue pendiente migración productiva firmada de 0.28.6 a 0.28.7, con instalación y recuperación de un verdadero motor publicado. Indicador formal 65/100.
