@@ -114,6 +114,6 @@ try{
         $report.blocked_nxdomain_observations -eq 4 -and
         $report.allowed_noerror_observations -eq 2)
 } catch {
-    $report.note='No verificado. La identidad SYSTEM previa o posterior falló: '+$_.Exception.Message
+    $report.note='No verificado: falló una comprobación de identidad o la lectura local. No autoriza cambios.'
 }
 $report|ConvertTo-Json -Depth 6
