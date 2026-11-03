@@ -1,0 +1,43 @@
+name: VOLVÉ familias — filtro directo desde Instagram (sin despliegue)
+on:
+  push:
+    branches:
+      - 'feature/volve-familias-filtro-directo-20261103'
+    paths:
+      - 'site/src/routes/centros-y-reuniones.tsx'
+      - 'site/src/routes/instagram.tsx'
+      - 'site/scripts/test-family-deeplink.mjs'
+      - '.github/workflows/volve-family-deeplink-ci.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Verificar enlaces, filtro inicial y privacidad
+        run: |
+          node site/scripts/test-instagram-landing.mjs
+          node site/scripts/test-family-deeplink.mjs
+      - name: Compilar web y validar tipos
+        run: |
+          cd site
+          npm install --no-audit --no-fund
+          npm run build
+          npx tsc --noEmit
+      - name: Verificar deep link y aislar cambios al sitio
+        run: |
+          test -f site/dist/centros-y-reuniones/index.html
+          test -f site/dist/instagram/index.html
+          node site/scripts/test-og-static.mjs
+          if git diff --name-only origin/main...HEAD | grep -E '^(motor|installer|update|windows|win|DNS|scripts/|worker/|firmware/)' ; then
+            echo 'Cambios fuera del sitio VOLVÉ'; exit 1
+          fi
+          echo VOLVE_FAMILY_DEEPLINK_BUILD_OK
