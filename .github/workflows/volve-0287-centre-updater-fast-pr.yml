@@ -125,6 +125,9 @@ jobs:
             'TestPinnedResidentTerminalReceiptExactPathAndNoAlias',
             'TestPinnedResidentBootEntryRejectsNonSYSTEMWithoutTouchingInstallation',
             'TestPinnedResidentBootTerminalSourceHasNoReleaseOrTaskRegistration',
+            'TestPinnedResidentBootCLIFailsClosedWithoutActualSYSTEM',
+            'TestPinnedResidentBootCLIRefusesCancelledContext',
+            'TestPinnedRecoveryBootCLIHasNoUserControlledRootOrAutomaticTask',
             'TestPinnedBootHealthQueriesLiveTaskProcessAndBothDNS53Owners',
             'TestSignedOriginalSYSTEMTaskRestoresOnlyAuthenticatedPendingXMLAndDoesNotFinish'
           )
@@ -135,7 +138,7 @@ jobs:
               throw ('CRITICAL: independent signed boot watchdog test not compiled: '+$test)
             }
           }
-          go test ./cmd/volve-managed-watchdog -run '^(TestSignedOriginalSYSTEMStart|TestPinnedBootHealthQueriesLiveTaskProcessAndBothDNS53Owners|TestSignedOriginalSYSTEMTaskRestoresOnlyAuthenticatedPendingXMLAndDoesNotFinish|TestPinnedResidentTerminal|TestPinnedResidentBootEntry|TestPinnedResidentBootTerminalSource)' -count=1 -timeout 6m
+          go test ./cmd/volve-managed-watchdog -run '^(TestSignedOriginalSYSTEMStart|TestPinnedBootHealthQueriesLiveTaskProcessAndBothDNS53Owners|TestSignedOriginalSYSTEMTaskRestoresOnlyAuthenticatedPendingXMLAndDoesNotFinish|TestPinnedResidentTerminal|TestPinnedResidentBootEntry|TestPinnedResidentBootTerminalSource|TestPinnedResidentBootCLI|TestPinnedRecoveryBootCLI)' -count=1 -timeout 6m
           if($LASTEXITCODE -ne 0){throw 'Protected SYSTEM original task restart/health rollback tests failed'}
           go vet . ./motorupdate
           if($LASTEXITCODE -ne 0){throw 'Centre updater vet failed'}
