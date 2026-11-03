@@ -1,0 +1,38 @@
+{
+  "brand": "VOLVÉ Prevención",
+  "instagram": "@volveprevencion",
+  "platform": "Instagram carousel",
+  "cards": [
+    {
+      "name": "volve_familias_01.png",
+      "bytes": 74884,
+      "sha256": "142285eba7bee1aefa205b2774c4efa0516c51b2783af54480e6bc36c5807fbb"
+    },
+    {
+      "name": "volve_familias_02.png",
+      "bytes": 64999,
+      "sha256": "5a7c81735f790076e37e19ae567c827a96525a1fb3fc40ab3ae07394277f3e9e"
+    },
+    {
+      "name": "volve_familias_03.png",
+      "bytes": 69921,
+      "sha256": "c048c98baf77f02626c207e74bea1c6f182ba3c1b8f263f199792963f80c1e92"
+    },
+    {
+      "name": "volve_familias_04.png",
+      "bytes": 73530,
+      "sha256": "6ade9ddfb679796e351a7f6a2d812575947c768822575e9f1902816fee4aa65c"
+    }
+  ],
+  "sources": [
+    "https://loteria.gba.gob.ar/juego-compulsivo",
+    "https://jug-anon.org.ar/pages/grupos-autoayuda.html"
+  ],
+  "disclaimers": "Educación y recursos para familias; no reemplaza asistencia profesional ni garantiza resultados.",
+  "facts": [
+    "Línea oficial PBA 0800-444-4000",
+    "JUG-ANON asiste a familiares y amigos"
+  ],
+  "privacy": "Sin datos personales, casos reales, marcas ajenas, cookies ni formularios.",
+  "publishing": "No publicar desde CI; entregar PNG en rama marketing"
+}
