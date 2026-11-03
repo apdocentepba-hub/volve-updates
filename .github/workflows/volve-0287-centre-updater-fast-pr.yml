@@ -92,60 +92,24 @@ jobs:
           }
           go test ./motorupdate -run '^(TestProtectedBoot|TestProtectedSigned|TestPublisherBoundBootEvidence|TestPublisherBoundBootFinalizer|TestDurablePublisherBootEvidence|TestProtectedMotor)' -count=1 -timeout 6m
           if($LASTEXITCODE -ne 0){throw 'Protected signed bridge tests failed'}
-          # Execute the REAL Windows NTFS security descriptor callbacks on a
-          # temp signed candidate. This must not be a merely compiled test.
+          # Real WinNTFS ACL exercise on a disposable hosted VM only.
           $nativeTest='TestWindowsNativeProtectedMotorStagingRealNTFS'
-          $nativeCensus=@(go test -tags volveci . -list '^TestWindowsNativeProtectedMotorStagingRealNTFS          if($LASTEXITCODE -ne 0){throw 'Centre updater vet failed'}
-      - name: Build and inspect real integrated Win64 GUI (NO DISTRIBUTION)
-        shell: pwsh
-        working-directory: build/codigo
-        run: |
-          $ErrorActionPreference='Stop'
-          $env:CGO_ENABLED='0'
-          $file=Join-Path $env:RUNNER_TEMP 'VOLVE_0287_Centro_Updater_LAB_NO_INSTALAR.exe'
-          go build -trimpath -ldflags '-H windowsgui' -o $file .
-          if($LASTEXITCODE -ne 0){throw 'Real Centro+Updater Win64 build failed'}
-          $meta=Get-Item -LiteralPath $file -ErrorAction Stop
-          if($meta.Length -lt 1048576){throw 'Windows GUI is incomplete'}
-          $handle=[IO.File]::OpenRead($file)
-          try{$a=$handle.ReadByte();$b=$handle.ReadByte()}finally{$handle.Dispose()}
-          if($a -ne 77 -or $b -ne 90){throw 'Result is not a PE executable'}
-          $h=(Get-FileHash -Algorithm SHA256 -LiteralPath $file).Hash.ToLowerInvariant()
-          Write-Host ('PASS: compile actual Centro+Updater 0.28.7 for Windows; bytes='+$meta.Length+' SHA256='+$h)
-          Write-Host 'NO RELEASE, NO INSTALLER, NO FILE DISTRIBUTION, NO DNS/TASK MODIFICATIONS'
-)
-          if($LASTEXITCODE -ne 0 -or -not ($nativeCensus -contains $nativeTest)){
-            throw 'CRITICAL: real native NTFS motor staging E2E was not compiled'
+          $census=@(go test -tags volveci . -list '^TestWindowsNativeProtectedMotorStagingRealNTFS$')
+          if($LASTEXITCODE -ne 0 -or -not ($census -contains $nativeTest)){
+            throw 'CRITICAL: actual WinNTFS stage test absent from compiled Go sources'
           }
-          $nativeEvents=@(go test -tags volveci . -run '^TestWindowsNativeProtectedMotorStagingRealNTFS          if($LASTEXITCODE -ne 0){throw 'Centre updater vet failed'}
-      - name: Build and inspect real integrated Win64 GUI (NO DISTRIBUTION)
-        shell: pwsh
-        working-directory: build/codigo
-        run: |
-          $ErrorActionPreference='Stop'
-          $env:CGO_ENABLED='0'
-          $file=Join-Path $env:RUNNER_TEMP 'VOLVE_0287_Centro_Updater_LAB_NO_INSTALAR.exe'
-          go build -trimpath -ldflags '-H windowsgui' -o $file .
-          if($LASTEXITCODE -ne 0){throw 'Real Centro+Updater Win64 build failed'}
-          $meta=Get-Item -LiteralPath $file -ErrorAction Stop
-          if($meta.Length -lt 1048576){throw 'Windows GUI is incomplete'}
-          $handle=[IO.File]::OpenRead($file)
-          try{$a=$handle.ReadByte();$b=$handle.ReadByte()}finally{$handle.Dispose()}
-          if($a -ne 77 -or $b -ne 90){throw 'Result is not a PE executable'}
-          $h=(Get-FileHash -Algorithm SHA256 -LiteralPath $file).Hash.ToLowerInvariant()
-          Write-Host ('PASS: compile actual Centro+Updater 0.28.7 for Windows; bytes='+$meta.Length+' SHA256='+$h)
-          Write-Host 'NO RELEASE, NO INSTALLER, NO FILE DISTRIBUTION, NO DNS/TASK MODIFICATIONS'
- -count=1 -timeout 5m -json)
+          $events=@(go test -tags volveci . -run '^TestWindowsNativeProtectedMotorStagingRealNTFS$' -count=1 -timeout 5m -json)
           if($LASTEXITCODE -ne 0){
-            $nativeEvents | Select-Object -Last 60 | Write-Host
-            throw 'Actual signed motor staging + SYSTEM/Administrators NTFS E2E failed'
+            $events | Select-Object -Last 60 | Write-Host
+            throw 'Real WinNTFS SYSTEM/Admin signed motor preparation failed'
           }
-          $nativeReport=@($nativeEvents | Where-Object {$_ -match '^\s*\{'} | ForEach-Object {$_ | ConvertFrom-Json})
-          if(@($nativeReport | Where-Object {$_.Test -eq $nativeTest -and $_.Action -eq 'pass'}).Count -ne 1 -or
-             @($nativeReport | Where-Object {$_.Test -eq $nativeTest -and $_.Action -eq 'skip'}).Count -ne 0){
-            throw 'CRITICAL: real NTFS signed motor staging test absent or skipped'
+          $report=@($events | Where-Object {$_ -match '^\s*\{'} | ForEach-Object {$_ | ConvertFrom-Json})
+          $passed=@($report | Where-Object {$_.Test -eq $nativeTest -and $_.Action -eq 'pass'})
+          $skipped=@($report | Where-Object {$_.Test -eq $nativeTest -and $_.Action -eq 'skip'})
+          if($passed.Count -ne 1 -or $skipped.Count -ne 0){
+            throw 'CRITICAL: signed motor WinNTFS stage test was skipped or missing'
           }
-          Write-Host 'PASS: signed motor staged with real NTFS SYSTEM+Administrators DACL on disposable hosted Windows, no motor receipt or task/DNS writes'
+          Write-Host 'PASS: real NTFS SYSTEM/Admin ACL, signed create-only candidate staging without service/task changes'
           go vet . ./motorupdate
           if($LASTEXITCODE -ne 0){throw 'Centre updater vet failed'}
       - name: Build and inspect real integrated Win64 GUI (NO DISTRIBUTION)
