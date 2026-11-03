@@ -24,7 +24,8 @@ assert.match(kind,/search:next\?\{tipo:next as DirectorySearch\["tipo"\]\}:\{\}/
 assert.match(kind,/replace:true/);
 assert.match(src,/validateSearch:\(search:Record<string,unknown>\):DirectorySearch=>/);
 assert.match(src,/typeof candidate==="string"&&Object\.prototype\.hasOwnProperty\.call\(types,candidate\)/);
-assert.match(src,/useEffect\(\(\)=>setKind\(tipo\|\|""\),\[tipo\]\)/,"Re-sync upon URL changes");
+assert.match(src,/useEffect\(\(\)=>setKind\(safeKind\),\[safeKind\]\)/,"Re-sync via validated value");
+assert.match(src,/const safeKind=typeof tipo==="string"&&Object\.prototype\.hasOwnProperty\.call\(types,tipo\)\?tipo:""/,"Invalid/unknown URLs never filter to 0");
 assert.match(src,/onChange=\{e=>changeKind\(e\.target\.value\)\}/,"Dropdown persists selection");
 
 assert.ok(src.includes("Limpiar todos los filtros"),"General reset displayed when filters active");
