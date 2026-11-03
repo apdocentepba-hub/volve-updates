@@ -102,8 +102,14 @@ func TestProtectedMotorPreparationKeepsInterruptedBundleUnusable(t *testing.T){
  _,err:=PrepareProtectedVersionedMotor(context.Background(),f.candidate,root,f.pub,ops)
  if err==nil{t.Fatal("incomplete protected signature was accepted")}
  dst:=filepath.Join(root,"motor-0.28.7","VOLVE_DNS_Motor_0_28_7.exe")
- if _,err:=VerifyStaged(dst,f.pub);err==nil{
-  t.Fatal("interrupted copy became a verified installed motor")
+ // A signed file can authenticate even when its NTFS ACL sealing
+ // failed. That must NEVER imply an installed, managed, enabled motor.
+ // Installed status requires a separate authenticated COMMIT receipt.
+ if _,err:=VerifyStaged(dst,f.pub);err!=nil{
+  t.Fatalf("fixture should retain valid signed bytes despite failed NTFS seal: %v",err)
+ }
+ if _,err:=InspectInstalledEngine(root,f.pub);!errors.Is(err,ErrUnregisteredEngine){
+  t.Fatalf("incomplete ACL sealing produced a false installed motor receipt: %v",err)
  }
  if _,err:=PrepareProtectedVersionedMotor(context.Background(),f.candidate,root,f.pub,protectedMotorTestOps());err==nil{
   t.Fatal("unreviewed partial bundle silently overwritten on retry")
