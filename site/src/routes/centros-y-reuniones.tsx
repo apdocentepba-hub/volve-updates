@@ -5,7 +5,7 @@ import entries from "@/data/ayuda-pba.json";
 import { SupportStrip } from "@/components/SupportStrip";
 
 type Meeting = { dia: string; hora: string };
-type Resource = { tipo: "publico"|"ja"|"familias"; zona: string; localidad: string; nombre: string; lugar: string; direccion: string; horarios: Meeting[]; telefono?: string; nota?: string; fuente: string; fuenteAlternativa?: string };
+type Resource = { tipo: "publico"|"ja"|"familias"; zona: string; localidad: string; nombre: string; lugar: string; direccion: string; horarios: Meeting[]; telefono?: string; nota?: string; verificacionPendiente?: "direccion"|"horarios"; fuente: string; fuenteAlternativa?: string };
 const data = entries as Resource[];
 const types: Record<string,string> = { publico: "Centro público", ja: "Jugadores Anónimos", familias: "Para familiares · Jug-Anon" };
 const zones: Record<string,string> = { sur:"Conurbano sur y La Plata", oeste:"Conurbano oeste", norte:"Conurbano norte", interior:"Interior provincial", Provincia:"Centros públicos" };
@@ -24,7 +24,7 @@ function Directory(){
  });
  const [zone,setZone]=useState("");
  const [day,setDay]=useState("");
- const filtered=useMemo(()=>data.filter(r=>(!query||norm([r.localidad,r.nombre,r.lugar,r.direccion].join(" ")).includes(norm(query)))&&(!kind||r.tipo===kind)&&(!zone||r.zona===zone)&&(!day||r.horarios.some(h=>h.dia===day))).sort((a,b)=>a.localidad.localeCompare(b.localidad,"es")),[query,kind,zone,day]);
+ const filtered=useMemo(()=>data.filter(r=>(!query||norm([r.localidad,r.nombre,r.lugar,r.direccion].join(" ")).includes(norm(query)))&&(!kind||r.tipo===kind)&&(!zone||r.zona===zone)&&(!day||(r.verificacionPendiente!=="horarios"&&r.horarios.some(h=>h.dia===day)))).sort((a,b)=>a.localidad.localeCompare(b.localidad,"es")),[query,kind,zone,day]);
  return <>
   <PageHero eyebrow="Asistencia gratuita · Provincia de Buenos Aires" title="Hay ayuda cerca. Y también desde casa." intro="Centros públicos, grupos presenciales, ayuda para familiares y reuniones virtuales. VOLVÉ no organiza estos encuentros ni tiene convenios con las entidades: confirmá los datos antes de asistir."/>
   <section className="container-v py-12">
@@ -60,25 +60,26 @@ function Directory(){
       <label className="text-sm font-semibold">Zona<select value={zone} onChange={e=>setZone(e.target.value)} className="mt-2 w-full rounded-xl border border-border bg-card p-3 text-foreground"><option value="">Toda la provincia</option>{Object.entries(zones).map(([k,v])=><option key={k} value={k}>{v}</option>)}</select></label>
       <label className="text-sm font-semibold">Día<select value={day} onChange={e=>setDay(e.target.value)} className="mt-2 w-full rounded-xl border border-border bg-card p-3 text-foreground"><option value="">Cualquier día</option>{["Lun","Mar","Mié","Jue","Vie","Sáb","Dom"].map(k=><option key={k}>{k}</option>)}</select></label>
     </div>
+    {day&&<p className="mb-5 text-sm text-muted-foreground">El filtro por día excluye los grupos cuyos horarios todavía presentan información contradictoria. Podés quitar ese filtro para verlos y consultar sus fuentes.</p>}
     <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
     {filtered.map((r,i)=><article key={r.localidad+r.direccion+i} className="rounded-3xl border border-border bg-card p-6">
       <p className="text-xs font-bold uppercase tracking-wide text-sage">{types[r.tipo]}</p>
       <h3 className="mt-2 text-xl font-bold text-primary">{r.localidad}</h3>
       <strong className="mt-2 block">{r.nombre}</strong>
       <p className="mt-2 text-sm text-muted-foreground">{r.lugar} · {r.direccion}</p>
-      {r.horarios.length?<p className="mt-3 text-sm">{r.horarios.map(h=>h.dia+" "+h.hora).join(" · ")}</p>:<p className="mt-3 text-sm text-muted-foreground">Consultá días y horarios de atención.</p>}
+      {r.verificacionPendiente==="horarios"?<p className="mt-3 rounded-xl border border-warm bg-warm-soft p-3 text-sm font-semibold text-accent-foreground">Días y horarios en conflicto entre fuentes oficiales. Consultá directamente con el grupo antes de ir.</p>:r.horarios.length?<p className="mt-3 text-sm">{r.horarios.map(h=>h.dia+" "+h.hora).join(" · ")}</p>:<p className="mt-3 text-sm text-muted-foreground">Consultá días y horarios de atención.</p>}
       {r.telefono&&<p className="mt-3 text-sm">Teléfono: {r.telefono}</p>}
       {r.nota&&<p className="mt-3 rounded-xl bg-warm-soft p-3 text-xs text-accent-foreground">{r.nota}</p>}
       <div className="mt-5 flex flex-wrap gap-3 text-sm font-semibold text-primary">
         <a href={r.fuente} target="_blank" rel="noopener noreferrer" className="underline">Fuente oficial ↗</a>
         {r.fuenteAlternativa&&<a href={r.fuenteAlternativa} target="_blank" rel="noopener noreferrer" className="underline">Otra fuente ↗</a>}
-        <a href={"https://www.google.com/maps/search/?api=1&query="+encodeURIComponent(r.direccion+", "+r.localidad+", Buenos Aires, Argentina")} target="_blank" rel="noopener noreferrer" className="underline">Cómo llegar ↗</a>
+        {r.verificacionPendiente==="direccion"?<span className="rounded-xl bg-warm-soft px-3 py-2 text-accent-foreground">Ubicación a confirmar: no se muestran indicaciones</span>:<a href={"https://www.google.com/maps/search/?api=1&query="+encodeURIComponent(r.direccion+", "+r.localidad+", Buenos Aires, Argentina")} target="_blank" rel="noopener noreferrer" className="underline">Cómo llegar ↗</a>}
       </div>
     </article>)}
     {!filtered.length&&<p className="rounded-3xl border border-border bg-card p-6 text-muted-foreground">No encontramos resultados con esos filtros. Probá otra localidad o consultá al 0800-444-4000.</p>}
     </div>
     <p className="mt-8 rounded-2xl bg-warm-soft p-5 text-sm text-accent-foreground">Los horarios y las sedes pueden cambiar. Verificá directamente con cada organización. El grupo «Catedral» de San Martín figura suspendido y no aparece aquí. Olavarría registra dos direcciones oficiales distintas: confirmá antes de ir.</p>
-    <p className="mt-5 text-sm text-muted-foreground">¿Querés ayuda inmediata? <Link to="/ayuda" className="font-semibold text-primary underline">Ver opciones y orientación</Link> · Fuentes revisadas en octubre de 2026.</p>
+    <p className="mt-5 text-sm text-muted-foreground">¿Querés ayuda inmediata? <Link to="/ayuda" className="font-semibold text-primary underline">Ver opciones y orientación</Link> · Enlaces y datos conflictivos contrastados el 3 de noviembre de 2026; confirmá condiciones vigentes antes de asistir.</p>
   </section>
   <div className="container-v pb-12"><SupportStrip /></div>
  </>;
