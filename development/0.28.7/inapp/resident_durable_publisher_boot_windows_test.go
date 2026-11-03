@@ -78,3 +78,48 @@ func TestDurablePublisherBoundWindowsBootRequiresPinnedTrust(t *testing.T){
   t.Fatal("nil recovery operations accepted")
  }
 }
+
+
+// Loading a sealed on-disk grant and reading the pending journal are part
+// of the privileged transaction, never permitted before acquiring the
+// protected Win32 lease. A failed earlier verification also may not pin
+// its first signed permit as the successful transaction's authorization.
+func TestDurablePublisherBootEvidenceRequiresLeaseBeforeDiskRead(t *testing.T){
+ residentProtectedCITest(t)
+ f:=makeSignedRecoveryFixture(t,false)
+ noop:=func(string)error{return nil}
+ if err:=PersistResidentDurablePublisherGrant(context.Background(),f.root,
+  f.permit,f.sig,f.pub,noop,noop,noop,noop);err!=nil{t.Fatal(err)}
+ state,err:=InspectResidentRecoveryJournal(context.Background(),f.journal,noop)
+ if err!=nil{t.Fatal(err)}
+ reads:=0
+ count:=func(string)error{reads++;return nil}
+ ops:=&publisherBoundRecoveryOpsFixture{}
+ driver,err:=NewDurablePublisherBoundProtectedResidentBootDriver(ops,f.root,f.pub,count,count,count)
+ if err!=nil{t.Fatal(err)}
+ if err:=driver.VerifySealedOriginal(context.Background(),state.Intent);err==nil{
+  t.Fatal("durable publisher grant was readable before native mutex acquisition")
+ }
+ if err:=driver.RestoreOriginal(context.Background(),state.Intent);err==nil{
+  t.Fatal("durable original restore accepted without native SYSTEM mutex")
+ }
+ if reads!=0||ops.restored!=0||ops.verified!=0{
+  t.Fatalf("unleased durable evidence reader/restore executed: reads=%d ops=%+v",reads,ops)
+ }
+ release,err:=driver.AcquireExclusive(context.Background())
+ if err!=nil{t.Fatal(err)}
+ if err:=driver.VerifySealedOriginal(context.Background(),state.Intent);err!=nil{
+  release();t.Fatal(err)
+ }
+ if err:=driver.RestoreOriginal(context.Background(),state.Intent);err!=nil{
+  release();t.Fatal(err)
+ }
+ release()
+ if reads==0||ops.verified!=1||ops.restored!=1{
+  t.Fatalf("durable publisher grant did not bind both native-lease operations: reads=%d ops=%+v",reads,ops)
+ }
+ reads=0
+ if err:=driver.RestoreOriginal(context.Background(),state.Intent);err==nil||reads!=0{
+  t.Fatalf("post-release durable grant read or recovery admitted: reads=%d err=%v",reads,err)
+ }
+}
