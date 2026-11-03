@@ -85,8 +85,21 @@ func VerifyWindowsPublisherSignature(ctx context.Context, exe, trustedCertDER256
 	for i, unit := range units {
 		binary.LittleEndian.PutUint16(encodedScript[i*2:], unit)
 	}
-	cmd := exec.CommandContext(timeoutCtx, "powershell.exe", "-NoProfile", "-NonInteractive", "-EncodedCommand", base64.StdEncoding.EncodeToString(encodedScript))
-	cmd.Env = append(os.Environ(), "VOLVE_PUBLISHER_VERIFY_FILE="+exe)
+	// A Go child process launched from pwsh 7 can inherit pwsh-7 modules
+	// and fail autoloading Microsoft.PowerShell.Security under powershell.exe 5.
+	// Pin the native WindowsPowerShell module directory; never search an
+	// arbitrary caller-supplied PSModulePath for the trust-policy cmdlet.
+	systemRoot := os.Getenv("SystemRoot")
+	if systemRoot == "" || !filepath.IsAbs(systemRoot) {
+		return errors.New("Windows system directory unavailable for publisher verification")
+	}
+	windowsPowerShell := filepath.Join(systemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe")
+	modulePath := filepath.Join(systemRoot, "System32", "WindowsPowerShell", "v1.0", "Modules")
+	if info, err := os.Stat(modulePath); err != nil || !info.IsDir() {
+		return errors.New("canonical Windows PowerShell security modules unavailable")
+	}
+	cmd := exec.CommandContext(timeoutCtx, windowsPowerShell, "-NoProfile", "-NonInteractive", "-EncodedCommand", base64.StdEncoding.EncodeToString(encodedScript))
+	cmd.Env = append(os.Environ(), "PSModulePath="+modulePath, "VOLVE_PUBLISHER_VERIFY_FILE="+exe)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		// Diagnostics never weaken trust acceptance. Only a disposable CI VM
