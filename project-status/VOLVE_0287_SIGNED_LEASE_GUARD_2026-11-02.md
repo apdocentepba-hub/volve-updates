@@ -37,3 +37,16 @@ Además, la función de liberación capturaba un puntero de adaptador mutable. U
 - `go vet ./motorupdate`: **PASS**.
 - El run anterior #41547867800 también fue **SUCCESS**; #41548091997 se canceló por una nueva revisión, no es evidencia de fallo.
 - Este CI específico no ejercita el cambio DNS real, no instala un motor nuevo y no prueba aún recuperación firmada tras reboot; mantiene `motor-stable.json` ausente y el progreso en **65/100**.
+
+
+## 03/11/2026 — Cierre completo de la batería previa y nuevo límite criptográfico
+
+- [Windows run #41555207181](https://github.com/apdocentepba-hub/volve-updates/actions/runs/41555207181): **SUCCESS, 13 de 13 trabajos** sobre commit `76c7c32a9bc3a9ea19d66f0d76167c9f32915e0d`. Un job `motorupdate` y 12 particiones disjuntas de watchdog; ya no queda un timeout sin atribuir de esa ejecución.
+- Los logs de `windows-protected-lease` confirman el paso de `TestProtectedBootRefusesUnleasedOriginalOperations`, `TestProtectedBootLeaseGatesVerifyRestoreAndRejectsStaleFinalizer`, `TestProtectedBootFinalizerWaitsForOriginalRestore`, `TestProtectedSignedFullTransactionCommitAndRecoveryUnderNativeMutex` en commit/fallo/cancelación, y el paquete completo `motorupdate`.
+- Hallazgo posterior de auditoría: los dos adaptadores externos `publisherBoundResidentBootDriver` y `durablePublisherBootDriver` realizaban **lecturas de permiso editorial/journal/ACL antes de entrar al chequeo de lease del adaptador interno**. Aunque las operaciones finales ya rechazaban ejecución sin mutex, podía haber un intervalo donde se leyera y verificara material criptográfico sin exclusión de otro proceso.
+- Corrección propuesta: las dos capas externas ahora invocan `protectedResidentBootDriver.underProtectedLease` **antes** de leer/verificar evidencia y retienen ese mismo lease durante la verificación y la operación privilegiada; evitan abrir una ventana entre validar el respaldo y verificar/restaurar el original.
+- Pruebas añadidas: `TestPublisherBoundBootEvidenceRequiresLeaseBeforeAnyACLReader`, `TestPublisherBoundBootFinalizerWaitsForSignedEvidence`, `TestDurablePublisherBootEvidenceRequiresLeaseBeforeDiskRead`. La comprobación del pipeline exige la presencia de los tres tests en la reconstrucción y los ejecuta sobre Windows hospedado, sin DNS productivo.
+- **Estado de esa nueva revisión:** [run #41557592889](https://github.com/apdocentepba-hub/volve-updates/actions/runs/41557592889), commit `25430b592382c4a7711a3e20ef802764ff756fdb`, **pendiente/en ejecución** al registrar esto. No confundir el éxito del commit anterior con la aprobación de este cambio.
+- El PR #3 sigue en **DRAFT**, no fusionado. No se modificó `main`, el canal del motor, el DNS de una instalación ni la PC del usuario.
+
+**Control de aceptación:** 65/100 para el componente de actualización Windows. La liberación del motor 0.28.7 sigue **NO AUTORIZADA** hasta una migración firmada de 0.28.6, controlador real, copia NTFS, recuperación SYSTEM y reinicio de Windows en una VM persistente, con pruebas DNS 53 de ambas familias y conectividad externa.
