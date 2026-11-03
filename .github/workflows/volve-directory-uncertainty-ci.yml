@@ -1,0 +1,47 @@
+name: VOLVÉ — seguridad de directorio de ayuda
+on:
+  push:
+    branches:
+      - 'fix/volve-directorio-datos-inciertos-20261103'
+    paths:
+      - 'site/src/data/ayuda-pba.json'
+      - 'site/src/routes/centros-y-reuniones.tsx'
+      - 'site/scripts/test-directory-uncertainty.mjs'
+      - '.github/workflows/volve-directory-uncertainty-ci.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Verificar señales de riesgo y datos oficiales
+        run: |
+          node --check site/scripts/test-directory-uncertainty.mjs
+          node site/scripts/test-directory-uncertainty.mjs
+          node site/scripts/test-family-deeplink.mjs
+          node site/scripts/test-instagram-landing.mjs
+      - name: Compilar y comprobar tipos, enlaces sociales y rutas
+        run: |
+          cd site
+          npm install --no-audit --no-fund
+          npm run build
+          npx tsc --noEmit
+          cd ..
+          node site/scripts/test-og-static.mjs
+      - name: Verificar aislamiento del proyecto VOLVÉ
+        run: |
+          test -f site/dist/centros-y-reuniones/index.html
+          changed="$(git diff --name-only origin/main...HEAD)"
+          printf '%s\n' "$changed"
+          if printf '%s\n' "$changed" | grep -Ev '^(site/|.github/workflows/volve-directory-uncertainty-ci.yml)' ; then
+            echo 'ERROR: cambios fuera de VOLVÉ web'; exit 1
+          fi
+          echo VOLVE_DIRECTORY_SAFE_READY
