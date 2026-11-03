@@ -26,11 +26,14 @@ function Directory(){
  const navigate=useNavigate({from:Route.fullPath});
  // Filtro validado por el router; al actualizar o compartir la URL, el resultado se conserva.
  const {tipo}=Route.useSearch();
+ // Defensa adicional al leer: algunas transiciones del router exponen el valor
+ // crudo antes de aplicar validateSearch. Nunca filtramos con valores no admitidos.
+ const safeKind=typeof tipo==="string"&&Object.prototype.hasOwnProperty.call(types,tipo)?tipo:"";
  const [query,setQuery]=useState("");
- const [kind,setKind]=useState(tipo||"");
+ const [kind,setKind]=useState(safeKind);
  const [zone,setZone]=useState("");
  const [day,setDay]=useState("");
- useEffect(()=>setKind(tipo||""),[tipo]);
+ useEffect(()=>setKind(safeKind),[safeKind]);
  function changeKind(next:string){
   setKind(next);
   void navigate({to:"/centros-y-reuniones",search:next?{tipo:next as DirectorySearch["tipo"]}:{},replace:true,hash:"buscar"});

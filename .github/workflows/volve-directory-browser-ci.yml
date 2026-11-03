@@ -1,0 +1,64 @@
+name: VOLVÉ — prueba real de filtros del directorio
+on:
+  push:
+    branches:
+      - 'fix/volve-unknown-filter-fallback-20261103'
+    paths:
+      - 'site/src/routes/centros-y-reuniones.tsx'
+      - 'site/scripts/test-family-deeplink.mjs'
+      - 'site/scripts/test-directory-reset-all.mjs'
+      - 'site/scripts/test-directory-browser.mjs'
+      - '.github/workflows/volve-directory-browser-ci.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  browser:
+    runs-on: ubuntu-latest
+    timeout-minutes: 13
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Compilar y validar TypeScript del sitio
+        run: |
+          cd site
+          npm install --no-audit --no-fund
+          npm run build
+          npx tsc --noEmit
+      - name: Suites de regresión
+        run: |
+          node site/scripts/test-directory-reset-all.mjs
+          node site/scripts/test-family-deeplink.mjs
+          node site/scripts/test-directory-uncertainty.mjs
+          node site/scripts/test-instagram-landing.mjs
+          node site/scripts/test-phone-links.mjs
+          node site/scripts/test-og-static.mjs
+      - name: Instalar navegador temporal para prueba e2e
+        run: |
+          cd site
+          npm install --no-save --no-audit --no-fund playwright
+          npx playwright install --with-deps chromium
+      - name: Probar con navegador real navegaciones y reinicio
+        run: |
+          cd site
+          npm run preview -- --host 127.0.0.1 --port 4173 > /tmp/volve-vite-preview.log 2>&1 &
+          server_pid=$!
+          trap 'kill "$server_pid" 2>/dev/null || true' EXIT
+          ok=0
+          for i in $(seq 1 30); do
+            if curl --fail --silent 'http://127.0.0.1:4173/centros-y-reuniones' > /dev/null; then ok=1; break; fi
+            sleep 1
+          done
+          if test "$ok" -ne 1; then cat /tmp/volve-vite-preview.log; exit 1; fi
+          node scripts/test-directory-browser.mjs
+      - name: Auditar aislamiento del instalador
+        run: |
+          git diff --name-only origin/main...HEAD
+          if git diff --name-only origin/main...HEAD | grep -Ev '^(site/|\.github/workflows/volve-directory-browser-ci\.yml)' ; then
+            echo 'Modificación fuera del sitio de prevención'; exit 1
+          fi
+          echo VOLVE_DIRECTORY_E2E_OK
