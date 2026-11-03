@@ -93,23 +93,31 @@ jobs:
           go test ./motorupdate -run '^(TestProtectedBoot|TestProtectedSigned|TestPublisherBoundBootEvidence|TestPublisherBoundBootFinalizer|TestDurablePublisherBootEvidence|TestProtectedMotor)' -count=1 -timeout 6m
           if($LASTEXITCODE -ne 0){throw 'Protected signed bridge tests failed'}
           # Real WinNTFS ACL exercise on a disposable hosted VM only.
-          $nativeTest='TestWindowsNativeProtectedMotorStagingRealNTFS'
-          $census=@(go test -tags volveci . -list '^TestWindowsNativeProtectedMotorStagingRealNTFS$')
-          if($LASTEXITCODE -ne 0 -or -not ($census -contains $nativeTest)){
-            throw 'CRITICAL: actual WinNTFS stage test absent from compiled Go sources'
+          $nativeRequired=@(
+            'TestWindowsNativeProtectedMotorStagingRealNTFS',
+            'TestWindowsNativeProtectedMotorStageRootAndLease'
+          )
+          $census=@(go test -tags volveci . -list '^TestWindowsNativeProtectedMotor')
+          if($LASTEXITCODE -ne 0){throw 'WinNTFS staged motor native tests did not compile'}
+          foreach($test in $nativeRequired){
+            if(-not ($census -contains $test)){
+              throw ('CRITICAL: native Windows SYSTEM/NTFS test missing: '+$test)
+            }
           }
-          $events=@(go test -tags volveci . -run '^TestWindowsNativeProtectedMotorStagingRealNTFS$' -count=1 -timeout 5m -json)
+          $events=@(go test -tags volveci . -run '^TestWindowsNativeProtectedMotor' -count=1 -timeout 6m -json)
           if($LASTEXITCODE -ne 0){
-            $events | Select-Object -Last 60 | Write-Host
-            throw 'Real WinNTFS SYSTEM/Admin signed motor preparation failed'
+            $events | Select-Object -Last 65 | Write-Host
+            throw 'Real NTFS, OS-wide mutex, publisher signing and protected motor staging failed'
           }
           $report=@($events | Where-Object {$_ -match '^\s*\{'} | ForEach-Object {$_ | ConvertFrom-Json})
-          $passed=@($report | Where-Object {$_.Test -eq $nativeTest -and $_.Action -eq 'pass'})
-          $skipped=@($report | Where-Object {$_.Test -eq $nativeTest -and $_.Action -eq 'skip'})
-          if($passed.Count -ne 1 -or $skipped.Count -ne 0){
-            throw 'CRITICAL: signed motor WinNTFS stage test was skipped or missing'
+          foreach($test in $nativeRequired){
+            $passed=@($report | Where-Object {$_.Test -eq $test -and $_.Action -eq 'pass'})
+            $skipped=@($report | Where-Object {$_.Test -eq $test -and $_.Action -eq 'skip'})
+            if($passed.Count -ne 1 -or $skipped.Count -ne 0){
+              throw ('CRITICAL: protected Windows motor test missing or skipped: '+$test)
+            }
           }
-          Write-Host 'PASS: real NTFS SYSTEM/Admin ACL, signed create-only candidate staging without service/task changes'
+          Write-Host 'PASS: native WinNTFS SYSTEM/Admin create-only root and signed bundle, actual shared kernel lock, no installed receipt, no DNS/task writes'
           go vet . ./motorupdate
           if($LASTEXITCODE -ne 0){throw 'Centre updater vet failed'}
       - name: Build and inspect real integrated Win64 GUI (NO DISTRIBUTION)
