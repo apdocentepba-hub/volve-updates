@@ -12,6 +12,7 @@ import (
  "errors"
  "os"
  "path/filepath"
+ "strings"
  "testing"
  "time"
 
@@ -43,9 +44,9 @@ func TestSignedBootOriginalOpsUnderProtectedPolicyLeaseLeavesPendingJournal(t *t
  })
  if err!=nil||state.Status!="recovery-required"{t.Fatalf("test has no protected pending journal: %v",err)}
  calls:=0
- deps.Task.RunWindowsTask=func(context.Context,string)(string,error){
+ deps.Task.RunWindowsTask=func(_ context.Context,script string)(string,error){
   calls++
-  return "VOLVE_SIGNED_ORIGINAL_TASK_RESTORED",nil
+  return signedRecoveryTaskFixtureResult(script)
  }
  ops,err:=newResidentSignedBootOriginalOps(root,ed25519.PublicKey(key),deps)
  if err!=nil{t.Fatal(err)}
@@ -66,7 +67,7 @@ func TestSignedBootOriginalOpsUnderProtectedPolicyLeaseLeavesPendingJournal(t *t
  if err:=ops.RestoreOriginal(ctx,state.Intent);err!=nil{
   t.Fatalf("boot policy original restore failed while holding protected lock: %v",err)
  }
- if calls!=1{t.Fatalf("expected precisely one original task restoration, got %d",calls)}
+ if calls!=2{t.Fatalf("expected task import AND verified original task start, got %d",calls)}
  pending,err:=auditResidentJournal(ctx,journalDir)
  if err!=nil||pending.Status!="recovery-required"{
   t.Fatalf("policy original ops incorrectly marked DNS or Internet healthy: %+v %v",pending,err)
@@ -136,8 +137,16 @@ func TestSignedBootPolicyFullRecoveryUnderSharedMutexSealsExactlyOnce(t *testing
  calls:=0
  deps.Task.RunWindowsTask=func(_ context.Context,script string)(string,error){
   calls++
-  if !containsCombinedTokens(script){
+  response,actionErr:=signedRecoveryTaskFixtureResult(script)
+  if actionErr!=nil{return "",actionErr}
+  if response=="VOLVE_SIGNED_ORIGINAL_TASK_RESTORED"&&!containsCombinedTokens(script){
    return "",errors.New("policy original task re-import lost signed SYSTEM/DNS53 fences")
+  }
+  if response=="VOLVE_SIGNED_ORIGINAL_START_REQUESTED"&&
+   (!strings.Contains(script,"Start-ScheduledTask")||
+    !strings.Contains(script,"Get-NetUDPEndpoint")||
+    !strings.Contains(script,"[IO.File]::OpenRead($old)")){
+   return "",errors.New("signed original START lacks SYSTEM/DNS53/hash gates")
   }
   // Prove the policy still holds the global Win32 mutex at the actual
   // Scheduler mutation boundary, not only during its initial audit.
@@ -152,7 +161,7 @@ func TestSignedBootPolicyFullRecoveryUnderSharedMutexSealsExactlyOnce(t *testing
   if err:=<-blocked;!errors.Is(err,context.DeadlineExceeded){
    return "",errors.New("policy released transition mutex before signed Scheduler restore")
   }
-  return "VOLVE_SIGNED_ORIGINAL_TASK_RESTORED",nil
+  return response,nil
  }
  ops,err:=newResidentSignedBootOriginalOps(root,ed25519.PublicKey(key),deps)
  if err!=nil{t.Fatal(err)}
@@ -165,7 +174,7 @@ func TestSignedBootPolicyFullRecoveryUnderSharedMutexSealsExactlyOnce(t *testing
  health:=&ciBootHealth{firstOriginalMissing:true}
  result,err:=motorupdate.RecoverPendingResidentAfterBoot(ctx,journalDir,
   sealed,durableWindowsACL,health,driver)
- if err!=nil||result!="restored"||calls!=1{
+ if err!=nil||result!="restored"||calls!=2{
   t.Fatalf("signed protected boot policy did not finish once: result=%q tasks=%d err=%v",result,calls,err)
  }
  if health.identityChecks<3{
@@ -177,7 +186,7 @@ func TestSignedBootPolicyFullRecoveryUnderSharedMutexSealsExactlyOnce(t *testing
  }
  again,err:=motorupdate.RecoverPendingResidentAfterBoot(ctx,journalDir,
   sealed,durableWindowsACL,&ciBootHealth{},driver)
- if err!=nil||again!="restored"||calls!=1{
+ if err!=nil||again!="restored"||calls!=2{
   t.Fatalf("terminal original boot recovery replayed or rejected: %q calls=%d err=%v",again,calls,err)
  }
 }
