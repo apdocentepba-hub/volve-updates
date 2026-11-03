@@ -17,6 +17,8 @@ const routes = {
        "Consultá centros públicos y reuniones de apoyo, presenciales y virtuales, en Provincia de Buenos Aires. Confirmá horarios con cada entidad."],
   "proyecto": ["Proyecto VOLVÉ · Tecnología gratuita en desarrollo",
        "Conocé VOLVÉ, iniciativa independiente de prevención de apuestas online. Software gratuito para Windows en pruebas, todavía sin descarga estable."],
+  "escuelas": ["Kit educativo para escuelas y familias · VOLVÉ",
+       "Material gratuito A4: afiche de prevención de apuestas online, actividad de 15 minutos y guía para familias, sin registro."],
   "educacion": ["Educación y prevención de apuestas · VOLVÉ",
        "Información educativa para comprender los riesgos de las apuestas online y conocer recursos gratuitos de orientación en Buenos Aires."],
   "colabora": ["Colaborá voluntariamente con VOLVÉ",
