@@ -12,7 +12,7 @@ permissions:
 jobs:
   verify-windows-exe:
     runs-on: windows-latest
-    timeout-minutes: 12
+    timeout-minutes: 17
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -63,7 +63,8 @@ jobs:
                   target.write_bytes(archive.extractfile(e).read())
           '@ | python -
           if($LASTEXITCODE -ne 0){throw 'Publisher trust overlay rejected'}
-      - name: Test, sign, trust-verify and stage a disposable one-EXE in Windows
+      - name: Build and integrity-check unsigned CI-only container
+        timeout-minutes: 3
         shell: pwsh
         working-directory: development/0.28.7/singlefile
         run: |
@@ -72,12 +73,12 @@ jobs:
           foreach($name in @('VOLVE-DNS-SERVER-0270','VOLVE-DNS-RESCUE-0270','VOLVE-CATALOGO-0230')){
             if(Get-ScheduledTask -TaskName $name -ErrorAction SilentlyContinue){throw 'Productive VOLVE task detected on CI runner'}
           }
+          Write-Host 'CHECKPOINT 1/5: generating synthetic signed bundle'
           $fixture=Join-Path $env:RUNNER_TEMP 'VOLVE-CI-signed-inputs'
           $pub=(go run ./cmd/fixture --out $fixture | Select-Object -Last 1).Trim()
           if($LASTEXITCODE -ne 0 -or $pub.Length -ne 64){throw 'Synthetic publisher Ed25519 fixture failed'}
           $boot=Join-Path $env:RUNNER_TEMP 'VOLVE-CI-Bootstrap-LAB.exe'
           $unsigned=Join-Path $env:RUNNER_TEMP 'VOLVE-CI-Unsigned-Container.exe'
-          $signed=Join-Path $env:RUNNER_TEMP 'VOLVE-CI-Signed-Container.exe'
           go build -ldflags "-X main.trustedKeyHex=$pub" -o $boot ./cmd/bootstrapper
           if($LASTEXITCODE -ne 0){throw 'Windows PE bootstrap compilation failed'}
           go run ./cmd/assemble --bootstrapper $boot --bundle $fixture --out $unsigned --pubkey $pub
@@ -92,49 +93,91 @@ jobs:
           [IO.File]::WriteAllBytes($tampered,$bytes)
           $rejected=(& $tampered --verify-bundle 2>&1 | Out-String)
           if($LASTEXITCODE -eq 0){throw 'CRITICAL: altered embedded ZIP was accepted'}
-          # Sign the isolated synthetic EXE using a throwaway local test cert.
-          # Never publish its private key or add trust on the user's computer.
-          [IO.File]::Copy($unsigned,$signed)
-          $ciCert=New-SelfSignedCertificate -Type CodeSigningCert -Subject 'CN=VOLVE CI ONLY NEVER DISTRIBUTE' -CertStoreLocation 'Cert:\CurrentUser\My' -NotAfter (Get-Date).AddDays(2)
-          if($null -eq $ciCert){throw 'CI-only test certificate was not generated'}
-          $rootStore=New-Object System.Security.Cryptography.X509Certificates.X509Store('Root','CurrentUser')
-          $rootStore.Open('ReadWrite')
-          try {$rootStore.Add($ciCert)} finally {$rootStore.Close()}
-          $publisherStore=New-Object System.Security.Cryptography.X509Certificates.X509Store('TrustedPublisher','CurrentUser')
-          $publisherStore.Open('ReadWrite')
-          try {$publisherStore.Add($ciCert)} finally {$publisherStore.Close()}
-          $auth=Set-AuthenticodeSignature -FilePath $signed -Certificate $ciCert -HashAlgorithm SHA256 -IncludeChain All
-          $check=Get-AuthenticodeSignature -LiteralPath $signed
-          if($check.Status -ne 'Valid' -or $null -eq $check.SignerCertificate){throw ("Authenticode test signature not trusted: "+$check.Status+" "+$auth.Status)}
+          Add-Content -LiteralPath $env:GITHUB_ENV -Value "VOLVE_CI_ED25519_PUB=$pub"
+          Write-Host 'CHECKPOINT 1/5 PASS: single EXE authenticates 8 test files and rejects tampering'
+          exit 0
+      - name: Create isolated short-lived signing certificate
+        timeout-minutes: 2
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          if($env:RUNNER_ENVIRONMENT -ne 'github-hosted'){throw 'Refuse to create CI cert outside hosted disposable Windows'}
+          Write-Host 'CHECKPOINT 2/5: begin certificate issuance'
+          $ciCert=New-SelfSignedCertificate -Type CodeSigningCert -Subject 'CN=VOLVE CI ONLY NEVER DISTRIBUTE' -CertStoreLocation 'Cert:\CurrentUser\My' -KeyAlgorithm RSA -KeyLength 2048 -Provider 'Microsoft Software Key Storage Provider' -NotAfter (Get-Date).AddDays(2)
+          if($null -eq $ciCert -or -not $ciCert.HasPrivateKey){throw 'CI-only code signing certificate not generated with private key'}
+          Add-Content -LiteralPath $env:GITHUB_ENV -Value "VOLVE_CI_CERT_THUMBPRINT=$($ciCert.Thumbprint)"
+          Write-Host 'CHECKPOINT 2/5 PASS: ephemeral certificate created; no key exported'
+      - name: Sign synthetic EXE and verify Windows publisher status
+        timeout-minutes: 3
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          if($env:RUNNER_ENVIRONMENT -ne 'github-hosted'){throw 'Not a hosted runner'}
+          $thumb=$env:VOLVE_CI_CERT_THUMBPRINT
+          if([string]::IsNullOrWhiteSpace($thumb)){throw 'Missing CI cert thumbprint'}
+          $cert=Get-Item -LiteralPath ("Cert:\CurrentUser\My\"+$thumb) -ErrorAction Stop
+          if(-not $cert.HasPrivateKey){throw 'Signing private key unavailable'}
+          $unsigned=Join-Path $env:RUNNER_TEMP 'VOLVE-CI-Unsigned-Container.exe'
+          $signed=Join-Path $env:RUNNER_TEMP 'VOLVE-CI-Signed-Container.exe'
+          Copy-Item -LiteralPath $unsigned -Destination $signed -ErrorAction Stop
+          Write-Host 'CHECKPOINT 3/5: registering trust in ephemeral CurrentUser stores'
+          foreach($storeName in @('Root','TrustedPublisher')){
+            $store=[Security.Cryptography.X509Certificates.X509Store]::new($storeName,'CurrentUser')
+            $store.Open('ReadWrite')
+            try {$store.Add($cert)} finally {$store.Close()}
+          }
+          Write-Host 'CHECKPOINT 3/5: Set-AuthenticodeSignature BEGIN'
+          $auth=Set-AuthenticodeSignature -FilePath $signed -Certificate $cert -HashAlgorithm SHA256 -IncludeChain All
+          Write-Host ("CHECKPOINT 3/5: Set-AuthenticodeSignature returned "+$auth.Status)
+          $check=Get-AuthenticodeSignature -LiteralPath $signed -ErrorAction Stop
+          if($check.Status -ne 'Valid' -or $null -eq $check.SignerCertificate){
+            throw ("Windows does not trust the signed synthetic EXE: "+$check.Status+" "+$auth.Status)
+          }
           $sha=[Security.Cryptography.SHA256]::Create()
           try {
             $certDigest=$sha.ComputeHash($check.SignerCertificate.GetRawCertData())
             $fs=[IO.File]::OpenRead($signed)
             try {$exeDigest=$sha.ComputeHash($fs)} finally {$fs.Dispose()}
-            $env:VOLVE_CI_AUTHENTICODE_OS_BINARY=$signed
-            $env:VOLVE_CI_AUTHENTICODE_CERT_SHA256=[BitConverter]::ToString($certDigest).Replace('-','').ToLowerInvariant()
-            $env:VOLVE_CI_AUTHENTICODE_FILE_SHA256=[BitConverter]::ToString($exeDigest).Replace('-','').ToLowerInvariant()
+            Add-Content -LiteralPath $env:GITHUB_ENV -Value ("VOLVE_CI_AUTHENTICODE_OS_BINARY="+$signed)
+            Add-Content -LiteralPath $env:GITHUB_ENV -Value ("VOLVE_CI_AUTHENTICODE_CERT_SHA256="+[BitConverter]::ToString($certDigest).Replace('-','').ToLowerInvariant())
+            Add-Content -LiteralPath $env:GITHUB_ENV -Value ("VOLVE_CI_AUTHENTICODE_FILE_SHA256="+[BitConverter]::ToString($exeDigest).Replace('-','').ToLowerInvariant())
           } finally {$sha.Dispose()}
-          # These tests require a VALID embedded code-signature and pinned
-          # certificate DER. Wrong publisher/hash, unsigned or cancellation fail.
+          Write-Host 'CHECKPOINT 3/5 PASS: signed Windows PE, trusted publisher and SHA256 pinned'
+      - name: Test Windows Authenticode pins and complete regression
+        timeout-minutes: 4
+        shell: pwsh
+        working-directory: development/0.28.7/singlefile
+        run: |
+          $ErrorActionPreference='Stop'
+          if([string]::IsNullOrWhiteSpace($env:VOLVE_CI_AUTHENTICODE_CERT_SHA256)){throw 'No trusted editor pin from prior step'}
+          Write-Host 'CHECKPOINT 4/5: Windows signed-positive and negative-authenticity tests'
           go test -count=1 -v ./...
-          if($LASTEXITCODE -ne 0){throw 'Authenticode and singlefile tests failed'}
+          if($LASTEXITCODE -ne 0){throw 'Windows Authenticode and singlefile tests failed'}
           go vet ./...
-          if($LASTEXITCODE -ne 0){throw 'Go static audit failed'}
+          if($LASTEXITCODE -ne 0){throw 'Go static analysis failed'}
+          Write-Host 'CHECKPOINT 4/5 PASS: Windows signed-positive, wrong pins and unsigned negatives'
+      - name: Execute signed EXE and re-verify eight staged components
+        timeout-minutes: 3
+        shell: pwsh
+        working-directory: development/0.28.7/singlefile
+        run: |
+          $ErrorActionPreference='Stop'
+          $signed=$env:VOLVE_CI_AUTHENTICODE_OS_BINARY
+          if(-not (Test-Path -LiteralPath $signed -PathType Leaf)){throw 'Signed Windows PE missing'}
+          Write-Host 'CHECKPOINT 5/5: actual Windows signed EXE verification'
           $result=(& $signed --verify-bundle | Out-String)
           if($LASTEXITCODE -ne 0 -or $result -notmatch 'PASS VOLVE_SINGLEFILE_SIGNED_BUNDLE release=0.28.7 items=8 NO_INSTALL'){
-            throw 'Authenticode-signed Windows EXE failed its embedded bundle inspection'
+            throw 'Signed Windows PE failed authenticated payload check'
           }
           $staged=Join-Path $env:RUNNER_TEMP 'VOLVE-CI-verified-extraction'
-          $stageResult=(go run ./cmd/stageci --exe $signed --out $staged --pubkey $pub | Out-String)
+          $stageResult=(go run ./cmd/stageci --exe $signed --out $staged --pubkey $env:VOLVE_CI_ED25519_PUB | Out-String)
           if($LASTEXITCODE -ne 0 -or $stageResult -notmatch 'PASS VOLVE_STAGE_VERIFIED_LAB release=0.28.7 items=8 NO_INSTALL'){
-            throw 'Authenticated Windows EXE failed safe extraction and re-verification'
+            throw 'Signed Windows EXE failed safe extraction and re-verification'
           }
           foreach($name in @('VOLVE_DNS_Motor_0_28_7.exe','VOLVE_Managed_Watchdog.exe','VOLVE_Uninstall.exe','VOLVE_Browser_Policies.json','VOLVE_Full_Catalog.txt','manifest.json','manifest.ed25519')){
-            if(-not (Test-Path -LiteralPath (Join-Path $staged $name) -PathType Leaf)){throw ('Staging missing '+$name)}
+            if(-not (Test-Path -LiteralPath (Join-Path $staged $name) -PathType Leaf)){throw ('Missing staged asset '+$name)}
           }
           Write-Host $result
           Write-Host $stageResult
-          Write-Host 'PASS: embedded authenticode certificate, publisher SHA256 pin, EXE hash, ZIP authentication, negative-tamper test, protected lab stage. NO INSTALL / NO RELEASE.'
-          # The expected corrupt unsigned EXE previously set LASTEXITCODE!=0.
+          Write-Host 'CHECKPOINT 5/5 PASS: signed synthetic Windows PE + bundle integrity + extraction; NO INSTALL NO DNS NO RELEASE'
           exit 0
