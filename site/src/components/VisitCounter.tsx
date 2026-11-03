@@ -2,7 +2,9 @@ import { useEffect, useState } from "react";
 import { Eye } from "lucide-react";
 
 // Servicio gratuito externo, separado del motor de protección de VOLVÉ.
-// Sin cookies propias, cuentas ni almacenamiento de IP en nuestro sitio.
+// No almacenamos IP en nuestra web; sin embargo, la petición automática al
+// proveedor expone datos técnicos de conexión a ese tercero. Lo informamos
+// en Preguntas frecuentes y en el pie de página.
 const SERVICE = "https://visitor-badge.one9x.com";
 const PAGE_ID = "volve-web-onrender-2026";
 const SESSION_KEY = "volve-web-visita-v2";
@@ -69,7 +71,7 @@ export function VisitCounter() {
           ? <img className="mt-2 h-7 max-w-full" alt="Cantidad de visitas de VOLVÉ" src={badgeSrc} onLoad={() => { if (!badgeReadOnly) markCounted(); }} onError={() => setBadgeError(true)} referrerPolicy="no-referrer" />
           : badgeError ? "No disponible" : "Consultando…"}
       </div>
-      <p className="mt-1 text-xs opacity-75">Desde el 30/10/2026 · Visitas contabilizadas, no personas únicas.</p>
+      <p className="mt-1 text-xs opacity-75">Desde el 30/10/2026 · Visitas contabilizadas, no personas únicas. Servicio externo Visitor Badge.</p>
     </div>
   );
 }
