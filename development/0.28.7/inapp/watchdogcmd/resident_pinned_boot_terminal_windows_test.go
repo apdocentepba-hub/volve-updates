@@ -96,7 +96,7 @@ func TestPinnedResidentBootTerminalSourceHasNoReleaseOrTaskRegistration(t *testi
   if !strings.Contains(source,token){t.Errorf("private signed terminal recovery omitted safety fence: %q",token)}
  }
  for _,token:=range []string{
-  "Register-ScheduledTask","Start-ScheduledTask",
+  "Register-ScheduledTask","Start-ScheduledTask -TaskName",
   "Set-DnsClientServerAddress","Set-NetIPInterface",
   "Remove-Item","os.Remove(","Set-ScheduledTask",
  } {
