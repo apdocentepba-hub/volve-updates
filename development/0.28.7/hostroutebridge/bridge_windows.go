@@ -95,6 +95,20 @@ func ReviewReadOnly(
         return rejected,errors.New("Windows route has incomplete privileged inventory")
     }
     if err := ctx.Err(); err != nil { return rejected,err }
+    // The host census is not atomic with package verification. Recheck the
+    // exact Authenticode-pinned bytes and signed Ed25519 component inventory
+    // after all six Windows observations. If the EXE changed while an
+    // inventory command was running, discard the ENTIRE review.
+    if err := singlefile.VerifyWindowsPublisherSignature(ctx,exe,certDERHash,exeHash); err != nil {
+        return rejected,fmt.Errorf("publisher file changed during Windows inventory: %w",err)
+    }
+    confirmed,err := singlefile.InspectExecutable(exe,publisherKey)
+    if err != nil { return rejected,fmt.Errorf("signed bundle changed during Windows inventory: %w",err) }
+    if confirmed.Release != manifest.Release || confirmed.Platform != manifest.Platform ||
+       len(confirmed.Components) != len(manifest.Components) {
+        return rejected,errors.New("signed manifest changed during Windows inventory")
+    }
+    if err := ctx.Err(); err != nil { return rejected,err }
     return Review{
         Schema:bridgeSchema,
         Component:"installer-signed-bundle-windows-route-review",
