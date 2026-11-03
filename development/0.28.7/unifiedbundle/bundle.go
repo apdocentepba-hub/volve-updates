@@ -23,7 +23,7 @@ const (
  maxManifest int64 = 1 << 20
  maxComponent int64 = 1 << 30
 )
-var Required = map[string]string{
+var requiredComponents = map[string]string{
  "centro-updater":"VOLVE_Centro_Updater.exe",
  "dns-motor":"VOLVE_DNS_Motor_0_28_7.exe",
  "motor-manifest":"VOLVE_DNS_Motor_0_28_7.exe.json",
@@ -66,11 +66,11 @@ func Verify(dir string, trusted ed25519.PublicKey) (*Manifest,error) {
  var trailing any
  if dec.Decode(&trailing)!=io.EOF{return nil,errors.New("manifest contains trailing data")}
  if m.Schema!=schema||m.Release!=release||m.Platform!=target{return nil,errors.New("wrong schema, release or Windows architecture")}
- if len(m.Components)!=len(Required){return nil,errors.New("incomplete component set")}
+ if len(m.Components)!=len(requiredComponents){return nil,errors.New("incomplete component set")}
  seen:=map[string]bool{}
  allowed:=map[string]bool{"manifest.json":true,"manifest.ed25519":true}
  for _,c:=range m.Components{
-  expected,ok:=Required[c.ID]
+  expected,ok:=requiredComponents[c.ID]
   if !ok||seen[c.ID]||c.File!=expected{return nil,fmt.Errorf("wrong or repeated component %q",c.ID)}
   seen[c.ID]=true
   if c.Size<=0||c.Size>maxComponent{return nil,fmt.Errorf("component %s size rejected",c.ID)}

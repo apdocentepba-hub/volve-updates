@@ -15,7 +15,7 @@ func setup(t *testing.T)(string,ed25519.PublicKey,ed25519.PrivateKey,Manifest){
  dir:=t.TempDir()
  pub,priv,err:=ed25519.GenerateKey(rand.Reader);if err!=nil{t.Fatal(err)}
  m:=Manifest{Schema:schema,Release:release,Platform:target}
- for id,file:=range Required{
+ for id,file:=range requiredComponents{
   data:=[]byte("synthetic test only: "+id)
   if err:=os.WriteFile(filepath.Join(dir,file),data,0600);err!=nil{t.Fatal(err)}
   sum:=sha256.Sum256(data)
@@ -43,14 +43,14 @@ func TestMissingCriticalPartsFail(t *testing.T){
  for _,id:=range []string{"dns-motor","system-watchdog","uninstaller","browser-policies","full-catalog"}{
   t.Run(id,func(t *testing.T){
    dir,pub,_,_:=setup(t)
-   if err:=os.Remove(filepath.Join(dir,Required[id]));err!=nil{t.Fatal(err)}
+   if err:=os.Remove(filepath.Join(dir,requiredComponents[id]));err!=nil{t.Fatal(err)}
    reject(t,dir,pub)
   })
  }
 }
 func TestAlteredFileOrManifestFails(t *testing.T){
  dir,pub,_,_:=setup(t)
- if err:=os.WriteFile(filepath.Join(dir,Required["dns-motor"]),[]byte("tampered"),0600);err!=nil{t.Fatal(err)}
+ if err:=os.WriteFile(filepath.Join(dir,requiredComponents["dns-motor"]),[]byte("tampered"),0600);err!=nil{t.Fatal(err)}
  reject(t,dir,pub)
  dir,pub,_,_=setup(t)
  if err:=os.WriteFile(filepath.Join(dir,"manifest.json"),[]byte("{}"),0600);err!=nil{t.Fatal(err)}
@@ -82,7 +82,7 @@ func TestExtraEntriesAndLinksFail(t *testing.T){
  if err:=os.WriteFile(filepath.Join(dir,"extra.exe"),[]byte("x"),0600);err!=nil{t.Fatal(err)}
  reject(t,dir,pub)
  dir,pub,_,_=setup(t)
- path:=filepath.Join(dir,Required["dns-motor"])
+ path:=filepath.Join(dir,requiredComponents["dns-motor"])
  target:=filepath.Join(t.TempDir(),"motor")
  bytes,err:=os.ReadFile(path);if err!=nil{t.Fatal(err)}
  if err:=os.WriteFile(target,bytes,0600);err!=nil{t.Fatal(err)}
