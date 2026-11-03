@@ -1,14 +1,16 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { ChevronDown } from "lucide-react";
 import { PageHero, meta } from "@/components/ui-bits";
+import { siteConfig, isLive } from "@/config/site";
 
+const donationsEnabled = siteConfig.donations.some(c=>isLive(c.url)) || Boolean(siteConfig.bankTransfer.alias);
 const faqs = [
   { q: "¿Es gratis?", a: "Sí. VOLVÉ es y va a seguir siendo gratuito. No hay precio, suscripción ni funciones pagas." },
-  { q: "¿Ya está disponible?", a: "Todavía no. A octubre de 2026 está en desarrollo y pruebas, con Windows como primer objetivo y Android después. No hay instalador estable publicado: si ves un enlace de descarga fuera de este sitio, no es oficial." },
-  { q: "¿Puedo aportar?", a: "Pronto. El canal de aportes voluntarios está en preparación. No hay monto mínimo ni beneficios por aportar, y vamos a publicar reportes de transparencia." },
+  { q: "¿Ya está disponible?", a: "Todavía no. VOLVÉ continúa en desarrollo y pruebas, con Windows como primer objetivo y Android después. No hay instalador estable publicado: si ves un enlace de descarga fuera de este sitio, no es oficial." },
+  { q: "¿Puedo aportar?", a: donationsEnabled ? "Sí. En la sección Colaborá figuran los enlaces y el alias público habilitados para aportes voluntarios. Antes de transferir o pagar, comprobá el destinatario y el importe en la plataforma. No hay ventajas ni funciones exclusivas por aportar. La ayuda de VOLVÉ siempre es gratuita." : "Los canales de aportes voluntarios están en preparación. No habrá funciones exclusivas por aportar y VOLVÉ seguirá siendo gratuito." },
   { q: "¿Sustituye un tratamiento?", a: "No. VOLVÉ no es terapia ni cura. Es una barrera que puede ayudar a reducir riesgos, como complemento de la atención profesional y de los programas públicos, como el 0800-444-4000 en la Provincia de Buenos Aires." },
   { q: "¿Cómo se usa?", a: "La idea es simple: lo instalás por decisión propia, activás la protección y el programa dificulta el acceso a sitios de apuestas conocidos, con listas que se actualizan. Publicaremos una guía paso a paso junto con la primera versión estable." },
-  { q: "¿Qué pasa con mi privacidad?", a: "No pedimos cuentas ni datos personales, no registramos tu navegación y no vendemos información. Este sitio tampoco tiene formularios." },
+  { q: "¿Qué pasa con mi privacidad?", a: "No pedimos cuentas ni datos personales, y no vendemos información. Este sitio no tiene formularios. Para mostrar el contador agregado de visitas, el navegador consulta el servicio externo Visitor Badge, que puede recibir la dirección IP y datos técnicos de conexión. Usamos sessionStorage en el navegador para evitar volver a contar una visita en la misma sesión. Las tipografías se cargan desde Google Fonts. No usamos estos servicios para elaborar perfiles personales." },
 ];
 
 export const Route = createFileRoute("/preguntas")({
