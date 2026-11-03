@@ -80,6 +80,21 @@ function Instagram() {
             </span>
             <ArrowRight aria-hidden="true" className="h-5 w-5 shrink-0" />
           </Link>
+          <a
+            href="https://jug-anon.org.ar/pages/grupos-autoayuda.html"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex min-h-24 items-center gap-4 rounded-3xl border border-border bg-card px-6 py-5 text-primary transition hover:border-sage"
+          >
+            <HeartHandshake aria-hidden="true" className="h-7 w-7 shrink-0 text-primary" />
+            <span className="flex-1">
+              <strong className="block font-bold">¿Acompañás a alguien? Hay ayuda para familiares</strong>
+              <span className="mt-1 block text-sm text-muted-foreground">
+                JUG-ANON reúne a familiares y amigos. Consultá sus grupos y confirmá los horarios en el sitio oficial.
+              </span>
+            </span>
+            <ArrowRight aria-hidden="true" className="h-5 w-5 shrink-0" />
+          </a>
         </div>
 
         <section className="mt-8 rounded-3xl border border-sage/60 bg-sage-soft p-6" aria-labelledby="compartir-ayuda">
