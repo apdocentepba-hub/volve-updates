@@ -34,6 +34,12 @@ jobs:
                   dest=root/item.name
                   dest.parent.mkdir(parents=True,exist_ok=True)
                   dest.write_bytes(a.extractfile(item).read())
+          for rel in ('staging.go','staging_test.go','cmd/stageci/main.go'):
+              source=root/'singlefile-overlay'/rel
+              dest=root/'singlefile'/rel
+              assert source.is_file(), f'Missing mandatory staging source: {rel}'
+              dest.parent.mkdir(parents=True,exist_ok=True)
+              dest.write_bytes(source.read_bytes())
           '@ | python -
           if($LASTEXITCODE -ne 0){throw 'Source archive hash or path invalid'}
       - name: Test, analyze, compile and execute one EXE in Windows
@@ -63,6 +69,16 @@ jobs:
           [IO.File]::WriteAllBytes($corrupt,$bytes)
           $reject=(& $corrupt --verify-bundle 2>&1 | Out-String)
           if($LASTEXITCODE -eq 0){throw 'Modified ZIP was accepted'}
+          # Real Windows extraction into a disposable, never-used lab directory.
+          $staged=Join-Path $env:RUNNER_TEMP 'VOLVE-CI-verified-extraction'
+          $stageResult=(go run ./cmd/stageci --exe $out --out $staged --pubkey $pub | Out-String)
+          if($LASTEXITCODE -ne 0 -or $stageResult -notmatch 'PASS VOLVE_STAGE_VERIFIED_LAB release=0.28.7 items=8 NO_INSTALL'){
+            throw 'Actual Windows signed staging verification failed'
+          }
+          foreach($name in @('VOLVE_DNS_Motor_0_28_7.exe','VOLVE_Managed_Watchdog.exe','VOLVE_Uninstall.exe','VOLVE_Browser_Policies.json','VOLVE_Full_Catalog.txt','manifest.json','manifest.ed25519')){
+            if(-not (Test-Path -LiteralPath (Join-Path $staged $name) -PathType Leaf)){throw ('Staging missing: '+$name)}
+          }
+          Write-Host $stageResult
           Write-Host $result
           Write-Host 'PASS: packed Windows PE executed verified signed synthetic bundle; tampering rejected; NO INSTALL'
           # The expected rejected EXE exits nonzero; clear that LASTEXITCODE
