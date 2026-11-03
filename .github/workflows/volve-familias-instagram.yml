@@ -1,0 +1,64 @@
+name: VOLVÉ familias — generar carrusel educativo (sin deploy)
+on:
+  push:
+    branches:
+      - 'marketing/volve-apoyo-familias-20261103'
+    paths:
+      - 'social/familias-20261103/build.py'
+      - '.github/workflows/volve-familias-instagram.yml'
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: volve-familias-20261103-render
+  cancel-in-progress: false
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Instalar Pillow
+        run: python -m pip install --disable-pip-version-check 'Pillow>=10,<13'
+      - name: Crear cuatro placas originales
+        run: |
+          python -m compileall -q social/familias-20261103/build.py
+          python social/familias-20261103/build.py
+      - name: Validar imágenes, marcas y manifiesto
+        run: |
+          python - <<'PY'
+          import hashlib,json
+          from pathlib import Path
+          from PIL import Image
+          base=Path('social/familias-20261103')
+          d=json.loads((base/'manifest.json').read_text(encoding='utf-8'))
+          assert d['instagram']=='@volveprevencion'
+          assert len(d['cards'])==4
+          assert d['facts'][0]=='Línea oficial PBA 0800-444-4000'
+          for n,row in enumerate(d['cards'],start=1):
+              assert row['name']==f'volve_familias_{n:02d}.png'
+              p=base/row['name']
+              assert hashlib.sha256(p.read_bytes()).hexdigest()==row['sha256']
+              with Image.open(p) as im:
+                  assert im.size==(1080,1350) and im.format=='PNG'
+                  im.verify()
+              print('CARD_FORMAT_HASH_OK',n)
+          with Image.open(base/'contact_sheet.jpg') as im:
+              assert im.size==(844,1090)
+              im.verify()
+          print('VOLVE_FAMILIAS_4_4_VERIFICADAS')
+          PY
+      - name: Guardar solo archivos de difusión en rama marketing
+        run: |
+          git config user.name 'VOLVÉ Social Builder'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add social/familias-20261103/volve_familias_*.png
+          git add social/familias-20261103/contact_sheet.jpg
+          git add social/familias-20261103/manifest.json
+          if ! git diff --cached --quiet; then
+            git commit -m 'VOLVÉ: cuatro placas educativas para familias, verificadas'
+            git push origin "HEAD:${GITHUB_REF_NAME}"
+          fi
