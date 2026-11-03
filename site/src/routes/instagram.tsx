@@ -1,5 +1,6 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { ArrowRight, BookOpen, HeartHandshake, LifeBuoy, MapPin, Phone, ShieldCheck } from "lucide-react";
+import { useState } from "react";
+import { ArrowRight, BookOpen, Copy, HeartHandshake, LifeBuoy, MapPin, Phone, Share2, ShieldCheck } from "lucide-react";
 import { meta } from "@/components/ui-bits";
 import { siteConfig } from "@/config/site";
 
@@ -12,7 +13,25 @@ export const Route = createFileRoute("/instagram")({
   component: Instagram,
 });
 
+const PAGE_URL = "https://volve-web.onrender.com/instagram";
+const shareText = [
+  "Si necesitás orientación frente a las apuestas online, hay ayuda gratuita en PBA:",
+  "0800-444-4000 (programa oficial de asistencia).",
+  "También podés consultar centros y reuniones sin registrarte:",
+  PAGE_URL,
+].join("\n");
+
 function Instagram() {
+  const [copyStatus, setCopyStatus] = useState("");
+  async function copyHelpLink() {
+    try {
+      if (!navigator.clipboard?.writeText) throw new Error("Portapapeles no disponible");
+      await navigator.clipboard.writeText(PAGE_URL);
+      setCopyStatus("Enlace copiado. Compartilo solo si vos querés.");
+    } catch {
+      setCopyStatus("No se pudo copiar automáticamente. Seleccioná la dirección que aparece abajo.");
+    }
+  }
   return (
     <section className="bg-hero">
       <div className="container-v mx-auto max-w-2xl py-10 md:py-16">
@@ -62,6 +81,32 @@ function Instagram() {
             <ArrowRight aria-hidden="true" className="h-5 w-5 shrink-0" />
           </Link>
         </div>
+
+        <section className="mt-8 rounded-3xl border border-sage/60 bg-sage-soft p-6" aria-labelledby="compartir-ayuda">
+          <h2 id="compartir-ayuda" className="text-xl font-bold text-primary">Compartí estos recursos de ayuda</h2>
+          <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
+            Puede servirle a alguien de tu entorno. Elegís vos con quién compartir; VOLVÉ no accede a tus contactos ni envía mensajes por tu cuenta.
+          </p>
+          <div className="mt-5 flex flex-col gap-3 sm:flex-row">
+            <a
+              href={`https://wa.me/?text=${encodeURIComponent(shareText)}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex min-h-12 flex-1 items-center justify-center gap-2 rounded-full bg-primary px-5 py-3 font-semibold text-primary-foreground transition hover:opacity-90"
+            >
+              <Share2 aria-hidden="true" className="h-5 w-5" /> Compartir por WhatsApp
+            </a>
+            <button
+              type="button"
+              onClick={copyHelpLink}
+              className="inline-flex min-h-12 flex-1 items-center justify-center gap-2 rounded-full border-2 border-primary bg-card px-5 py-3 font-semibold text-primary transition hover:bg-background"
+            >
+              <Copy aria-hidden="true" className="h-5 w-5" /> Copiar enlace
+            </button>
+          </div>
+          <p className="mt-4 break-all text-xs font-medium text-muted-foreground">{PAGE_URL}</p>
+          <p className="mt-2 min-h-5 text-sm text-primary" role="status" aria-live="polite">{copyStatus}</p>
+        </section>
 
         <div className="mt-9 rounded-3xl border border-border bg-card p-6">
           <div className="flex items-start gap-3">
