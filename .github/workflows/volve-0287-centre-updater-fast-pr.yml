@@ -79,7 +79,17 @@ jobs:
           }
           go test . -run '^Test(MergeUpdateReports|PreparedSignedMigration|MotorMigrationStatus|InstalledPublisherReview|InstalledUnsignedMigrationDraft|WindowsResidentProcessEvidence)' -count=1 -timeout 5m
           if($LASTEXITCODE -ne 0){throw 'Centro signed migration/inapp tests failed'}
-          go test ./motorupdate -run '^(TestProtectedBoot|TestProtectedSigned|TestPublisherBoundBootEvidence|TestPublisherBoundBootFinalizer|TestDurablePublisherBootEvidence)' -count=1 -timeout 5m
+          $motorTests=@(go test ./motorupdate -list '^TestProtectedMotor')
+          foreach($required in @(
+            'TestProtectedMotorPreparedOnlySignedBundleAndNoActivation',
+            'TestProtectedMotorPreparationFailsClosedBeforeAnyWrite',
+            'TestProtectedMotorPreparationKeepsInterruptedBundleUnusable'
+          )){
+            if($LASTEXITCODE -ne 0 -or -not ($motorTests -contains $required)){
+              throw ('protected motor staging test absent: '+$required)
+            }
+          }
+          go test ./motorupdate -run '^(TestProtectedBoot|TestProtectedSigned|TestPublisherBoundBootEvidence|TestPublisherBoundBootFinalizer|TestDurablePublisherBootEvidence|TestProtectedMotor)' -count=1 -timeout 6m
           if($LASTEXITCODE -ne 0){throw 'Protected signed bridge tests failed'}
           go vet . ./motorupdate
           if($LASTEXITCODE -ne 0){throw 'Centre updater vet failed'}
