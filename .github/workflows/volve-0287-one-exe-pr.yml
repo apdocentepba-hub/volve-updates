@@ -5,6 +5,7 @@ on:
     paths:
       - 'development/0.28.7/singlefile-*'
       - 'development/0.28.7/singlefile-overlay/**'
+      - 'development/0.28.7/hostroutebridge/**'
       - 'development/0.28.7/authenticode-source/**'
       - 'development/0.28.7/unifiedbundle/**'
       - '.github/workflows/volve-0287-one-exe-pr.yml'
@@ -14,7 +15,7 @@ permissions:
 jobs:
   verify-windows-exe:
     runs-on: windows-latest
-    timeout-minutes: 17
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -226,3 +227,82 @@ jobs:
           Write-Host $stageResult
           Write-Host 'CHECKPOINT 5/5 PASS: dual-signed Windows Authenticode + pinned SHA256 + Ed25519 bundle + staged integrity + negative cases; NO INSTALL NO DNS NO RELEASE'
           exit 0
+
+      - name: Join real Windows six-inventory route to the already verified signed EXE
+        timeout-minutes: 8
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          if($env:GITHUB_ACTIONS -ne 'true' -or $env:RUNNER_ENVIRONMENT -ne 'github-hosted'){
+            throw 'Host route integration requires disposable GitHub-hosted Windows'
+          }
+          if(-not (Test-Path -LiteralPath $env:VOLVE_CI_AUTHENTICODE_OS_BINARY -PathType Leaf)){
+            throw 'Signed Windows laboratory EXE missing'
+          }
+          if([string]::IsNullOrWhiteSpace($env:VOLVE_CI_AUTHENTICODE_CERT_SHA256) -or
+             [string]::IsNullOrWhiteSpace($env:VOLVE_CI_AUTHENTICODE_FILE_SHA256) -or
+             [string]::IsNullOrWhiteSpace($env:VOLVE_CI_ED25519_PUB)){
+            throw 'Independent publisher/manifest pins missing'
+          }
+          Write-Host 'BRIDGE CHECKPOINT 1/3: reconstruct previously authenticated original motorupdate source'
+          @'
+          import hashlib,zipfile,shutil
+          from pathlib import Path
+          root=Path('development/0.28.7')
+          parts=sorted((root/'complete-source-parts').glob('part-*.bin'))
+          assert [p.name for p in parts]==[f'part-{i:02d}.bin' for i in range(10)]
+          payload=b''.join(p.read_bytes() for p in parts)
+          assert hashlib.sha256(payload).hexdigest()=='92b3536559151260375b17a64eedd009df8399e45460637208027b7ca0587ba5'
+          Path('source.zip').write_bytes(payload)
+          Path('build').mkdir(exist_ok=True)
+          with zipfile.ZipFile('source.zip') as z:
+              z.extractall('build')
+          for name,digest in (
+            ('VOLVE_0287_PRECHECK_RESCATE_OVERLAY_NO_INSTALAR.zip','fdfd31f21df81fe6da6075bfd442354297874576b6dc2c38f19bd35a681d95cd'),
+            ('VOLVE_0287_RECUPERACION_INTERRUPCION_FORZADA_NO_INSTALAR_v3.zip','773bd5eb5f1c4883021cc321856636354e964d3605dba9017e2fb5d1a7401b40')
+          ):
+              p=root/name
+              assert hashlib.sha256(p.read_bytes()).hexdigest()==digest
+              with zipfile.ZipFile(p) as z: z.extractall('build')
+          for p in (root/'journal').glob('*.go'):
+              shutil.copy2(p,Path('build/codigo/motorupdate')/p.name)
+          bridge=root/'hostroutebridge'
+          target=root/'singlefile/hostroutebridge'
+          target.mkdir(parents=True,exist_ok=True)
+          for name in ('bridge_windows.go','bridge_windows_test.go'):
+              original=bridge/name
+              assert original.is_file()
+              assert not (target/name).exists()
+              shutil.copy2(original,target/name)
+          '@ | python -
+          if($LASTEXITCODE -ne 0){throw 'Host route sources could not be independently authenticated'}
+          go run development/0.28.7/inapp/apply_overlay.go build/codigo
+          if($LASTEXITCODE -ne 0){throw 'Windows six-inventory source overlay failed'}
+          Write-Host 'BRIDGE CHECKPOINT 2/3: link native motorupdate into test-only singlefile module'
+          $module=(Resolve-Path 'build/codigo').Path.Replace('\','/')
+          Push-Location 'development/0.28.7/singlefile'
+          try {
+            go mod edit '-require=volve-browser-protection@v0.0.0'
+            if($LASTEXITCODE -ne 0){throw 'Cannot require original motorupdate for bridge CI'}
+            go mod edit "-replace=volve-browser-protection=$module"
+            if($LASTEXITCODE -ne 0){throw 'Cannot local-replace original motorupdate for bridge CI'}
+            Write-Host 'BRIDGE CHECKPOINT 3/3: Windows real 6-inventory + 2 independent publisher signatures'
+            $events=@(go test -mod=mod -count=1 -timeout 6m -json ./hostroutebridge)
+            if($LASTEXITCODE -ne 0){
+              $events | Select-Object -Last 75 | Write-Host
+              throw 'Dual-signed EXE / Windows six-inventory route bridge failed'
+            }
+            $records=@($events | Where-Object {$_ -match '^\s*\{'} | ForEach-Object {$_ | ConvertFrom-Json})
+            foreach($name in @(
+              'TestSixInventoryActualWindowsBridgeOnlyReturnsReview',
+              'TestSignedBridgeRefusesWrongPinsAndMissingInventory',
+              'TestSignedBridgeRejectsCancellationAndRelativePath'
+            )){
+              $passes=@($records | Where-Object {$_.Test -eq $name -and $_.Action -eq 'pass'})
+              $skips=@($records | Where-Object {$_.Test -eq $name -and $_.Action -eq 'skip'})
+              if($passes.Count -ne 1 -or $skips.Count -ne 0){throw ('Mandatory bridge test skipped or missing: '+$name)}
+            }
+            Write-Host 'PASS VOLVE_SIGNED_EXE_PLUS_REAL_WINDOWS_6_INVENTORIES REVIEW_ONLY NO_INSTALL NO_DNS_CHANGE'
+          } finally {
+            Pop-Location
+          }
