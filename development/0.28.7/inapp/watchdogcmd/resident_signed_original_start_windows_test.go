@@ -16,6 +16,22 @@ import (
  "volve-browser-protection/motorupdate"
 )
 
+// A signed boot recovery performs TWO distinct scheduler actions: import of
+// the sealed original XML, then START of that exact original. Synthetic
+// runners must not confuse a successful import with a process start.
+func signedRecoveryTaskFixtureResult(script string)(string,error){
+ importTask:=strings.Contains(script,"Register-ScheduledTask")
+ startTask:=strings.Contains(script,"Start-ScheduledTask")
+ switch {
+ case importTask && !startTask:
+  return "VOLVE_SIGNED_ORIGINAL_TASK_RESTORED",nil
+ case startTask && !importTask:
+  return "VOLVE_SIGNED_ORIGINAL_START_REQUESTED",nil
+ default:
+  return "",errors.New("unknown or combined Scheduler mutation in signed boot recovery")
+ }
+}
+
 func TestSignedOriginalSYSTEMStartRequiresSignedPendingTaskAndNeverCommits(t *testing.T){
  root,key,p:=signedTaskRecoveryFixture(t)
  calls:=0
@@ -57,12 +73,16 @@ func TestSignedOriginalSYSTEMStartRequiresSignedPendingTaskAndNeverCommits(t *te
 }
 
 func TestSignedOriginalSYSTEMStartFailClosedBeforeTaskMutation(t *testing.T){
+ // Reuse one cryptographically signed, real-NTFS fixture. Only the LAST
+ // scenario mutates original bytes; all earlier cases are read-only.
+ // Avoid re-creating the same protected signed grant nine times on Windows.
+ fixtureRoot,fixtureKey,fixtureProbes:=signedTaskRecoveryFixture(t)
  for _,scenario:=range []string{
   "cancelled","wrong-editor","not-system","bad-acl","busy-port53",
-  "foreign-original","ambiguous-scheduler","scheduler-error","invalid-root",
+  "ambiguous-scheduler","scheduler-error","invalid-root","foreign-original",
  }{
   t.Run(scenario,func(t *testing.T){
-   root,key,p:=signedTaskRecoveryFixture(t)
+   root,key,p:=fixtureRoot,fixtureKey,fixtureProbes
    ctx:=context.Background()
    publisher:=ed25519.PublicKey(key)
    calls:=0
