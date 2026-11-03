@@ -63,11 +63,25 @@ func(d *publisherBoundResidentBootDriver) verify(ctx context.Context,intent Resi
  }
  return nil
 }
+// Keep publisher permit/journal reads AND the privileged original operation
+// inside ONE protected kernel-lease interval. The underlying protected
+// adapter's stateMu prevents a concurrent finalizer from dropping the lease
+// between the signature validation and the actual recovery call.
+func(d *publisherBoundResidentBootDriver)withSignedLease(
+ ctx context.Context,intent ResidentRecoveryIntent,restore bool,
+)error{
+ if d==nil||d.ResidentBootRecoveryDriver==nil{return errors.New("missing protected signed recovery adapter")}
+ protected,ok:=d.ResidentBootRecoveryDriver.(*protectedResidentBootDriver)
+ if !ok||protected==nil{return errors.New("signed recovery lacks the required native Windows mutex adapter")}
+ return protected.underProtectedLease(ctx,func()error{
+  if err:=d.verify(ctx,intent);err!=nil{return err}
+  if restore{return protected.operations.RestoreOriginal(ctx,intent)}
+  return protected.operations.VerifySealedOriginal(ctx,intent)
+ })
+}
 func(d *publisherBoundResidentBootDriver)VerifySealedOriginal(ctx context.Context,intent ResidentRecoveryIntent)error{
- if err:=d.verify(ctx,intent);err!=nil{return err}
- return d.ResidentBootRecoveryDriver.VerifySealedOriginal(ctx,intent)
+ return d.withSignedLease(ctx,intent,false)
 }
 func(d *publisherBoundResidentBootDriver)RestoreOriginal(ctx context.Context,intent ResidentRecoveryIntent)error{
- if err:=d.verify(ctx,intent);err!=nil{return err}
- return d.ResidentBootRecoveryDriver.RestoreOriginal(ctx,intent)
+ return d.withSignedLease(ctx,intent,true)
 }
