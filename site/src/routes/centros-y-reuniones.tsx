@@ -16,7 +16,12 @@ export const Route=createFileRoute("/centros-y-reuniones")({
 });
 function Directory(){
  const [query,setQuery]=useState("");
- const [kind,setKind]=useState("");
+ // Filtro opcional y público de un enlace compartido; no guarda datos personales.
+ const [kind,setKind]=useState(()=>{
+  if(typeof window==="undefined") return "";
+  const selected=new URLSearchParams(window.location.search).get("tipo")||"";
+  return Object.prototype.hasOwnProperty.call(types,selected)?selected:"";
+ });
  const [zone,setZone]=useState("");
  const [day,setDay]=useState("");
  const filtered=useMemo(()=>data.filter(r=>(!query||norm([r.localidad,r.nombre,r.lugar,r.direccion].join(" ")).includes(norm(query)))&&(!kind||r.tipo===kind)&&(!zone||r.zona===zone)&&(!day||r.horarios.some(h=>h.dia===day))).sort((a,b)=>a.localidad.localeCompare(b.localidad,"es")),[query,kind,zone,day]);
@@ -41,6 +46,13 @@ function Directory(){
   </section>
   <section className="container-v py-12" id="buscar">
     <h2 className="text-3xl font-bold text-primary">Buscá un centro o una reunión</h2>
+    {kind==="familias"&&<div className="mt-4 rounded-2xl border border-sage/60 bg-sage-soft p-4 text-sm text-primary">
+      <p className="font-semibold">Estás viendo recursos específicos para familiares y amigos.</p>
+      <p className="mt-1">También podés consultar los centros públicos o elegir otro tipo de apoyo.</p>
+      <button type="button" onClick={()=>setKind("")} className="mt-3 rounded-full border border-primary px-4 py-2 font-semibold hover:bg-card">
+        Mostrar todos los recursos
+      </button>
+    </div>}
     <p className="mt-3 text-muted-foreground">{filtered.length} recursos encontrados de {data.length} registrados en Buenos Aires. VOLVÉ no pide información personal ni gestiona turnos.</p>
     <div className="my-7 grid gap-3 rounded-3xl bg-sage-soft p-5 md:grid-cols-4">
       <label className="text-sm font-semibold">Localidad o dirección<input type="search" value={query} onChange={e=>setQuery(e.target.value)} placeholder="Ej.: Sarandí, Quilmes…" className="mt-2 w-full rounded-xl border border-border bg-card p-3 text-foreground"/></label>
