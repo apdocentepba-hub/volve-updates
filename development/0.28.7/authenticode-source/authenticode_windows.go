@@ -89,6 +89,15 @@ func VerifyWindowsPublisherSignature(ctx context.Context, exe, trustedCertDER256
 	cmd.Env = append(os.Environ(), "VOLVE_PUBLISHER_VERIFY_FILE="+exe)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
+		// Diagnostics never weaken trust acceptance. Only a disposable CI VM
+		// may expose bounded subprocess stderr to identify test harness bugs.
+		if os.Getenv("GITHUB_ACTIONS") == "true" && os.Getenv("RUNNER_ENVIRONMENT") == "github-hosted" {
+			trace := strings.TrimSpace(string(out))
+			if len(trace) > 1200 {
+				trace = trace[:1200]
+			}
+			return fmt.Errorf("Windows Authenticode trust unavailable or invalid: %w; hosted-CI diagnostic=%q", err, trace)
+		}
 		return fmt.Errorf("Windows Authenticode trust unavailable or invalid: %w", err)
 	}
 	if len(out) > 512 {
