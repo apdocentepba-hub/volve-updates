@@ -42,13 +42,60 @@ jobs:
               dest.write_bytes(source.read_bytes())
           '@ | python -
           if($LASTEXITCODE -ne 0){throw 'Source archive hash or path invalid'}
+      - name: Reconstruct pinned Authenticode Windows source overlay
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          @'
+          import hashlib, tarfile
+          from pathlib import Path
+          root=Path('development/0.28.7')
+          payload=root/'authenticode-overlay.tar.xz'
+          assert hashlib.sha256(payload.read_bytes()).hexdigest()=='cdb9cb776552ee9a08668aae71e8031c7b3d4fb3b6fadf6e6690abfb20fc36a0'
+          allowed={'authenticode_windows.go','authenticode_windows_test.go'}
+          with tarfile.open(payload,'r:xz') as archive:
+              files=archive.getmembers()
+              assert {e.name for e in files}==allowed and len(files)==2
+              for e in files:
+                  assert e.isfile() and e.size < 65536
+                  target=root/'singlefile'/e.name
+                  assert not target.exists()
+                  target.write_bytes(archive.extractfile(e).read())
+          '@ | python -
+          if($LASTEXITCODE -ne 0){throw 'Publisher trust overlay rejected'}
       - name: Test, analyze, compile and execute one EXE in Windows
         shell: pwsh
         working-directory: development/0.28.7/singlefile
         run: |
           $ErrorActionPreference='Stop'
           if($env:RUNNER_ENVIRONMENT -ne 'github-hosted'){throw 'Not an isolated runner'}
-          go test -count=1 ./...
+          # A genuine trusted Microsoft-signed Windows PE proves the positive
+          # Authenticode path. Pins are synthetic CI fixtures, never editor keys.
+          $candidates=@(
+            (Join-Path $env:SystemRoot 'System32/WindowsPowerShell/v1.0/powershell.exe'),
+            (Join-Path $env:SystemRoot 'System32/notepad.exe'),
+            (Join-Path $env:SystemRoot 'System32/regedit.exe')
+          )
+          $selected=$null
+          foreach($candidate in $candidates){
+            if(-not (Test-Path -LiteralPath $candidate -PathType Leaf)){continue}
+            $signature=Get-AuthenticodeSignature -LiteralPath $candidate -ErrorAction Stop
+            if($signature.Status -eq 'Valid' -and $null -ne $signature.SignerCertificate){
+              $selected=[IO.Path]::GetFullPath($candidate)
+              break
+            }
+          }
+          if($null -eq $selected){throw 'No trusted Windows OS signed PE found on hosted CI'}
+          $hashProvider=[Security.Cryptography.SHA256]::Create()
+          try {
+            $certificateHash=$hashProvider.ComputeHash($signature.SignerCertificate.GetRawCertData())
+            $fileStream=[IO.File]::OpenRead($selected)
+            try {$binaryHash=$hashProvider.ComputeHash($fileStream)}finally{$fileStream.Dispose()}
+            $env:VOLVE_CI_AUTHENTICODE_OS_BINARY=$selected
+            $env:VOLVE_CI_AUTHENTICODE_CERT_SHA256=[BitConverter]::ToString($certificateHash).Replace('-','').ToLowerInvariant()
+            $env:VOLVE_CI_AUTHENTICODE_FILE_SHA256=[BitConverter]::ToString($binaryHash).Replace('-','').ToLowerInvariant()
+          } finally {$hashProvider.Dispose()}
+          go test -count=1 -v ./...
           if($LASTEXITCODE -ne 0){throw 'Go test failed'}
           go vet ./...
           if($LASTEXITCODE -ne 0){throw 'Go vet failed'}
