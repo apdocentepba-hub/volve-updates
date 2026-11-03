@@ -11,6 +11,7 @@ const cases = [
   ["ayuda", "Necesito ayuda · VOLVÉ Prevención"],
   ["centros-y-reuniones", "Centros y reuniones de ayuda en PBA · VOLVÉ"],
   ["proyecto", "Proyecto VOLVÉ · Tecnología gratuita en desarrollo"],
+  ["escuelas", "Kit educativo para escuelas y familias · VOLVÉ"],
   ["educacion", "Educación y prevención de apuestas · VOLVÉ"],
   ["colabora", "Colaborá voluntariamente con VOLVÉ"],
   ["preguntas", "Preguntas frecuentes · VOLVÉ Prevención"],
