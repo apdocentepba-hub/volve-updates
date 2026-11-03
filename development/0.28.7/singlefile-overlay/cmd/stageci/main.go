@@ -23,7 +23,7 @@ func main() {
     out := flag.String("out", "", "fresh absolute VOLVE-CI- staging directory")
     keyHex := flag.String("pubkey", "", "trusted synthetic Ed25519 bundle key")
     certSHA := flag.String("certsha", "", "externally pinned Windows signer certificate SHA256")
-    exeSHA := flag.String("exesha", "", "externally pinned exact Windows executable SHA256")
+    exeSHA := flag.String("filehash", "", "externally pinned exact Windows executable SHA256")
     flag.Parse()
 
     // Safety boundary: a CI lab harness, NOT a product installation CLI.
