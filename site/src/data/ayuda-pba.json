@@ -76,7 +76,8 @@
     "telefono": "2284-520151 (WhatsApp)",
     "fuente": "https://loteria.gba.gob.ar/node/522",
     "nota": "Atención: hay dos direcciones distintas publicadas por fuentes oficiales. Una comunicación provincial de junio de 2025 y la Municipalidad indican Alsina 3157; el directorio general aún indica Hornos 2992. Confirmá dirección y horario por WhatsApp antes de asistir.",
-    "fuenteAlternativa": "https://loteria.gba.gob.ar/juego-compulsivo"
+    "fuenteAlternativa": "https://loteria.gba.gob.ar/juego-compulsivo",
+    "verificacionPendiente": "direccion"
   },
   {
     "tipo": "publico",
@@ -579,7 +580,8 @@
     "telefono": "",
     "fuente": "https://jugadoresanonimos.org.ar/buenos-aires-zona-oeste/",
     "nota": "Atención: hay horarios contradictorios en dos páginas oficiales de Jugadores Anónimos. El listado de Zona Oeste indica miércoles y viernes de 20:00 a 22:00, pero la ficha individual de San Justo indica martes y viernes de 20:00 a 22:00. Confirmá directamente con JA antes de concurrir.",
-    "fuenteAlternativa": "https://jugadoresanonimos.org.ar/location/san-justo/"
+    "fuenteAlternativa": "https://jugadoresanonimos.org.ar/location/san-justo/",
+    "verificacionPendiente": "horarios"
   },
   {
     "tipo": "ja",
