@@ -1,0 +1,98 @@
+name: VOLVÉ — kit educativo imprimible para escuelas (rama de prueba)
+on:
+  push:
+    branches:
+      - 'feature/volve-kit-prevencion-escuelas-20261103'
+    paths:
+      - 'site/src/routes/escuelas.tsx'
+      - 'site/src/routes/educacion.tsx'
+      - 'site/src/components/SiteFooter.tsx'
+      - 'site/scripts/build-school-kit.py'
+      - 'site/scripts/test-school-kit.mjs'
+      - 'site/scripts/route-fallback.mjs'
+      - 'site/scripts/test-og-static.mjs'
+      - '.github/workflows/volve-kit-educativo-ci.yml'
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: volve-kit-educativo-20261103
+  cancel-in-progress: false
+jobs:
+  build-and-verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 9
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Dependencias PDF y validación
+        run: |
+          python -m pip install --disable-pip-version-check 'reportlab>=4,<5' 'qrcode[pil]>=8,<10' 'pypdf>=5,<7'
+          python -m compileall -q site/scripts/build-school-kit.py
+      - name: Generar kit PDF A4 con fuentes y QR
+        run: python site/scripts/build-school-kit.py
+      - name: Comprobar páginas, texto, enlaces y seguridad
+        run: |
+          python - <<'PY'
+          from pypdf import PdfReader
+          from pathlib import Path
+          p=Path("site/public/kit-escolar-volve.pdf")
+          assert 10000<p.stat().st_size<900000
+          b=p.read_bytes()
+          assert b[:5]==b"%PDF-"
+          r=PdfReader(p)
+          assert len(r.pages)==3
+          for i,page in enumerate(r.pages):
+              assert abs(float(page.mediabox.width)-595.2756)<1
+              assert abs(float(page.mediabox.height)-841.8898)<1
+              assert len(page.extract_text())>350
+              print("PAGE_A4_TEXT_OK",i+1,len(page.extract_text()))
+          text="\n".join(p.extract_text() for p in r.pages)
+          for phrase in ["APUESTAS","ONLINE","0800-444-4000","Una actividad de 15 minutos","Orientación para familias","VOLVÉ"]:
+              assert phrase in text, phrase
+          uris=[]
+          for page in r.pages:
+              for a in page.get("/Annots",[]):
+                  act=a.get_object().get("/A")
+                  if act and act.get("/URI"): uris.append(str(act["/URI"]))
+          assert any("volve-web.onrender.com/escuelas" in u for u in uris)
+          assert any("unicef.org" in u for u in uris)
+          assert any("jug-anon.org.ar" in u for u in uris)
+          assert not any("casino" in u or "bet." in u for u in uris)
+          print("VOLVE_SCHOOL_KIT_PDF_VALIDATED",len(uris),p.stat().st_size)
+          PY
+      - name: Compilar web y todas las rutas
+        run: |
+          cd site
+          npm install --no-audit --no-fund
+          npm run build
+          npx tsc --noEmit
+          cd ..
+          node site/scripts/test-school-kit.mjs
+          node site/scripts/test-og-static.mjs
+          node site/scripts/test-instagram-landing.mjs
+          node site/scripts/test-directory-reset-all.mjs
+          node site/scripts/test-directory-uncertainty.mjs
+      - name: Verificar que no se modificó el instalador
+        run: |
+          git diff --name-only origin/main...HEAD
+          if git diff --name-only origin/main...HEAD | grep -Ev '^(site/|\.github/workflows/volve-kit-educativo-ci\.yml)' ; then
+            echo "Cambio fuera del sitio VOLVÉ"; exit 1
+          fi
+          echo VOLVE_ONLY_WEB_AND_EDUCATION_OK
+      - name: Guardar el PDF generado solo en la rama de prueba
+        run: |
+          git config user.name "VOLVÉ School Kit Builder"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add site/public/kit-escolar-volve.pdf
+          if ! git diff --cached --quiet; then
+            git commit -m "VOLVÉ: kit educativo A4 PDF reproducible y verificado"
+            git push origin "HEAD:${GITHUB_REF_NAME}"
+          fi

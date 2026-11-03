@@ -30,6 +30,7 @@ export function SiteFooter() {
           <ul className="space-y-3 text-sm">
             <li><Link to="/proyecto" className="hover:underline">Qué es VOLVÉ</Link></li>
             <li><Link to="/educacion" className="hover:underline">Educación</Link></li>
+            <li><Link to="/escuelas" className="hover:underline">Kit para escuelas y familias</Link></li>
             <li><Link to="/centros-y-reuniones" className="hover:underline">Centros y reuniones PBA</Link></li>
             <li><Link to="/colabora" className="inline-flex items-center gap-2 rounded-xl bg-warm px-4 py-2.5 font-bold text-accent-foreground hover:opacity-90"><HeartHandshake className="h-5 w-5" aria-hidden="true"/> Colaborá con VOLVÉ</Link></li>
             <li><Link to="/preguntas" className="hover:underline">Preguntas frecuentes</Link></li>

@@ -1,5 +1,5 @@
-import { createFileRoute } from "@tanstack/react-router";
-import { Sparkles } from "lucide-react";
+import { createFileRoute, Link } from "@tanstack/react-router";
+import { Sparkles, Download, School } from "lucide-react";
 import { PageHero, SectionTitle, meta } from "@/components/ui-bits";
 import { notes, upcoming } from "@/content/education";
 import { SupportStrip } from "@/components/SupportStrip";
@@ -14,6 +14,12 @@ function Educacion() {
   return (
     <>
       <PageHero eyebrow="Educación" title="Entender ayuda a cuidarse" intro="Mini notas sobrias, pensadas para compartir con amistades, familias y escuelas." />
+      <section className="container-v pt-12">
+        <div className="flex flex-col gap-5 rounded-3xl border border-border bg-sage-soft p-7 md:flex-row md:items-center md:justify-between md:p-9">
+          <div className="max-w-2xl"><span className="inline-flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-sage"><School aria-hidden="true" className="h-4 w-4" /> Para escuelas y familias</span><h2 className="mt-3 text-2xl font-bold text-primary">Kit gratuito de prevención para imprimir</h2><p className="mt-3 text-sm leading-relaxed text-muted-foreground">Afiche A4, actividad de 15 minutos para secundaria y orientación para familias. Basado en fuentes públicas; sin registros ni publicidad.</p></div>
+          <Link to="/escuelas" className="inline-flex min-h-12 shrink-0 items-center justify-center gap-2 rounded-full bg-primary px-5 py-3 font-semibold text-primary-foreground"><Download aria-hidden="true" className="h-5 w-5"/> Ver y descargar el kit</Link>
+        </div>
+      </section>
       <section className="container-v py-12">
         <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
           {notes.map((n, i) => (
