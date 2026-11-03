@@ -30,13 +30,13 @@ func TestWindowsResidentProcessEvidenceUsesReadOnlySystemCommands(t *testing.T){
  query:=func(_ context.Context,script string)(string,error){
   called++
   for _,need:=range []string{
-   "Get-ScheduledTask","Win32_Process","GetOwnerSid","Get-FileHash","Get-NetUDPEndpoint",
+   "Get-ScheduledTask","Win32_Process","GetOwnerSid","[Security.Cryptography.SHA256]::Create()","[IO.File]::OpenRead($exe)","Get-NetUDPEndpoint",
    "ConvertTo-Json","VOLVE-DNS-SERVER-0270",
   }{
    if !strings.Contains(script,need){t.Fatalf("read-only observation lacks %s",need)}
   }
   for _,forbidden:=range []string{
-   "Register-ScheduledTask","Set-ScheduledTask","Start-ScheduledTask",
+   "Get-FileHash","Register-ScheduledTask","Set-ScheduledTask","Start-ScheduledTask",
    "Stop-ScheduledTask","Unregister-ScheduledTask",
   }{
    if strings.Contains(script,forbidden){t.Fatalf("unsafe command in observer: %s",forbidden)}
