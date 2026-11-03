@@ -3,6 +3,7 @@ import { useMemo, useState } from "react";
 import { PageHero, meta } from "@/components/ui-bits";
 import entries from "@/data/ayuda-pba.json";
 import { SupportStrip } from "@/components/SupportStrip";
+import { toDialHref } from "@/lib/phone-link";
 
 type Meeting = { dia: string; hora: string };
 type Resource = { tipo: "publico"|"ja"|"familias"; zona: string; localidad: string; nombre: string; lugar: string; direccion: string; horarios: Meeting[]; telefono?: string; nota?: string; verificacionPendiente?: "direccion"|"horarios"; fuente: string; fuenteAlternativa?: string };
@@ -68,7 +69,7 @@ function Directory(){
       <strong className="mt-2 block">{r.nombre}</strong>
       <p className="mt-2 text-sm text-muted-foreground">{r.lugar} · {r.direccion}</p>
       {r.verificacionPendiente==="horarios"?<p className="mt-3 rounded-xl border border-warm bg-warm-soft p-3 text-sm font-semibold text-accent-foreground">Días y horarios en conflicto entre fuentes oficiales. Consultá directamente con el grupo antes de ir.</p>:r.horarios.length?<p className="mt-3 text-sm">{r.horarios.map(h=>h.dia+" "+h.hora).join(" · ")}</p>:<p className="mt-3 text-sm text-muted-foreground">Consultá días y horarios de atención.</p>}
-      {r.telefono&&<p className="mt-3 text-sm">Teléfono: {r.telefono}</p>}
+      {r.telefono&&<PhoneContact number={r.telefono}/>}
       {r.nota&&<p className="mt-3 rounded-xl bg-warm-soft p-3 text-xs text-accent-foreground">{r.nota}</p>}
       <div className="mt-5 flex flex-wrap gap-3 text-sm font-semibold text-primary">
         <a href={r.fuente} target="_blank" rel="noopener noreferrer" className="underline">Fuente oficial ↗</a>
@@ -83,4 +84,16 @@ function Directory(){
   </section>
   <div className="container-v pb-12"><SupportStrip /></div>
  </>;
+}
+
+/** Botón voluntario: nunca reconstruimos números incompletos o solo de WhatsApp. */
+function PhoneContact({number}:{number:string}) {
+ const href=toDialHref(number);
+ return <p className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-2 text-sm">
+  <span>Teléfono: {number}</span>
+  {href&&<a href={href} aria-label={"Llamar al "+number}
+   className="inline-flex min-h-10 items-center rounded-full border border-primary px-4 py-2 font-semibold text-primary underline-offset-2 hover:bg-sage-soft focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary">
+   Llamar
+  </a>}
+ </p>;
 }

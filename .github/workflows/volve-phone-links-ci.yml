@@ -1,0 +1,48 @@
+name: VOLVÉ — contactos telefónicos móviles sin inferencias
+on:
+  push:
+    branches:
+      - 'feature/volve-contacto-telefonico-movil-20261103'
+    paths:
+      - 'site/src/lib/phone-link.ts'
+      - 'site/src/routes/centros-y-reuniones.tsx'
+      - 'site/scripts/test-phone-links.mjs'
+      - '.github/workflows/volve-phone-links-ci.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Instalar dependencias con compatibilidad
+        run: |
+          cd site
+          npm install --no-audit --no-fund
+      - name: Probar el helper real y la integridad del directorio
+        run: |
+          node site/scripts/test-phone-links.mjs
+          node site/scripts/test-directory-uncertainty.mjs
+          node site/scripts/test-family-deeplink.mjs
+          node site/scripts/test-instagram-landing.mjs
+      - name: Build/TypeScript/metadatos
+        run: |
+          cd site
+          npm run build
+          npx tsc --noEmit
+          cd ..
+          node site/scripts/test-og-static.mjs
+      - name: Asegurar que no se tocó el instalador
+        run: |
+          git diff --name-only origin/main...HEAD
+          if git diff --name-only origin/main...HEAD | grep -Ev '^(site/|.github/workflows/volve-phone-links-ci.yml)' ; then
+            echo 'Cambio fuera de VOLVÉ web'; exit 1
+          fi
+          echo VOLVE_PHONE_LINKS_CI_OK
