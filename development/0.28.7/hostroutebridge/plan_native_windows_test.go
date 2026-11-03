@@ -4,6 +4,7 @@ package hostroutebridge
 
 import (
     "context"
+    "strings"
     "testing"
     "time"
 
@@ -34,4 +35,28 @@ func TestSignedPackageRealWindowsRouteProducesNonAuthorizingPlan(t *testing.T) {
         t.Fatalf("read-only installation preview gained write capabilities: %+v",plan)
     }
     t.Logf("PASS VOLVE_WIN_SETUP_PLAN_LAB route=%s mode=%s NO_INSTALL NO_DNS_CHANGE",review.Route,plan.Mode)
+}
+
+func TestSignedHostPlanRefusesWrongPublisherBeforeHostInspection(t *testing.T) {
+    fixture:=labEvidence(t)
+    root:=t.TempDir()
+    wrongCert:=strings.Repeat("0",64)
+    if wrongCert==fixture.certPin {wrongCert=strings.Repeat("1",64)}
+    readers:=motorupdate.DefaultWindowsMotorRouteInspectors()
+    realAdmin:=readers.Host.Admin
+    if realAdmin==nil{t.Fatal("native Windows admin reader missing")}
+    count:=0
+    readers.Host.Admin=func(ctx context.Context, query string)([]byte,error){
+        count++
+        return realAdmin(ctx,query)
+    }
+    ctx,cancel:=context.WithTimeout(context.Background(),60*time.Second)
+    defer cancel()
+    review,plan,err:=InspectAndPlanWindowsHostReadOnly(
+        ctx,fixture.exe,fixture.key,wrongCert,fixture.exePin,root,readers)
+    if err==nil||count!=0||review.Component!=""||plan.Mode!=""||
+        plan.SignedPackageVerified||review.WindowsPublisherAndPackageVerified{
+        t.Fatalf("untrusted release reached Windows inspection or returned a plan: scans=%d, review=%+v, plan=%+v, error=%v",count,review,plan,err)
+    }
+    t.Log("PASS VOLVE_UNTRUSTED_EXE_REJECTED_BEFORE_WINDOWS_INVENTORY")
 }
