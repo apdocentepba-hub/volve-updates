@@ -95,6 +95,13 @@ function Instagram() {
             </span>
             <ArrowRight aria-hidden="true" className="h-5 w-5 shrink-0" />
           </a>
+          <a
+            href="/centros-y-reuniones?tipo=familias#buscar"
+            className="inline-flex min-h-12 w-full items-center justify-center gap-2 rounded-full border border-primary bg-card px-5 py-3 text-center font-semibold text-primary transition hover:bg-secondary"
+          >
+            Ver los 4 recursos para familiares en PBA
+            <ArrowRight aria-hidden="true" className="h-5 w-5 shrink-0" />
+          </a>
         </div>
 
         <section className="mt-8 rounded-3xl border border-sage/60 bg-sage-soft p-6" aria-labelledby="compartir-ayuda">
