@@ -61,3 +61,55 @@ func TestWindowsNativeProtectedMotorStagingRealNTFS(t *testing.T) {
  }
  t.Log("PASS: real WinNTFS DACL SYSTEM+Admins, publisher-signed create-only motor staging, no receipt/DNS/tasks, no overwrite")
 }
+
+
+func TestWindowsNativeProtectedMotorStageRootAndLease(t *testing.T){
+ if os.Getenv("GITHUB_ACTIONS")!="true"||os.Getenv("RUNNER_ENVIRONMENT")!="github-hosted"{
+  t.Fatal("protected motor installation root integration is restricted to hosted Windows CI")
+ }
+ if !isAdmin(){t.Fatal("protected motor staging requires an elevated Windows administrator")}
+ root:=filepath.Join(t.TempDir(),"VOLVE-CI-Only-Installed-Root")
+ if err:=os.Mkdir(root,0700);err!=nil{t.Fatal(err)}
+ signed,pub:=prepareSignedLabCandidate(t,t.TempDir())
+ ctx:=context.Background()
+ installed,err:=stageSignedMotorWithProtectedWindowsLease(ctx,root,signed,pub)
+ if err!=nil{t.Fatalf("native signed motor stage failed to initialize protected root: %v",err)}
+ inventory:=filepath.Join(root,"installed-engines")
+ if _,err:=os.Lstat(inventory);err!=nil{t.Fatal(err)}
+ _,acl,err:=nativeProtectedMotorTargetOpsForRoot(root);if err!=nil{t.Fatal(err)}
+ for _,path:=range []string{inventory,filepath.Dir(installed),installed,installed+".json",installed+".sig"}{
+  if err:=acl.VerifyProtected(path);err!=nil{
+   t.Fatalf("new inventory or signed installed bundle ACL weak: path=%s error=%v",path,err)
+  }
+ }
+ verified,err:=motorupdate.VerifyStaged(installed,pub)
+ if err!=nil||verified.Version!="0.28.7"{t.Fatalf("signed native staged copy invalid: %+v %v",verified,err)}
+ if _,err:=motorupdate.InspectInstalledEngine(inventory,pub);!errors.Is(err,motorupdate.ErrUnregisteredEngine){
+  t.Fatalf("stage-only CLI helper falsely recorded motor as running/installed: %v",err)
+ }
+ if _,err:=stageSignedMotorWithProtectedWindowsLease(ctx,root,signed,pub);err==nil{
+  t.Fatal("native duplicate signed stage overwrote existing motor")
+ }
+ // Fresh shared mutex availability after staging proves no OS lease leak.
+ release,err:=motorupdate.AcquireProtectedResidentTransitionLease(ctx)
+ if err!=nil||release==nil{t.Fatalf("native signed stage leaked protected kernel lease: %v",err)}
+ release()
+ badRoot:=filepath.Join(t.TempDir(),"VOLVE-CI-No-Signature")
+ if err:=os.Mkdir(badRoot,0700);err!=nil{t.Fatal(err)}
+ if _,err:=stageSignedMotorWithProtectedWindowsLease(ctx,badRoot,signed,make(ed25519.PublicKey,ed25519.PublicKeySize));err==nil{
+  t.Fatal("untrusted publisher signing key was accepted for native root initialization")
+ }
+ if _,err:=os.Lstat(filepath.Join(badRoot,"installed-engines"));!errors.Is(err,os.ErrNotExist){
+  t.Fatalf("bad publisher signature created protected installed-engines root: %v",err)
+ }
+ weakRoot:=filepath.Join(t.TempDir(),"VOLVE-CI-Inherited-ACL")
+ if err:=os.Mkdir(weakRoot,0700);err!=nil{t.Fatal(err)}
+ if err:=os.Mkdir(filepath.Join(weakRoot,"installed-engines"),0700);err!=nil{t.Fatal(err)}
+ if _,err:=stageSignedMotorWithProtectedWindowsLease(ctx,weakRoot,signed,pub);err==nil{
+  t.Fatal("unsealed preexisting inventory ACL incorrectly accepted")
+ }
+ if _,err:=os.Lstat(filepath.Join(weakRoot,"installed-engines","motor-0.28.7"));!errors.Is(err,os.ErrNotExist){
+  t.Fatalf("unsafe NTFS inventory created signed engine before ACL rejection: %v",err)
+ }
+ t.Log("PASS: native OS mutex and protected inventory create-only init, publisher signature mandatory, no engine receipt, no DNS/task operations")
+}
