@@ -65,3 +65,6 @@ jobs:
           if($LASTEXITCODE -eq 0){throw 'Modified ZIP was accepted'}
           Write-Host $result
           Write-Host 'PASS: packed Windows PE executed verified signed synthetic bundle; tampering rejected; NO INSTALL'
+          # The expected rejected EXE exits nonzero; clear that LASTEXITCODE
+          # only after proving the rejection or GitHub marks this step failed.
+          exit 0
