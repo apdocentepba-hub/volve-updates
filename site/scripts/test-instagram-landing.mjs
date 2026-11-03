@@ -19,5 +19,19 @@ assert.match(route, /no hay instalador público estable/i);
 assert.match(route, /No reemplaza la atención profesional/);
 assert.match(route, /No requiere crear una cuenta/);
 assert.match(route, /VOLVÉ es una iniciativa independiente/);
+
+const shareIndex=route.indexOf("Compartí estos recursos de ayuda");
+assert.ok(shareIndex>centersIndex && shareIndex<projectIndex,"La opción voluntaria de compartir no debe desplazar los recursos de ayuda");
+assert.match(route, /Compartir por WhatsApp/);
+assert.match(route, /https:\/\/wa\.me\/\?text=/);
+assert.match(route, /encodeURIComponent\(shareText\)/);
+assert.match(route, /target="_blank"/);
+assert.match(route, /rel="noopener noreferrer"/);
+assert.match(route, /navigator\.clipboard\.writeText\(PAGE_URL\)/);
+assert.match(route, /onClick=\{copyHelpLink\}/);
+assert.match(route, /no accede a tus contactos ni envía mensajes por tu cuenta/);
+assert.match(route, /role="status" aria-live="polite"/);
+assert.match(route, /Enlace copiado. Compartilo solo si vos querés./);
+
 assert.doesNotMatch(route,/fetch\(|sendBeacon|localStorage|sessionStorage|document\.cookie|window\.location|utm_source|formsubmit|mercadopago|cafecito|casino|bet\.ar/i);
-console.log("VOLVE_INSTAGRAM_LANDING_STATIC_OK",12);
+console.log("VOLVE_INSTAGRAM_LANDING_STATIC_OK",23);
