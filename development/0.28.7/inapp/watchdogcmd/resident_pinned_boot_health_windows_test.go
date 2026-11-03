@@ -90,12 +90,18 @@ func TestPinnedBootHealthQueriesLiveTaskProcessAndBothDNS53Owners(t *testing.T){
    required:=[]string{
     "WindowsIdentity", "S-1-5-18","Get-ScheduledTask",
     "VOLVE-DNS-SERVER-0270","$t.State -ne 'Running'",
-    "--dns-service","Get-FileHash","Win32_Process","GetOwnerSid",
+    "--dns-service","[IO.File]::OpenRead($old)","[Security.Cryptography.SHA256]::Create()","Win32_Process","GetOwnerSid",
     "Get-NetUDPEndpoint","127.0.0.1","::1","OwningProcess",
     "VOLVE_ORIGINAL_SYSTEM_DNS53_IDENTITY_VERIFIED",
    }
    for _,token:=range required{
     if !strings.Contains(script,token){t.Errorf("health OS probe missing %q",token)}
+   }
+   if strings.Contains(script,"Get-FileHash") {
+    t.Error("watchdog health must not depend on missing Get-FileHash cmdlet")
+   }
+   if !strings.Contains(script,"finally{$handle.Dispose();$hasher.Dispose()}") {
+    t.Error("watchdog identity check did not dispose native SHA256 file handle")
    }
    if !strings.Contains(script,intent.LegacySHA256) {
     t.Error("health OS identity script omitted original hash binding")
