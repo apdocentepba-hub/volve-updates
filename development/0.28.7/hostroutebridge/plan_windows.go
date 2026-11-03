@@ -83,8 +83,8 @@ func PlanFromVerifiedReview(ctx context.Context, review Review) (InstallerPlanRe
         notes="Catalog-only means preserve the independently verified scheduled catalog task."
     case motorupdate.MotorRouteLegacyReview:
         mode=PlanLegacy
-        steps=[]string{"attest-exact-legacy-exe-task-SYSTEM-and-port53","require-one-time-signed-0286-to-0287-migration-permit","prove-original-task-XML-and-motor-SHA256"}
-        notes="Existing 0.28.6-style motor must remain running until a separate authorized protected transition is ready."
+        steps=[]string{"attest-exact-legacy-exe-task-SYSTEM-and-port53","require-one-time-signed-legacy-to-0287-migration-permit-with-exact-origin-SHA256","prove-original-task-XML-and-motor-SHA256"}
+        notes="Existing legacy motor must remain running until a separate authorized protected transition is ready."
     case motorupdate.MotorRouteManagedReview:
         mode=PlanManaged
         steps=[]string{"verify-installed-signed-motor-receipt","validate-version-compatibility-and-upgrade-lease","preserve-original-version-for-watchdog-rollback"}
