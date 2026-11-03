@@ -1,0 +1,98 @@
+name: VOLVE 0.28.7 Centre+Updater actual Windows integration (FAST, NO RELEASE)
+on:
+  pull_request:
+    branches: [feature/motor-updater-0287-pilot]
+    paths:
+      - 'development/0.28.7/inapp/**'
+      - '.github/workflows/volve-0287-centre-updater-fast-pr.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: volve-0287-centre-fast-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  windows-real-centre-compile:
+    runs-on: windows-latest
+    timeout-minutes: 13
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.x'
+      - name: Prove Windows is disposable and has no productive VOLVE DNS tasks
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          if($env:GITHUB_ACTIONS -ne 'true' -or $env:RUNNER_ENVIRONMENT -ne 'github-hosted'){throw 'Not isolated CI'}
+          foreach($name in @('VOLVE-DNS-SERVER-0270','VOLVE-DNS-RESCUE-0270','VOLVE-CATALOGO-0230')){
+            if(Get-ScheduledTask -TaskName $name -ErrorAction SilentlyContinue){throw 'Production task detected: refusing build'}
+          }
+      - name: Reconstruct exact authenticated original Centro and overlays
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          @'
+          import hashlib,zipfile,shutil
+          from pathlib import Path
+          root=Path("development/0.28.7")
+          parts=sorted((root/"complete-source-parts").glob("part-*.bin"))
+          assert [p.name for p in parts]==[f"part-{i:02d}.bin" for i in range(10)]
+          payload=b"".join(p.read_bytes() for p in parts)
+          assert hashlib.sha256(payload).hexdigest()=="92b3536559151260375b17a64eedd009df8399e45460637208027b7ca0587ba5"
+          Path("source.zip").write_bytes(payload)
+          Path("build").mkdir(exist_ok=True)
+          with zipfile.ZipFile("source.zip") as z:z.extractall("build")
+          for name,digest in (
+            ("VOLVE_0287_PRECHECK_RESCATE_OVERLAY_NO_INSTALAR.zip","fdfd31f21df81fe6da6075bfd442354297874576b6dc2c38f19bd35a681d95cd"),
+            ("VOLVE_0287_RECUPERACION_INTERRUPCION_FORZADA_NO_INSTALAR_v3.zip","773bd5eb5f1c4883021cc321856636354e964d3605dba9017e2fb5d1a7401b40")
+          ):
+            p=root/name
+            assert hashlib.sha256(p.read_bytes()).hexdigest()==digest
+            with zipfile.ZipFile(p) as z:z.extractall("build")
+          for p in (root/"journal").glob("*.go"):
+            shutil.copy2(p,Path("build/codigo/motorupdate")/p.name)
+          '@ | python -
+          if($LASTEXITCODE -ne 0){throw 'Authenticated source archive reconstruction failed'}
+          go run development/0.28.7/inapp/apply_overlay.go build/codigo
+          if($LASTEXITCODE -ne 0){throw 'Authenticated source overlay failed'}
+      - name: Focused actual Centro, signed update button and production mutex contract
+        shell: pwsh
+        working-directory: build/codigo
+        run: |
+          $ErrorActionPreference='Stop'
+          $required=@(
+            'TestMergeUpdateReportsPreservesPanelInstallMarker',
+            'TestMergeUpdateReportsNoPanelCandidate',
+            'TestPreparedSignedMigrationValidIsReadOnlyAndNeverClaimsInstalled',
+            'TestMotorMigrationStatusUsesSignedPermitInsteadOfMissingOldVersion',
+            'TestInstalledPublisherReviewBridgeRequiresRepeatedLiveSYSTEMTaskXMLAndDNS'
+          )
+          $listed=@(go test . -list '^Test')
+          if($LASTEXITCODE -ne 0){throw 'Centre tests did not compile'}
+          foreach($name in $required){
+            if(-not ($listed -contains $name)){throw ('REQUIRED Centro test not compiled: '+$name)}
+          }
+          go test . -run '^Test(MergeUpdateReports|PreparedSignedMigration|MotorMigrationStatus|InstalledPublisherReview)' -count=1 -timeout 5m
+          if($LASTEXITCODE -ne 0){throw 'Centro signed migration/inapp tests failed'}
+          go test ./motorupdate -run '^(TestProtectedBoot|TestProtectedSigned|TestPublisherBoundBootEvidence|TestPublisherBoundBootFinalizer|TestDurablePublisherBootEvidence)' -count=1 -timeout 5m
+          if($LASTEXITCODE -ne 0){throw 'Protected signed bridge tests failed'}
+          go vet . ./motorupdate
+          if($LASTEXITCODE -ne 0){throw 'Centre updater vet failed'}
+      - name: Build and inspect real integrated Win64 GUI (NO DISTRIBUTION)
+        shell: pwsh
+        working-directory: build/codigo
+        run: |
+          $ErrorActionPreference='Stop'
+          $env:CGO_ENABLED='0'
+          $file=Join-Path $env:RUNNER_TEMP 'VOLVE_0287_Centro_Updater_LAB_NO_INSTALAR.exe'
+          go build -trimpath -ldflags '-H windowsgui' -o $file .
+          if($LASTEXITCODE -ne 0){throw 'Real Centro+Updater Win64 build failed'}
+          $meta=Get-Item -LiteralPath $file -ErrorAction Stop
+          if($meta.Length -lt 1048576){throw 'Windows GUI is incomplete'}
+          $handle=[IO.File]::OpenRead($file)
+          try{$a=$handle.ReadByte();$b=$handle.ReadByte()}finally{$handle.Dispose()}
+          if($a -ne 77 -or $b -ne 90){throw 'Result is not a PE executable'}
+          $h=(Get-FileHash -Algorithm SHA256 -LiteralPath $file).Hash.ToLowerInvariant()
+          Write-Host ('PASS: compile actual Centro+Updater 0.28.7 for Windows; bytes='+$meta.Length+' SHA256='+$h)
+          Write-Host 'NO RELEASE, NO INSTALLER, NO FILE DISTRIBUTION, NO DNS/TASK MODIFICATIONS'
