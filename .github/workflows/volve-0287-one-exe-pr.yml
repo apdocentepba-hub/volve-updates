@@ -1,0 +1,67 @@
+name: VOLVE one-EXE signed bundle lab (NO RELEASE)
+on:
+  pull_request:
+    branches: [feature/motor-updater-0287-pilot]
+    paths:
+      - 'development/0.28.7/singlefile-*'
+      - 'development/0.28.7/unifiedbundle/**'
+      - '.github/workflows/volve-0287-one-exe-pr.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  verify-windows-exe:
+    runs-on: windows-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.x'
+      - name: Validate exact Go source archive
+        shell: pwsh
+        run: |
+          @'
+          import hashlib, tarfile
+          from pathlib import Path
+          root=Path("development/0.28.7")
+          path=root/"singlefile-src.tar.xz"
+          assert hashlib.sha256(path.read_bytes()).hexdigest()=="01294e1d5ce51928098d30bd90f04b7979e1764993d4b419c66489b67676e215"
+          with tarfile.open(path,"r:xz") as a:
+              for item in a.getmembers():
+                  parts=Path(item.name).parts
+                  assert item.isfile() and parts[0]=="singlefile" and ".." not in parts
+                  dest=root/item.name
+                  dest.parent.mkdir(parents=True,exist_ok=True)
+                  dest.write_bytes(a.extractfile(item).read())
+          '@ | python -
+          if($LASTEXITCODE -ne 0){throw 'Source archive hash or path invalid'}
+      - name: Test, analyze, compile and execute one EXE in Windows
+        shell: pwsh
+        working-directory: development/0.28.7/singlefile
+        run: |
+          $ErrorActionPreference='Stop'
+          if($env:RUNNER_ENVIRONMENT -ne 'github-hosted'){throw 'Not an isolated runner'}
+          go test -count=1 ./...
+          if($LASTEXITCODE -ne 0){throw 'Go test failed'}
+          go vet ./...
+          if($LASTEXITCODE -ne 0){throw 'Go vet failed'}
+          $fixture=Join-Path $env:RUNNER_TEMP 'singlefile-fixture'
+          $pub=(go run ./cmd/fixture --out $fixture | Select-Object -Last 1).Trim()
+          if($LASTEXITCODE -ne 0 -or $pub.Length -ne 64){throw 'CI fixture failed'}
+          $boot=Join-Path $env:RUNNER_TEMP 'VOLVE_Boot_LAB.exe'
+          $out=Join-Path $env:RUNNER_TEMP 'VOLVE_Setup_LAB_NO_INSTALAR.exe'
+          go build -ldflags "-X main.trustedKeyHex=$pub" -o $boot ./cmd/bootstrapper
+          if($LASTEXITCODE -ne 0){throw 'Windows executable build failed'}
+          go run ./cmd/assemble --bootstrapper $boot --bundle $fixture --out $out --pubkey $pub
+          if($LASTEXITCODE -ne 0){throw 'Single EXE assembly failed'}
+          $result=(& $out --verify-bundle | Out-String)
+          if($LASTEXITCODE -ne 0 -or $result -notmatch 'PASS VOLVE_SINGLEFILE_SIGNED_BUNDLE release=0.28.7 items=8 NO_INSTALL'){throw 'Windows EXE self-verification failed'}
+          $bytes=[IO.File]::ReadAllBytes($out)
+          $bytes[$bytes.Length-57] = $bytes[$bytes.Length-57] -bxor 1
+          $corrupt=Join-Path $env:RUNNER_TEMP 'VOLVE_corrupt_LAB.exe'
+          [IO.File]::WriteAllBytes($corrupt,$bytes)
+          $reject=(& $corrupt --verify-bundle 2>&1 | Out-String)
+          if($LASTEXITCODE -eq 0){throw 'Modified ZIP was accepted'}
+          Write-Host $result
+          Write-Host 'PASS: packed Windows PE executed verified signed synthetic bundle; tampering rejected; NO INSTALL'
