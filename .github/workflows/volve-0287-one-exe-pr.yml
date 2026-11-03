@@ -4,6 +4,7 @@ on:
     branches: [feature/motor-updater-0287-pilot]
     paths:
       - 'development/0.28.7/singlefile-*'
+      - 'development/0.28.7/authenticode-source/**'
       - 'development/0.28.7/unifiedbundle/**'
       - '.github/workflows/volve-0287-one-exe-pr.yml'
   workflow_dispatch:
@@ -61,6 +62,13 @@ jobs:
                   target=root/'singlefile'/e.name
                   assert not target.exists()
                   target.write_bytes(archive.extractfile(e).read())
+          # The readable reviewable Go source overrides only its exact path.
+          # Keep binary archived fixture tests intact and pinned by SHA256.
+          source=root/'authenticode-source/authenticode_windows.go'
+          target=root/'singlefile/authenticode_windows.go'
+          assert source.is_file() and target.is_file()
+          assert b'EncodedCommand' in source.read_bytes()
+          target.write_bytes(source.read_bytes())
           '@ | python -
           if($LASTEXITCODE -ne 0){throw 'Publisher trust overlay rejected'}
       - name: Build and integrity-check unsigned CI-only container
