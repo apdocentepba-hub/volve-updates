@@ -12,6 +12,7 @@ await page.route(/(?:visitor-badge\.one9x\.com|fonts\.googleapis\.com|fonts\.gst
 try{
  let r=await page.goto(base+"/preguntas",{waitUntil:"domcontentloaded"});
  assert.equal(r?.status(),200);
+ await page.locator("details").first().waitFor({state:"visible",timeout:15000});
  const faq=page.locator("details").filter({hasText:"¿Puedo aportar?"});
  assert.equal(await faq.count(),1);
  await faq.locator("summary").click();
@@ -32,7 +33,9 @@ try{
 
  r=await page.goto(base+"/centros-y-reuniones",{waitUntil:"domcontentloaded"});
  assert.equal(r?.status(),200);
- const strip=await page.getByRole("complementary",{name:"Colaborar con el proyecto VOLVÉ"}).innerText();
+ const stripElement=page.getByRole("complementary",{name:"Colaborar con el proyecto VOLVÉ"});
+ await stripElement.waitFor({state:"visible",timeout:15000});
+ const strip=await stripElement.innerText();
  assert.match(strip,/Los aportes económicos son voluntarios/);
  assert.doesNotMatch(strip,/todavía no están habilitados/);
  console.log("VOLVE_SUPPORT_STRIP_BROWSER_OK");
