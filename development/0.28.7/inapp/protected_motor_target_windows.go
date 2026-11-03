@@ -50,6 +50,16 @@ func nativeProtectedMotorTargetOps()(string,motorupdate.ProtectedTargetFileOps,e
  if !isAdmin(){return "",empty,errors.New("motor target preparation requires elevated administrator")}
  installed,err:=installRoot()
  if err!=nil{return "",empty,fmt.Errorf("installed VOLVE root unavailable: %w",err)}
+ return nativeProtectedMotorTargetOpsForRoot(installed)
+}
+
+// Native ACL verification is factored independently from the installed-root
+// resolver so Windows CI can exercise the EXACT production DACL callbacks
+// against a disposable temporary directory without impersonating an actual
+// VOLVE installation or creating a productive motor.
+func nativeProtectedMotorTargetOpsForRoot(installed string)(string,motorupdate.ProtectedTargetFileOps,error){
+ var empty motorupdate.ProtectedTargetFileOps
+ if !isAdmin(){return "",empty,errors.New("motor target preparation requires elevated administrator")}
  if !filepath.IsAbs(installed)||filepath.Clean(installed)!=installed{
   return "",empty,errors.New("installed motor root is not canonical")
  }
