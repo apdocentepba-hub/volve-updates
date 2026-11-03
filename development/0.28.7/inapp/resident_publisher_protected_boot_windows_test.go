@@ -81,6 +81,17 @@ func TestPublisherBoundProtectedBootRequiresSignerAndCopiesGrant(t *testing.T){
  evidence.SignedPermit[0]='!'
  evidence.Signature[0]='!'
  evidence.PublisherKey[0]=0
+ // Valid publisher evidence alone must never bypass the protected OS-wide
+ // lease. This check previously invoked VerifySealedOriginal directly.
+ if err:=driver.VerifySealedOriginal(context.Background(),state.Intent);err==nil{
+  t.Fatal("publisher proof read allowed without owning protected mutex")
+ }
+ if err:=driver.RestoreOriginal(context.Background(),state.Intent);err==nil||ops.restored!=0{
+  t.Fatalf("publisher-bound restorer bypassed Windows mutex: %v ops=%+v",err,ops)
+ }
+ unlock,err:=driver.AcquireExclusive(context.Background())
+ if err!=nil{t.Fatal(err)}
+ defer unlock()
  if err:=driver.VerifySealedOriginal(context.Background(),state.Intent);err!=nil{
   t.Fatalf("immutable signed authority changed via mutable caller slices: %v",err)
  }
