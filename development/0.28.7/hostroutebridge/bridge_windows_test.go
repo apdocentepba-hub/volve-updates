@@ -110,3 +110,59 @@ func TestSignedBridgeRejectsCancellationAndRelativePath(t *testing.T) {
         fixture.certPin,fixture.exePin,t.TempDir(),motorupdate.DefaultWindowsMotorRouteInspectors())
     if err==nil||review.Component!=""{t.Fatalf("relative PE allowed: %+v",review)}
 }
+
+
+func TestLegacyMotorFileCannotBeMisclassifiedAsFresh(t *testing.T) {
+    fixture := labEvidence(t)
+    root := t.TempDir()
+    // A synthetic legacy file is enough to disqualify a "clean" host even
+    // without a task. DO NOT register or execute any real legacy service.
+    if err:=os.WriteFile(filepath.Join(root,"VOLVE_DNS_Server_0270.exe"),
+        []byte("VOLVE LAB LEGACY FILE ONLY NOT EXECUTABLE"),0600);err!=nil{t.Fatal(err)}
+    ctx,cancel:=context.WithTimeout(context.Background(),90*time.Second)
+    defer cancel()
+    report,err:=ReviewReadOnly(ctx,fixture.exe,fixture.key,fixture.certPin,fixture.exePin,
+        root,motorupdate.DefaultWindowsMotorRouteInspectors())
+    if err!=nil{t.Fatal(err)}
+    if report.Route!=motorupdate.MotorRouteConflictingResidue||
+        report.InstallAuthorized||report.UpgradeAuthorized||report.CanModifyDNS {
+        t.Fatalf("legacy motor file incorrectly treated as fresh or writable: %+v",report)
+    }
+    t.Log("PASS VOLVE_LEGACY_MOTOR_NOT_FRESH REVIEW_ONLY NO_INSTALL")
+}
+
+func TestBridgeRejectsPEAlteredDuringWindowsInventory(t *testing.T) {
+    fixture:=labEvidence(t)
+    // Copy only a synthetic, disposable signed test PE; never modify the
+    // original CI fixture or any installed executable.
+    b,err:=os.ReadFile(fixture.exe)
+    if err!=nil{t.Fatal(err)}
+    copied:=filepath.Join(t.TempDir(),"VOLVE-CI-Signed-PE-Copy.exe")
+    if err:=os.WriteFile(copied,b,0600);err!=nil{t.Fatal(err)}
+    root:=t.TempDir()
+    readers:=motorupdate.DefaultWindowsMotorRouteInspectors()
+    originalAdmin:=readers.Host.Admin
+    if originalAdmin==nil{t.Fatal("native Windows admin inspector missing")}
+    changed:=false
+    readers.Host.Admin=func(ctx context.Context,cmd string)([]byte,error){
+        if !changed {
+            changed=true
+            file,err:=os.OpenFile(copied,os.O_WRONLY|os.O_APPEND,0)
+            if err!=nil{return nil,err}
+            _,writeErr:=file.Write([]byte("CHANGED DURING LAB READ ONLY HOST CENSUS"))
+            closeErr:=file.Close()
+            if writeErr!=nil{return nil,writeErr}
+            if closeErr!=nil{return nil,closeErr}
+        }
+        return originalAdmin(ctx,cmd)
+    }
+    ctx,cancel:=context.WithTimeout(context.Background(),90*time.Second)
+    defer cancel()
+    report,err:=ReviewReadOnly(ctx,copied,fixture.key,fixture.certPin,fixture.exePin,
+        root,readers)
+    if !changed||err==nil||report.WindowsPublisherAndPackageVerified||
+        report.Component!=""||report.InventoriesChecked!=0 {
+        t.Fatalf("changed signed PE produced a route after a six-inventory scan: %+v, err=%v changed=%t",report,err,changed)
+    }
+    t.Log("PASS VOLVE_SIGNED_PE_TOCTOU_REJECTED NO_INSTALL")
+}
