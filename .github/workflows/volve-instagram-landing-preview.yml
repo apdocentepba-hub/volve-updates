@@ -26,8 +26,8 @@ jobs:
         run: |
           cd site
           npm install --no-audit --no-fund
-          npx tsc --noEmit
           npm run build
+          npx tsc --noEmit
       - name: Comprobar ruta directa y assets compilados
         run: |
           test -f site/dist/instagram/index.html
