@@ -1,0 +1,38 @@
+name: VOLVÉ — vista previa landing Instagram (sin deploy)
+on:
+  push:
+    branches:
+      - 'feature/volve-instagram-ayuda-landing-20261103'
+    paths:
+      - 'site/src/routes/instagram.tsx'
+      - 'site/scripts/route-fallback.mjs'
+      - 'site/scripts/test-instagram-landing.mjs'
+      - '.github/workflows/volve-instagram-landing-preview.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Controles de privacidad y enlaces de ayuda
+        run: node site/scripts/test-instagram-landing.mjs
+      - name: Instalar dependencias, TypeScript y compilar sitio aislado
+        run: |
+          cd site
+          npm install --no-audit --no-fund
+          npm run build
+          npx tsc --noEmit
+      - name: Comprobar ruta directa y assets compilados
+        run: |
+          test -f site/dist/instagram/index.html
+          test -f site/dist/ayuda/index.html
+          test -f site/dist/centros-y-reuniones/index.html
+          test -f site/dist/index.html
+          grep -q '<div id="root">' site/dist/instagram/index.html
+          echo VOLVE_INSTAGRAM_PREVIEW_OK
