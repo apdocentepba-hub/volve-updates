@@ -1,0 +1,26 @@
+{
+  "brand": "VOLVÉ · Prevención",
+  "instagram": "@volveprevencion",
+  "landing": "https://volve-web.onrender.com/instagram",
+  "official_source": "https://loteria.gba.gob.ar/juego-compulsivo",
+  "official_help_phone": "0800-444-4000",
+  "resource_count": 45,
+  "resource_scope": "45 recursos del directorio VOLVÉ PBA; verificar horarios",
+  "software_status": "Windows en desarrollo; sin descarga pública estable",
+  "video": {
+    "name": "volve_ayuda_reel.mp4",
+    "bytes": 919989,
+    "sha256": "0ff6211ce93308a1bbdd963c25ad2d11deafa7275c144d4b0b0ef26dd503b805",
+    "duration": 16.3,
+    "width": 1080,
+    "height": 1920,
+    "fps": 30,
+    "audio": "música sintetizada original"
+  },
+  "story": {
+    "name": "volve_ayuda_story.jpg",
+    "bytes": 254717,
+    "sha256": "33841e5e2701fb0d575be70704aa204e1e072ca7d17e40026ec2922a3c5a7875"
+  },
+  "privacy": "No faces, personal data, clients, accounts, cookies, or health claims."
+}
