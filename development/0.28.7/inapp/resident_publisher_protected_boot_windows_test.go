@@ -7,6 +7,8 @@ import (
  "os"
  "path/filepath"
  "testing"
+ "sync"
+ "time"
 )
 
 type publisherBoundRecoveryOpsFixture struct{ verified,restored int }
@@ -95,4 +97,91 @@ func TestPublisherBoundProtectedBootRequiresSignerAndCopiesGrant(t *testing.T){
  if err:=driver.VerifySealedOriginal(context.Background(),state.Intent);err!=nil{
   t.Fatalf("immutable signed authority changed via mutable caller slices: %v",err)
  }
+}
+
+
+// The publisher signature, backup and journal must NOT be read, even by a
+// read-only verification, without the very same OS lease as the restoration.
+func TestPublisherBoundBootEvidenceRequiresLeaseBeforeAnyACLReader(t *testing.T){
+ residentProtectedCITest(t)
+ f:=makeSignedRecoveryFixture(t,false)
+ evidence:=makePublisherEvidence(f)
+ reads:=0
+ evidence.ProtectJournal=func(string)error{reads++;return nil}
+ evidence.ProtectBackup=func(string)error{reads++;return nil}
+ state,err:=InspectResidentRecoveryJournal(context.Background(),f.journal,func(string)error{return nil})
+ if err!=nil{t.Fatal(err)}
+ ops:=&publisherBoundRecoveryOpsFixture{}
+ driver,err:=NewPublisherBoundProtectedResidentBootDriver(ops,evidence)
+ if err!=nil{t.Fatal(err)}
+ if err:=driver.VerifySealedOriginal(context.Background(),state.Intent);err==nil{
+  t.Fatal("publisher evidence read without exclusive Windows mutex")
+ }
+ if err:=driver.RestoreOriginal(context.Background(),state.Intent);err==nil{
+  t.Fatal("publisher restore admitted without exclusive Windows mutex")
+ }
+ if reads!=0||ops.verified!=0||ops.restored!=0{
+  t.Fatalf("unlocked publisher evidence/operation leaked: ACL=%d operations=%+v",reads,ops)
+ }
+ unlock,err:=driver.AcquireExclusive(context.Background())
+ if err!=nil{t.Fatal(err)}
+ if err:=driver.VerifySealedOriginal(context.Background(),state.Intent);err!=nil{
+  unlock();t.Fatal(err)
+ }
+ unlock()
+ if reads==0||ops.verified!=1{t.Fatalf("signed verification never ran under native lease: ACL=%d ops=%+v",reads,ops)}
+ reads=0
+ if err:=driver.VerifySealedOriginal(context.Background(),state.Intent);err==nil||reads!=0{
+  t.Fatalf("publisher file read after mutex release: ACL=%d err=%v",reads,err)
+ }
+}
+
+// A finalizer must wait until signature/journal proof and the protected
+// underlying verification both finish, not release between these operations.
+func TestPublisherBoundBootFinalizerWaitsForSignedEvidence(t *testing.T){
+ residentProtectedCITest(t)
+ f:=makeSignedRecoveryFixture(t,false)
+ evidence:=makePublisherEvidence(f)
+ started:=make(chan struct{})
+ proceed:=make(chan struct{})
+ var once sync.Once
+ evidence.ProtectJournal=func(string)error{
+  once.Do(func(){close(started);<-proceed})
+  return nil
+ }
+ state,err:=InspectResidentRecoveryJournal(context.Background(),f.journal,func(string)error{return nil})
+ if err!=nil{t.Fatal(err)}
+ ops:=&publisherBoundRecoveryOpsFixture{}
+ driver,err:=NewPublisherBoundProtectedResidentBootDriver(ops,evidence)
+ if err!=nil{t.Fatal(err)}
+ ctx,cancel:=context.WithTimeout(context.Background(),9*time.Second)
+ defer cancel()
+ unlock,err:=driver.AcquireExclusive(ctx)
+ if err!=nil{t.Fatal(err)}
+ defer unlock()
+ verified:=make(chan error,1)
+ go func(){verified<-driver.VerifySealedOriginal(ctx,state.Intent)}()
+ select{
+ case <-started:
+ case <-ctx.Done():t.Fatal("publisher ACL proof did not start")
+ }
+ released:=make(chan struct{})
+ go func(){unlock();close(released)}()
+ select{
+ case <-released:t.Fatal("kernel mutex released during publisher signature/journal verification")
+ case <-time.After(150*time.Millisecond):
+ }
+ close(proceed)
+ select{
+ case err:=<-verified:if err!=nil{t.Fatal(err)}
+ case <-ctx.Done():t.Fatal("publisher proof hung")
+ }
+ select{
+ case <-released:
+ case <-ctx.Done():t.Fatal("publisher finalizer failed to release after verified proof")
+ }
+ newLease,err:=AcquireProtectedResidentTransitionLease(ctx)
+ if err!=nil{t.Fatalf("publisher verifier leaked native kernel mutex: %v",err)}
+ newLease()
+ if ops.verified!=1||ops.restored!=0{t.Fatalf("unexpected protected original operations: %+v",ops)}
 }
