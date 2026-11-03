@@ -296,7 +296,9 @@ jobs:
             foreach($name in @(
               'TestSixInventoryActualWindowsBridgeOnlyReturnsReview',
               'TestSignedBridgeRefusesWrongPinsAndMissingInventory',
-              'TestSignedBridgeRejectsCancellationAndRelativePath'
+              'TestSignedBridgeRejectsCancellationAndRelativePath',
+              'TestLegacyMotorFileCannotBeMisclassifiedAsFresh',
+              'TestBridgeRejectsPEAlteredDuringWindowsInventory'
             )){
               $passes=@($records | Where-Object {$_.Test -eq $name -and $_.Action -eq 'pass'})
               $skips=@($records | Where-Object {$_.Test -eq $name -and $_.Action -eq 'skip'})
