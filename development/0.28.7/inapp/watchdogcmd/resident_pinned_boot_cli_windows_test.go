@@ -8,6 +8,7 @@ import (
  "context"
  "errors"
  "os"
+ "regexp"
  "strings"
  "testing"
  "time"
@@ -41,8 +42,7 @@ func TestPinnedResidentBootCLIRefusesCancelledContext(t *testing.T){
 
 func TestPinnedRecoveryBootCLIHasNoUserControlledRootOrAutomaticTask(t *testing.T){
  src,err:=os.ReadFile("main_windows.go");if err!=nil{t.Fatal(err)}
- if !strings.Contains(string(src),
-  "len(os.Args)==2 && os.Args[1]==\"--recover-pinned-signed-boot\""){
+ if !regexp.MustCompile(`if\s+len\(os\.Args\)\s*==\s*2\s*&&\s*os\.Args\[1\]\s*==\s*"--recover-pinned-signed-boot"`).Match(src){
   t.Fatal("signed boot recovery command is absent or accepts user-controlled path arguments")
  }
  bridge,err:=os.ReadFile("resident_pinned_boot_cli_windows.go");if err!=nil{t.Fatal(err)}
