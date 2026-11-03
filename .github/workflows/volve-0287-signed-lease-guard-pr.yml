@@ -8,7 +8,10 @@ on:
       - 'development/0.28.7/inapp/resident_protected_signed_transaction_windows_test.go'
       - 'development/0.28.7/inapp/resident_protected_boot_driver_windows.go'
       - 'development/0.28.7/inapp/resident_protected_boot_driver_windows_test.go'
+      - 'development/0.28.7/inapp/resident_publisher_protected_boot_windows.go'
       - 'development/0.28.7/inapp/resident_publisher_protected_boot_windows_test.go'
+      - 'development/0.28.7/inapp/resident_durable_publisher_boot_windows.go'
+      - 'development/0.28.7/inapp/resident_durable_publisher_boot_windows_test.go'
       - 'development/0.28.7/inapp/apply_overlay.go'
       - 'development/0.28.7/inapp/resident_transition_lock_windows.go'
       - 'development/0.28.7/inapp/resident_transition_lock_windows_test.go'
@@ -81,11 +84,14 @@ jobs:
             'TestProtectedSignedFullTransactionCommitAndRecoveryUnderNativeMutex',
             'TestProtectedBootRefusesUnleasedOriginalOperations',
             'TestProtectedBootLeaseGatesVerifyRestoreAndRejectsStaleFinalizer',
-            'TestProtectedBootFinalizerWaitsForOriginalRestore'
+            'TestProtectedBootFinalizerWaitsForOriginalRestore',
+            'TestPublisherBoundBootEvidenceRequiresLeaseBeforeAnyACLReader',
+            'TestPublisherBoundBootFinalizerWaitsForSignedEvidence',
+            'TestDurablePublisherBootEvidenceRequiresLeaseBeforeDiskRead'
           )){
             if(-not ($tests -contains $required)){throw ('CRITICAL: mandatory Windows native mutex regression absent: '+$required)}
           }
-          go test ./motorupdate -run '^TestProtected(Signed|Boot|ResidentMutexReleaseOnDifferentGoroutine)' -count=1 -timeout 10m -v
+          go test ./motorupdate -run '^(TestProtected(Signed|Boot|ResidentMutexReleaseOnDifferentGoroutine)|TestPublisherBoundBoot|TestDurablePublisherBootEvidence)' -count=1 -timeout 10m -v
           if($LASTEXITCODE -ne 0){throw 'signed transition lock regression failed'}
           go vet ./motorupdate
           if($LASTEXITCODE -ne 0){throw 'Go vet found errors'}
