@@ -53,7 +53,7 @@ jobs:
           print('Authenticated source assembled; no real installation touched.')
           PY
           go run development/0.28.7/inapp/apply_overlay.go build/codigo
-      - name: Run signed disposable Windows task switch with actual independent SYSTEM watchdog and protected evidence
+      - name: Execute signed Windows CI task switch with actual independent SYSTEM watchdog
         shell: pwsh
         working-directory: build/codigo
         run: |
@@ -70,16 +70,10 @@ jobs:
           if($LASTEXITCODE -ne 0){throw 'Production switch and boot recovery did not share protected mutex'}
           go test ./cmd/volve-managed-watchdog -run '^(TestIndependentWatchdogUsesMigrationBootLockEvenForTerminalJournal|TestProtectedResidentBootPolicyUsesProductionMutexBeforeReadingJournal|TestProtectedBootPlanAuditWaitsForProductionUpdateMutex|TestIndependentBootAuditAcrossFreshProcesses|TestDurableWindowsGrant)' -count=1 -timeout 6m -v
           if($LASTEXITCODE -ne 0){throw 'Watchdog did not respect migration-held BootLock'}
-          $census=@(go test . -list '^TestWindowsSignedUnversionedMigrationWithActualSYSTEMRecovery
-          if($LASTEXITCODE -ne 0){throw 'Signed disposable SYSTEM transaction and watchdog rollback failed'}
-          Write-Host 'PASS: disposable signed migration + independent real SYSTEM watchdog rollback, no live VOLVE motor or production DNS touched.'
-)
+          $census=@(go test . -list '^TestWindowsSignedUnversionedMigrationWithActualSYSTEMRecovery$')
           if($LASTEXITCODE -ne 0 -or -not ($census -contains 'TestWindowsSignedUnversionedMigrationWithActualSYSTEMRecovery')){
             throw 'CRITICAL: actual SYSTEM signed migration E2E test missing from reconstructed Centro'
           }
-          go test . -run '^TestWindowsSignedUnversionedMigrationWithActualSYSTEMRecovery
+          go test . -run '^TestWindowsSignedUnversionedMigrationWithActualSYSTEMRecovery$' -count=1 -timeout 9m -v
           if($LASTEXITCODE -ne 0){throw 'Signed disposable SYSTEM transaction and watchdog rollback failed'}
-          Write-Host 'PASS: signed migration and separately compiled SYSTEM watchdog share BootLock without deadlock.'
- -count=1 -timeout 9m -v
-          if($LASTEXITCODE -ne 0){throw 'Signed disposable SYSTEM transaction and watchdog rollback failed'}
-          Write-Host 'PASS: signed migration and separately compiled SYSTEM watchdog share BootLock without deadlock.'
+          Write-Host 'PASS: disposable signed migration and independent real SYSTEM watchdog rollback; no installed VOLVE motor touched.'
