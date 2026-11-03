@@ -118,6 +118,22 @@ jobs:
             }
           }
           Write-Host 'PASS: native WinNTFS SYSTEM/Admin create-only root and signed bundle, actual shared kernel lock, no installed receipt, no DNS/task writes'
+          # Real compiled Windows watchdog source, no real SYSTEM task writes.
+          $watchdogRequired=@(
+            'TestSignedOriginalSYSTEMStartRequiresSignedPendingTaskAndNeverCommits',
+            'TestSignedOriginalSYSTEMStartFailClosedBeforeTaskMutation',
+            'TestPinnedBootHealthQueriesLiveTaskProcessAndBothDNS53Owners',
+            'TestSignedOriginalSYSTEMTaskRestoresOnlyAuthenticatedPendingXMLAndDoesNotFinish'
+          )
+          $watchdogCensus=@(go test ./cmd/volve-managed-watchdog -list '^Test')
+          if($LASTEXITCODE -ne 0){throw 'Independent watchdog Windows code does not compile'}
+          foreach($test in $watchdogRequired){
+            if(-not ($watchdogCensus -contains $test)){
+              throw ('CRITICAL: independent signed boot watchdog test not compiled: '+$test)
+            }
+          }
+          go test ./cmd/volve-managed-watchdog -run '^(TestSignedOriginalSYSTEMStart|TestPinnedBootHealthQueriesLiveTaskProcessAndBothDNS53Owners|TestSignedOriginalSYSTEMTaskRestoresOnlyAuthenticatedPendingXMLAndDoesNotFinish)' -count=1 -timeout 6m
+          if($LASTEXITCODE -ne 0){throw 'Protected SYSTEM original task restart/health rollback tests failed'}
           go vet . ./motorupdate
           if($LASTEXITCODE -ne 0){throw 'Centre updater vet failed'}
       - name: Build and inspect real integrated Win64 GUI (NO DISTRIBUTION)
