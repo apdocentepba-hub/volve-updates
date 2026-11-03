@@ -1,0 +1,67 @@
+name: VOLVÉ — transparencia de aportes y privacidad
+on:
+  push:
+    branches:
+      - 'fix/volve-donaciones-transparencia-20261103'
+    paths:
+      - 'site/src/components/SupportStrip.tsx'
+      - 'site/src/components/SiteFooter.tsx'
+      - 'site/src/components/VisitCounter.tsx'
+      - 'site/src/routes/preguntas.tsx'
+      - 'site/scripts/test-transparency.mjs'
+      - 'site/scripts/test-transparency-browser.mjs'
+      - '.github/workflows/volve-transparency-ci.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 13
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Compilar web y comprobar tipado
+        run: |
+          cd site
+          npm install --no-audit --no-fund
+          npm run build
+          npx tsc --noEmit
+      - name: Pruebas de configuración y regresiones
+        run: |
+          node site/scripts/test-transparency.mjs
+          node site/scripts/test-directory-reset-all.mjs
+          node site/scripts/test-family-deeplink.mjs
+          node site/scripts/test-directory-uncertainty.mjs
+          node site/scripts/test-phone-links.mjs
+          node site/scripts/test-og-static.mjs
+      - name: Instalar Chromium temporal para contraste de la interfaz
+        run: |
+          cd site
+          npm install --no-save --no-audit --no-fund playwright
+          npx playwright install --with-deps chromium
+      - name: Probar sin conexiones reales a Visitor Badge ni Google Fonts
+        run: |
+          cd site
+          npm run preview -- --host 127.0.0.1 --port 4173 > /tmp/volve-preview.log 2>&1 &
+          server_pid=$!
+          trap 'kill "$server_pid" 2>/dev/null || true' EXIT
+          ok=0
+          for i in $(seq 1 30); do
+            if curl --fail --silent 'http://127.0.0.1:4173/preguntas' > /dev/null; then ok=1; break; fi
+            sleep 1
+          done
+          if test "$ok" -ne 1; then cat /tmp/volve-preview.log; exit 1; fi
+          node scripts/test-transparency-browser.mjs
+      - name: Verificar aislamiento de motor y otros proyectos
+        run: |
+          changed="$(git diff --name-only origin/main...HEAD)"
+          printf '%s\n' "$changed"
+          if printf '%s\n' "$changed" | grep -Ev '^(site/|\.github/workflows/volve-transparency-ci\.yml)' ; then
+            echo 'Cambios ajenos al sitio informativo'; exit 1
+          fi
+          echo VOLVE_TRANSPARENCIA_CI_OK
