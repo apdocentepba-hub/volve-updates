@@ -164,8 +164,19 @@ jobs:
           $ErrorActionPreference='Stop'
           if([string]::IsNullOrWhiteSpace($env:VOLVE_CI_AUTHENTICODE_CERT_SHA256)){throw 'No trusted editor pin from prior step'}
           Write-Host 'CHECKPOINT 4/5: Windows signed-positive and negative-authenticity tests'
+          Write-Host 'AUTHDIAG: PowerShell 7 direct trust status'
+          $ps7=Get-AuthenticodeSignature -LiteralPath $env:VOLVE_CI_AUTHENTICODE_OS_BINARY
+          Write-Host ("AUTHDIAG: PS7="+$ps7.Status)
+          if($ps7.Status -ne 'Valid'){throw 'PS7 signer trust changed unexpectedly'}
+          Write-Host 'AUTHDIAG: Windows PowerShell 5 direct trust status'
+          & "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -Command '$s=Get-AuthenticodeSignature -LiteralPath $env:VOLVE_CI_AUTHENTICODE_OS_BINARY; Write-Output ("AUTHDIAG: PS5="+$s.Status); if($s.Status -ne "Valid"){exit 7}'
+          Write-Host ("AUTHDIAG: PS5_EXIT="+$LASTEXITCODE)
           go test -count=1 -v ./...
-          if($LASTEXITCODE -ne 0){throw 'Windows Authenticode and singlefile tests failed'}
+          if($LASTEXITCODE -ne 0){
+            Write-Host 'AUTHDIAG: exact Go PowerShell trust verifier source (public test code)'
+            Get-Content -LiteralPath './authenticode_windows.go' | ForEach-Object {Write-Host $_}
+            throw 'Windows Authenticode and singlefile tests failed'
+          }
           go vet ./...
           if($LASTEXITCODE -ne 0){throw 'Go static analysis failed'}
           Write-Host 'CHECKPOINT 4/5 PASS: Windows signed-positive, wrong pins and unsigned negatives'
