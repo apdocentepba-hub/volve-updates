@@ -118,8 +118,8 @@ func runProtectedMotorStageCLI(candidate string)error{
  prepared,err:=stageSignedMotorWithProtectedWindowsLease(ctx,root,candidate,ed25519.PublicKey(key))
  if err!=nil{return err}
  _,err=fmt.Fprintf(os.Stdout,
-  "MOTOR DNS FIRMADO: COPIA PROTEGIDA PREPARADA: %s
+  `MOTOR DNS FIRMADO: COPIA PROTEGIDA PREPARADA: %s
 NO INSTALADO. NO ACTIVADO. NO SE MODIFICARON DNS NI TAREAS SYSTEM.
-",prepared)
+`,prepared)
  return err
 }
