@@ -78,7 +78,7 @@ jobs:
         working-directory: build/codigo
         run: |
           $ErrorActionPreference='Stop'
-          $tests=@(go test ./motorupdate -list '^TestProtected')
+          $tests=@(go test ./motorupdate -list '^Test')
           if($LASTEXITCODE -ne 0){throw 'protected motorupdate test census failed'}
           foreach($required in @(
             'TestProtectedSignedFullTransactionCommitAndRecoveryUnderNativeMutex',
