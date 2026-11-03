@@ -114,6 +114,13 @@ func VerifyWindowsPublisherSignature(ctx context.Context, exe, trustedCertDER256
 		return fmt.Errorf("Windows Authenticode trust unavailable or invalid: %w", err)
 	}
 	if len(out) > 512 {
+		if os.Getenv("GITHUB_ACTIONS") == "true" && os.Getenv("RUNNER_ENVIRONMENT") == "github-hosted" {
+			preview := string(out)
+			if len(preview) > 900 {
+				preview = preview[:900]
+			}
+			return fmt.Errorf("unexpected Authenticode trust output length=%d; hosted-CI preview=%q", len(out), preview)
+		}
 		return errors.New("unexpected Authenticode trust output length")
 	}
 	report := strings.TrimSpace(string(out))
