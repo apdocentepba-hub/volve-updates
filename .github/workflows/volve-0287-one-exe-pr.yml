@@ -120,12 +120,25 @@ jobs:
           $unsigned=Join-Path $env:RUNNER_TEMP 'VOLVE-CI-Unsigned-Container.exe'
           $signed=Join-Path $env:RUNNER_TEMP 'VOLVE-CI-Signed-Container.exe'
           Copy-Item -LiteralPath $unsigned -Destination $signed -ErrorAction Stop
-          Write-Host 'CHECKPOINT 3/5: registering trust in ephemeral CurrentUser stores'
-          foreach($storeName in @('Root','TrustedPublisher')){
-            $store=[Security.Cryptography.X509Certificates.X509Store]::new($storeName,'CurrentUser')
-            $store.Open('ReadWrite')
-            try {$store.Add($cert)} finally {$store.Close()}
+          # CurrentUser Root X509Store.Add may display an invisible confirmation
+          # dialog on a noninteractive CI session, hanging until timeout.
+          # Trust the CI-only public certificate via the documented elevated
+          # machine-store certutil route on a DISPOSABLE hosted runner only.
+          $principal=[Security.Principal.WindowsPrincipal]::new([Security.Principal.WindowsIdentity]::GetCurrent())
+          if(-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)){
+            throw 'Refusing test-root import without elevated isolated Windows runner'
           }
+          $der=Join-Path $env:RUNNER_TEMP 'VOLVE-CI-test-only-editor.cer'
+          [IO.File]::WriteAllBytes($der,$cert.Export([Security.Cryptography.X509Certificates.X509ContentType]::Cert))
+          $certutil=Join-Path $env:SystemRoot 'System32/certutil.exe'
+          Write-Host 'CHECKPOINT 3/5: certutil machine Root import BEGIN (CI-only)'
+          & $certutil -f -addstore Root $der
+          if($LASTEXITCODE -ne 0){throw 'CI-only machine Root import failed'}
+          Write-Host 'CHECKPOINT 3/5: certutil machine Root import PASS'
+          & $certutil -f -addstore TrustedPublisher $der
+          if($LASTEXITCODE -ne 0){throw 'CI-only TrustedPublisher import failed'}
+          $root=Get-Item -LiteralPath ("Cert:\LocalMachine\Root\"+$thumb) -ErrorAction Stop
+          if($root.Thumbprint -ne $thumb){throw 'Machine trust fingerprint mismatch'}
           Write-Host 'CHECKPOINT 3/5: Set-AuthenticodeSignature BEGIN'
           $auth=Set-AuthenticodeSignature -FilePath $signed -Certificate $cert -HashAlgorithm SHA256 -IncludeChain All
           Write-Host ("CHECKPOINT 3/5: Set-AuthenticodeSignature returned "+$auth.Status)
