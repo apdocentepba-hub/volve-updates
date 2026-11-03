@@ -1,0 +1,66 @@
+name: VOLVÉ campaña prevención — Reel e historia aislados
+on:
+  push:
+    branches:
+      - 'marketing/volve-prevencion-ayuda-20261103'
+    paths:
+      - 'social/prevencion-ayuda-20261103/build.py'
+      - '.github/workflows/volve-social-prevencion-ayuda.yml'
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: volve-social-prevencion-ayuda-20261103
+  cancel-in-progress: false
+jobs:
+  render:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Herramientas de renderizado
+        run: |
+          python -m pip install 'Pillow>=10,<13' 'numpy>=1.26,<3'
+          sudo apt-get install -y --no-install-recommends ffmpeg
+          python -m compileall -q social/prevencion-ayuda-20261103/build.py
+      - name: Construir Reel y Story de ayuda
+        run: python social/prevencion-ayuda-20261103/build.py
+      - name: Verificación independiente de formato y privacidad
+        run: |
+          python - <<'PY'
+          import hashlib, json
+          from pathlib import Path
+          from PIL import Image
+          root=Path("social/prevencion-ayuda-20261103")
+          o=json.loads((root/"manifest.json").read_text(encoding="utf8"))
+          assert o["instagram"]=="@volveprevencion"
+          assert o["official_help_phone"]=="0800-444-4000"
+          assert o["software_status"].startswith("Windows en desarrollo")
+          assert o["landing"]=="https://volve-web.onrender.com/instagram"
+          assert 15<=o["video"]["duration"]<=17
+          for name,field in [("volve_ayuda_reel.mp4","video"),("volve_ayuda_story.jpg","story")]:
+            b=(root/name).read_bytes()
+            assert hashlib.sha256(b).hexdigest()==o[field]["sha256"]
+            print("ASSET_SHA_OK",name,len(b))
+          with Image.open(root/"volve_ayuda_story.jpg") as im:
+            assert im.size==(1080,1920)
+            im.verify()
+          with Image.open(root/"contact_sheet.jpg") as im: im.verify()
+          assert len(list((root/"frames").glob("scene_*.jpg")))==5
+          print("VOLVE_SOCIAL_CAMPAIGN_OK")
+          PY
+      - name: Guardar materiales solo en rama marketing, sin despliegue
+        run: |
+          git config user.name 'VOLVE Social Builder'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add social/prevencion-ayuda-20261103/volve_ayuda_reel.mp4
+          git add social/prevencion-ayuda-20261103/volve_ayuda_story.jpg
+          git add social/prevencion-ayuda-20261103/contact_sheet.jpg
+          git add social/prevencion-ayuda-20261103/manifest.json
+          if ! git diff --cached --quiet; then
+            git commit -m 'VOLVÉ: material audiovisual educativo, sin datos personales'
+            git push origin "HEAD:${GITHUB_REF_NAME}"
+          fi
