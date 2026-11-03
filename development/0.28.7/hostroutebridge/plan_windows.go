@@ -7,6 +7,7 @@ package hostroutebridge
 // authorizes any installation, DNS change, task change, repair or removal.
 import (
     "context"
+    "crypto/ed25519"
     "errors"
 
     motorupdate "volve-browser-protection/motorupdate"
@@ -131,4 +132,32 @@ func ReviewAndPlanReadOnly(ctx context.Context, inspect func(context.Context)(Re
     plan,err:=PlanFromVerifiedReview(ctx,review)
     if err!=nil{return zeroReview,zeroPlan,err}
     return review,plan,nil
+}
+
+
+// InspectAndPlanWindowsHostReadOnly is the non-injectable one-call preview
+// entrypoint for a future Setup UI. There is no route, version or permission
+// selector parameter: the complete route must come from actual OS inspection
+// after validation of the release EXE with independent publisher pins.
+// Supplying an alternative reader is useful for CI but does not grant any
+// installer capability or override a failed trust check.
+func InspectAndPlanWindowsHostReadOnly(
+    ctx context.Context,
+    signedEXE string,
+    publisherPublicKey ed25519.PublicKey,
+    windowsSignerCertSHA256 string,
+    signedEXESHA256 string,
+    installedRoot string,
+    readers motorupdate.WindowsMotorRouteInspectors,
+) (Review,InstallerPlanReadOnly,error) {
+    var rejectedReview Review
+    var rejectedPlan InstallerPlanReadOnly
+    if ctx==nil { return rejectedReview,rejectedPlan,errors.New("non-nil preview context required") }
+    if err:=ctx.Err();err!=nil{return rejectedReview,rejectedPlan,err}
+    report,err:=ReviewReadOnly(ctx,signedEXE,publisherPublicKey,
+        windowsSignerCertSHA256,signedEXESHA256,installedRoot,readers)
+    if err!=nil{return rejectedReview,rejectedPlan,err}
+    plan,err:=PlanFromVerifiedReview(ctx,report)
+    if err!=nil{return rejectedReview,rejectedPlan,err}
+    return report,plan,nil
 }
