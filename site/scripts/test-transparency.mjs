@@ -1,0 +1,48 @@
+import assert from "node:assert/strict";
+import {readFileSync} from "node:fs";
+import {createRequire} from "node:module";
+import {runInNewContext} from "node:vm";
+
+const req=createRequire(new URL("../package.json",import.meta.url));
+const ts=req("typescript");
+const cfg=readFileSync("site/src/config/site.ts","utf8");
+const vmCode=ts.transpileModule(cfg,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText;
+const ctx={exports:{}};
+runInNewContext(vmCode,ctx);
+const {siteConfig,isLive}=ctx.exports;
+assert.equal(typeof isLive,"function");
+assert.equal(siteConfig.donations.find(x=>x.id==="cafecito").url,"https://cafecito.app/volve");
+assert.equal(siteConfig.donations.find(x=>x.id==="mercadopago").url,"https://link.mercadopago.com.ar/volve");
+assert.equal(siteConfig.bankTransfer.alias,"volve.prevencion");
+const enabled=siteConfig.donations.some(x=>isLive(x.url))||Boolean(siteConfig.bankTransfer.alias);
+assert.equal(enabled,true);
+
+const faq=readFileSync("site/src/routes/preguntas.tsx","utf8");
+const strip=readFileSync("site/src/components/SupportStrip.tsx","utf8");
+const footer=readFileSync("site/src/components/SiteFooter.tsx","utf8");
+const counter=readFileSync("site/src/components/VisitCounter.tsx","utf8");
+const donation=readFileSync("site/src/routes/colabora.tsx","utf8");
+const all=faq+strip+footer+counter;
+
+assert.ok(faq.includes("const donationsEnabled = siteConfig.donations.some"),"FAQ syncs with real donation settings");
+assert.ok(strip.includes("const donationsEnabled = siteConfig.donations.some"),"Footer CTA syncs with real donation settings");
+assert.ok(faq.includes("a: donationsEnabled ?"),"FAQ supports both enabled and disabled states");
+assert.ok(strip.includes('donationsEnabled ?'),"Support strip supports both enabled and disabled states");
+assert.ok(!faq.includes('a: "Pronto.'),"Old false donation status removed");
+assert.ok(!strip.includes("Los aportes económicos todavía no están habilitados."),"Outdated disabled status removed");
+assert.ok(faq.includes("No hay instalador estable publicado"),"No public installer promise");
+assert.ok(faq.includes("No pedimos cuentas ni datos personales"),"Privacy commitments preserved");
+assert.ok(faq.includes("Visitor Badge"),"External visitor service disclosed in FAQ");
+assert.ok(faq.includes("sessionStorage"),"Session storage disclosed in FAQ");
+assert.ok(faq.includes("dirección IP"),"Third-party network disclosure");
+assert.ok(faq.includes("Google Fonts"),"External fonts disclosed");
+assert.ok(footer.includes("servicio externo Visitor Badge"),"Counter disclosure near footer");
+assert.ok(counter.includes('const SERVICE = "https://visitor-badge.one9x.com"'));
+assert.ok(counter.includes("window.sessionStorage"),"Counter actual storage matches disclosure");
+assert.ok(counter.includes("Visitas contabilizadas, no personas únicas."),"Metrics must not claim unique users");
+assert.ok(counter.includes("Servicio externo Visitor Badge."),"Counter itself identifies service");
+assert.ok(donation.includes("Proyectos Independientes"),"Verify recipient warning still present");
+assert.ok(donation.includes("Comprobá el nombre antes de confirmar"),"Verify transfer safety warning still present");
+assert.ok(donation.includes("No te pedimos claves ni datos bancarios."),"Safety disclaimer preserved");
+assert.doesNotMatch(all,/No registramos tu navegación\.|Pronto\. El canal de aportes voluntarios|Los aportes económicos todavía no están habilitados/);
+console.log("VOLVE_TRANSPARENCIA_STATIC_OK",siteConfig.donations.filter(x=>isLive(x.url)).length,"PUBLIC LINKS",Boolean(siteConfig.bankTransfer.alias),"ALIAS PRESENT");
