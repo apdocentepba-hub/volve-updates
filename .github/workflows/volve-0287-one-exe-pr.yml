@@ -269,7 +269,7 @@ jobs:
           bridge=root/'hostroutebridge'
           target=root/'singlefile/hostroutebridge'
           target.mkdir(parents=True,exist_ok=True)
-          for name in ('bridge_windows.go','bridge_windows_test.go'):
+          for name in ('bridge_windows.go','bridge_windows_test.go','plan_windows.go','plan_windows_test.go','plan_native_windows_test.go'):
               original=bridge/name
               assert original.is_file()
               assert not (target/name).exists()
@@ -298,7 +298,12 @@ jobs:
               'TestSignedBridgeRefusesWrongPinsAndMissingInventory',
               'TestSignedBridgeRejectsCancellationAndRelativePath',
               'TestLegacyMotorFileCannotBeMisclassifiedAsFresh',
-              'TestBridgeRejectsPEAlteredDuringWindowsInventory'
+              'TestBridgeRejectsPEAlteredDuringWindowsInventory',
+              'TestAllWindowsInstallRoutesHaveNonAuthorizingPlans',
+              'TestRoutePlanRejectsUnsignedIncompleteOrForgedReviews',
+              'TestRoutePlanRequiresContextAndVerifiedCallback',
+              'TestRoutePlanNeverConfusesLegacyWithFresh',
+              'TestSignedPackageRealWindowsRouteProducesNonAuthorizingPlan'
             )){
               $passes=@($records | Where-Object {$_.Test -eq $name -and $_.Action -eq 'pass'})
               $skips=@($records | Where-Object {$_.Test -eq $name -and $_.Action -eq 'skip'})
