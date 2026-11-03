@@ -1,0 +1,48 @@
+name: VOLVÉ — navegación del directorio y filtros completos
+on:
+  push:
+    branches:
+      - 'fix/volve-directory-reset-all-20261103'
+    paths:
+      - 'site/src/routes/centros-y-reuniones.tsx'
+      - 'site/scripts/test-directory-reset-all.mjs'
+      - 'site/scripts/test-family-deeplink.mjs'
+      - '.github/workflows/volve-directory-reset-ci.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Controles estáticos de datos y filtro
+        run: |
+          node site/scripts/test-directory-reset-all.mjs
+          node site/scripts/test-family-deeplink.mjs
+          node site/scripts/test-directory-uncertainty.mjs
+          node site/scripts/test-instagram-landing.mjs
+      - name: Build y TypeScript del router (fuente de verdad)
+        run: |
+          cd site
+          npm install --no-audit --no-fund
+          npm run build
+          npx tsc --noEmit
+          cd ..
+          node site/scripts/test-phone-links.mjs
+          node site/scripts/test-og-static.mjs
+      - name: Limitar cambio al sitio informativo
+        run: |
+          changed="$(git diff --name-only origin/main...HEAD)"
+          printf '%s\n' "$changed"
+          if printf '%s\n' "$changed" | grep -Ev '^(site/|\.github/workflows/volve-directory-reset-ci\.yml)' ; then
+            echo 'ERROR: archivos fuera de VOLVÉ web'; exit 1
+          fi
+          test -f site/dist/centros-y-reuniones/index.html
+          echo VOLVE_DIRECTORY_RESET_TESTS_OK
