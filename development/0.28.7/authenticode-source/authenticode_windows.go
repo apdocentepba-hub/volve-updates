@@ -67,7 +67,7 @@ func VerifyWindowsPublisherSignature(ctx context.Context, exe, trustedCertDER256
 	// value and consumed by -LiteralPath (no command interpolation).
 	// Status=Valid invokes Windows Authenticode trust policy and certificate
 	// chain checking; merely seeing a SignerCertificate is NOT sufficient.
-	const script = `$ErrorActionPreference='Stop';` +
+	const script = `$ErrorActionPreference='Stop';$ProgressPreference='SilentlyContinue';` +
 		`$path=$env:VOLVE_PUBLISHER_VERIFY_FILE;` +
 		`if([string]::IsNullOrWhiteSpace($path)){throw 'missing target'};` +
 		`$s=Get-AuthenticodeSignature -LiteralPath $path -ErrorAction Stop;` +
