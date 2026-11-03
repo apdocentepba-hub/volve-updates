@@ -3,6 +3,7 @@ on:
   push:
     branches:
       - 'feature/volve-instagram-ayuda-landing-20261103'
+      - 'feature/volve-share-ayuda-ig-20261103'
     paths:
       - 'site/src/routes/instagram.tsx'
       - 'site/scripts/route-fallback.mjs'
