@@ -5,6 +5,7 @@ on:
     paths:
       - 'development/0.28.7/inapp/resident_protected_signed_switch_windows.go'
       - 'development/0.28.7/inapp/resident_protected_signed_switch_windows_test.go'
+      - 'development/0.28.7/inapp/resident_protected_signed_transaction_windows_test.go'
       - 'development/0.28.7/inapp/resident_transition_lock_windows.go'
       - 'development/0.28.7/inapp/resident_transition_lock_windows_test.go'
       - '.github/workflows/volve-0287-signed-lease-guard-pr.yml'
