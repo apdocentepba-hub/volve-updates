@@ -70,14 +70,15 @@ jobs:
             'TestInstalledUnsignedMigrationDraftBindsFourLiveSYSTEMObservationsAndNeverAuthorizes',
             'TestInstalledUnsignedMigrationDraftRejectsHostDriftBetweenReviewAndDraft',
             'TestWindowsResidentProcessEvidenceUsesReadOnlySystemCommands',
-            'TestWindowsResidentProcessEvidenceFailsClosed'
+            'TestWindowsResidentProcessEvidenceFailsClosed',
+            'TestProtectedMotorTargetNativePathAllowlist'
           )
           $listed=@(go test . -list '^Test')
           if($LASTEXITCODE -ne 0){throw 'Centre tests did not compile'}
           foreach($name in $required){
             if(-not ($listed -contains $name)){throw ('REQUIRED Centro test not compiled: '+$name)}
           }
-          go test . -run '^Test(MergeUpdateReports|PreparedSignedMigration|MotorMigrationStatus|InstalledPublisherReview|InstalledUnsignedMigrationDraft|WindowsResidentProcessEvidence)' -count=1 -timeout 5m
+          go test . -run '^Test(MergeUpdateReports|PreparedSignedMigration|MotorMigrationStatus|InstalledPublisherReview|InstalledUnsignedMigrationDraft|WindowsResidentProcessEvidence|ProtectedMotorTarget)' -count=1 -timeout 5m
           if($LASTEXITCODE -ne 0){throw 'Centro signed migration/inapp tests failed'}
           $motorTests=@(go test ./motorupdate -list '^TestProtectedMotor')
           foreach($required in @(
