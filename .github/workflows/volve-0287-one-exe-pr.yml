@@ -4,6 +4,7 @@ on:
     branches: [feature/motor-updater-0287-pilot]
     paths:
       - 'development/0.28.7/singlefile-*'
+      - 'development/0.28.7/singlefile-overlay/**'
       - 'development/0.28.7/authenticode-source/**'
       - 'development/0.28.7/unifiedbundle/**'
       - '.github/workflows/volve-0287-one-exe-pr.yml'
@@ -196,7 +197,7 @@ jobs:
           go build -o $gate ./cmd/stageci
           if($LASTEXITCODE -ne 0){throw 'Windows dual-signature gate build failed'}
           $staged=Join-Path $env:RUNNER_TEMP 'VOLVE-CI-verified-extraction'
-          $stageResult=(& $gate --exe $signed --out $staged --pubkey $env:VOLVE_CI_ED25519_PUB --certsha $env:VOLVE_CI_AUTHENTICODE_CERT_SHA256 --exesha $env:VOLVE_CI_AUTHENTICODE_FILE_SHA256 | Out-String)
+          $stageResult=(& $gate --exe $signed --out $staged --pubkey $env:VOLVE_CI_ED25519_PUB --certsha $env:VOLVE_CI_AUTHENTICODE_CERT_SHA256 --filehash $env:VOLVE_CI_AUTHENTICODE_FILE_SHA256 | Out-String)
           if($LASTEXITCODE -ne 0 -or $stageResult -notmatch 'PASS VOLVE_DUAL_SIGNED_STAGE_LAB release=0.28.7 items=8 NO_INSTALL'){
             throw 'Dual-signed Windows EXE failed protected extraction and re-verification'
           }
@@ -205,16 +206,16 @@ jobs:
           if($invalidCert -eq $env:VOLVE_CI_AUTHENTICODE_CERT_SHA256){$invalidCert=('1'*64)}
           $wrongPublisherDest=Join-Path $env:RUNNER_TEMP 'VOLVE-CI-WrongPublisher-REFUSED'
           $PSNativeCommandUseErrorActionPreference=$false
-          $rejectWrongPublisher=(& $gate --exe $signed --out $wrongPublisherDest --pubkey $env:VOLVE_CI_ED25519_PUB --certsha $invalidCert --exesha $env:VOLVE_CI_AUTHENTICODE_FILE_SHA256 2>&1 | Out-String)
+          $rejectWrongPublisher=(& $gate --exe $signed --out $wrongPublisherDest --pubkey $env:VOLVE_CI_ED25519_PUB --certsha $invalidCert --filehash $env:VOLVE_CI_AUTHENTICODE_FILE_SHA256 2>&1 | Out-String)
           if($LASTEXITCODE -eq 0 -or (Test-Path -LiteralPath $wrongPublisherDest)){throw 'CRITICAL: wrong publisher pin staged files'}
           $wrongExeDest=Join-Path $env:RUNNER_TEMP 'VOLVE-CI-WrongEXEHash-REFUSED'
-          $rejectWrongExe=(& $gate --exe $signed --out $wrongExeDest --pubkey $env:VOLVE_CI_ED25519_PUB --certsha $env:VOLVE_CI_AUTHENTICODE_CERT_SHA256 --exesha ('0'*64) 2>&1 | Out-String)
+          $rejectWrongExe=(& $gate --exe $signed --out $wrongExeDest --pubkey $env:VOLVE_CI_ED25519_PUB --certsha $env:VOLVE_CI_AUTHENTICODE_CERT_SHA256 --filehash ('0'*64) 2>&1 | Out-String)
           if($LASTEXITCODE -eq 0 -or (Test-Path -LiteralPath $wrongExeDest)){throw 'CRITICAL: wrong EXE hash staged files'}
           $wrongManifestDest=Join-Path $env:RUNNER_TEMP 'VOLVE-CI-WrongEd25519-REFUSED'
-          $rejectWrongManifest=(& $gate --exe $signed --out $wrongManifestDest --pubkey ('0'*64) --certsha $env:VOLVE_CI_AUTHENTICODE_CERT_SHA256 --exesha $env:VOLVE_CI_AUTHENTICODE_FILE_SHA256 2>&1 | Out-String)
+          $rejectWrongManifest=(& $gate --exe $signed --out $wrongManifestDest --pubkey ('0'*64) --certsha $env:VOLVE_CI_AUTHENTICODE_CERT_SHA256 --filehash $env:VOLVE_CI_AUTHENTICODE_FILE_SHA256 2>&1 | Out-String)
           if($LASTEXITCODE -eq 0 -or (Test-Path -LiteralPath $wrongManifestDest)){throw 'CRITICAL: wrong Ed25519 publisher staged files'}
           $missingPublisherDest=Join-Path $env:RUNNER_TEMP 'VOLVE-CI-NoCert-REFUSED'
-          $rejectNoCert=(& $gate --exe $signed --out $missingPublisherDest --pubkey $env:VOLVE_CI_ED25519_PUB --exesha $env:VOLVE_CI_AUTHENTICODE_FILE_SHA256 2>&1 | Out-String)
+          $rejectNoCert=(& $gate --exe $signed --out $missingPublisherDest --pubkey $env:VOLVE_CI_ED25519_PUB --filehash $env:VOLVE_CI_AUTHENTICODE_FILE_SHA256 2>&1 | Out-String)
           if($LASTEXITCODE -eq 0 -or (Test-Path -LiteralPath $missingPublisherDest)){throw 'CRITICAL: missing Authenticode pin staged files'}
           Write-Host 'CHECKPOINT 5/5: rejection tests passed (wrong cert, wrong exe hash, wrong manifest key, absent cert pin)'
 
