@@ -22,14 +22,17 @@ assert.equal(byType.publico.length,10);
 assert.ok(byType.familias.every(r=>r.fuente==="https://jug-anon.org.ar/pages/grupos-autoayuda.html"),"Fuentes oficiales en cada recurso familiar");
 assert.ok(byType.familias.every(r=>r.localidad&&r.direccion&&r.horarios),"Registros familiares con localidades y horarios");
 
-assert.ok(directory.includes('new URLSearchParams(window.location.search).get("tipo")'),"Captura parámetro público tipo");
-assert.ok(directory.includes('Object.prototype.hasOwnProperty.call(types,selected)'),"Lista blanca contra parámetros inesperados");
-assert.ok(directory.includes('typeof window==="undefined"'),"Compatible con build SSR");
-assert.ok(directory.includes('const [kind,setKind]=useState(()=>'),"Filtro inicializado en state");
+assert.ok(directory.includes('validateSearch:(search:Record<string,unknown>):DirectorySearch=>{'),"Validación del query string por el router");
+assert.ok(directory.includes('Object.prototype.hasOwnProperty.call(types,candidate)'),"Lista blanca del parámetro público tipo");
+assert.ok(directory.includes('const {tipo}=Route.useSearch();'),"El filtro se recupera desde la URL validada");
+assert.ok(directory.includes('const [kind,setKind]=useState(tipo||"")'),"Filtro inicializado desde búsqueda validada");
+assert.ok(directory.includes('useEffect(()=>setKind(tipo||""),[tipo])'),"Atrás, adelante y recarga sincronizan el filtro");
 assert.ok(directory.includes('(!kind||r.tipo===kind)'),"Filtro real por tipo de recurso");
 assert.ok(directory.includes('Mostrar todos los recursos'),"Opción de restablecer");
-assert.ok(directory.includes('onClick={()=>setKind("")}'),"La acción restablece categoría");
+assert.ok(directory.includes('onClick={clearAll}'),"Restablece todos los criterios, no solo categoría");
 assert.ok(directory.includes('id="buscar"'),"Ancla al listado");
+assert.ok(directory.includes('search:next?{tipo:next as DirectorySearch["tipo"]}:{}'),"Persistencia de categoría elegida en URL");
+assert.ok(directory.includes('search:{},replace:true'),"Reinicio elimina parámetros de búsqueda");
 
 assert.ok(instagram.includes('href="/centros-y-reuniones?tipo=familias#buscar"'),"Enlace directo desde Instagram");
 assert.ok(instagram.includes('Ver recursos para familiares en PBA'),"Etiqueta visible");
