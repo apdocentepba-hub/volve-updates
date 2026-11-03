@@ -18,10 +18,9 @@ func TestSignedPackageRealWindowsRouteProducesNonAuthorizingPlan(t *testing.T) {
     ctx,cancel:=context.WithTimeout(context.Background(),120*time.Second)
     defer cancel()
     installedRoot:=t.TempDir()
-    review,plan,err:=ReviewAndPlanReadOnly(ctx,func(inner context.Context)(Review,error){
-        return ReviewReadOnly(inner,fixture.exe,fixture.key,fixture.certPin,fixture.exePin,
-            installedRoot,motorupdate.DefaultWindowsMotorRouteInspectors())
-    })
+    review,plan,err:=InspectAndPlanWindowsHostReadOnly(
+        ctx,fixture.exe,fixture.key,fixture.certPin,fixture.exePin,
+        installedRoot,motorupdate.DefaultWindowsMotorRouteInspectors())
     if err!=nil{t.Fatal(err)}
     if !review.WindowsPublisherAndPackageVerified||review.PackageParts!=8||
         review.InventoriesChecked!=6||plan.CompleteHostInventories!=6||
