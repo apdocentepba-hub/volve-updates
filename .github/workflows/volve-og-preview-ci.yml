@@ -1,0 +1,42 @@
+name: VOLVÉ — preview WhatsApp y ayuda a familiares (sin deploy)
+on:
+  push:
+    branches:
+      - 'feature/volve-web-open-graph-preview-20261103'
+    paths:
+      - 'site/src/components/ui-bits.tsx'
+      - 'site/src/routes/instagram.tsx'
+      - 'site/scripts/route-fallback.mjs'
+      - 'site/scripts/test-og-static.mjs'
+      - 'site/public/preview-volve.png'
+      - '.github/workflows/volve-og-preview-ci.yml'
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Verificar sintaxis de HTML generado y suite de la landing
+        run: |
+          node --check site/scripts/route-fallback.mjs
+          node --check site/scripts/test-og-static.mjs
+          node site/scripts/test-instagram-landing.mjs
+      - name: Compilar, validar tipos y metadatos iniciales
+        run: |
+          cd site
+          npm install --no-audit --no-fund
+          npm run build
+          npx tsc --noEmit
+          cd ..
+          node site/scripts/test-og-static.mjs
+      - name: Asegurar que no cambiaron archivos del instalador
+        run: |
+          if git diff --name-only HEAD~4 HEAD | grep -E '^(motor|installer|update|windows|win|DNS|scripts/|worker/|firmware/)' ; then
+            echo 'Cambio fuera del sitio VOLVÉ'; exit 1
+          fi
+          echo SOLO_SITE_VOLVE_OK
