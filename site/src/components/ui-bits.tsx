@@ -34,7 +34,11 @@ export function StatusPill({ children }: { children: ReactNode }) {
   );
 }
 
+const SITE_ORIGIN = "https://volve-web.onrender.com";
+const PREVIEW_IMAGE = SITE_ORIGIN + "/preview-volve.png";
+
 export function meta(title: string, description: string, path: string) {
+  const absoluteUrl = SITE_ORIGIN + (path.startsWith("/") ? path : "/" + path);
   return {
     meta: [
       { title },
@@ -42,9 +46,18 @@ export function meta(title: string, description: string, path: string) {
       { property: "og:title", content: title },
       { property: "og:description", content: description },
       { property: "og:type", content: "website" },
-      { property: "og:url", content: path },
+      { property: "og:locale", content: "es_AR" },
+      { property: "og:site_name", content: "VOLVÉ · Prevención" },
+      { property: "og:url", content: absoluteUrl },
+      { property: "og:image", content: PREVIEW_IMAGE },
+      { property: "og:image:secure_url", content: PREVIEW_IMAGE },
+      { property: "og:image:type", content: "image/png" },
+      { property: "og:image:width", content: "1080" },
+      { property: "og:image:height", content: "1080" },
+      { property: "og:image:alt", content: "VOLVÉ: programa gratuito de prevención de apuestas online, en desarrollo." },
       { name: "twitter:card", content: "summary_large_image" },
+      { name: "twitter:image", content: PREVIEW_IMAGE },
     ],
-    links: [{ rel: "canonical", href: path }],
+    links: [{ rel: "canonical", href: absoluteUrl }],
   };
 }
