@@ -66,14 +66,16 @@ jobs:
             'TestMergeUpdateReportsNoPanelCandidate',
             'TestPreparedSignedMigrationValidIsReadOnlyAndNeverClaimsInstalled',
             'TestMotorMigrationStatusUsesSignedPermitInsteadOfMissingOldVersion',
-            'TestInstalledPublisherReviewBridgeRequiresRepeatedLiveSYSTEMTaskXMLAndDNS'
+            'TestInstalledPublisherReviewBridgeRequiresRepeatedLiveSYSTEMTaskXMLAndDNS',
+            'TestInstalledUnsignedMigrationDraftBindsFourLiveSYSTEMObservationsAndNeverAuthorizes',
+            'TestInstalledUnsignedMigrationDraftRejectsHostDriftBetweenReviewAndDraft'
           )
           $listed=@(go test . -list '^Test')
           if($LASTEXITCODE -ne 0){throw 'Centre tests did not compile'}
           foreach($name in $required){
             if(-not ($listed -contains $name)){throw ('REQUIRED Centro test not compiled: '+$name)}
           }
-          go test . -run '^Test(MergeUpdateReports|PreparedSignedMigration|MotorMigrationStatus|InstalledPublisherReview)' -count=1 -timeout 5m
+          go test . -run '^Test(MergeUpdateReports|PreparedSignedMigration|MotorMigrationStatus|InstalledPublisherReview|InstalledUnsignedMigrationDraft)' -count=1 -timeout 5m
           if($LASTEXITCODE -ne 0){throw 'Centro signed migration/inapp tests failed'}
           go test ./motorupdate -run '^(TestProtectedBoot|TestProtectedSigned|TestPublisherBoundBootEvidence|TestPublisherBoundBootFinalizer|TestDurablePublisherBootEvidence)' -count=1 -timeout 5m
           if($LASTEXITCODE -ne 0){throw 'Protected signed bridge tests failed'}
