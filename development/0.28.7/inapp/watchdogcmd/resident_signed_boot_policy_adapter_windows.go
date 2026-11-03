@@ -96,6 +96,11 @@ func(o *residentSignedBootOriginalOps)RestoreOriginal(
  ctx context.Context,intent motorupdate.ResidentRecoveryIntent,
 )error{
  if err:=o.VerifySealedOriginal(ctx,intent);err!=nil{return err}
- return recoverSignedLegacyOriginalAndSYSTEMTaskLockedWindows(
-  ctx,o.root,o.publisher,o.deps)
+ if err:=recoverSignedLegacyOriginalAndSYSTEMTaskLockedWindows(
+  ctx,o.root,o.publisher,o.deps);err!=nil{return err}
+ // The exact original EXE and signed SYSTEM task are now restored, but DNS
+ // is still stopped. Request one original-only start while the SAME
+ // protected kernel lock remains held. Health and the durable receipt are
+ // checked by RecoverPendingResidentAfterBoot AFTER this returns.
+ return startSignedRestoredOriginalTaskLockedWindows(ctx,o.root,o.publisher,o.deps.Task)
 }
