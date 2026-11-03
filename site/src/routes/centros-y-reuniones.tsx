@@ -1,5 +1,5 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
-import { useMemo, useState } from "react";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
+import { useEffect, useMemo, useState } from "react";
 import { PageHero, meta } from "@/components/ui-bits";
 import entries from "@/data/ayuda-pba.json";
 import { SupportStrip } from "@/components/SupportStrip";
@@ -11,20 +11,37 @@ const data = entries as Resource[];
 const types: Record<string,string> = { publico: "Centro público", ja: "Jugadores Anónimos", familias: "Para familiares · Jug-Anon" };
 const zones: Record<string,string> = { sur:"Conurbano sur y La Plata", oeste:"Conurbano oeste", norte:"Conurbano norte", interior:"Interior provincial", Provincia:"Centros públicos" };
 const norm=(s:string)=>s.normalize("NFD").replace(/[\u0300-\u036f]/g,"").toLocaleLowerCase("es");
+type DirectorySearch = { tipo?: "publico" | "ja" | "familias" };
 export const Route=createFileRoute("/centros-y-reuniones")({
+ validateSearch:(search:Record<string,unknown>):DirectorySearch=>{
+  const candidate=search.tipo;
+  return typeof candidate==="string"&&Object.prototype.hasOwnProperty.call(types,candidate)
+    ? {tipo:candidate as DirectorySearch["tipo"]}
+    : {};
+ },
  head:()=>meta("Centros y reuniones de ayuda en PBA — VOLVÉ","Buscá centros públicos gratuitos, Jugadores Anónimos, grupos familiares y reuniones virtuales.","/centros-y-reuniones"),
  component:Directory
 });
 function Directory(){
+ const navigate=useNavigate({from:Route.fullPath});
+ // Filtro validado por el router; al actualizar o compartir la URL, el resultado se conserva.
+ const {tipo}=Route.useSearch();
  const [query,setQuery]=useState("");
- // Filtro opcional y público de un enlace compartido; no guarda datos personales.
- const [kind,setKind]=useState(()=>{
-  if(typeof window==="undefined") return "";
-  const selected=new URLSearchParams(window.location.search).get("tipo")||"";
-  return Object.prototype.hasOwnProperty.call(types,selected)?selected:"";
- });
+ const [kind,setKind]=useState(tipo||"");
  const [zone,setZone]=useState("");
  const [day,setDay]=useState("");
+ useEffect(()=>setKind(tipo||""),[tipo]);
+ function changeKind(next:string){
+  setKind(next);
+  void navigate({to:"/centros-y-reuniones",search:next?{tipo:next as DirectorySearch["tipo"]}:{},replace:true,hash:"buscar"});
+ }
+ function clearAll(){
+  setQuery("");
+  setKind("");
+  setZone("");
+  setDay("");
+  void navigate({to:"/centros-y-reuniones",search:{},replace:true,hash:"buscar"});
+ }
  const filtered=useMemo(()=>data.filter(r=>(!query||norm([r.localidad,r.nombre,r.lugar,r.direccion].join(" ")).includes(norm(query)))&&(!kind||r.tipo===kind)&&(!zone||r.zona===zone)&&(!day||(r.verificacionPendiente!=="horarios"&&r.horarios.some(h=>h.dia===day)))).sort((a,b)=>a.localidad.localeCompare(b.localidad,"es")),[query,kind,zone,day]);
  return <>
   <PageHero eyebrow="Asistencia gratuita · Provincia de Buenos Aires" title="Hay ayuda cerca. Y también desde casa." intro="Centros públicos, grupos presenciales, ayuda para familiares y reuniones virtuales. VOLVÉ no organiza estos encuentros ni tiene convenios con las entidades: confirmá los datos antes de asistir."/>
@@ -50,17 +67,21 @@ function Directory(){
     {kind==="familias"&&<div className="mt-4 rounded-2xl border border-sage/60 bg-sage-soft p-4 text-sm text-primary">
       <p className="font-semibold">Estás viendo recursos específicos para familiares y amigos.</p>
       <p className="mt-1">También podés consultar los centros públicos o elegir otro tipo de apoyo.</p>
-      <button type="button" onClick={()=>setKind("")} className="mt-3 rounded-full border border-primary px-4 py-2 font-semibold hover:bg-card">
+      <button type="button" onClick={clearAll} className="mt-3 min-h-11 rounded-full border border-primary px-4 py-2 font-semibold hover:bg-card">
         Mostrar todos los recursos
       </button>
     </div>}
     <p className="mt-3 text-muted-foreground">{filtered.length} recursos encontrados de {data.length} registrados en Buenos Aires. VOLVÉ no pide información personal ni gestiona turnos.</p>
     <div className="my-7 grid gap-3 rounded-3xl bg-sage-soft p-5 md:grid-cols-4">
       <label className="text-sm font-semibold">Localidad o dirección<input type="search" value={query} onChange={e=>setQuery(e.target.value)} placeholder="Ej.: Sarandí, Quilmes…" className="mt-2 w-full rounded-xl border border-border bg-card p-3 text-foreground"/></label>
-      <label className="text-sm font-semibold">Tipo de ayuda<select value={kind} onChange={e=>setKind(e.target.value)} className="mt-2 w-full rounded-xl border border-border bg-card p-3 text-foreground"><option value="">Todas</option>{Object.entries(types).map(([k,v])=><option key={k} value={k}>{v}</option>)}</select></label>
+      <label className="text-sm font-semibold">Tipo de ayuda<select value={kind} onChange={e=>changeKind(e.target.value)} className="mt-2 w-full rounded-xl border border-border bg-card p-3 text-foreground"><option value="">Todas</option>{Object.entries(types).map(([k,v])=><option key={k} value={k}>{v}</option>)}</select></label>
       <label className="text-sm font-semibold">Zona<select value={zone} onChange={e=>setZone(e.target.value)} className="mt-2 w-full rounded-xl border border-border bg-card p-3 text-foreground"><option value="">Toda la provincia</option>{Object.entries(zones).map(([k,v])=><option key={k} value={k}>{v}</option>)}</select></label>
       <label className="text-sm font-semibold">Día<select value={day} onChange={e=>setDay(e.target.value)} className="mt-2 w-full rounded-xl border border-border bg-card p-3 text-foreground"><option value="">Cualquier día</option>{["Lun","Mar","Mié","Jue","Vie","Sáb","Dom"].map(k=><option key={k}>{k}</option>)}</select></label>
     </div>
+    {(query||kind||zone||day)&&<div className="mb-5 flex flex-wrap items-center gap-3 text-sm">
+      <span className="text-muted-foreground">Filtros activos.</span>
+      <button type="button" onClick={clearAll} className="min-h-11 rounded-full border border-primary px-5 py-2 font-semibold text-primary hover:bg-sage-soft">Limpiar todos los filtros</button>
+    </div>}
     {day&&<p className="mb-5 text-sm text-muted-foreground">El filtro por día excluye los grupos cuyos horarios todavía presentan información contradictoria. Podés quitar ese filtro para verlos y consultar sus fuentes.</p>}
     <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
     {filtered.map((r,i)=><article key={r.localidad+r.direccion+i} className="rounded-3xl border border-border bg-card p-6">
@@ -77,7 +98,7 @@ function Directory(){
         {r.verificacionPendiente==="direccion"?<span className="rounded-xl bg-warm-soft px-3 py-2 text-accent-foreground">Ubicación a confirmar: no se muestran indicaciones</span>:<a href={"https://www.google.com/maps/search/?api=1&query="+encodeURIComponent(r.direccion+", "+r.localidad+", Buenos Aires, Argentina")} target="_blank" rel="noopener noreferrer" className="underline">Cómo llegar ↗</a>}
       </div>
     </article>)}
-    {!filtered.length&&<p className="rounded-3xl border border-border bg-card p-6 text-muted-foreground">No encontramos resultados con esos filtros. Probá otra localidad o consultá al 0800-444-4000.</p>}
+    {!filtered.length&&<div className="rounded-3xl border border-border bg-card p-6 text-muted-foreground"><p>No encontramos resultados con esos filtros. Podés probar otra localidad o consultar al 0800-444-4000.</p><button type="button" onClick={clearAll} className="mt-4 min-h-11 rounded-full border border-primary px-5 py-2 font-semibold text-primary hover:bg-sage-soft">Mostrar los 45 recursos</button></div>}
     </div>
     <p className="mt-8 rounded-2xl bg-warm-soft p-5 text-sm text-accent-foreground">Los horarios y las sedes pueden cambiar. Verificá directamente con cada organización. El grupo «Catedral» de San Martín figura suspendido y no aparece aquí. Olavarría registra dos direcciones oficiales distintas: confirmá antes de ir.</p>
     <p className="mt-5 text-sm text-muted-foreground">¿Querés ayuda inmediata? <Link to="/ayuda" className="font-semibold text-primary underline">Ver opciones y orientación</Link> · Enlaces y datos conflictivos contrastados el 3 de noviembre de 2026; confirmá condiciones vigentes antes de asistir.</p>
