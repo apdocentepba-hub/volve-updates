@@ -1,0 +1,35 @@
+name: VOLVE 0.28.7 unified signed-bundle gate (NO RELEASE)
+on:
+  pull_request:
+    branches: [feature/motor-updater-0287-pilot]
+    paths:
+      - 'development/0.28.7/unifiedbundle/**'
+      - '.github/workflows/volve-0287-unifiedbundle-gate-pr.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  check-bundle-contract:
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 8
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    defaults:
+      run:
+        working-directory: development/0.28.7/unifiedbundle
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.x'
+      - name: Verify signed bundle contract on both operating systems
+        shell: bash
+        run: |
+          go test -count=1 -v ./...
+          go vet ./...
+          go build ./...
+      - name: Confirm this is NOT a release
+        shell: bash
+        run: echo 'Synthetic test keys only; no installer, DNS changes or SYSTEM tasks'
