@@ -26,7 +26,9 @@ import (
 
 func signedFullDNSHostSnapshot()(string,error){
  return labPS("$dns=(Get-DnsClientServerAddress -ErrorAction Stop | Sort-Object InterfaceIndex,AddressFamily | Select-Object InterfaceIndex,AddressFamily,ServerAddresses | ConvertTo-Json -Depth 6 -Compress);"+
-  "$hostHash=(Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $env:WINDIR 'System32\\drivers\\etc\\hosts')).Hash;"+
+  "$path=Join-Path $env:WINDIR 'System32\\drivers\\etc\\hosts';"+
+  "$file=[IO.File]::OpenRead($path);$sha=[Security.Cryptography.SHA256]::Create();"+
+  "try{$hostHash=[BitConverter]::ToString($sha.ComputeHash($file)).Replace('-','')}finally{$file.Dispose();$sha.Dispose()};"+
   "Write-Output ($dns+'|'+$hostHash)")
 }
 
