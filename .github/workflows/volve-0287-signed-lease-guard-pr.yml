@@ -69,16 +69,86 @@ jobs:
           go vet ./motorupdate
           if($LASTEXITCODE -ne 0){throw 'Go vet found errors'}
           Write-Host 'PASS: signed lease and true native OS-thread ownership, cross-goroutine release, and stale finalizer; DNS and productive tasks untouched'
-      - name: General regression of signed migration and independent watchdog (NO RELEASE)
+      - name: Full signed migration unit regression (NO RELEASE)
         shell: pwsh
         working-directory: build/codigo
         run: |
           $ErrorActionPreference='Stop'
-          # Run the complete two packages, not just regex-selected tests;
-          # catches incompatibilities with journal, release permits and the
-          # independent SYSTEM boot recovery. CI only, no production tasks.
-          go test ./motorupdate ./cmd/volve-managed-watchdog -count=1 -timeout 14m
-          if($LASTEXITCODE -ne 0){throw 'General signed migration/watchdog regression failed'}
-          go vet ./motorupdate ./cmd/volve-managed-watchdog
-          if($LASTEXITCODE -ne 0){throw 'General signed migration/watchdog static analysis failed'}
-          Write-Host 'PASS: full signed transaction and independent watchdog packages; productive motor remains untouched'
+          go test ./motorupdate -count=1 -timeout 8m
+          if($LASTEXITCODE -ne 0){throw 'Full motorupdate package regression failed'}
+          go vet ./motorupdate
+          if($LASTEXITCODE -ne 0){throw 'motorupdate vet failed'}
+          Write-Host 'PASS: complete motorupdate regression; no production motor writes'
+  windows-watchdog-shards:
+    runs-on: windows-latest
+    timeout-minutes: 22
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.x'
+      - name: Ensure disposable hosted VM and no installed productive VOLVE task
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          if($env:GITHUB_ACTIONS -ne 'true' -or $env:RUNNER_ENVIRONMENT -ne 'github-hosted'){throw 'disposable Windows CI required'}
+          foreach($name in @('VOLVE-DNS-SERVER-0270','VOLVE-DNS-RESCUE-0270')){
+            if(Get-ScheduledTask -TaskName $name -ErrorAction SilentlyContinue){throw 'productive VOLVE task detected; refusing test'}
+          }
+      - name: Reconstruct verified source and sealed overlays (no publishing)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          @'
+          import hashlib,zipfile,shutil
+          from pathlib import Path
+          root=Path("development/0.28.7")
+          parts=sorted((root/"complete-source-parts").glob("part-*.bin"))
+          assert [p.name for p in parts]==[f"part-{i:02d}.bin" for i in range(10)]
+          payload=b"".join(p.read_bytes() for p in parts)
+          assert hashlib.sha256(payload).hexdigest()=="92b3536559151260375b17a64eedd009df8399e45460637208027b7ca0587ba5"
+          Path("source.zip").write_bytes(payload)
+          Path("build").mkdir(exist_ok=True)
+          with zipfile.ZipFile("source.zip") as z:z.extractall("build")
+          for name,digest in (
+            ("VOLVE_0287_PRECHECK_RESCATE_OVERLAY_NO_INSTALAR.zip","fdfd31f21df81fe6da6075bfd442354297874576b6dc2c38f19bd35a681d95cd"),
+            ("VOLVE_0287_RECUPERACION_INTERRUPCION_FORZADA_NO_INSTALAR_v3.zip","773bd5eb5f1c4883021cc321856636354e964d3605dba9017e2fb5d1a7401b40")
+          ):
+            p=root/name
+            assert hashlib.sha256(p.read_bytes()).hexdigest()==digest
+            with zipfile.ZipFile(p) as z:z.extractall("build")
+          for p in (root/"journal").glob("*.go"):
+            shutil.copy2(p,Path("build/codigo/motorupdate")/p.name)
+          '@ | python -
+          if($LASTEXITCODE -ne 0){throw 'source reconstruction failed'}
+          go run development/0.28.7/inapp/apply_overlay.go build/codigo
+          if($LASTEXITCODE -ne 0){throw 'source overlay failed'}
+      - name: Run complete watchdog suite in non-overlapping shard ${{ matrix.shard }}
+        shell: pwsh
+        working-directory: build/codigo
+        env:
+          VOLVE_TEST_SHARD: ${{ matrix.shard }}
+        run: |
+          $ErrorActionPreference='Stop'
+          $all=@(go test ./cmd/volve-managed-watchdog -list '^Test')
+          if($LASTEXITCODE -ne 0){throw 'watchdog test discovery failed'}
+          $names=@($all | Where-Object {$_ -cmatch '^Test[A-Za-z0-9_]+$'} | Sort-Object -Unique)
+          if($names.Count -lt 25){throw ('watchdog test census suspiciously small: '+$names.Count)}
+          $index=[int]$env:VOLVE_TEST_SHARD
+          $selected=@(for($i=0;$i -lt $names.Count;$i++){
+            if(($i % 4) -eq $index){$names[$i]}
+          })
+          if($selected.Count -lt 1){throw ('empty watchdog shard '+$index)}
+          $pattern='^(' + ($selected -join '|') + ')$'
+          Write-Host ('Watchdog census='+$names.Count+' shard='+$index+' tests='+$selected.Count)
+          # Every top-level Test name appears in exactly one of the four
+          # deterministic partitions; none is skipped or silently excluded.
+          go test ./cmd/volve-managed-watchdog -run $pattern -count=1 -timeout 12m -v
+          if($LASTEXITCODE -ne 0){throw ('watchdog shard failed: '+$index)}
+          go vet ./cmd/volve-managed-watchdog
+          if($LASTEXITCODE -ne 0){throw 'watchdog Go vet failed'}
+          Write-Host ('PASS: watchdog shard '+$index+' of 4; NO productive task or DNS changed')
