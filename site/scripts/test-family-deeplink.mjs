@@ -25,8 +25,9 @@ assert.ok(byType.familias.every(r=>r.localidad&&r.direccion&&r.horarios),"Regist
 assert.ok(directory.includes('validateSearch:(search:Record<string,unknown>):DirectorySearch=>{'),"Validación del query string por el router");
 assert.ok(directory.includes('Object.prototype.hasOwnProperty.call(types,candidate)'),"Lista blanca del parámetro público tipo");
 assert.ok(directory.includes('const {tipo}=Route.useSearch();'),"El filtro se recupera desde la URL validada");
-assert.ok(directory.includes('const [kind,setKind]=useState(tipo||"")'),"Filtro inicializado desde búsqueda validada");
-assert.ok(directory.includes('useEffect(()=>setKind(tipo||""),[tipo])'),"Atrás, adelante y recarga sincronizan el filtro");
+assert.ok(directory.includes('const safeKind=typeof tipo==="string"&&Object.prototype.hasOwnProperty.call(types,tipo)?tipo:""'),"El filtro leído se valida incluso antes del primer render");
+assert.ok(directory.includes('const [kind,setKind]=useState(safeKind)'),"Filtro inicializado seguro");
+assert.ok(directory.includes('useEffect(()=>setKind(safeKind),[safeKind])'),"Atrás, adelante y recarga sincronizan filtro seguro");
 assert.ok(directory.includes('(!kind||r.tipo===kind)'),"Filtro real por tipo de recurso");
 assert.ok(directory.includes('Mostrar todos los recursos'),"Opción de restablecer");
 assert.ok(directory.includes('onClick={clearAll}'),"Restablece todos los criterios, no solo categoría");
