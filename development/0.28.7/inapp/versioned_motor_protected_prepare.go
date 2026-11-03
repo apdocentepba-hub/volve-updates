@@ -50,6 +50,18 @@ func PrepareProtectedVersionedMotor(
  if err:=acl.VerifyProtected(targetRoot);err!=nil{
   return "",fmt.Errorf("installed engine parent is not ACL-protected: %w",err)
  }
+ if err:=safeInventoryDirectory(filepath.Dir(source));err!=nil{
+  return "",fmt.Errorf("downloaded motor parent is redirected or unsafe: %w",err)
+ }
+ // A symlink in the staged EXE/manifest/signature must fail before the
+ // create-only destination directory is created, not after partial writes.
+ for _,sidecar:=range []string{"",".json",".sig"}{
+  stat,err:=os.Lstat(source+sidecar)
+  if err!=nil{return "",err}
+  if !stat.Mode().IsRegular()||stat.Mode()&os.ModeSymlink!=0||stat.Size()<1{
+   return "",errors.New("publisher bundle contains a link or nonregular file")
+  }
+ }
  manifest,err:=VerifyStaged(source,publisher)
  if err!=nil{return "",fmt.Errorf("publisher-signed candidate refused: %w",err)}
  if manifest.Component!="dns-engine"||manifest.Version==""{
