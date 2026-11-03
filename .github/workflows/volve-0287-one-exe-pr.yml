@@ -179,6 +179,26 @@ jobs:
           Write-Host 'AUTHDIAG: Windows PowerShell 5 direct trust status'
           & "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -Command '$s=Get-AuthenticodeSignature -LiteralPath $env:VOLVE_CI_AUTHENTICODE_OS_BINARY; Write-Output ("AUTHDIAG: PS5="+$s.Status); if($s.Status -ne "Valid"){exit 7}'
           Write-Host ("AUTHDIAG: PS5_EXIT="+$LASTEXITCODE)
+          # Reproduce the Go verifier's fixed PowerShell script EXACTLY, but
+          # expose the subprocess stderr only inside disposable Windows CI.
+          $commandText = '$ErrorActionPreference=''Stop'';' +
+            '$path=$env:VOLVE_PUBLISHER_VERIFY_FILE;' +
+            'if([string]::IsNullOrWhiteSpace($path)){throw ''missing target''};' +
+            '$s=Get-AuthenticodeSignature -LiteralPath $path -ErrorAction Stop;' +
+            'if($s.Status -ne ''Valid'' -or $null -eq $s.SignerCertificate){throw ''Windows Authenticode trust failed''};' +
+            '$alg=[Security.Cryptography.SHA256]::Create();' +
+            'try{$hash=$alg.ComputeHash($s.SignerCertificate.GetRawCertData())}finally{$alg.Dispose()};' +
+            'Write-Output (''VOLVE_AUTHENTICODE_CERT_SHA256=''+[BitConverter]::ToString($hash).Replace(''-'','''').ToLowerInvariant())'
+          $encoded=[Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($commandText))
+          $env:VOLVE_PUBLISHER_VERIFY_FILE=$env:VOLVE_CI_AUTHENTICODE_OS_BINARY
+          Write-Host 'AUTHDIAG: full Go-compatible encoded script BEGIN'
+          $previous=$ErrorActionPreference
+          $ErrorActionPreference='Continue'
+          $diagnostic=(& "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -EncodedCommand $encoded 2>&1 | Out-String)
+          $diagnosticExit=$LASTEXITCODE
+          $ErrorActionPreference=$previous
+          Write-Host ("AUTHDIAG: exact-script exit="+$diagnosticExit)
+          Write-Host ("AUTHDIAG: exact-script output="+$diagnostic)
           go test -count=1 -v ./...
           if($LASTEXITCODE -ne 0){
             Write-Host 'AUTHDIAG: exact Go PowerShell trust verifier source (public test code)'
