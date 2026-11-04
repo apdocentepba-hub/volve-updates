@@ -25,6 +25,7 @@ type Sources struct{
 type Result struct{
  AssetsFromRealSources int
  AssetsSynthetic int
+ AuthoredBrowserPolicyPlans int
  RealPEFiles int
  StagedComponents int
  ApprovedForRelease bool
@@ -66,8 +67,8 @@ func assertWindowsPE64(path string)error{
 }
 // BuildMixedLab strictly cross-checks real Centro/watchdog/historic motor
 // against the independent read-only materials audit, verifies the pinned
-// official HaGeZi source independently and fills ONLY the missing browser
-// policies with an explicit synthetic CI marker.
+// official HaGeZi source independently and compiles a deterministic
+// browser desired-state policy with no registry writes or installation.
 // A randomly generated private key is used for this ephemeral lab alone;
 // no private key is stored or exported. An inactive second-stage is verified.
 func BuildMixedLab(ctx context.Context,s Sources)(Result,error){
@@ -136,7 +137,10 @@ func BuildMixedLab(ctx context.Context,s Sources)(Result,error){
  receipt,err:=regularBytes(s.CatalogReceipt,1<<20);if err!=nil{return rejected,fmt.Errorf("source receipt unavailable: %w",err)}
  if err:=VerifyPinnedFullCatalog(catalog,receipt);err!=nil{return rejected,fmt.Errorf("HaGeZi source verification refused: %w",err)}
  content["full-catalog"]=catalog
- content["browser-policies"]=[]byte("{\"ci_only\":true,\"synthetic_missing_product_policy\":true,\"never_install\":true}\n")
+ browserPlan,err:=CreateBrowserPolicyPlan(catalog,receipt)
+ if err!=nil{return rejected,fmt.Errorf("real browser policy compiler rejected pinned catalog: %w",err)}
+ if err:=VerifyBrowserPolicyPlan(browserPlan,catalog,receipt);err!=nil{return rejected,fmt.Errorf("browser plan reproducibility refused: %w",err)}
+ content["browser-policies"]=browserPlan
  if err:=ctx.Err();err!=nil{return rejected,err}
  pub,priv,err:=ed25519.GenerateKey(rand.Reader);if err!=nil{return rejected,err}
  if err:=os.Mkdir(s.Root,0700);err!=nil{return rejected,err}
@@ -161,5 +165,5 @@ func BuildMixedLab(ctx context.Context,s Sources)(Result,error){
  staged,err:=signedstage.PrepareInactiveLabVersion(ctx,s.Root,s.Inactive,pub)
  if err!=nil{return rejected,fmt.Errorf("inactive Windows stage refused: %w",err)}
  if len(staged.Components)!=7{return rejected,errors.New("invalid staged public count")}
- return Result{AssetsFromRealSources:6,AssetsSynthetic:1,RealPEFiles:3,StagedComponents:7,ApprovedForRelease:false},nil
+ return Result{AssetsFromRealSources:6,AssetsSynthetic:0,AuthoredBrowserPolicyPlans:1,RealPEFiles:3,StagedComponents:7,ApprovedForRelease:false},nil
 }
