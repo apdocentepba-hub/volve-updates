@@ -45,6 +45,22 @@ jobs:
               dest.write_bytes(source.read_bytes())
           '@ | python -
           if($LASTEXITCODE -ne 0){throw 'Source archive hash or path invalid'}
+
+      - name: Audit historical singlefile source for seven-component migration
+        shell: pwsh
+        run: |
+          @'
+          from pathlib import Path
+          root=Path("development/0.28.7/singlefile")
+          for p in sorted(root.rglob("*.go")):
+              print("SOURCE_FILE",p.relative_to(root))
+              lines=p.read_text(encoding="utf-8").splitlines()
+              for i,line in enumerate(lines,1):
+                  if any(needle in line.lower() for needle in ("uninstall", "items=8", "len(m.components)", "requiredcomponents", "requiredfiles", "fixture", "components =")):
+                      print(f"SOURCE_LINE {p.relative_to(root)}:{i} {line[:220]}")
+          '@ | python -
+          if($LASTEXITCODE -ne 0){throw 'Historical singlefile source inspection failed'}
+
       - name: Reconstruct pinned Authenticode Windows source overlay
         shell: pwsh
         run: |
