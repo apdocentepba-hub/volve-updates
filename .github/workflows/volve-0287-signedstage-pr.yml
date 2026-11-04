@@ -1,0 +1,31 @@
+name: VOLVE 0.28.7 signed inactive-version staging CI (NO RELEASE)
+on:
+  pull_request:
+    branches: [feature/motor-updater-0287-pilot]
+    paths:
+      - 'development/0.28.7/signedstage/**'
+      - 'development/0.28.7/unifiedbundle/**'
+      - '.github/workflows/volve-0287-signedstage-pr.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  test-inactive-version-stage:
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.x'
+      - name: Test fail-closed staging and build Windows code
+        shell: pwsh
+        working-directory: development/0.28.7/signedstage
+        run: |
+          go test -count=1 -v ./...
+          if($LASTEXITCODE -ne 0){throw 'Signed inactive stage tests failed'}
+          go vet ./...
+          if($LASTEXITCODE -ne 0){throw 'Signed inactive stage vet failed'}
+          go build ./...
+          if($LASTEXITCODE -ne 0){throw 'Signed inactive stage build failed'}
+          Write-Host 'PASS VOLVE_SIGNED_INACTIVE_STAGE_WINDOWS NO_INSTALL NO_DNS NO_TASKS NO_RELEASE'
