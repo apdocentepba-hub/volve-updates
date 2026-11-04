@@ -33,6 +33,11 @@ func RecoverAbandonedInactiveLabStage(ctx context.Context, source,destination st
   return "",errors.New("canonical CI-only sibling locations required")
  }
  if err:=recoveryParents(filepath.Dir(source));err!=nil{return "",err}
+ // The same process-independent OS lock is held by an active stage writer.
+ // Windows kernel abandons a mutex automatically on process termination.
+ unlock,lockErr:=acquireStageLock(destination)
+ if lockErr!=nil{return "",fmt.Errorf("cannot exclusively inspect abandoned staging: %w",lockErr)}
+ defer unlock()
  if _,err:=unifiedbundle.Verify(source,key);err!=nil{return "",fmt.Errorf("untrusted signed source: %w",err)}
  pending:=destination+".pending"
  if _,err:=os.Lstat(destination);err==nil{return "",errors.New("already prepared/installed destination: preserve files")}else if !os.IsNotExist(err){return "",err}
@@ -40,12 +45,11 @@ func RecoverAbandonedInactiveLabStage(ctx context.Context, source,destination st
  if os.IsNotExist(err){return RecoveryAlreadyClean,nil}
  if err!=nil{return "",err}
  if !info.IsDir()||info.Mode()&os.ModeSymlink!=0{return "",errors.New("pending is not an ordinary directory")}
- // An existing lock (including post-crash residue) fails closed.
- lockPath:=pending+".recovery-lock"
- lock,err:=os.OpenFile(lockPath,os.O_WRONLY|os.O_CREATE|os.O_EXCL,0600)
- if err!=nil{return "",fmt.Errorf("recovery lock already present: %w",err)}
- if err:=lock.Close();err!=nil{return "",err}
- defer os.Remove(lockPath)
+ // Fail closed on residual lockfiles from the older CI implementation.
+ // New mutual exclusion uses the crash-safe OS kernel mutex above instead.
+ if _,err:=os.Lstat(pending+".recovery-lock");err==nil{
+  return "",errors.New("legacy recovery lock residue needs explicit inspection")
+ }else if !os.IsNotExist(err){return "",err}
  if err:=ctx.Err();err!=nil{return "",err}
  if _,err:=os.Lstat(destination);err==nil{return "",errors.New("destination appeared during recovery lock")}else if !os.IsNotExist(err){return "",err}
  allowed:=map[string]bool{"manifest.json":true,"manifest.ed25519":true}
