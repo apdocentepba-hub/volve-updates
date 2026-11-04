@@ -44,11 +44,11 @@ func InspectWindowsReadOnly(ctx context.Context) (Evidence,error) {
         `$tcp=@(Get-NetTCPConnection -ErrorAction Stop | Where-Object {$_.LocalPort -eq 53 -and $_.State -eq 'Listen'});` +
         `$d=@(Get-DnsClientServerAddress -ErrorAction Stop);` +
         `$loop=$false;foreach($x in $d){foreach($ip in @($x.ServerAddresses)){if($ip -eq '127.0.0.1' -or $ip -eq '::1'){$loop=$true}}};` +
-        `$roots=@(Join-Path $env:ProgramData 'VOLVE-Browser-Filter',Join-Path $env:ProgramData 'VOLVE-DNS-Recovery');` +
+        `$roots=@((Join-Path -Path $env:ProgramData -ChildPath 'VOLVE-Browser-Filter'),(Join-Path -Path $env:ProgramData -ChildPath 'VOLVE-DNS-Recovery'));` +
         `$dataCount=@($roots | Where-Object {Test-Path -LiteralPath $_}).Count;` +
         `$rec=Test-Path -LiteralPath (Join-Path $env:ProgramData 'VOLVE-DNS-Recovery');` +
         `$proot=Test-Path -LiteralPath (Join-Path $env:ProgramFiles 'VOLVE');` +
-        `$policyPaths=@('HKLM:\\SOFTWARE\\Policies\\Google\\Chrome\\URLBlocklist','HKLM:\\SOFTWARE\\Policies\\Microsoft\\Edge\\URLBlocklist','HKLM:\\SOFTWARE\\Policies\\Mozilla\\Firefox');` +
+        `$policyPaths=@('HKLM:\SOFTWARE\Policies\Google\Chrome\URLBlocklist','HKLM:\SOFTWARE\Policies\Microsoft\Edge\URLBlocklist','HKLM:\SOFTWARE\Policies\Mozilla\Firefox');` +
         `$policyCount=@($policyPaths | Where-Object {Test-Path -LiteralPath $_}).Count;` +
         `$pr=[Security.Principal.WindowsPrincipal]::new([Security.Principal.WindowsIdentity]::GetCurrent());` +
         `$admin=$pr.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator);` +
