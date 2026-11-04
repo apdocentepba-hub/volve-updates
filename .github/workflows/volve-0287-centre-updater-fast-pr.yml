@@ -454,6 +454,9 @@ jobs:
           } finally {Pop-Location}
           $firstSha=(Get-FileHash -LiteralPath $unsigned -Algorithm SHA256).Hash.ToLowerInvariant()
           Write-Host "PASS VOLVE_REAL_SEVEN_ONE_PE_SIGNED_MANIFEST verified=true roles=7 corrupt_refused=true sha256=$firstSha NO_INSTALL NO_DNS NO_TASKS NO_RELEASE"
+          # The intentional negative tests set LASTEXITCODE to nonzero.
+          # Return success only after all explicit assertions above passed.
+          exit 0
       - name: Authenticode-sign one-PE genuine-seven LAB container and verify dual trust (NO RELEASE)
         timeout-minutes: 5
         shell: pwsh
@@ -508,3 +511,6 @@ jobs:
           }
           if(Test-Path -LiteralPath (Join-Path $staged 'VOLVE_Uninstall.exe')){throw 'CRITICAL private owner uninstaller present'}
           Write-Host "PASS VOLVE_ONE_PE_SEVEN_ACTUAL_COMPONENTS_DUAL_SIGNATURE_WINDOWS sha256=$exeSHA certsha=$certSHA items=7 NO_INSTALL NO_DNS_CHANGE NO_TASKS NO_RELEASE"
+          # The intentional negative tests set LASTEXITCODE to nonzero.
+          # Return success only after all explicit assertions above passed.
+          exit 0
