@@ -171,7 +171,7 @@ jobs:
           Write-Host ('PASS: compile actual Centro+Updater 0.28.7 for Windows; bytes='+$meta.Length+' SHA256='+$h)
           Write-Host 'NO RELEASE, NO INSTALLER, NO FILE DISTRIBUTION, NO DNS/TASK MODIFICATIONS'
 
-      - name: Compile actual independent Windows watchdog and audit 2 of 8 release inputs (NO RELEASE)
+      - name: Compile actual independent Windows watchdog and audit 2 of 7 public inputs (NO RELEASE)
         shell: pwsh
         working-directory: build/codigo
         run: |
@@ -204,11 +204,13 @@ jobs:
             --report (Join-Path $env:RUNNER_TEMP 'VOLVE_0287_CI_INPUTS_NO_RELEASE.json')
           if($LASTEXITCODE -ne 0){throw 'Actual Windows release material inspection failed'}
           $proof=Get-Content -LiteralPath (Join-Path $env:RUNNER_TEMP 'VOLVE_0287_CI_INPUTS_NO_RELEASE.json') -Raw | ConvertFrom-Json
-          if($proof.checked_compiled_roles -ne 2 -or $proof.missing_production_release_roles -ne 8 -or
+          if($proof.checked_compiled_roles -ne 2 -or $proof.missing_production_release_roles -ne 7 -or
+             @($proof.materials).Count -ne 7 -or
+             @($proof.materials | Where-Object {$_.filename -eq 'VOLVE_Uninstall.exe' -or $_.id -eq 'uninstaller'}).Count -ne 0 -or
              $proof.production_install_authorized -ne $false -or $proof.can_publish_release -ne $false){
             throw 'Unsigned CI components were incorrectly treated as installable release'
           }
-          Write-Host 'PASS: Centro and independent watchdog compiled from authenticated real source; 2/8 CI build inputs; 0/8 release-approved'
+          Write-Host 'PASS: Centro and independent watchdog compiled from authenticated real source; 2/7 CI build inputs; 0/7 release-approved'
           Write-Host 'NO EXPORT/UPLOAD, NO RELEASE, NO INSTALLER, NO DNS/TASK CHANGE'
 
       - name: Verify exact old editor-signed DNS motor candidate as THIRD material (NO RELEASE)
@@ -287,11 +289,13 @@ jobs:
           if($proof.checked_compiled_roles -ne 2 -or
              $proof.checked_historic_candidate_roles -ne 1 -or
              $proof.checked_build_material_roles -ne 3 -or
-             $proof.missing_production_release_roles -ne 8 -or
+             @($proof.materials).Count -ne 7 -or
+             @($proof.materials | Where-Object {$_.filename -eq 'VOLVE_Uninstall.exe' -or $_.id -eq 'uninstaller'}).Count -ne 0 -or
+             $proof.missing_production_release_roles -ne 7 -or
              $proof.production_install_authorized -ne $false -or
              $m.Count -ne 1 -or
              $m[0].state -cne 'PINNED_HISTORIC_SIGNED_DNS_CANDIDATE_NOT_INSTALLABLE'){
             throw 'Candidate presence must never grant installation or release permission'
           }
           Write-Host 'PASS: 2 distinct actual Windows builds + 1 SHA256-pinned historical publisher-signed DNS motor verified with genuine original Go verifier.'
-          Write-Host '3/8 CI audit materials, 0/8 production approved; missing signed migration and final Setup. NO INSTALL OR RELEASE.'
+          Write-Host '3/7 CI audit materials, 0/7 production approved; missing signed migration and final Setup. NO INSTALL OR RELEASE.'
