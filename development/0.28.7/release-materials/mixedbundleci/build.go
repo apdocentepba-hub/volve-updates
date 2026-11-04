@@ -23,6 +23,10 @@ type Sources struct{
  Centro,Watchdog,Motor,MotorManifest,MotorSignature,Catalog,CatalogReceipt,AuditJSON,Root,Inactive string
 }
 type Result struct{
+ // Lab-only public key for independently authenticating the resulting
+ // exact seven-role signed bundle inside the CI-only single PE container.
+ // The ephemeral signing PRIVATE key never leaves BuildMixedLab.
+ EphemeralPublicKeyHex string
  AssetsFromRealSources int
  AssetsSynthetic int
  AuthoredBrowserPolicyPlans int
@@ -165,5 +169,5 @@ func BuildMixedLab(ctx context.Context,s Sources)(Result,error){
  staged,err:=signedstage.PrepareInactiveLabVersion(ctx,s.Root,s.Inactive,pub)
  if err!=nil{return rejected,fmt.Errorf("inactive Windows stage refused: %w",err)}
  if len(staged.Components)!=7{return rejected,errors.New("invalid staged public count")}
- return Result{AssetsFromRealSources:6,AssetsSynthetic:0,AuthoredBrowserPolicyPlans:1,RealPEFiles:3,StagedComponents:7,ApprovedForRelease:false},nil
+ return Result{EphemeralPublicKeyHex:hex.EncodeToString(pub),AssetsFromRealSources:6,AssetsSynthetic:0,AuthoredBrowserPolicyPlans:1,RealPEFiles:3,StagedComponents:7,ApprovedForRelease:false},nil
 }
