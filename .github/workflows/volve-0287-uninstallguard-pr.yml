@@ -1,0 +1,70 @@
+name: VOLVE 0.28.7 uninstaller ownership gate Windows (NO RELEASE)
+on:
+  pull_request:
+    branches: [feature/motor-updater-0287-pilot]
+    paths:
+      - 'development/0.28.7/uninstallguard/**'
+      - '.github/workflows/volve-0287-uninstallguard-pr.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  native-readonly-uninstall-review:
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.x'
+      - name: Reject running on a host with existing VOLVE protection
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          if($env:GITHUB_ACTIONS -ne 'true' -or $env:RUNNER_ENVIRONMENT -ne 'github-hosted'){throw 'Only isolated Windows CI allowed'}
+          if(Get-ScheduledTask -ErrorAction Stop | Where-Object {$_.TaskName -match '^(?i:VOLVE[-_])'}){
+            throw 'Existing installed VOLVE task, refuse to run on any protected machine'
+          }
+      - name: Compile and exercise safe uninstaller policy tests on Windows
+        shell: pwsh
+        working-directory: development/0.28.7/uninstallguard
+        run: |
+          $ErrorActionPreference='Stop'
+          go version
+          go test -count=1 -v ./...
+          if($LASTEXITCODE -ne 0){throw 'Windows uninstall guard tests failed or were skipped'}
+          go vet ./...
+          if($LASTEXITCODE -ne 0){throw 'Uninstall guard static analysis failed'}
+      - name: Build standalone native uninstall review and ensure no Windows host mutation
+        shell: pwsh
+        working-directory: development/0.28.7/uninstallguard
+        run: |
+          $ErrorActionPreference='Stop'
+          $beforeDNS=Get-DnsClientServerAddress -ErrorAction Stop | Sort-Object InterfaceIndex,AddressFamily | Select-Object InterfaceIndex,AddressFamily,ServerAddresses | ConvertTo-Json -Depth 5 -Compress
+          $beforeTasks=@(Get-ScheduledTask -ErrorAction Stop | Where-Object {$_.TaskName -match '^(?i:VOLVE[-_])'}).Count
+          $exe=Join-Path $env:RUNNER_TEMP 'VOLVE_Uninstall_0287_REVIEW_ONLY_NO_DESINSTALAR.exe'
+          $env:CGO_ENABLED='0'
+          go build -buildvcs=false -trimpath -ldflags '-buildid=' -o $exe ./cmd/review
+          if($LASTEXITCODE -ne 0){throw 'Windows read-only uninstaller component build failed'}
+          $bytes=[IO.File]::ReadAllBytes($exe)
+          if($bytes.Length -lt 1048576 -or $bytes[0] -ne 77 -or $bytes[1] -ne 90){
+            throw 'Not a native Windows PE executable'
+          }
+          $reportRaw=(& $exe --review-only | Out-String)
+          if($LASTEXITCODE -ne 0){throw 'Actual Windows uninstall inventory refused'}
+          $report=$reportRaw | ConvertFrom-Json
+          if($report.component -ne 'VOLVE-0287-UNINSTALL-REVIEW-ONLY' -or
+             $report.can_uninstall -ne $false -or $report.can_stop_motor -ne $false -or
+             $report.can_change_dns -ne $false -or $report.can_delete_tasks -ne $false -or
+             $report.can_remove_browser_policies -ne $false -or $report.can_delete_files -ne $false){
+            throw 'CRITICAL: native uninstaller preview wrongly granted destructive permissions'
+          }
+          $afterDNS=Get-DnsClientServerAddress -ErrorAction Stop | Sort-Object InterfaceIndex,AddressFamily | Select-Object InterfaceIndex,AddressFamily,ServerAddresses | ConvertTo-Json -Depth 5 -Compress
+          $afterTasks=@(Get-ScheduledTask -ErrorAction Stop | Where-Object {$_.TaskName -match '^(?i:VOLVE[-_])'}).Count
+          if($beforeDNS -cne $afterDNS -or $beforeTasks -ne $afterTasks){
+            throw 'CRITICAL: Windows DNS adapter or VOLVE tasks changed during read-only preview'
+          }
+          $hash=(Get-FileHash -Algorithm SHA256 -LiteralPath $exe).Hash.ToLowerInvariant()
+          Write-Host ('PASS: compiled Win64 uninstall review, original host DNS and tasks unchanged; SHA256='+$hash)
+          Write-Host ('ROUTE='+$report.mode)
+          Write-Host 'NO UNINSTALL, NO RELEASE, NO DOWNLOADED INSTALLER'
