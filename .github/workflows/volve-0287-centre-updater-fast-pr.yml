@@ -4,6 +4,7 @@ on:
     branches: [feature/motor-updater-0287-pilot]
     paths:
       - 'development/0.28.7/inapp/**'
+      - 'development/0.28.7/release-materials/**'
       - '.github/workflows/volve-0287-centre-updater-fast-pr.yml'
   workflow_dispatch:
 permissions:
@@ -14,7 +15,7 @@ concurrency:
 jobs:
   windows-real-centre-compile:
     runs-on: windows-latest
-    timeout-minutes: 13
+    timeout-minutes: 18
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -159,3 +160,36 @@ jobs:
           $h=(Get-FileHash -Algorithm SHA256 -LiteralPath $file).Hash.ToLowerInvariant()
           Write-Host ('PASS: compile actual Centro+Updater 0.28.7 for Windows; bytes='+$meta.Length+' SHA256='+$h)
           Write-Host 'NO RELEASE, NO INSTALLER, NO FILE DISTRIBUTION, NO DNS/TASK MODIFICATIONS'
+
+      - name: Compile actual independent Windows watchdog and audit 2 of 8 release inputs (NO RELEASE)
+        shell: pwsh
+        working-directory: build/codigo
+        run: |
+          $ErrorActionPreference='Stop'
+          $env:CGO_ENABLED='0'
+          $centro=Join-Path $env:RUNNER_TEMP 'VOLVE_0287_Centro_Updater_LAB_NO_INSTALAR.exe'
+          $watchdog=Join-Path $env:RUNNER_TEMP 'VOLVE_0287_Managed_Watchdog_LAB_NO_INSTALAR.exe'
+          if(-not (Test-Path -LiteralPath $centro -PathType Leaf)){
+            throw 'Integrated Centre binary from previous Windows build is missing'
+          }
+          go build -trimpath -o $watchdog ./cmd/volve-managed-watchdog
+          if($LASTEXITCODE -ne 0){throw 'Independent native Windows watchdog build failed'}
+          $meta=Get-Item -LiteralPath $watchdog -ErrorAction Stop
+          if($meta.Length -lt 1048576){throw 'Compiled watchdog binary is suspiciously small'}
+          Write-Host 'MATERIALS CHECK 1/2: execute adversarial auditor tests'
+          python -m unittest discover -s ../../development/0.28.7/release-materials -p 'test_inspect_materials.py' -v
+          if($LASTEXITCODE -ne 0){throw 'Materials audit negative/contract tests failed'}
+          Write-Host 'MATERIALS CHECK 2/2: inventory actual PE32+ binaries, with NONE approved for install'
+          python ../../development/0.28.7/release-materials/inspect_materials.py `
+            --centro $centro `
+            --watchdog $watchdog `
+            --go-contract ../../development/0.28.7/unifiedbundle/bundle.go `
+            --report (Join-Path $env:RUNNER_TEMP 'VOLVE_0287_CI_INPUTS_NO_RELEASE.json')
+          if($LASTEXITCODE -ne 0){throw 'Actual Windows release material inspection failed'}
+          $proof=Get-Content -LiteralPath (Join-Path $env:RUNNER_TEMP 'VOLVE_0287_CI_INPUTS_NO_RELEASE.json') -Raw | ConvertFrom-Json
+          if($proof.checked_compiled_roles -ne 2 -or $proof.missing_production_release_roles -ne 8 -or
+             $proof.production_install_authorized -ne $false -or $proof.can_publish_release -ne $false){
+            throw 'Unsigned CI components were incorrectly treated as installable release'
+          }
+          Write-Host 'PASS: Centro and independent watchdog compiled from authenticated real source; 2/8 CI build inputs; 0/8 release-approved'
+          Write-Host 'NO EXPORT/UPLOAD, NO RELEASE, NO INSTALLER, NO DNS/TASK CHANGE'
