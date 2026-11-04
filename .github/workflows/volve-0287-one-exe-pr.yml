@@ -6,6 +6,7 @@ on:
       - 'development/0.28.7/singlefile-*'
       - 'development/0.28.7/singlefile-overlay/**'
       - 'development/0.28.7/hostroutebridge/**'
+      - 'development/0.28.7/browserpolicytx/**'
       - 'development/0.28.7/authenticode-source/**'
       - 'development/0.28.7/unifiedbundle/**'
       - '.github/workflows/volve-0287-one-exe-pr.yml'
@@ -21,6 +22,18 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: '1.23.x'
+      - name: Validate browser-policy rollback contract (non-Windows lab store)
+        shell: pwsh
+        working-directory: development/0.28.7/browserpolicytx
+        run: |
+          $ErrorActionPreference='Stop'
+          go test -count=1 -v ./...
+          if($LASTEXITCODE -ne 0){throw 'Browser policy trial and reversal failed'}
+          go vet ./...
+          if($LASTEXITCODE -ne 0){throw 'Browser policy trial vet failed'}
+          go build ./...
+          if($LASTEXITCODE -ne 0){throw 'Browser policy trial compilation failed'}
+          Write-Host 'PASS VOLVE_BROWSER_POLICY_772_VALUES_SIMULATED_TRANSACTION_ROLLBACK NO_REGISTRY NO_INSTALL NO_RELEASE'
       - name: Validate exact Go source archive
         shell: pwsh
         run: |
