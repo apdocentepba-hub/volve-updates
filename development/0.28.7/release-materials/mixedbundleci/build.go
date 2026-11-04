@@ -20,7 +20,7 @@ import (
 )
 
 type Sources struct{
- Centro,Watchdog,Motor,MotorManifest,MotorSignature,AuditJSON,Root,Inactive string
+ Centro,Watchdog,Motor,MotorManifest,MotorSignature,Catalog,CatalogReceipt,AuditJSON,Root,Inactive string
 }
 type Result struct{
  AssetsFromRealSources int
@@ -65,8 +65,9 @@ func assertWindowsPE64(path string)error{
  return nil
 }
 // BuildMixedLab strictly cross-checks real Centro/watchdog/historic motor
-// against the independent read-only materials audit, then fills ONLY the
-// missing browser policies and catalog with explicit synthetic CI markers.
+// against the independent read-only materials audit, verifies the pinned
+// official HaGeZi source independently and fills ONLY the missing browser
+// policies with an explicit synthetic CI marker.
 // A randomly generated private key is used for this ephemeral lab alone;
 // no private key is stored or exported. An inactive second-stage is verified.
 func BuildMixedLab(ctx context.Context,s Sources)(Result,error){
@@ -121,8 +122,21 @@ func BuildMixedLab(ctx context.Context,s Sources)(Result,error){
  );err!=nil{return rejected,fmt.Errorf("historically signed motor sidecars refused: %w",err)}
  if SHA256(content["centro-updater"])==SHA256(content["system-watchdog"])||SHA256(content["centro-updater"])==ExpectedHistoricMotorSHA256||
   SHA256(content["system-watchdog"])==ExpectedHistoricMotorSHA256{return rejected,errors.New("distinct executable roles were reused")}
+ // A sixth genuine source asset: exact byte-pinned official gambling list.
+ // No assertion is made that this input is compatible with the motor or
+ // legally cleared for production redistribution.
+ if s.Catalog==""||s.CatalogReceipt==""||!filepath.IsAbs(s.Catalog)||!filepath.IsAbs(s.CatalogReceipt)||
+  filepath.Base(s.Catalog)!=files["full-catalog"]||filepath.Clean(s.Catalog)!=s.Catalog||
+  filepath.Clean(s.CatalogReceipt)!=s.CatalogReceipt{
+  return rejected,errors.New("exact absolute catalog and provenance receipt paths required")
+ }
+ if err:=safeParents(filepath.Dir(s.Catalog));err!=nil{return rejected,err}
+ if err:=safeParents(filepath.Dir(s.CatalogReceipt));err!=nil{return rejected,err}
+ catalog,err:=regularBytes(s.Catalog,24<<20);if err!=nil{return rejected,fmt.Errorf("pinned full source unavailable: %w",err)}
+ receipt,err:=regularBytes(s.CatalogReceipt,1<<20);if err!=nil{return rejected,fmt.Errorf("source receipt unavailable: %w",err)}
+ if err:=VerifyPinnedFullCatalog(catalog,receipt);err!=nil{return rejected,fmt.Errorf("HaGeZi source verification refused: %w",err)}
+ content["full-catalog"]=catalog
  content["browser-policies"]=[]byte("{\"ci_only\":true,\"synthetic_missing_product_policy\":true,\"never_install\":true}\n")
- content["full-catalog"]=[]byte("VOLVE-CI-ONLY-SYNTHETIC-CATALOG-NOT-PRODUCTION-NEVER-INSTALL\n")
  if err:=ctx.Err();err!=nil{return rejected,err}
  pub,priv,err:=ed25519.GenerateKey(rand.Reader);if err!=nil{return rejected,err}
  if err:=os.Mkdir(s.Root,0700);err!=nil{return rejected,err}
@@ -147,5 +161,5 @@ func BuildMixedLab(ctx context.Context,s Sources)(Result,error){
  staged,err:=signedstage.PrepareInactiveLabVersion(ctx,s.Root,s.Inactive,pub)
  if err!=nil{return rejected,fmt.Errorf("inactive Windows stage refused: %w",err)}
  if len(staged.Components)!=7{return rejected,errors.New("invalid staged public count")}
- return Result{AssetsFromRealSources:5,AssetsSynthetic:2,RealPEFiles:3,StagedComponents:7,ApprovedForRelease:false},nil
+ return Result{AssetsFromRealSources:6,AssetsSynthetic:1,RealPEFiles:3,StagedComponents:7,ApprovedForRelease:false},nil
 }
