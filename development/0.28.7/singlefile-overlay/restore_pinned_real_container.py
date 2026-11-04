@@ -11,7 +11,7 @@ import tarfile
 
 ROOT=Path(__file__).resolve().parents[1]
 SINGLE_SHA="01294e1d5ce51928098d30bd90f04b7979e1764993d4b419c66489b67676e215"
-AUTH_SHA="cdb9cb776552ee9a08668aae71e8031c7b3b6fadf6e6690abfb20fc36a0"
+AUTH_SHA="cdb9cb776552ee9a08668aae71e8031c7b3d4fb3b6fadf6e6690abfb20fc36a0"
 
 def open_pinned(path:Path,digest:str):
     if hashlib.sha256(path.read_bytes()).hexdigest()!=digest:
