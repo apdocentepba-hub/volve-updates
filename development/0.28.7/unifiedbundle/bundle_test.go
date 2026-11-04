@@ -68,7 +68,7 @@ func TestEvenSignedIncorrectContentFails(t *testing.T){
  cases:=[]struct{name string;change func(*Manifest)}{
   {"old",func(m *Manifest){m.Release="0.28.6"}},
   {"architecture",func(m *Manifest){m.Platform="linux-amd64"}},
-  {"incomplete",func(m *Manifest){m.Components=m.Components[:7]}},
+  {"incomplete",func(m *Manifest){m.Components=m.Components[:len(m.Components)-1]}},
   {"duplicate",func(m *Manifest){m.Components[0]=m.Components[1]}},
   {"traversal",func(m *Manifest){m.Components[0].File="../motor.exe"}},
   {"wrong-hash",func(m *Manifest){m.Components[0].SHA256="0000000000000000000000000000000000000000000000000000000000000000"}},
