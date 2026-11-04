@@ -37,10 +37,10 @@ func reject(t *testing.T,dir string,pub ed25519.PublicKey){
 func TestSignedCompleteBundle(t *testing.T){
  dir,pub,_,_:=setup(t)
  m,err:=Verify(dir,pub);if err!=nil{t.Fatal(err)}
- if len(m.Components)!=8{t.Fatal("eight parts required")}
+ if len(m.Components)!=7{t.Fatal("eight parts required")}
 }
 func TestMissingCriticalPartsFail(t *testing.T){
- for _,id:=range []string{"dns-motor","system-watchdog","uninstaller","browser-policies","full-catalog"}{
+ for _,id:=range []string{"dns-motor","system-watchdog","browser-policies","full-catalog"}{
   t.Run(id,func(t *testing.T){
    dir,pub,_,_:=setup(t)
    if err:=os.Remove(filepath.Join(dir,requiredComponents[id]));err!=nil{t.Fatal(err)}
@@ -94,4 +94,13 @@ func TestNoImplicitTrust(t *testing.T){
  dir,pub,_,_:=setup(t)
  if _,err:=Verify(dir,nil);err==nil{t.Fatal("untrusted key accepted")}
  if _,err:=Verify("",pub);err==nil{t.Fatal("empty root accepted")}
+}
+
+// The public installer must reject an owner's private removal executable,
+// even when the rest of the payload has a valid synthetic editorial signature.
+func TestOwnerOnlyUninstallerNeverIncludedInPublicBundle(t *testing.T){
+ dir,pub,_,_:=setup(t)
+ if _,exists:=RequiredFiles()["uninstaller"];exists{t.Fatal("owner-only removal tool entered public component allowlist")}
+ if err:=os.WriteFile(filepath.Join(dir,"VOLVE_Uninstall.exe"),[]byte("owner-only forbidden"),0600);err!=nil{t.Fatal(err)}
+ reject(t,dir,pub)
 }

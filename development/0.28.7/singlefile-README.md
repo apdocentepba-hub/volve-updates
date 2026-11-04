@@ -1,3 +1,5 @@
+> **BLOQUEO DE DISTRIBUCIÓN (04/11/2026):** este prototipo usa ocho componentes sintéticos, incluido un marcador `VOLVE_Uninstall.exe`. Es una fixture **solo de CI**, incompatible con el contrato público de **siete** componentes en `unifiedbundle`. Está prohibido distribuirlo como instalador de usuarios. El desinstalador real será una herramienta privada y exclusiva del propietario, sin incluirse en el Setup, sitio, releases, actualizaciones ni artefactos descargables. Hay que reconstruir el empaquetador para siete piezas y repetir todas las pruebas de firma y staging antes de release.
+
 # VOLVÉ 0.28.7 — EXE único: circuito firmado de laboratorio
 
 **Estado:** PILOTO · PR #3 DRAFT · NO INSTALAR · NO RELEASE

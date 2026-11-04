@@ -20,7 +20,6 @@ COMPONENTS = {
     "motor-manifest": "VOLVE_DNS_Motor_0_28_7.exe.json",
     "motor-signature": "VOLVE_DNS_Motor_0_28_7.exe.sig",
     "system-watchdog": "VOLVE_Managed_Watchdog.exe",
-    "uninstaller": "VOLVE_Uninstall.exe",
     "browser-policies": "VOLVE_Browser_Policies.json",
     "full-catalog": "VOLVE_Full_Catalog.txt",
 }
@@ -33,12 +32,14 @@ PUBLISHED_MOTOR_BYTES = 18168832
 
 
 def require_matching_go_contract(contract_path: Path) -> None:
-    """Fail if the exact 8-role contract in Go differs from the auditor."""
+    """Fail if the exact seven-role PUBLIC contract in Go differs from the auditor."""
     data = contract_path.read_text(encoding="utf-8")
     match = re.search(r"var\s+requiredComponents\s*=\s*map\[string\]string\s*\{(.*?)\n\}", data, re.S)
     if not match:
         raise ValueError("cannot inspect the authoritative Go component contract")
     found = dict(re.findall(r'"([a-z][a-z-]*)"\s*:\s*"([^"]+)"', match.group(1)))
+    if "uninstaller" in found or "VOLVE_Uninstall.exe" in found.values():
+        raise ValueError("owner-only uninstaller forbidden in public release materials")
     if found != COMPONENTS:
         raise ValueError("component manifest differs from original verified Go contract")
 

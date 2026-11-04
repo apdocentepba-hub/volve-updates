@@ -1,51 +1,11 @@
-# VOLVÉ 0.28.7 — Uninstaller ownership guard (NO DESINSTALA)
+# VOLVÉ 0.28.7 — auditoría de propiedad, solo lectura
 
-Capa de revisión preventiva para el futuro desinstalador único. No contiene
-funciones que eliminen archivos, tareas, políticas, servicios o DNS.
+**Este módulo público NO desinstala nada.** Sus verificaciones de recibos, hashes, tareas SYSTEM, archivos y DNS se emplean como controles de integridad y diagnóstico. No eliminan procesos, archivos, políticas, tareas, servicios ni configuraciones DNS.
 
-En la PC real observada en noviembre 2026 existen las tareas heredadas
-`VOLVE-CATALOGO-0230`, `VOLVE-DNS-RESCUE-0270` y
-`VOLVE-DNS-SERVER-0270`, además del motor DNS activo.
-Por diseño, el estado resultante es `STOP_LEGACY_0286_PROTECTION_PRESENT`.
+**Política del propietario (04/11/2026):** el único desinstalador/reparador con capacidad de retirada se reservará al propietario del proyecto. Debe desarrollarse y mantenerse **fuera del paquete público, del sitio web, de los releases y de los artefactos públicos de CI**. No se incluye en `VOLVE_Setup.exe` ni en actualizaciones descargadas por usuarios.
 
-Un eventual desinstalador productivo deberá verificar por separado una
-instalación 0.28.7 firmada, la identidad exacta de cada archivo/tarea,
-respaldo de DNS y XML de tareas, lock SYSTEM, journal de transacción,
-watchdog externo, reversión probada y consentimiento explícito.
+Una eventual herramienta privada exigirá consentimiento explícito del propietario, autenticación independiente, verificación de procedencia, identidad de procesos/tareas, respaldo original de DNS y XML SYSTEM, journal durable, exclusión exclusiva y recuperación probada. **No existe todavía un desinstalador privado operativo ni se ha implementado aquí permiso para desinstalar.** Es indispensable una vía de reparación segura ante incidentes de red y pérdida de conectividad.
 
-**Este paquete NO es un desinstalador productivo** ni un cuarto
-componente aprobado del futuro Setup. Ninguna salida autoriza acciones.
+En la PC con 0.28.6 siguen presentes las tareas heredadas `VOLVE-CATALOGO-0230`, `VOLVE-DNS-RESCUE-0270` y `VOLVE-DNS-SERVER-0270`. El revisor responde `STOP_LEGACY_0286_PROTECTION_PRESENT`; no modifica la instalación.
 
-
-## Recibo editorial de instalación — paso nuevo 04/11/2026
-
-El módulo `receipt.go` comprueba un recibo de instalación completo emitido
-**después** de una instalación 0.28.7 y una verificación independiente de
-recuperación tras reinicio. Requisitos innegociables:
-
-- firma Ed25519 del recibo en bytes JSON canónicos, validada con una clave
-  pública editorial previamente fijada en el producto; nunca obtenida del
-  propio recibo ni elegida por el usuario en línea de comandos;
-- ocho componentes, nombres y hashes, comparados con el contrato real de
-  `../unifiedbundle` sin mantener otra lista divergente;
-- hash de paquete firmado, respaldo DNS, journal de recuperación, tarea SYSTEM
-  y acción programada, e identidad del motor 0.28.6 de origen si hubo migración;
-- UUID de instalación codificado en hexadecimal, rutas Windows absolutas
-  sin UNC, traversal, alias ni streams NTFS.
-
-Una firma válida **NO demuestra** que el proceso y las tareas actualmente
-ejecutándose coincidan con ese recibo. `ReviewWithSignedReceipt` devuelve
-`REVIEW_AUTHENTIC_INSTALLED_0287_RECEIPT_BUT_LIVE_OWNERSHIP_UNPROVEN`
-solo en condiciones conservadoras, con TODAS las operaciones destructivas
-deshabilitadas y otras seis pruebas todavía obligatorias. Tareas heredadas
-0.28.6 o journal de recuperación mantienen prioridad de veto.
-
-Los tests usan claves efímeras generadas localmente para verificar tanto
-casos válidos como alteraciones y suplantaciones. **No hay en este módulo
-un recibo productivo emitido, firma editorial de producción disponible,
-autorización de desinstalación, ni ejecutable productivo para desinstalar.**
-La identidad de los objetos realmente instalados (hashes de disco, XML
-de las tareas, propietario del puerto 53, DNS y lock SYSTEM) aún requiere
-atestación nativa vinculada al recibo.
-
-Evidencia Windows CI: https://github.com/apdocentepba-hub/volve-updates/actions/runs/41826124549
+Las pruebas de este paquete emplean claves efímeras y no otorgan firmas editoriales productivas, ni autorización de release o retirada. La protección frente a desinstalación convencional no puede prometer invulnerabilidad ante administradores de Windows, reinstalación del SO o acceso físico.

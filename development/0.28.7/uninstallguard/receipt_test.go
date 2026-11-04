@@ -47,7 +47,7 @@ func testSigned(t *testing.T,r InstalledReceipt)([]byte,[]byte,ed25519.PublicKey
 func TestVerifiedEditorialReceiptIsNotAnUninstallPermit(t *testing.T){
     raw,sig,key,_:=testSigned(t,testReceipt())
     r,err:=VerifySignedInstalledReceipt(raw,sig,key)
-    if err!=nil || len(r.Files)!=8 {t.Fatalf("authentic receipt rejected: %+v %v",r,err)}
+    if err!=nil || len(r.Files)!=7 {t.Fatalf("authentic receipt rejected: %+v %v",r,err)}
     host:=knownHost()
     host.OtherVolveTasks=1;host.ProgramFilesRoot=true;host.ProgramDataResidues=1
     plan,err:=ReviewWithSignedReceipt(host,raw,sig,key)
@@ -99,7 +99,7 @@ func TestReceiptSignatureAndCanonicalJSONRejectManipulation(t *testing.T){
 
 func TestSignedReceiptRejectsIncorrectOwnersMissingFilesAndUnsafeRoots(t *testing.T){
     for name,change:=range map[string]func(*InstalledReceipt){
-        "missing-file":func(r *InstalledReceipt){r.Files=r.Files[:7]},
+        "missing-file":func(r *InstalledReceipt){r.Files=r.Files[:len(r.Files)-1]},
         "missing-root":func(r *InstalledReceipt){r.Files[0].Root=""},
         "wrong-root":func(r *InstalledReceipt){r.Files[0].Root="windows"},
         "unsorted":func(r *InstalledReceipt){r.Files[0],r.Files[1]=r.Files[1],r.Files[0]},

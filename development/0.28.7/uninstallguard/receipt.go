@@ -102,7 +102,7 @@ func validateReceipt(r InstalledReceipt) error {
     }
 
     required:=unifiedbundle.RequiredFiles()
-    if len(r.Files)!=len(required){return errors.New("signed receipt lacks exact eight release component identities")}
+    if len(r.Files)!=len(required){return errors.New("signed receipt lacks exact seven public release component identities")}
     previous:=""
     for _,f:=range r.Files {
         name,ok:=required[f.ID]

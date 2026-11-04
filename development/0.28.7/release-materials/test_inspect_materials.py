@@ -37,17 +37,25 @@ class BuildMaterialTests(unittest.TestCase):
             encoding="utf-8",
         )
 
-    def test_two_distinct_ci_materials_never_approve_eight_release_parts(self):
+    def test_two_distinct_ci_materials_never_approve_seven_public_release_parts(self):
         report = inspector.build_report(self.centro, self.watchdog, self.contract)
         self.assertEqual(report["checked_compiled_roles"], 2)
-        self.assertEqual(report["missing_production_release_roles"], 8)
-        self.assertEqual(len(report["materials"]), 8)
+        self.assertEqual(report["missing_production_release_roles"], 7)
+        self.assertEqual(len(report["materials"]), 7)
         for permission in ("production_install_authorized", "can_modify_dns_or_tasks", "can_publish_release", "ed25519_release_manifest_verified", "publisher_authenticode_verified_for_release"):
             self.assertIs(report[permission], False)
         self.assertEqual(sum("sha256" in x for x in report["materials"]), 2)
         self.assertEqual(len(set(x.get("sha256") for x in report["materials"] if "sha256" in x)), 2)
         self.assertTrue(all("INSTALLABLE" not in x["state"] or "NOT_INSTALLABLE" in x["state"] for x in report["materials"]))
         self.assertEqual(report["materials"][-1]["state"], "MISSING_PRODUCTION_RELEASE_INPUT")
+
+    def test_owner_only_uninstaller_cannot_enter_public_contract(self):
+        self.assertNotIn("uninstaller", inspector.COMPONENTS)
+        self.assertNotIn("VOLVE_Uninstall.exe", inspector.COMPONENTS.values())
+        self.contract.write_text(self.contract.read_text(encoding="utf-8").replace(
+            "VOLVE_Full_Catalog.txt", "VOLVE_Uninstall.exe"), encoding="utf-8")
+        with self.assertRaises(ValueError):
+            inspector.require_matching_go_contract(self.contract)
 
     def test_rejects_wrong_pe_architecture_and_truncated_file(self):
         data = bytearray(self.centro.read_bytes())

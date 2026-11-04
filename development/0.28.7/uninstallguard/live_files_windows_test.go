@@ -11,14 +11,14 @@ import (
 
 // A real native Windows filesystem test: uses only t.TempDir() and private
 // synthetic signed fixtures. No VOLVE tasks, DNS or browser settings change.
-func TestWindowsNativeSignedReceiptAndEightDiskFilesNoMutations(t *testing.T){
+func TestWindowsNativeSignedReceiptAndSevenDiskFilesNoMutations(t *testing.T){
     r,install,data:=buildFileFixture(t)
     r.InstallRoot=install
     r.DataRoot=data
     raw,sig,pub,_:=testSigned(t,r)
     report,err:=AuditSignedInstalledFilesReadOnly(context.Background(),raw,sig,pub)
     if err!=nil{t.Fatalf("native signed disk audit refused authentic fixture: %v",err)}
-    if report.CheckedFiles!=8 || report.MatchedFiles!=8 ||
+    if report.CheckedFiles!=7 || report.MatchedFiles!=7 ||
         report.CanUninstall || report.CanStopMotor || report.CanChangeDNS ||
         report.CanDeleteTasks || report.CanDeleteFiles ||
         report.TaskOwnershipVerified || report.ProcessOwnershipVerified{

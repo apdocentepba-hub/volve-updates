@@ -23,13 +23,14 @@ const (
  maxManifest int64 = 1 << 20
  maxComponent int64 = 1 << 30
 )
+// Public distribution contract: owner-only recovery/uninstallation stays OUTSIDE the installer.
+// Do not add VOLVE_Uninstall.exe or any equivalent removal binary here.
 var requiredComponents = map[string]string{
  "centro-updater":"VOLVE_Centro_Updater.exe",
  "dns-motor":"VOLVE_DNS_Motor_0_28_7.exe",
  "motor-manifest":"VOLVE_DNS_Motor_0_28_7.exe.json",
  "motor-signature":"VOLVE_DNS_Motor_0_28_7.exe.sig",
  "system-watchdog":"VOLVE_Managed_Watchdog.exe",
- "uninstaller":"VOLVE_Uninstall.exe",
  "browser-policies":"VOLVE_Browser_Policies.json",
  "full-catalog":"VOLVE_Full_Catalog.txt",
 }

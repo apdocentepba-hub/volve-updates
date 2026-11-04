@@ -32,11 +32,11 @@ func buildFileFixture(t *testing.T)(InstalledReceipt,string,string){
     return r,install,data
 }
 
-func TestReadOnlySignedFilesMatchEightExactHashesAndNeverAuthorize(t *testing.T){
+func TestReadOnlySignedFilesMatchSevenExactHashesAndNeverAuthorize(t *testing.T){
     r,install,data:=buildFileFixture(t)
     a,err:=auditReceiptFilesAtRoots(context.Background(),r,install,data)
     if err!=nil{t.Fatal(err)}
-    if a.MatchedFiles!=8||a.CheckedFiles!=8||a.Status!="READ_ONLY_FILE_HASHES_MATCH_TASKS_AND_PROCESS_UNVERIFIED"{
+    if a.MatchedFiles!=7||a.CheckedFiles!=7||a.Status!="READ_ONLY_FILE_HASHES_MATCH_TASKS_AND_PROCESS_UNVERIFIED"{
         t.Fatalf("unexpected audit: %+v",a)
     }
     if a.CanUninstall||a.CanStopMotor||a.CanDeleteTasks||a.CanDeleteFiles||
