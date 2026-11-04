@@ -45,21 +45,13 @@ jobs:
               dest.write_bytes(source.read_bytes())
           '@ | python -
           if($LASTEXITCODE -ne 0){throw 'Source archive hash or path invalid'}
-
-      - name: Audit historical singlefile source for seven-component migration
+      - name: Migrate CI source to the seven-part public bundle (owner uninstaller excluded)
         shell: pwsh
         run: |
-          @'
-          from pathlib import Path
-          root=Path("development/0.28.7/singlefile")
-          for p in sorted(root.rglob("*.go")):
-              print("SOURCE_FILE",p.relative_to(root))
-              lines=p.read_text(encoding="utf-8").splitlines()
-              for i,line in enumerate(lines,1):
-                  if any(needle in line.lower() for needle in ("uninstall", "items=8", "len(m.components)", "requiredcomponents", "requiredfiles", "fixture", "components =")):
-                      print(f"SOURCE_LINE {p.relative_to(root)}:{i} {line[:220]}")
-          '@ | python -
-          if($LASTEXITCODE -ne 0){throw 'Historical singlefile source inspection failed'}
+          python development/0.28.7/singlefile-overlay/enforce_public_seven.py
+          if($LASTEXITCODE -ne 0){throw 'Failed to enforce public seven-piece bundle; do not build historical eight-piece candidate'}
+
+
 
       - name: Reconstruct pinned Authenticode Windows source overlay
         shell: pwsh
@@ -110,7 +102,7 @@ jobs:
           go run ./cmd/assemble --bootstrapper $boot --bundle $fixture --out $unsigned --pubkey $pub
           if($LASTEXITCODE -ne 0){throw 'Single EXE signed bundle assembly failed'}
           $original=(& $unsigned --verify-bundle | Out-String)
-          if($LASTEXITCODE -ne 0 -or $original -notmatch 'PASS VOLVE_SINGLEFILE_SIGNED_BUNDLE release=0.28.7 items=8 NO_INSTALL'){
+          if($LASTEXITCODE -ne 0 -or $original -notmatch 'PASS VOLVE_SINGLEFILE_SIGNED_BUNDLE release=0.28.7 items=7 NO_INSTALL'){
             throw 'Unsigned PE cannot verify its internal Ed25519-signed bundle'
           }
           $bytes=[IO.File]::ReadAllBytes($unsigned)
@@ -120,7 +112,7 @@ jobs:
           $rejected=(& $tampered --verify-bundle 2>&1 | Out-String)
           if($LASTEXITCODE -eq 0){throw 'CRITICAL: altered embedded ZIP was accepted'}
           Add-Content -LiteralPath $env:GITHUB_ENV -Value "VOLVE_CI_ED25519_PUB=$pub"
-          Write-Host 'CHECKPOINT 1/5 PASS: single EXE authenticates 8 test files and rejects tampering'
+          Write-Host 'CHECKPOINT 1/5 PASS: single EXE authenticates 7 test files and rejects tampering'
           exit 0
       - name: Create isolated short-lived signing certificate
         timeout-minutes: 2
@@ -195,7 +187,7 @@ jobs:
           go vet ./...
           if($LASTEXITCODE -ne 0){throw 'Go static analysis failed'}
           Write-Host 'CHECKPOINT 4/5 PASS: Windows signed-positive, wrong pins and unsigned negatives'
-      - name: Execute signed EXE and re-verify eight staged components
+      - name: Execute signed EXE and re-verify seven staged components
         timeout-minutes: 3
         shell: pwsh
         working-directory: development/0.28.7/singlefile
@@ -205,7 +197,7 @@ jobs:
           if(-not (Test-Path -LiteralPath $signed -PathType Leaf)){throw 'Signed Windows PE missing'}
           Write-Host 'CHECKPOINT 5/5: actual Windows signed EXE verification'
           $result=(& $signed --verify-bundle | Out-String)
-          if($LASTEXITCODE -ne 0 -or $result -notmatch 'PASS VOLVE_SINGLEFILE_SIGNED_BUNDLE release=0.28.7 items=8 NO_INSTALL'){
+          if($LASTEXITCODE -ne 0 -or $result -notmatch 'PASS VOLVE_SINGLEFILE_SIGNED_BUNDLE release=0.28.7 items=7 NO_INSTALL'){
             throw 'Signed Windows PE failed authenticated payload check'
           }
           # A single CI gate now refuses staging unless BOTH Windows
@@ -215,7 +207,7 @@ jobs:
           if($LASTEXITCODE -ne 0){throw 'Windows dual-signature gate build failed'}
           $staged=Join-Path $env:RUNNER_TEMP 'VOLVE-CI-verified-extraction'
           $stageResult=(& $gate --exe $signed --out $staged --pubkey $env:VOLVE_CI_ED25519_PUB --certsha $env:VOLVE_CI_AUTHENTICODE_CERT_SHA256 --filehash $env:VOLVE_CI_AUTHENTICODE_FILE_SHA256 | Out-String)
-          if($LASTEXITCODE -ne 0 -or $stageResult -notmatch 'PASS VOLVE_DUAL_SIGNED_STAGE_LAB release=0.28.7 items=8 NO_INSTALL'){
+          if($LASTEXITCODE -ne 0 -or $stageResult -notmatch 'PASS VOLVE_DUAL_SIGNED_STAGE_LAB release=0.28.7 items=7 NO_INSTALL'){
             throw 'Dual-signed Windows EXE failed protected extraction and re-verification'
           }
           Write-Host 'CHECKPOINT 5/5: correct publisher+file+Ed25519 dual-auth passed'
@@ -236,7 +228,7 @@ jobs:
           if($LASTEXITCODE -eq 0 -or (Test-Path -LiteralPath $missingPublisherDest)){throw 'CRITICAL: missing Authenticode pin staged files'}
           Write-Host 'CHECKPOINT 5/5: rejection tests passed (wrong cert, wrong exe hash, wrong manifest key, absent cert pin)'
 
-          foreach($name in @('VOLVE_DNS_Motor_0_28_7.exe','VOLVE_Managed_Watchdog.exe','VOLVE_Uninstall.exe','VOLVE_Browser_Policies.json','VOLVE_Full_Catalog.txt','manifest.json','manifest.ed25519')){
+          foreach($name in @('VOLVE_DNS_Motor_0_28_7.exe','VOLVE_Managed_Watchdog.exe','VOLVE_Browser_Policies.json','VOLVE_Full_Catalog.txt','manifest.json','manifest.ed25519')){
             if(-not (Test-Path -LiteralPath (Join-Path $staged $name) -PathType Leaf)){throw ('Missing staged asset '+$name)}
           }
           Write-Host $result
