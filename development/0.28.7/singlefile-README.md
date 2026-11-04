@@ -1,3 +1,5 @@
+> **CI siete componentes (04/11/2026):** el workflow ahora reconstruye el archivo fuente histórico fijado por SHA-256, aplica `singlefile-overlay/enforce_public_seven.py` con reemplazos de anclas exactas y adapta el puente de inventario Windows para admitir **siete** piezas. No se empaqueta `VOLVE_Uninstall.exe`. La compilación de laboratorio está firmada con certificado sintético y sigue siendo **NO INSTALAR / NO RELEASE**. El desinstalador exclusivo del propietario permanece fuera de las descargas públicas.
+
 > **BLOQUEO DE DISTRIBUCIÓN (04/11/2026):** este prototipo usa ocho componentes sintéticos, incluido un marcador `VOLVE_Uninstall.exe`. Es una fixture **solo de CI**, incompatible con el contrato público de **siete** componentes en `unifiedbundle`. Está prohibido distribuirlo como instalador de usuarios. El desinstalador real será una herramienta privada y exclusiva del propietario, sin incluirse en el Setup, sitio, releases, actualizaciones ni artefactos descargables. Hay que reconstruir el empaquetador para siete piezas y repetir todas las pruebas de firma y staging antes de release.
 
 # VOLVÉ 0.28.7 — EXE único: circuito firmado de laboratorio

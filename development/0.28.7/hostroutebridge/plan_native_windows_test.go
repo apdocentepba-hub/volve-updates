@@ -23,7 +23,7 @@ func TestSignedPackageRealWindowsRouteProducesNonAuthorizingPlan(t *testing.T) {
         ctx,fixture.exe,fixture.key,fixture.certPin,fixture.exePin,
         installedRoot,motorupdate.DefaultWindowsMotorRouteInspectors())
     if err!=nil{t.Fatal(err)}
-    if !review.WindowsPublisherAndPackageVerified||review.PackageParts!=8||
+    if !review.WindowsPublisherAndPackageVerified||review.PackageParts!=7||
         review.InventoriesChecked!=6||plan.CompleteHostInventories!=6||
         !plan.SignedPackageVerified||plan.HostRoute!=review.Route||
         plan.TargetRelease!="0.28.7"||plan.Mode==""||

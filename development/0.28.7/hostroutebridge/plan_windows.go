@@ -63,7 +63,7 @@ func PlanFromVerifiedReview(ctx context.Context, review Review) (InstallerPlanRe
     if review.Schema!=bridgeSchema ||
         review.Component!="installer-signed-bundle-windows-route-review" ||
         review.Status!="REVIEW_ONLY_NEVER_INSTALL_OR_MIGRATE" ||
-        review.Release!=wantedRelease ||review.PackageParts!=8||
+        review.Release!=wantedRelease ||review.PackageParts!=7||
         !review.WindowsPublisherAndPackageVerified||
         review.InventoriesChecked!=6||
         review.InstallAuthorized||review.UpgradeAuthorized||review.CanModifyDNS||

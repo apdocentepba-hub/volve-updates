@@ -51,7 +51,7 @@ func TestSixInventoryActualWindowsBridgeOnlyReturnsReview(t *testing.T) {
     review,err := ReviewReadOnly(ctx,fixture.exe,fixture.key,
         fixture.certPin,fixture.exePin,root,motorupdate.DefaultWindowsMotorRouteInspectors())
     if err != nil {t.Fatal(err)}
-    if review.Schema!=1||review.Release!="0.28.7"||review.PackageParts!=8||
+    if review.Schema!=1||review.Release!="0.28.7"||review.PackageParts!=7||
         !review.WindowsPublisherAndPackageVerified||review.InventoriesChecked!=6 {
         t.Fatalf("dual-signature or real six-inventory proof incomplete: %+v",review)
     }

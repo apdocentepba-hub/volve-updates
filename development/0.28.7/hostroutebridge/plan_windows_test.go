@@ -14,7 +14,7 @@ func safeReview(route motorupdate.MotorInstallRoute) Review {
     return Review{
         Schema:bridgeSchema,
         Component:"installer-signed-bundle-windows-route-review",
-        Release:wantedRelease,PackageParts:8,
+        Release:wantedRelease,PackageParts:7,
         WindowsPublisherAndPackageVerified:true,
         InventoriesChecked:6,Route:route,
         Reason:"independently read-only classified Windows host",

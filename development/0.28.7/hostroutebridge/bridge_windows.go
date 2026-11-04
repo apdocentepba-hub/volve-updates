@@ -78,7 +78,7 @@ func ReviewReadOnly(
     manifest,err := singlefile.InspectExecutable(exe,publisherKey)
     if err != nil { return rejected,fmt.Errorf("complete signed bundle rejected: %w",err) }
     if manifest.Release != wantedRelease || manifest.Platform != wantedPlatform ||
-       len(manifest.Components) != 8 {
+       len(manifest.Components) != 7 {
         return rejected,errors.New("signed bundle is not complete VOLVE 0.28.7 Windows package")
     }
     if err := ctx.Err(); err != nil { return rejected,err }
