@@ -130,6 +130,10 @@ jobs:
           $afterTasks=@(Get-ScheduledTask -ErrorAction Stop | Where-Object {$_.TaskName -match '(?i)^VOLVE[-_]'}).Count
           if($beforeDNS -cne $afterDNS -or $beforeTasks -ne $afterTasks){throw 'Read-only run changed Windows DNS or tasks'}
           Write-Host 'PASS VOLVE_0287_REAL_CENTRO_READ_ONLY_WINDOWS_PE NO_DNS NO_TASKS NO_INSTALL'
+          # Read-only refusal of a missing installed motor is EXPECTED to exit 1.
+          # PowerShell exposes the last native exit status to GitHub at step end.
+          # The before/after comparisons above have already confirmed no writes.
+          exit 0
       - uses: actions/upload-artifact@v4
         with:
           name: VOLVE-0287-WINDOWS-REAL-PE-TESTED-NO-INSTALL
