@@ -300,7 +300,7 @@ jobs:
           Write-Host 'PASS: 2 distinct actual Windows builds + 1 SHA256-pinned historical publisher-signed DNS motor verified with genuine original Go verifier.'
           Write-Host '3/7 CI audit materials, 0/7 production approved; missing signed migration and final Setup. NO INSTALL OR RELEASE.'
 
-      - name: Stage six real-source files with one CI-only browser policy placeholder (NO RELEASE)
+      - name: Stage six real-source files and reviewed three-browser no-write policy declaration (NO RELEASE)
         timeout-minutes: 5
         shell: pwsh
         working-directory: development/0.28.7/release-materials/mixedbundleci
@@ -328,7 +328,7 @@ jobs:
           $sidecar=(Resolve-Path '../../motor-release-candidate/VOLVE_DNS_Motor_0_28_7.exe.json').Path
           $signature=(Resolve-Path '../../motor-release-candidate/VOLVE_DNS_Motor_0_28_7.exe.sig').Path
           $result=(& go run ./cmd/mixedbundle --centro $centro --watchdog $watchdog --historic-motor $motor --motor-manifest $sidecar --motor-signature $signature --catalog $catalog --catalog-receipt $catalogReceipt --audit $audit --out $root --inactive $inactive | Out-String)
-          if($LASTEXITCODE -ne 0 -or $result -notmatch 'PASS VOLVE_REAL_MATERIALS_MIXED_CI_INACTIVE_STAGE actual_source_files=6 synthetic_roles=1 native_PE=3 total=7 RELEASE_APPROVED=false'){
+          if($LASTEXITCODE -ne 0 -or $result -notmatch 'PASS VOLVE_REAL_MATERIALS_MIXED_CI_INACTIVE_STAGE actual_source_files=6 authored_browser_policy_plans=1 synthetic_roles=0 native_PE=3 total=7 RELEASE_APPROVED=false'){
             throw 'Actual Windows components could not be signed and staged in inactive CI'
           }
           foreach($test in @(
@@ -342,7 +342,37 @@ jobs:
             $b=(Get-FileHash -Algorithm SHA256 -LiteralPath $test[1]).Hash
             if($a -cne $b){throw ('Real asset changed while staging: '+$test[1])}
           }
-          if((Get-Content -LiteralPath (Join-Path $inactive 'VOLVE_Browser_Policies.json') -Raw) -notmatch 'never_install'){throw 'Synthetic browser policy marker missing'}
+          # This is a verified DESIRED-STATE policy definition only.
+          # No registry keys are set; no enforcement is claimed.
+          $policy=(Get-Content -LiteralPath (Join-Path $inactive 'VOLVE_Browser_Policies.json') -Raw | ConvertFrom-Json)
+          if($policy.component -cne 'browser-policies' -or
+             $policy.status -cne 'DESIRED_STATE_ONLY_NOT_APPLIED' -or
+             $policy.source_commit -cne '81bbd1b9009893d65358146b23282647634c26be' -or
+             $policy.distinct_blocked_domains -ne 256 -or
+             $policy.list_limit -ne 1000 -or
+             $policy.conflict_rule -cne 'REFUSE_OR_SKIP_EXISTING_UNOWNED_VALUES' -or
+             $policy.browser_enforcement_verified -ne $false -or
+             $policy.registry_write_authorized -ne $false -or
+             $policy.production_install_authorized -ne $false -or
+             $policy.can_publish_release -ne $false -or
+             @($policy.registry_values).Count -ne 772){
+            throw 'Chrome/Edge/Firefox desired-state contract is malformed or falsely claiming activation'
+          }
+          $chrome=@($policy.registry_values | Where-Object {$_.browser -eq 'chrome'})
+          $edge=@($policy.registry_values | Where-Object {$_.browser -eq 'edge'})
+          $firefox=@($policy.registry_values | Where-Object {$_.browser -eq 'firefox'})
+          if($chrome.Count -ne 257 -or $edge.Count -ne 257 -or $firefox.Count -ne 258){
+            throw 'Browser policy role counts or max 1000 cap violated'
+          }
+          foreach($name in @('chrome','edge','firefox')){
+            $matches=@($policy.registry_values | Where-Object {
+              $_.browser -eq $name -and $_.name -eq '1' -and
+              $_.value -match 'argentina-app-betwarrior\\.com'
+            })
+            if($matches.Count -ne 1){throw ('Priority policy host missing from '+$name)}
+          }
+          Write-Host 'PASS VOLVE_AUTHORED_BROWSER_POLICY_PLAN chrome=256 edge=256 firefox=256 doh=4 applied=false'
+
           $sourceHash=(Get-FileHash -Algorithm SHA256 -LiteralPath $catalog).Hash
           $stagedHash=(Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $inactive 'VOLVE_Full_Catalog.txt')).Hash
           if($sourceHash -cne $stagedHash){throw 'Pinned official full source changed during inactive stage'}
@@ -351,7 +381,7 @@ jobs:
           }
           if(Test-Path -LiteralPath (Join-Path $inactive 'VOLVE_Uninstall.exe')){throw 'Owner uninstaller entered public payload'}
           Write-Host $result
-          Write-Host 'PASS VOLVE_MIXED_REAL_SOURCE_INACTIVE_CI_WIREUP; ZERO PRODUCTION-APPROVED COMPONENTS; HAGEZI GPL COMPLIANCE PENDING; NO SETUP NO INSTALL NO RELEASE'
+          Write-Host 'PASS VOLVE_MIXED_REAL_SOURCE_INACTIVE_CI_WIREUP; ZERO PRODUCTION-APPROVED COMPONENTS; BROWSER POLICY ONLY DESIRED STATE; HAGEZI GPL COMPLIANCE PENDING; NO SETUP NO INSTALL NO RELEASE'
 
       - name: Exercise exact HaGeZi full list with REAL resident DNS parser on Windows loopback (NO INSTALL)
         timeout-minutes: 7
