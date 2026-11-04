@@ -73,6 +73,23 @@ class BuildMaterialTests(unittest.TestCase):
         with self.assertRaises(OSError):
             inspector.build_report(self.centro, self.watchdog, self.contract)
 
+    def test_historic_motor_candidate_never_accepts_synthetic_or_wrong_bytes(self):
+        motor = self.folder / "motor.exe"
+        synthetic_pe(motor, b"3")
+        with self.assertRaisesRegex(ValueError, "not exact, pinned"):
+            inspector.build_report(self.centro, self.watchdog, self.contract, motor)
+        self.assertEqual(inspector.PUBLISHED_MOTOR_BYTES, 18168832)
+        self.assertEqual(len(inspector.PUBLISHED_MOTOR_SHA256), 64)
+
+    def test_historic_motor_never_reuses_compiled_centro(self):
+        # A renamed Centro from this build is not an authenticated independent motor.
+        with self.assertRaises(ValueError):
+            inspector.build_report(self.centro, self.watchdog, self.contract, self.centro)
+
+    def test_missing_historic_candidate_is_failure_not_partial_success(self):
+        with self.assertRaises(OSError):
+            inspector.build_report(self.centro, self.watchdog, self.contract, self.folder / "missing.exe")
+
     def test_rejects_duplicate_binary_roles(self):
         self.watchdog.write_bytes(self.centro.read_bytes())
         with self.assertRaises(ValueError):
