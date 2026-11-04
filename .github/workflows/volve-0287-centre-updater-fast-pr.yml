@@ -150,8 +150,18 @@ jobs:
           $ErrorActionPreference='Stop'
           $env:CGO_ENABLED='0'
           $file=Join-Path $env:RUNNER_TEMP 'VOLVE_0287_Centro_Updater_LAB_NO_INSTALAR.exe'
-          go build -trimpath -ldflags '-H windowsgui' -o $file .
-          if($LASTEXITCODE -ne 0){throw 'Real Centro+Updater Win64 build failed'}
+          # Keep build metadata independent of PR commit SHA and destination path.
+          # Two independently linked files must be byte-exact within this run.
+          Write-Host ('Go toolchain: '+(go version))
+          $file2=Join-Path $env:RUNNER_TEMP 'VOLVE_0287_Centro_Updater_RELINK_NO_INSTALAR.exe'
+          go build -buildvcs=false -trimpath -ldflags '-H windowsgui -buildid=' -o $file .
+          if($LASTEXITCODE -ne 0){throw 'First exact Centro+Updater Win64 build failed'}
+          go build -buildvcs=false -trimpath -ldflags '-H windowsgui -buildid=' -o $file2 .
+          if($LASTEXITCODE -ne 0){throw 'Second independent Centro+Updater Win64 link failed'}
+          $digest1=(Get-FileHash -Algorithm SHA256 -LiteralPath $file).Hash.ToLowerInvariant()
+          $digest2=(Get-FileHash -Algorithm SHA256 -LiteralPath $file2).Hash.ToLowerInvariant()
+          if($digest1 -cne $digest2){throw 'CRITICAL: Centro+Updater not byte-identical across independent link outputs'}
+          Write-Host ('PASS: REPRODUCIBLE_CENTRO_WITHIN_RUN SHA256='+$digest1)
           $meta=Get-Item -LiteralPath $file -ErrorAction Stop
           if($meta.Length -lt 1048576){throw 'Windows GUI is incomplete'}
           $handle=[IO.File]::OpenRead($file)
@@ -172,8 +182,15 @@ jobs:
           if(-not (Test-Path -LiteralPath $centro -PathType Leaf)){
             throw 'Integrated Centre binary from previous Windows build is missing'
           }
-          go build -trimpath -o $watchdog ./cmd/volve-managed-watchdog
-          if($LASTEXITCODE -ne 0){throw 'Independent native Windows watchdog build failed'}
+          $watchdog2=Join-Path $env:RUNNER_TEMP 'VOLVE_0287_Managed_Watchdog_RELINK_NO_INSTALAR.exe'
+          go build -buildvcs=false -trimpath -ldflags '-buildid=' -o $watchdog ./cmd/volve-managed-watchdog
+          if($LASTEXITCODE -ne 0){throw 'First independent native Windows watchdog build failed'}
+          go build -buildvcs=false -trimpath -ldflags '-buildid=' -o $watchdog2 ./cmd/volve-managed-watchdog
+          if($LASTEXITCODE -ne 0){throw 'Second independent native Windows watchdog build failed'}
+          $digest1=(Get-FileHash -Algorithm SHA256 -LiteralPath $watchdog).Hash.ToLowerInvariant()
+          $digest2=(Get-FileHash -Algorithm SHA256 -LiteralPath $watchdog2).Hash.ToLowerInvariant()
+          if($digest1 -cne $digest2){throw 'CRITICAL: watchdog not byte-identical across independent link outputs'}
+          Write-Host ('PASS: REPRODUCIBLE_WATCHDOG_WITHIN_RUN SHA256='+$digest1)
           $meta=Get-Item -LiteralPath $watchdog -ErrorAction Stop
           if($meta.Length -lt 1048576){throw 'Compiled watchdog binary is suspiciously small'}
           Write-Host 'MATERIALS CHECK 1/2: execute adversarial auditor tests'
