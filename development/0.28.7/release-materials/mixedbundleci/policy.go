@@ -50,7 +50,9 @@ func selectDomains(catalog []byte)([]string,error){
  for scan.Scan(){
   domain:=strings.TrimSpace(scan.Text())
   if domain==""||strings.HasPrefix(domain,"#"){continue}
-  domain=strings.TrimPrefix(domain,"*.")
+  // Never broaden a wildcard-only upstream rule to its apex domain.
+  // A later semantic mapping may support wildcard entries separately.
+  if strings.HasPrefix(domain,"*."){continue}
   if !policyDomainRe.MatchString(domain){return nil,errors.New("malformed official browser-policy domain")}
   if _,yes:=found[domain];yes{found[domain]=true}
   if _,yes:=seen[domain];yes{continue}
