@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Read-only inspection of two *real compiled* 0.28.7 Windows build outputs.
+"""Read-only inspection of two compiled Windows binaries and one pinned published DNS motor candidate.
 
 Not a release assembler, signer, installer or publication action. This tool
 must never label missing or unsigned assets as suitable for installation.
@@ -26,6 +26,10 @@ COMPONENTS = {
 }
 BUILT_ROLES = ("centro-updater", "system-watchdog")
 MAX_BYTES = 128 * 1024 * 1024
+# Historical editor-signed DNS candidate, NOT the production installer motor.
+# Verified independently with original Go motorupdate.VerifyStaged in Windows CI.
+PUBLISHED_MOTOR_SHA256 = "e451b6289116636986ddd67b39dc15f02e471ebde7be9508b38d7bcb0155b414"
+PUBLISHED_MOTOR_BYTES = 18168832
 
 
 def require_matching_go_contract(contract_path: Path) -> None:
@@ -77,7 +81,7 @@ def inspect_windows_amd64_exe(path: Path) -> dict:
     return {"bytes": measured, "sha256": digest.hexdigest(), "pe": "PE32+ x64"}
 
 
-def build_report(centro: Path, watchdog: Path, go_contract: Path) -> dict:
+def build_report(centro: Path, watchdog: Path, go_contract: Path, pinned_motor: Path | None = None) -> dict:
     require_matching_go_contract(go_contract)
     supplied = {
         "centro-updater": inspect_windows_amd64_exe(centro),
@@ -85,11 +89,22 @@ def build_report(centro: Path, watchdog: Path, go_contract: Path) -> dict:
     }
     if supplied["centro-updater"]["sha256"] == supplied["system-watchdog"]["sha256"]:
         raise ValueError("Centro and independent recovery cannot be the same PE")
+    if pinned_motor is not None:
+        motor_info = inspect_windows_amd64_exe(pinned_motor)
+        if (motor_info["sha256"], motor_info["bytes"]) != (PUBLISHED_MOTOR_SHA256, PUBLISHED_MOTOR_BYTES):
+            raise ValueError("published DNS candidate not exact, pinned, previously authenticated bytes")
+        if motor_info["sha256"] in {part["sha256"] for part in supplied.values()}:
+            raise ValueError("published DNS motor cannot alias Centro or watchdog")
+        supplied["dns-motor"] = motor_info
     materials = [
         {
             "id": role,
             "filename": filename,
-            "state": "BUILT_CI_UNSIGNED_NOT_INSTALLABLE" if role in supplied else "MISSING_PRODUCTION_RELEASE_INPUT",
+            "state": (
+                "PINNED_HISTORIC_SIGNED_DNS_CANDIDATE_NOT_INSTALLABLE" if role == "dns-motor" and role in supplied
+                else "BUILT_CI_UNSIGNED_NOT_INSTALLABLE" if role in supplied
+                else "MISSING_PRODUCTION_RELEASE_INPUT"
+            ),
             **supplied.get(role, {}),
         }
         for role, filename in COMPONENTS.items()
@@ -100,7 +115,9 @@ def build_report(centro: Path, watchdog: Path, go_contract: Path) -> dict:
         "platform": "windows-amd64",
         "artifact_type": "CI_BUILD_MATERIALS_AUDIT_NO_RELEASE",
         "materials": materials,
-        "checked_compiled_roles": len(supplied),
+        "checked_compiled_roles": len(BUILT_ROLES),
+        "checked_historic_candidate_roles": 1 if pinned_motor is not None else 0,
+        "checked_build_material_roles": len(supplied),
         "missing_production_release_roles": len(COMPONENTS),
         "publisher_authenticode_verified_for_release": False,
         "ed25519_release_manifest_verified": False,
@@ -115,10 +132,11 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--centro", type=Path, required=True)
     parser.add_argument("--watchdog", type=Path, required=True)
+    parser.add_argument("--pinned-published-motor", type=Path, help="Historic v0.28.7 exact-pinned motor, verified by Go publisher-signature gate in CI")
     parser.add_argument("--go-contract", type=Path, required=True)
     parser.add_argument("--report", type=Path, required=True)
     args = parser.parse_args()
-    report = build_report(args.centro, args.watchdog, args.go_contract)
+    report = build_report(args.centro, args.watchdog, args.go_contract, args.pinned_published_motor)
     if not args.report.is_absolute() or args.report.parent.is_symlink():
         raise ValueError("audit destination must be an absolute nonlinked directory")
     if args.report.exists():
@@ -130,7 +148,7 @@ def main() -> int:
         os.fsync(out.fileno())
     print("PASS VOLVE_0287_REAL_CENTRO_AND_WATCHDOG_CI_BUILDS")
     print("NO_RELEASE NO_AUTHENTICODE_PUBLISHER NO_INSTALL NO_DNS_CHANGE")
-    print(f"release-components={len(report['materials'])}; compiled-ci={report['checked_compiled_roles']}; approved-product=0")
+    print(f"release-components={len(report['materials'])}; compiled-ci={report['checked_compiled_roles']}; pinned-published-candidate={report['checked_historic_candidate_roles']}; approved-product=0")
     print(json.dumps({m["id"]: m.get("sha256", "MISSING") for m in report["materials"]}, sort_keys=True))
     return 0
 
