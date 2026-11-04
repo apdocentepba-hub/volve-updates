@@ -1,6 +1,7 @@
 // Command mixedbundle is only a Windows GitHub-hosted CI evidence gate.
 // It embeds two CI-built executable files and a pinned HISTORIC motor into
-// an INACTIVE, partially synthetic test bundle. Never distribute its output.
+// an INACTIVE lab bundle including an authored browser policy declaration.
+// No registry policy is installed or enforced. Never distribute this output.
 package main
 import(
  "context"
@@ -38,10 +39,10 @@ func main(){
   AuditJSON:*audit,Catalog:*catalog,CatalogReceipt:*catalogReceipt,Root:*root,Inactive:*inactive,
  })
  if err!=nil{fmt.Fprintln(os.Stderr,"REFUSED: cannot bind real Windows materials:",err);os.Exit(1)}
- if result.AssetsFromRealSources!=6||result.AssetsSynthetic!=1||result.RealPEFiles!=3||
+ if result.AssetsFromRealSources!=6||result.AssetsSynthetic!=0||result.AuthoredBrowserPolicyPlans!=1||result.RealPEFiles!=3||
   result.StagedComponents!=7||result.ApprovedForRelease{
   fmt.Fprintln(os.Stderr,"CRITICAL: mixed CI material classification changed");os.Exit(1)
  }
- fmt.Printf("PASS VOLVE_REAL_MATERIALS_MIXED_CI_INACTIVE_STAGE actual_source_files=%d synthetic_roles=%d native_PE=%d total=%d RELEASE_APPROVED=false NO_INSTALL NO_DNS NO_TASKS\n",
-  result.AssetsFromRealSources,result.AssetsSynthetic,result.RealPEFiles,result.StagedComponents)
+ fmt.Printf("PASS VOLVE_REAL_MATERIALS_MIXED_CI_INACTIVE_STAGE actual_source_files=%d authored_browser_policy_plans=%d synthetic_roles=%d native_PE=%d total=%d RELEASE_APPROVED=false NO_INSTALL NO_DNS NO_TASKS\n",
+  result.AssetsFromRealSources,result.AuthoredBrowserPolicyPlans,result.AssetsSynthetic,result.RealPEFiles,result.StagedComponents)
 }
