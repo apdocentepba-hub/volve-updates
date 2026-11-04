@@ -352,3 +352,32 @@ jobs:
           if(Test-Path -LiteralPath (Join-Path $inactive 'VOLVE_Uninstall.exe')){throw 'Owner uninstaller entered public payload'}
           Write-Host $result
           Write-Host 'PASS VOLVE_MIXED_REAL_SOURCE_INACTIVE_CI_WIREUP; ZERO PRODUCTION-APPROVED COMPONENTS; HAGEZI GPL COMPLIANCE PENDING; NO SETUP NO INSTALL NO RELEASE'
+
+      - name: Exercise exact HaGeZi full list with REAL resident DNS parser on Windows loopback (NO INSTALL)
+        timeout-minutes: 7
+        shell: pwsh
+        working-directory: build/codigo
+        run: |
+          $ErrorActionPreference='Stop'
+          if($env:GITHUB_ACTIONS -ne 'true' -or $env:RUNNER_ENVIRONMENT -ne 'github-hosted'){throw 'Not isolated Windows CI'}
+          $source=Join-Path $env:RUNNER_TEMP 'VOLVE_Full_Catalog.txt'
+          if(-not (Test-Path -LiteralPath $source -PathType Leaf)){throw 'Pinned full source was not verified earlier'}
+          if((Get-Item -LiteralPath $source).Length -ne 11040215){throw 'Full source identity changed before DNS test'}
+          $beforeDns=Get-DnsClientServerAddress -ErrorAction Stop | Sort-Object InterfaceIndex,AddressFamily | Select-Object InterfaceIndex,AddressFamily,ServerAddresses | ConvertTo-Json -Depth 5 -Compress
+          $beforeTasks=@(Get-ScheduledTask -ErrorAction Stop | Where-Object {$_.TaskName -match '^(?i:VOLVE[-_])'}).Count
+          $probe=(Resolve-Path '../../development/0.28.7/release-materials/catalogci/real_dns_probe_windows_test.go.txt').Path
+          Copy-Item -LiteralPath $probe -Destination './ci_real_hagezi_full_windows_test.go' -ErrorAction Stop
+          $env:VOLVE_CI_HAGEZI_FULL_SOURCE=$source
+          $events=@(go test . -run '^TestOfficialPinnedHaGeZiFullLoadedByActualDNSMotorOnLoopback$' -count=1 -timeout 6m -json)
+          if($LASTEXITCODE -ne 0){
+            $events | Select-Object -Last 75 | Write-Host
+            throw 'Actual pinned HaGeZi full catalog did not load/block in production DNS parser'
+          }
+          $parsed=@($events | Where-Object {$_ -match '^\s*\{'} | ForEach-Object {$_ | ConvertFrom-Json})
+          $passed=@($parsed | Where-Object {$_.Action -eq 'pass' -and $_.Test -eq 'TestOfficialPinnedHaGeZiFullLoadedByActualDNSMotorOnLoopback'})
+          $skipped=@($parsed | Where-Object {$_.Action -eq 'skip' -and $_.Test -eq 'TestOfficialPinnedHaGeZiFullLoadedByActualDNSMotorOnLoopback'})
+          if($passed.Count -ne 1 -or $skipped.Count -ne 0){throw 'Live loopback test skipped or absent'}
+          $afterDns=Get-DnsClientServerAddress -ErrorAction Stop | Sort-Object InterfaceIndex,AddressFamily | Select-Object InterfaceIndex,AddressFamily,ServerAddresses | ConvertTo-Json -Depth 5 -Compress
+          $afterTasks=@(Get-ScheduledTask -ErrorAction Stop | Where-Object {$_.TaskName -match '^(?i:VOLVE[-_])'}).Count
+          if($beforeDns -cne $afterDns -or $beforeTasks -ne $afterTasks){throw 'Loopback DNS test modified host DNS or scheduled tasks'}
+          Write-Host 'PASS VOLVE_REAL_PINNED_HAGEZI_FULL_PRODUCTION_PARSER_WINDOWS_LOOPBACK_UDP NO_PORT53 NO_DNS_CHANGE NO_TASKS NO_INSTALL NO_RELEASE'
