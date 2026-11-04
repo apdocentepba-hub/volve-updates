@@ -33,6 +33,9 @@ type Review struct {
     PackageParts int `json:"package_parts"`
     WindowsPublisherAndPackageVerified bool `json:"windows_publisher_and_package_verified"`
     InventoriesChecked int `json:"inventories_checked"`
+    BrowserPolicyLocationsChecked int `json:"browser_policy_locations_checked"`
+    BrowserPolicyExistingLocations int `json:"browser_policy_existing_locations"`
+    BrowserPolicyReviewRequired bool `json:"browser_policy_review_required"`
     Route motorupdate.MotorInstallRoute `json:"route"`
     Reason string `json:"reason"`
     InstallAuthorized bool `json:"install_authorized"`
@@ -82,6 +85,8 @@ func ReviewReadOnly(
         return rejected,errors.New("signed bundle is not complete VOLVE 0.28.7 Windows package")
     }
     if err := ctx.Err(); err != nil { return rejected,err }
+    browserBefore,err:=InspectBrowserPolicyRegistryReadOnly(ctx)
+    if err!=nil{return rejected,fmt.Errorf("native browser policy inspection failed: %w",err)}
     // Never label a catalog task verified merely because the filename matches:
     // no expected publisher-pinned catalog action is supplied here.
     route,err := motorupdate.InspectWindowsMotorRouteReadOnly(
@@ -94,6 +99,15 @@ func ReviewReadOnly(
     if route.InventoriesChecked != 6 {
         return rejected,errors.New("Windows route has incomplete privileged inventory")
     }
+    // DNS motor absent does not imply an unowned Chrome/Edge/Firefox policy
+    // can be replaced. Force manual conflict review, never an auto-install.
+    if browserBefore.ReviewRequired && route.Route==motorupdate.MotorRouteFreshCandidate {
+        route.Route=motorupdate.MotorRouteConflictingResidue
+        route.Reason="existing-browser-policies-need-proven-ownership-no-write"
+    }
+    browserAfter,err:=InspectBrowserPolicyRegistryReadOnly(ctx)
+    if err!=nil{return rejected,fmt.Errorf("browser policy changed or unreadable after inventory: %w",err)}
+    if browserAfter!=browserBefore{return rejected,errors.New("browser policy registry changed during Windows inventory")}
     if err := ctx.Err(); err != nil { return rejected,err }
     // The host census is not atomic with package verification. Recheck the
     // exact Authenticode-pinned bytes and signed Ed25519 component inventory
@@ -116,6 +130,9 @@ func ReviewReadOnly(
         PackageParts:len(manifest.Components),
         WindowsPublisherAndPackageVerified:true,
         InventoriesChecked:route.InventoriesChecked,
+        BrowserPolicyLocationsChecked:browserAfter.LocationsChecked,
+        BrowserPolicyExistingLocations:browserAfter.ExistingLocations,
+        BrowserPolicyReviewRequired:browserAfter.ReviewRequired,
         Route:route.Route,
         Reason:route.Reason,
         InstallAuthorized:false,

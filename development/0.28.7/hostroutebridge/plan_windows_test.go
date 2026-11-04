@@ -16,7 +16,11 @@ func safeReview(route motorupdate.MotorInstallRoute) Review {
         Component:"installer-signed-bundle-windows-route-review",
         Release:wantedRelease,PackageParts:7,
         WindowsPublisherAndPackageVerified:true,
-        InventoriesChecked:6,Route:route,
+        InventoriesChecked:6,
+        BrowserPolicyLocationsChecked:browserPolicyProbes,
+        BrowserPolicyExistingLocations:0,
+        BrowserPolicyReviewRequired:false,
+        Route:route,
         Reason:"independently read-only classified Windows host",
         InstallAuthorized:false,UpgradeAuthorized:false,CanModifyDNS:false,
         Status:"REVIEW_ONLY_NEVER_INSTALL_OR_MIGRATE",
@@ -72,6 +76,9 @@ func TestRoutePlanRejectsUnsignedIncompleteOrForgedReviews(t *testing.T) {
         {"status-not-read-only",func(r *Review){r.Status="ALLOW_INSTALL"}},
         {"reason-absent",func(r *Review){r.Reason=""}},
         {"unknown-route",func(r *Review){r.Route="fresh-confirmed-no-census"}},
+        {"no-browser-census",func(r *Review){r.BrowserPolicyLocationsChecked=0}},
+        {"unowned-browser-policy-fresh",func(r *Review){r.BrowserPolicyExistingLocations=1;r.BrowserPolicyReviewRequired=true}},
+        {"inconsistent-browser-hits",func(r *Review){r.BrowserPolicyExistingLocations=1}},
     }
     for _,tc:=range cases{
         t.Run(tc.name,func(t *testing.T){

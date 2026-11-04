@@ -70,6 +70,9 @@ func execute(ctx context.Context, args []string, output io.Writer) error {
        plan.CanInstall || plan.CanUpgrade || plan.CanChangeDNS || plan.CanChangeTasks ||
        !review.WindowsPublisherAndPackageVerified || !plan.SignedPackageVerified ||
        review.InventoriesChecked!=6 || plan.CompleteHostInventories!=6 ||
+       review.BrowserPolicyLocationsChecked!=14 ||
+       plan.BrowserPolicyLocationsChecked!=14 ||
+       review.BrowserPolicyReviewRequired!=plan.BrowserPolicyReviewRequired ||
        review.PackageParts!=7 || plan.Disposition!="READ_ONLY_PLAN_NOT_AN_INSTALLATION_PERMIT" {
         return errors.New("critical: preview attempted to authorize product mutation")
     }

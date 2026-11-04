@@ -326,7 +326,7 @@ jobs:
           bridge=root/'hostroutebridge'
           target=root/'singlefile/hostroutebridge'
           target.mkdir(parents=True,exist_ok=True)
-          for name in ('bridge_windows.go','bridge_windows_test.go','plan_windows.go','plan_windows_test.go','plan_native_windows_test.go'):
+          for name in ('bridge_windows.go','bridge_windows_test.go','plan_windows.go','plan_windows_test.go','plan_native_windows_test.go','browser_policy_windows.go','browser_policy_windows_test.go'):
               original=bridge/name
               assert original.is_file()
               assert not (target/name).exists()
@@ -372,6 +372,10 @@ jobs:
               'TestRoutePlanNeverConfusesLegacyWithFresh',
               'TestSignedPackageRealWindowsRouteProducesNonAuthorizingPlan',
               'TestSignedHostPlanRefusesWrongPublisherBeforeHostInspection',
+              'TestBrowserPolicyInventoryFindsAllCleanOrOwnedUnknownLocations',
+              'TestBrowserPolicyInventoryNeverCallsExistingPoliciesOwned',
+              'TestBrowserPolicyInventoryFailsClosedOnErrorOrCancel',
+              'TestActualBrowserPolicyCensusUsesWindowsReadOnlyRegistry',
               'TestSetupReviewActualWindowsEXENeverAuthorizes',
               'TestSetupReviewFailsClosedOnWrongPublisherAndBadRoot',
               'TestSetupReviewRefusesNonHostedExecution'
@@ -393,6 +397,8 @@ jobs:
             $result=$json | ConvertFrom-Json -ErrorAction Stop
             if($result.schema -ne 1 -or $result.release_approved -ne $false -or
                $result.review.inventories_checked -ne 6 -or $result.review.package_parts -ne 7 -or
+               $result.review.browser_policy_locations_checked -ne 14 -or
+               $result.plan.browser_policy_locations_checked -ne 14 -or
                $result.plan.can_install -ne $false -or $result.plan.can_upgrade -ne $false -or
                $result.plan.can_change_dns -ne $false -or $result.plan.can_change_tasks -ne $false -or
                $result.executable_action -ne 'NONE_REVIEW_ONLY_NO_INSTALL_NO_DNS_NO_TASKS'){
@@ -401,6 +407,7 @@ jobs:
             # Read-only diagnosis of an unanticipated blocking route on a
             # hosted runner. NEVER change a conflict to Fresh automatically.
             Write-Host ('VOLVE_HOST_ROUTE_DIAGNOSTIC reason='+$result.review.reason)
+            Write-Host ('VOLVE_BROWSER_POLICY_INVENTORY slots='+$result.review.browser_policy_locations_checked+' existing='+$result.review.browser_policy_existing_locations+' require_review='+$result.review.browser_policy_review_required)
             $tasks=@(Get-ScheduledTask -ErrorAction Stop | Where-Object { $_.TaskName -match '^(?i:VOLVE[-_])' })
             $udp53=@(Get-NetUDPEndpoint -LocalPort 53 -ErrorAction SilentlyContinue)
             $tcp53=@(Get-NetTCPConnection -LocalPort 53 -State Listen -ErrorAction SilentlyContinue)

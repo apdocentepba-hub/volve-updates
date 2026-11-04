@@ -36,6 +36,8 @@ type InstallerPlanReadOnly struct {
     Prerequisites []string `json:"prerequisites"`
     Notes string `json:"notes"`
     CompleteHostInventories int `json:"complete_host_inventories"`
+    BrowserPolicyLocationsChecked int `json:"browser_policy_locations_checked"`
+    BrowserPolicyReviewRequired bool `json:"browser_policy_review_required"`
     SignedPackageVerified bool `json:"signed_package_verified"`
     CanInstall bool `json:"can_install"`
     CanUpgrade bool `json:"can_upgrade"`
@@ -66,6 +68,11 @@ func PlanFromVerifiedReview(ctx context.Context, review Review) (InstallerPlanRe
         review.Release!=wantedRelease ||review.PackageParts!=7||
         !review.WindowsPublisherAndPackageVerified||
         review.InventoriesChecked!=6||
+        review.BrowserPolicyLocationsChecked!=browserPolicyProbes||
+        review.BrowserPolicyExistingLocations<0||
+        review.BrowserPolicyExistingLocations>browserPolicyProbes||
+        review.BrowserPolicyReviewRequired!=(review.BrowserPolicyExistingLocations>0)||
+        (review.Route==motorupdate.MotorRouteFreshCandidate&&review.BrowserPolicyReviewRequired)||
         review.InstallAuthorized||review.UpgradeAuthorized||review.CanModifyDNS||
         review.Reason=="" {
         return rejected,errors.New("unsigned, incomplete or privileged route review rejected")
@@ -107,6 +114,9 @@ func PlanFromVerifiedReview(ctx context.Context, review Review) (InstallerPlanRe
     }
     requirements:=make([]string,0,len(steps)+len(mandatoryBeforeAnyMutation))
     requirements=append(requirements,steps...)
+    if review.BrowserPolicyReviewRequired {
+        requirements=append(requirements,"audit-existing-GPO-and-owner-before-any-registry-mutation")
+    }
     requirements=append(requirements,mandatoryBeforeAnyMutation...)
     if err:=ctx.Err();err!=nil{return rejected,err}
     return InstallerPlanReadOnly{
@@ -114,6 +124,8 @@ func PlanFromVerifiedReview(ctx context.Context, review Review) (InstallerPlanRe
         Mode:mode,HostRoute:review.Route,
         Prerequisites:requirements,Notes:notes,
         CompleteHostInventories:6,SignedPackageVerified:true,
+        BrowserPolicyLocationsChecked:review.BrowserPolicyLocationsChecked,
+        BrowserPolicyReviewRequired:review.BrowserPolicyReviewRequired,
         CanInstall:false,CanUpgrade:false,CanChangeDNS:false,CanChangeTasks:false,
         Disposition:"READ_ONLY_PLAN_NOT_AN_INSTALLATION_PERMIT",
     },nil
