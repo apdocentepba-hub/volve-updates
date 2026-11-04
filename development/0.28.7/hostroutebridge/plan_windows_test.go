@@ -63,7 +63,7 @@ func TestRoutePlanRejectsUnsignedIncompleteOrForgedReviews(t *testing.T) {
         {"no-cert-or-bundle-proof",func(r *Review){r.WindowsPublisherAndPackageVerified=false}},
         {"missing-inventory",func(r *Review){r.InventoriesChecked=5}},
         {"wrong-release",func(r *Review){r.Release="0.28.6"}},
-        {"missing-components",func(r *Review){r.PackageParts=7}},
+        {"missing-components",func(r *Review){r.PackageParts=6}},
         {"foreign-schema",func(r *Review){r.Schema=9}},
         {"wrong-review-type",func(r *Review){r.Component="untrusted"}},
         {"client-selected-action",func(r *Review){r.InstallAuthorized=true}},
