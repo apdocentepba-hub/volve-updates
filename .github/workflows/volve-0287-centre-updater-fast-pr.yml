@@ -367,7 +367,7 @@ jobs:
           foreach($name in @('chrome','edge','firefox')){
             $matches=@($policy.registry_values | Where-Object {
               $_.browser -eq $name -and $_.name -eq '1' -and
-              $_.value -match 'argentina-app-betwarrior\\.com'
+              $_.value -match 'argentina-app-betwarrior[.]com'
             })
             if($matches.Count -ne 1){throw ('Priority policy host missing from '+$name)}
           }
