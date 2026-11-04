@@ -307,6 +307,14 @@ jobs:
         run: |
           $ErrorActionPreference='Stop'
           if($env:GITHUB_ACTIONS -ne 'true' -or $env:RUNNER_ENVIRONMENT -ne 'github-hosted'){throw 'Not hosted Windows CI'}
+          # Fetch one exact HaGeZi Git commit/blob, never a floating latest.
+          # No release: upstream GPL-3.0 license and motor compatibility need review.
+          python -m unittest discover -s ../catalogci -p 'test_pinned_hagezi.py' -v
+          if($LASTEXITCODE -ne 0){throw 'Pinned official catalog parser negative tests failed'}
+          $catalog=Join-Path $env:RUNNER_TEMP 'VOLVE_Full_Catalog.txt'
+          $catalogReceipt=Join-Path $env:RUNNER_TEMP 'VOLVE_Full_Catalog_SOURCE_ONLY.json'
+          python ../catalogci/pinned_hagezi.py --out $catalog --receipt $catalogReceipt
+          if($LASTEXITCODE -ne 0){throw 'Official HaGeZi gambling catalog does not match fixed source blob/size/format'}
           go test -count=1 -v ./...
           if($LASTEXITCODE -ne 0){throw 'Mixed real-material provenance negative tests failed'}
           go vet ./...
@@ -319,8 +327,8 @@ jobs:
           $inactive=Join-Path $env:RUNNER_TEMP 'VOLVE-CI-VERSION-0287-MIXED'
           $sidecar=(Resolve-Path '../../motor-release-candidate/VOLVE_DNS_Motor_0_28_7.exe.json').Path
           $signature=(Resolve-Path '../../motor-release-candidate/VOLVE_DNS_Motor_0_28_7.exe.sig').Path
-          $result=(& go run ./cmd/mixedbundle --centro $centro --watchdog $watchdog --historic-motor $motor --motor-manifest $sidecar --motor-signature $signature --audit $audit --out $root --inactive $inactive | Out-String)
-          if($LASTEXITCODE -ne 0 -or $result -notmatch 'PASS VOLVE_REAL_MATERIALS_MIXED_CI_INACTIVE_STAGE actual_source_files=5 synthetic_roles=2 native_PE=3 total=7 RELEASE_APPROVED=false'){
+          $result=(& go run ./cmd/mixedbundle --centro $centro --watchdog $watchdog --historic-motor $motor --motor-manifest $sidecar --motor-signature $signature --catalog $catalog --catalog-receipt $catalogReceipt --audit $audit --out $root --inactive $inactive | Out-String)
+          if($LASTEXITCODE -ne 0 -or $result -notmatch 'PASS VOLVE_REAL_MATERIALS_MIXED_CI_INACTIVE_STAGE actual_source_files=6 synthetic_roles=1 native_PE=3 total=7 RELEASE_APPROVED=false'){
             throw 'Actual Windows components could not be signed and staged in inactive CI'
           }
           foreach($test in @(
@@ -335,7 +343,12 @@ jobs:
             if($a -cne $b){throw ('Real asset changed while staging: '+$test[1])}
           }
           if((Get-Content -LiteralPath (Join-Path $inactive 'VOLVE_Browser_Policies.json') -Raw) -notmatch 'never_install'){throw 'Synthetic browser policy marker missing'}
-          if((Get-Content -LiteralPath (Join-Path $inactive 'VOLVE_Full_Catalog.txt') -Raw) -notmatch 'NEVER-INSTALL'){throw 'Synthetic catalog marker missing'}
+          $sourceHash=(Get-FileHash -Algorithm SHA256 -LiteralPath $catalog).Hash
+          $stagedHash=(Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $inactive 'VOLVE_Full_Catalog.txt')).Hash
+          if($sourceHash -cne $stagedHash){throw 'Pinned official full source changed during inactive stage'}
+          if((Get-Item -LiteralPath (Join-Path $inactive 'VOLVE_Full_Catalog.txt')).Length -ne 11040215){
+            throw 'Staged complete gambling catalog truncated'
+          }
           if(Test-Path -LiteralPath (Join-Path $inactive 'VOLVE_Uninstall.exe')){throw 'Owner uninstaller entered public payload'}
           Write-Host $result
-          Write-Host 'PASS VOLVE_MIXED_REAL_SOURCE_INACTIVE_CI_WIREUP; ZERO PRODUCTION-APPROVED COMPONENTS; NO SETUP NO INSTALL NO RELEASE'
+          Write-Host 'PASS VOLVE_MIXED_REAL_SOURCE_INACTIVE_CI_WIREUP; ZERO PRODUCTION-APPROVED COMPONENTS; HAGEZI GPL COMPLIANCE PENDING; NO SETUP NO INSTALL NO RELEASE'
