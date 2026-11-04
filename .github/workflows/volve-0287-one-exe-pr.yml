@@ -257,6 +257,28 @@ jobs:
             throw 'Signed inactive version preparation was not verified'
           }
           if(Test-Path -LiteralPath (Join-Path $inactive 'VOLVE_Uninstall.exe')){throw 'CRITICAL: owner-only uninstaller included'}
+
+          # Simulate an interrupted write to a different INACTIVE CI version.
+          $probe=Join-Path $env:RUNNER_TEMP 'VOLVE-CI-VERSION-0287-CRASH-PROBE'
+          $pending=$probe+'.pending'
+          New-Item -ItemType Directory -Path $pending -ErrorAction Stop | Out-Null
+          $catalog=[IO.File]::ReadAllBytes((Join-Path $source 'VOLVE_Full_Catalog.txt'))
+          if($catalog.Length -lt 2){throw 'Synthetic CI catalog unexpectedly empty'}
+          $prefix=$catalog[0..([Math]::Min(15,$catalog.Length-1))]
+          [IO.File]::WriteAllBytes((Join-Path $pending 'VOLVE_Full_Catalog.txt'),[byte[]]$prefix)
+          [IO.File]::WriteAllBytes((Join-Path $pending 'manifest.ed25519'),[byte[]]@())
+          $recovered=(& go run ./cmd/preparelab --recover-pending --source $source --out $probe --pubkey $env:VOLVE_CI_ED25519_PUB | Out-String)
+          if($LASTEXITCODE -ne 0 -or $recovered -notmatch 'PASS VOLVE_LAB_ABANDONED_STAGE_RECOVERY status=VERIFIED_INCOMPLETE_CI_STAGE_CLEANED'){
+            throw 'Incomplete signed copy was not safely recovered'
+          }
+          if(Test-Path -LiteralPath $pending){throw 'Interrupted CI pending folder still exists'}
+          $retry=(& go run ./cmd/preparelab --source $source --out $probe --pubkey $env:VOLVE_CI_ED25519_PUB | Out-String)
+          if($LASTEXITCODE -ne 0 -or $retry -notmatch 'PASS VOLVE_SEVEN_COMPONENT_INACTIVE_VERSION_PREPARED release=0.28.7 items=7'){
+            throw 'Recovered stage did not permit verified new inactive preparation'
+          }
+          Write-Host $recovered
+          Write-Host $retry
+
           $afterDNS=Get-DnsClientServerAddress -ErrorAction Stop | Sort-Object InterfaceIndex,AddressFamily | Select-Object InterfaceIndex,AddressFamily,ServerAddresses | ConvertTo-Json -Depth 5 -Compress
           $afterTasks=@(Get-ScheduledTask -ErrorAction Stop | Where-Object {$_.TaskName -match '^(?i:VOLVE[-_])'}).Count
           if($beforeDNS -cne $afterDNS -or $beforeTasks -ne $afterTasks){throw 'Inactive preparation changed DNS or scheduled tasks'}
