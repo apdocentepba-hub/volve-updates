@@ -398,6 +398,28 @@ jobs:
                $result.executable_action -ne 'NONE_REVIEW_ONLY_NO_INSTALL_NO_DNS_NO_TASKS'){
               throw 'Executable preflight falsely authorized mutation or did not complete actual six-inventory census'
             }
+            # Read-only diagnosis of an unanticipated blocking route on a
+            # hosted runner. NEVER change a conflict to Fresh automatically.
+            Write-Host ('VOLVE_HOST_ROUTE_DIAGNOSTIC reason='+$result.review.reason)
+            $tasks=@(Get-ScheduledTask -ErrorAction Stop | Where-Object { $_.TaskName -match '^(?i:VOLVE[-_])' })
+            $udp53=@(Get-NetUDPEndpoint -LocalPort 53 -ErrorAction SilentlyContinue)
+            $tcp53=@(Get-NetTCPConnection -LocalPort 53 -State Listen -ErrorAction SilentlyContinue)
+            Write-Host ('VOLVE_HOST_ROUTE_DIAGNOSTIC named_volve_tasks='+$tasks.Count+' udp53_listeners='+$udp53.Count+' tcp53_listeners='+$tcp53.Count)
+            if($result.plan.mode -eq 'STOP_CONFLICTING_PROTECTION' -and $tasks.Count -eq 0){
+              # Print only the exact relevant classifier source excerpt from
+              # the reconstructed authenticated Go archive; no secrets.
+              $fileMatches=@(Get-ChildItem -LiteralPath (Join-Path $module 'motorupdate') -Filter '*.go' |
+                Select-String -Pattern 'contradictory-installed-protection-no-write' -List)
+              Write-Host ('VOLVE_HOST_ROUTE_DIAGNOSTIC classifier_source_hits='+$fileMatches.Count)
+              foreach($hit in $fileMatches | Select-Object -First 2){
+                $fileLines=[IO.File]::ReadAllLines($hit.Path)
+                $start=[Math]::Max(0,$hit.LineNumber-48)
+                $end=[Math]::Min($fileLines.Length-1,$hit.LineNumber+18)
+                for($i=$start;$i -le $end;$i++){
+                  Write-Host ('VOLVE_CLASSIFIER_LINE '+($i+1)+': '+$fileLines[$i])
+                }
+              }
+            }
             Write-Host ('PASS VOLVE_SETUP_PREFLIGHT_EXE_WINDOWS mode='+$result.plan.mode+' route='+$result.plan.host_route+' RELEASE_APPROVED=false NO_INSTALL NO_DNS_CHANGE')
             Write-Host 'PASS VOLVE_SIGNED_EXE_PLUS_REAL_WINDOWS_6_INVENTORIES REVIEW_ONLY NO_INSTALL NO_DNS_CHANGE'
           } finally {
