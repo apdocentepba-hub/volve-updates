@@ -55,7 +55,7 @@ func TestVerifiedEditorialReceiptIsNotAnUninstallPermit(t *testing.T){
         t.Fatalf("receipt did not produce distinct nonauthorizing review: %+v %v",plan,err)
     }
     if len(plan.Requirements)!=6 {t.Fatalf("signed receipt should satisfy only its own proof: %+v",plan)}
-    ensureNoWrites(t,{Plan:plan})
+    assertNoDestructiveReceipt(t,plan)
 }
 
 func TestLegacyOrRecoveryCannotBeRemovedEvenWithValidSignedReceipt(t *testing.T){
@@ -69,7 +69,7 @@ func TestLegacyOrRecoveryCannotBeRemovedEvenWithValidSignedReceipt(t *testing.T)
         e.OtherVolveTasks=2;e.ProgramFilesRoot=true;e.ProgramDataResidues=2
         p,err:=ReviewWithSignedReceipt(e,raw,sig,key)
         if err!=nil || p.Mode!=tt.mode {t.Fatalf("legacy/recovery incorrectly promoted: %+v %v",p,err)}
-        ensureNoWrites(t,{Plan:p})
+        assertNoDestructiveReceipt(t,p)
     }
 }
 
@@ -132,12 +132,8 @@ func TestSignedReceiptCannotOverrideIncompleteHostInventory(t *testing.T){
     if err==nil||p.Mode!=""{t.Fatalf("missing privileged live inventory accepted: %+v %v",p,err)}
 }
 
-// Keep test return with named type so audit tests share the existing no-write
-// invariant without allowing an accidental weakening of that invariant.
-type auditPlan struct{Plan Plan}
-func ensureNoWrites(t *testing.T,p auditPlan){
+func assertNoDestructiveReceipt(t *testing.T,x Plan){
     t.Helper()
-    x:=p.Plan
     if x.CanUninstall||x.CanStopMotor||x.CanChangeDNS||x.CanDeleteTasks||x.CanRemoveBrowserPolicies||x.CanDeleteFiles{
         t.Fatalf("receipt review wrongly authorized removal: %+v",x)
     }
