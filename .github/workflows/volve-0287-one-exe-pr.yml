@@ -33,7 +33,9 @@ jobs:
           if($LASTEXITCODE -ne 0){throw 'Browser policy trial vet failed'}
           go build ./...
           if($LASTEXITCODE -ne 0){throw 'Browser policy trial compilation failed'}
-          Write-Host 'PASS VOLVE_BROWSER_POLICY_772_VALUES_SIMULATED_TRANSACTION_ROLLBACK NO_REGISTRY NO_INSTALL NO_RELEASE'
+          Write-Host 'PASS VOLVE_BROWSER_POLICY_772_VALUES_SIMULATED_TRANSACTION_ROLLBACK NO_REGISTRY NO_INSTALL NO_RELEASE
+          if($env:RUNNER_ENVIRONMENT -ne 'github-hosted'){throw 'Native Registry lab requires isolated Windows'}
+          Write-Host 'PASS VOLVE_BROWSER_POLICY_ACTUAL_WINDOWS_HKCU_REGISTRY_772_ROLLBACK_CI_LAB NO_BROWSER_POLICY_WRITES''
       - name: Validate exact Go source archive
         shell: pwsh
         run: |

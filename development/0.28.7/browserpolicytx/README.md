@@ -7,3 +7,10 @@ La interfaz `LabStore` es un almacén de ensayo, **no es el Registro de Windows*
 ### Límites
 
 No demuestra restauración ante un corte de energía: aún no existe el journal NTFS persistente de políticas ni el driver de Registro de Windows bajo mutex SYSTEM. No ejecuta políticas en navegadores. No reemplaza comprobaciones del editor, integridad, estado del host ni la VM persistente. **No se permite publicar un Setup ni modificar Windows con este módulo.** El desinstalador propietario no forma parte del artefacto.
+
+
+### Ensayo adicional de Registro REAL en Windows CI
+
+`windows_registry_windows.go` incluye un adaptador limitado exclusivamente a `HKCU\\Software\\VOLVE-CI-BrowserPolicies-<GITHUB_RUN_ID>-<GITHUB_RUN_ATTEMPT>`. Rechaza ejecutarse fuera de GitHub Windows hospedado, rechaza reutilizar una carpeta de Registro preexistente y remapea todas las rutas de políticas originales a ese espacio de prueba. Los tests ejecutan realmente 772 escrituras, 772 reversiones y la detección de un valor ajeno. La limpieza elimina únicamente esa carpeta desechable.
+
+No se escriben `HKLM\\Software\\Policies` ni los perfiles reales de los navegadores. No se acredita recuperación tras corte de energía, ni atomicidad de operaciones contra escritores concurrentes. Este adaptador NO debe incorporarse en un Setup productivo.
