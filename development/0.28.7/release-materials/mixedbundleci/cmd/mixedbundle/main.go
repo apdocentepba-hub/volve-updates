@@ -18,6 +18,8 @@ func main(){
  motor:=flag.String("historic-motor","","pinned 0.28.7 historic DNS motor, not the final setup")
  sidecar:=flag.String("motor-manifest","","publisher-signed old motor manifest")
  signature:=flag.String("motor-signature","","publisher-signed old motor signature")
+ catalog:=flag.String("catalog","","exact official pinned HaGeZi full gambling source")
+ catalogReceipt:=flag.String("catalog-receipt","","strict provenance of exact source blob")
  audit:=flag.String("audit","","independent audit of 2 real CI builds + 1 historic motor")
  root:=flag.String("out","","fresh CI-only real-file mixed signing root")
  inactive:=flag.String("inactive","","fresh CI-only inactive version")
@@ -33,10 +35,10 @@ func main(){
  ctx,cancel:=context.WithTimeout(context.Background(),90*time.Second);defer cancel()
  result,err:=mixed.BuildMixedLab(ctx,mixed.Sources{
   Centro:*centro,Watchdog:*watchdog,Motor:*motor,MotorManifest:*sidecar,MotorSignature:*signature,
-  AuditJSON:*audit,Root:*root,Inactive:*inactive,
+  AuditJSON:*audit,Catalog:*catalog,CatalogReceipt:*catalogReceipt,Root:*root,Inactive:*inactive,
  })
  if err!=nil{fmt.Fprintln(os.Stderr,"REFUSED: cannot bind real Windows materials:",err);os.Exit(1)}
- if result.AssetsFromRealSources!=5||result.AssetsSynthetic!=2||result.RealPEFiles!=3||
+ if result.AssetsFromRealSources!=6||result.AssetsSynthetic!=1||result.RealPEFiles!=3||
   result.StagedComponents!=7||result.ApprovedForRelease{
   fmt.Fprintln(os.Stderr,"CRITICAL: mixed CI material classification changed");os.Exit(1)
  }
