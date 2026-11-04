@@ -16,10 +16,12 @@ func expectedAudit()Audit{
   switch role{
   case "centro-updater","system-watchdog":
    entry.State="BUILT_CI_UNSIGNED_NOT_INSTALLABLE"
+   entry.PE="PE32+ x64"
    entry.Bytes=1<<20
    entry.SHA256=strings.Repeat("a",64)
   case "dns-motor":
    entry.State="PINNED_HISTORIC_SIGNED_DNS_CANDIDATE_NOT_INSTALLABLE"
+   entry.PE="PE32+ x64"
    entry.Bytes=ExpectedHistoricMotorBytes
    entry.SHA256=ExpectedHistoricMotorSHA256
   }
@@ -49,6 +51,8 @@ func TestReleasePermissionDriftIsRejected(t *testing.T){
   {"owner-uninstaller-replaces-catalog",func(a *Audit){a.Materials[6].Filename="VOLVE_Uninstall.exe"}},
   {"bad-historic-sha",func(a *Audit){a.Materials[1].SHA256=strings.Repeat("f",64)}},
   {"fake-native-windows",func(a *Audit){a.Materials[0].SHA256="garbage"}},
+  {"wrong-pe-arch",func(a *Audit){a.Materials[0].PE="PE32 x86"}},
+  {"fake-missing-pe",func(a *Audit){a.Materials[6].PE="PE32+ x64"}},
   {"faked-production-catalog",func(a *Audit){a.Materials[6].State="BUILT_CI_UNSIGNED_NOT_INSTALLABLE"}},
  } {
   t.Run(tc.name,func(t *testing.T){a:=expectedAudit();tc.change(&a);if err:=ValidateAudit(a);err==nil{t.Fatal("unsafe auditor claim accepted")}})
