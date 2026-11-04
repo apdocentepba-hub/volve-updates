@@ -331,6 +331,16 @@ jobs:
               assert original.is_file()
               assert not (target/name).exists()
               shutil.copy2(original,target/name)
+          # Include an ACTUAL executable preflight entrypoint, not only tests
+          # of a library that the eventual Setup cannot launch.
+          cmdsrc=bridge/'cmd/setupreview'
+          cmddst=root/'singlefile/cmd/setupreview'
+          cmddst.mkdir(parents=True,exist_ok=True)
+          for name in ('main_windows.go','main_windows_test.go'):
+              original=cmdsrc/name
+              assert original.is_file()
+              assert not (cmddst/name).exists()
+              shutil.copy2(original,cmddst/name)
           '@ | python -
           if($LASTEXITCODE -ne 0){throw 'Host route sources could not be independently authenticated'}
           go run development/0.28.7/inapp/apply_overlay.go build/codigo
@@ -344,7 +354,7 @@ jobs:
             go mod edit "-replace=volve-browser-protection=$module"
             if($LASTEXITCODE -ne 0){throw 'Cannot local-replace original motorupdate for bridge CI'}
             Write-Host 'BRIDGE CHECKPOINT 3/3: Windows real 6-inventory + 2 independent publisher signatures'
-            $events=@(go test -mod=mod -count=1 -timeout 6m -json ./hostroutebridge)
+            $events=@(go test -mod=mod -count=1 -timeout 6m -json ./hostroutebridge ./cmd/setupreview)
             if($LASTEXITCODE -ne 0){
               $events | Select-Object -Last 75 | Write-Host
               throw 'Dual-signed EXE / Windows six-inventory route bridge failed'
@@ -361,12 +371,34 @@ jobs:
               'TestRoutePlanRequiresContextAndVerifiedCallback',
               'TestRoutePlanNeverConfusesLegacyWithFresh',
               'TestSignedPackageRealWindowsRouteProducesNonAuthorizingPlan',
-              'TestSignedHostPlanRefusesWrongPublisherBeforeHostInspection'
+              'TestSignedHostPlanRefusesWrongPublisherBeforeHostInspection',
+              'TestSetupReviewActualWindowsEXENeverAuthorizes',
+              'TestSetupReviewFailsClosedOnWrongPublisherAndBadRoot',
+              'TestSetupReviewRefusesNonHostedExecution'
             )){
               $passes=@($records | Where-Object {$_.Test -eq $name -and $_.Action -eq 'pass'})
               $skips=@($records | Where-Object {$_.Test -eq $name -and $_.Action -eq 'skip'})
               if($passes.Count -ne 1 -or $skips.Count -ne 0){throw ('Mandatory bridge test skipped or missing: '+$name)}
             }
+            # Execute the compiled PREVIEW program as Windows PE (not only
+            # go test). It requires the exact dual-signed CI fixture and
+            # genuinely inspects all six Windows state dimensions.
+            $reviewExe=Join-Path $env:RUNNER_TEMP 'VOLVE_CI_SetupPreflight_ONLY.exe'
+            go build -mod=mod -trimpath -o $reviewExe ./cmd/setupreview
+            if($LASTEXITCODE -ne 0){throw 'Windows setup preflight executable compilation failed'}
+            $scanRoot=Join-Path $env:RUNNER_TEMP 'VOLVE-CI-SetupReview'
+            New-Item -ItemType Directory -Path $scanRoot -ErrorAction Stop | Out-Null
+            $json=(& $reviewExe --exe $env:VOLVE_CI_AUTHENTICODE_OS_BINARY --pubkey $env:VOLVE_CI_ED25519_PUB --certsha $env:VOLVE_CI_AUTHENTICODE_CERT_SHA256 --filehash $env:VOLVE_CI_AUTHENTICODE_FILE_SHA256 --installed-root $scanRoot | Out-String)
+            if($LASTEXITCODE -ne 0){throw 'Actual Windows setup review EXE failed'}
+            $result=$json | ConvertFrom-Json -ErrorAction Stop
+            if($result.schema -ne 1 -or $result.release_approved -ne $false -or
+               $result.review.inventories_checked -ne 6 -or $result.review.package_parts -ne 7 -or
+               $result.plan.can_install -ne $false -or $result.plan.can_upgrade -ne $false -or
+               $result.plan.can_change_dns -ne $false -or $result.plan.can_change_tasks -ne $false -or
+               $result.executable_action -ne 'NONE_REVIEW_ONLY_NO_INSTALL_NO_DNS_NO_TASKS'){
+              throw 'Executable preflight falsely authorized mutation or did not complete actual six-inventory census'
+            }
+            Write-Host ('PASS VOLVE_SETUP_PREFLIGHT_EXE_WINDOWS mode='+$result.plan.mode+' route='+$result.plan.host_route+' RELEASE_APPROVED=false NO_INSTALL NO_DNS_CHANGE')
             Write-Host 'PASS VOLVE_SIGNED_EXE_PLUS_REAL_WINDOWS_6_INVENTORIES REVIEW_ONLY NO_INSTALL NO_DNS_CHANGE'
           } finally {
             Pop-Location
