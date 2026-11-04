@@ -28,6 +28,7 @@ const (
 type ReceiptFile struct {
     ID string `json:"id"`
     File string `json:"file"`
+    Root string `json:"root"` // "install" or "data"; signed and mandatory
     Size int64 `json:"size"`
     SHA256 string `json:"sha256"`
 }
@@ -105,7 +106,7 @@ func validateReceipt(r InstalledReceipt) error {
     previous:=""
     for _,f:=range r.Files {
         name,ok:=required[f.ID]
-        if !ok || f.File!=name || f.ID<=previous || f.Size<=0 || f.Size>1<<30 || !isSHA256(f.SHA256){
+        if !ok || f.File!=name || (f.Root!="install" && f.Root!="data") || f.ID<=previous || f.Size<=0 || f.Size>1<<30 || !isSHA256(f.SHA256){
             return fmt.Errorf("signed installed component identity rejected: %q",f.ID)
         }
         previous=f.ID
