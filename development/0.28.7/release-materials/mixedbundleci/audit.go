@@ -20,6 +20,7 @@ type Material struct {
  Filename string `json:"filename"`
  State string `json:"state"`
  SHA256 string `json:"sha256"`
+ PE string `json:"pe"`
  Bytes int64 `json:"bytes"`
 }
 type Audit struct{
@@ -71,16 +72,16 @@ func ValidateAudit(a Audit) error{
   seen[m.ID]=true
   switch m.ID{
   case "centro-updater","system-watchdog":
-   if m.State!="BUILT_CI_UNSIGNED_NOT_INSTALLABLE"||m.Bytes<1<<20||!validHash(m.SHA256){
+   if m.State!="BUILT_CI_UNSIGNED_NOT_INSTALLABLE"||m.Bytes<1<<20||!validHash(m.SHA256)||m.PE!="PE32+ x64"{
     return fmt.Errorf("compiled role %q not independently audited",m.ID)
    }
   case "dns-motor":
    if m.State!="PINNED_HISTORIC_SIGNED_DNS_CANDIDATE_NOT_INSTALLABLE"||
-    m.Bytes!=ExpectedHistoricMotorBytes||m.SHA256!=ExpectedHistoricMotorSHA256{
+    m.Bytes!=ExpectedHistoricMotorBytes||m.SHA256!=ExpectedHistoricMotorSHA256||m.PE!="PE32+ x64"{
     return errors.New("historic publisher-signed motor not pinned to original bytes")
    }
   default:
-   if m.State!="MISSING_PRODUCTION_RELEASE_INPUT"||m.SHA256!=""||m.Bytes!=0{
+   if m.State!="MISSING_PRODUCTION_RELEASE_INPUT"||m.SHA256!=""||m.Bytes!=0||m.PE!=""{
     return fmt.Errorf("production-critical role %q was falsely marked complete",m.ID)
    }
   }
