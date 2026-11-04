@@ -7,6 +7,7 @@ import (
     "encoding/json"
     "errors"
     "fmt"
+    "io"
     "regexp"
     "strconv"
     "strings"
@@ -62,7 +63,10 @@ func Parse(raw []byte)(Plan,error) {
     dec.DisallowUnknownFields()
     if err:=dec.Decode(&p);err!=nil{return Plan{},err}
     var extra any
-    if err:=dec.Decode(&extra);err==nil{return Plan{},errors.New("multiple JSON objects")}
+    if err:=dec.Decode(&extra);err!=io.EOF{
+        if err==nil{return Plan{},errors.New("multiple JSON objects")}
+        return Plan{},fmt.Errorf("trailing policy bytes refused: %w",err)
+    }
     if err:=Validate(p);err!=nil{return Plan{},err}
     return p,nil
 }

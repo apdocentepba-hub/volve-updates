@@ -27,8 +27,27 @@ jobs:
         working-directory: development/0.28.7/browserpolicytx
         run: |
           $ErrorActionPreference='Stop'
-          go test -count=1 -v ./...
-          if($LASTEXITCODE -ne 0){throw 'Browser policy trial and reversal failed'}
+          $events=@(go test -count=1 -json ./...)
+          if($LASTEXITCODE -ne 0){
+            $events | Select-Object -Last 50 | Write-Host
+            throw 'Browser policy trial and reversal failed'
+          }
+          $records=@($events | Where-Object {$_ -match '^\s*\{'} | ForEach-Object {$_ | ConvertFrom-Json})
+          foreach($name in @(
+            'TestExact772PolicyAndJSON',
+            'TestTrialFullPolicyRollsBackAll772Values',
+            'TestTrialRejectsUnownedExistingWithoutWrites',
+            'TestTrialReversesInterruptedWriteAndFailsClosed',
+            'TestTrialNeverCallsStoreOnInvalidPlanOrCancelledContext',
+            'TestActualWindowsRegistrySandbox772ValueRoundTrip',
+            'TestActualWindowsRegistryRefusesPreExistingUnownedValue'
+          )){
+            $passes=@($records | Where-Object { $_.Test -eq $name -and $_.Action -eq 'pass' })
+            $skips=@($records | Where-Object { $_.Test -eq $name -and $_.Action -eq 'skip' })
+            if($passes.Count -ne 1 -or $skips.Count -ne 0){
+              throw ('Mandatory actual browser transaction test skipped or absent: '+$name)
+            }
+          }
           go vet ./...
           if($LASTEXITCODE -ne 0){throw 'Browser policy trial vet failed'}
           go build ./...

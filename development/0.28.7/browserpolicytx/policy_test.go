@@ -57,6 +57,7 @@ func TestExact772PolicyAndJSON(t *testing.T){
         t.Run(tc.name,func(t *testing.T){p:=fixturePlan();tc.mutate(&p);if err:=Validate(p);err==nil{t.Fatal("unsafe policy accepted")}})
     }
     if _,err:=Parse(append(data,[]byte("{}")...));err==nil{t.Fatal("extra object accepted")}
+    if _,err:=Parse(append(data,[]byte("untrusted garbage")...));err==nil{t.Fatal("malformed trailing data accepted")}
 }
 type memory struct{data map[string]Value;writes int;failAt int;refuseDelete bool}
 func newMemory()*memory{return &memory{data:make(map[string]Value)}}
