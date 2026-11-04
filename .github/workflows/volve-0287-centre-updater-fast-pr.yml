@@ -299,3 +299,43 @@ jobs:
           }
           Write-Host 'PASS: 2 distinct actual Windows builds + 1 SHA256-pinned historical publisher-signed DNS motor verified with genuine original Go verifier.'
           Write-Host '3/7 CI audit materials, 0/7 production approved; missing signed migration and final Setup. NO INSTALL OR RELEASE.'
+
+      - name: Stage actual five-source files with two explicit CI-only placeholders (NO RELEASE)
+        timeout-minutes: 5
+        shell: pwsh
+        working-directory: development/0.28.7/release-materials/mixedbundleci
+        run: |
+          $ErrorActionPreference='Stop'
+          if($env:GITHUB_ACTIONS -ne 'true' -or $env:RUNNER_ENVIRONMENT -ne 'github-hosted'){throw 'Not hosted Windows CI'}
+          go test -count=1 -v ./...
+          if($LASTEXITCODE -ne 0){throw 'Mixed real-material provenance negative tests failed'}
+          go vet ./...
+          if($LASTEXITCODE -ne 0){throw 'Mixed real-material vet failed'}
+          $centro=Join-Path $env:RUNNER_TEMP 'VOLVE_0287_Centro_Updater_LAB_NO_INSTALAR.exe'
+          $watchdog=Join-Path $env:RUNNER_TEMP 'VOLVE_0287_Managed_Watchdog_LAB_NO_INSTALAR.exe'
+          $motor=Join-Path $env:RUNNER_TEMP 'VOLVE-CI-PINNED-MOTOR-NO-INSTALAR/VOLVE_DNS_Motor_0_28_7.exe'
+          $audit=Join-Path $env:RUNNER_TEMP 'VOLVE_0287_PINNED_THREE_MATERIALS_NO_RELEASE.json'
+          $root=Join-Path $env:RUNNER_TEMP 'VOLVE-CI-MIXED-REAL-5'
+          $inactive=Join-Path $env:RUNNER_TEMP 'VOLVE-CI-VERSION-0287-MIXED'
+          $sidecar=(Resolve-Path '../../motor-release-candidate/VOLVE_DNS_Motor_0_28_7.exe.json').Path
+          $signature=(Resolve-Path '../../motor-release-candidate/VOLVE_DNS_Motor_0_28_7.exe.sig').Path
+          $result=(& go run ./cmd/mixedbundle --centro $centro --watchdog $watchdog --historic-motor $motor --motor-manifest $sidecar --motor-signature $signature --audit $audit --out $root --inactive $inactive | Out-String)
+          if($LASTEXITCODE -ne 0 -or $result -notmatch 'PASS VOLVE_REAL_MATERIALS_MIXED_CI_INACTIVE_STAGE actual_source_files=5 synthetic_roles=2 native_PE=3 total=7 RELEASE_APPROVED=false'){
+            throw 'Actual Windows components could not be signed and staged in inactive CI'
+          }
+          foreach($test in @(
+            @($centro, (Join-Path $inactive 'VOLVE_Centro_Updater.exe')),
+            @($watchdog, (Join-Path $inactive 'VOLVE_Managed_Watchdog.exe')),
+            @($motor, (Join-Path $inactive 'VOLVE_DNS_Motor_0_28_7.exe')),
+            @($sidecar, (Join-Path $inactive 'VOLVE_DNS_Motor_0_28_7.exe.json')),
+            @($signature, (Join-Path $inactive 'VOLVE_DNS_Motor_0_28_7.exe.sig'))
+          )){
+            $a=(Get-FileHash -Algorithm SHA256 -LiteralPath $test[0]).Hash
+            $b=(Get-FileHash -Algorithm SHA256 -LiteralPath $test[1]).Hash
+            if($a -cne $b){throw ('Real asset changed while staging: '+$test[1])}
+          }
+          if((Get-Content -LiteralPath (Join-Path $inactive 'VOLVE_Browser_Policies.json') -Raw) -notmatch 'never_install'){throw 'Synthetic browser policy marker missing'}
+          if((Get-Content -LiteralPath (Join-Path $inactive 'VOLVE_Full_Catalog.txt') -Raw) -notmatch 'NEVER-INSTALL'){throw 'Synthetic catalog marker missing'}
+          if(Test-Path -LiteralPath (Join-Path $inactive 'VOLVE_Uninstall.exe')){throw 'Owner uninstaller entered public payload'}
+          Write-Host $result
+          Write-Host 'PASS VOLVE_MIXED_REAL_SOURCE_INACTIVE_CI_WIREUP; ZERO PRODUCTION-APPROVED COMPONENTS; NO SETUP NO INSTALL NO RELEASE'
