@@ -300,7 +300,7 @@ jobs:
           Write-Host 'PASS: 2 distinct actual Windows builds + 1 SHA256-pinned historical publisher-signed DNS motor verified with genuine original Go verifier.'
           Write-Host '3/7 CI audit materials, 0/7 production approved; missing signed migration and final Setup. NO INSTALL OR RELEASE.'
 
-      - name: Stage actual five-source files with two explicit CI-only placeholders (NO RELEASE)
+      - name: Stage six real-source files with one CI-only browser policy placeholder (NO RELEASE)
         timeout-minutes: 5
         shell: pwsh
         working-directory: development/0.28.7/release-materials/mixedbundleci
