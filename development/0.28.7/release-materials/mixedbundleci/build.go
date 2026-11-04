@@ -113,6 +113,12 @@ func BuildMixedLab(ctx context.Context,s Sources)(Result,error){
   }
   content[id]=raw
  }
+ // The historical editor signature is checked AGAIN at the assembly
+ // boundary, not merely trusted from an earlier CI step or SHA-256 audit.
+ if err:=VerifyHistoricMotorSidecars(
+  content["motor-manifest"],content["motor-signature"],
+  SHA256(content["dns-motor"]),int64(len(content["dns-motor"])),
+ );err!=nil{return rejected,fmt.Errorf("historically signed motor sidecars refused: %w",err)}
  if SHA256(content["centro-updater"])==SHA256(content["system-watchdog"])||SHA256(content["centro-updater"])==ExpectedHistoricMotorSHA256||
   SHA256(content["system-watchdog"])==ExpectedHistoricMotorSHA256{return rejected,errors.New("distinct executable roles were reused")}
  content["browser-policies"]=[]byte("{\"ci_only\":true,\"synthetic_missing_product_policy\":true,\"never_install\":true}\n")
