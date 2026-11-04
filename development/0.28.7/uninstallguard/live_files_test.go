@@ -98,7 +98,7 @@ func TestReadOnlySignedFilesRejectInvalidContextAndRoot(t *testing.T){
         t.Fatalf("cancelled operation was not rejected: %v",err)
     }
     if _,err:=auditReceiptFilesAtRoots(context.Background(),r,install,install);err==nil{t.Fatal("same roots accepted")}
-    if _,err:=auditReceiptFilesAtRoots(context.Background(),r,install,filepath.Join(data,"..","VOLVE-Browser-Filter"));err==nil{
+    if _,err:=auditReceiptFilesAtRoots(context.Background(),r,install,data + string(filepath.Separator) + ".." + string(filepath.Separator) + "VOLVE-Browser-Filter");err==nil{
         t.Fatal("noncanonical data path accepted")
     }
 }
