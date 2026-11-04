@@ -8,18 +8,21 @@ license compliance and functional compatibility review.
 from __future__ import annotations
 
 import argparse
+import base64
 import hashlib
 import json
 import os
 from pathlib import Path
 import re
 import sys
+import urllib.error
 import urllib.request
 
 UPSTREAM = "hagezi/dns-blocklists"
 COMMIT = "81bbd1b9009893d65358146b23282647634c26be"
 BLOB_SHA1 = "096ce47515721f7aac2ce8138fb5b421aa6fb1e1"
 BYTE_COUNT = 11040215
+SHA256_PIN = "ec700a88cdaedcc90cd482105ecbdeb7177289029303d61e35365ed1ea9c2347"
 SOURCE_URL = (
     "https://raw.githubusercontent.com/hagezi/dns-blocklists/"
     f"{COMMIT}/wildcard/gambling-onlydomains.txt"
@@ -83,14 +86,42 @@ def inspect_catalog(
     }
 
 def download_pinned_catalog() -> bytes:
-    req = urllib.request.Request(SOURCE_URL, headers={"User-Agent": "VOLVE-0287-CI-readonly/1.0"})
-    with urllib.request.urlopen(req, timeout=90) as response:
-        if response.geturl() != SOURCE_URL:
-            raise ValueError("unpinned redirect in catalog source")
-        data = response.read(MAX_BYTES + 1)
-    if len(data) > MAX_BYTES:
-        raise ValueError("upstream source exceeded configured bound")
-    return data
+    # Both independent transports must yield the exact same historic bytes.
+    # Fallback is only for transient GitHub CDN/network outages: NEVER
+    # fallback to a newer branch, changed commit, truncated or synthetic list.
+    endpoints = [
+        ("github-raw", SOURCE_URL),
+        ("jsdelivr-commit-pinned",
+         "https://cdn.jsdelivr.net/gh/hagezi/dns-blocklists@"
+         f"{COMMIT}/wildcard/gambling-onlydomains.txt"),
+        ("github-git-blob", f"https://api.github.com/repos/hagezi/dns-blocklists/git/blobs/{BLOB_SHA1}"),
+    ]
+    failures = []
+    for kind, url in endpoints:
+        try:
+            request = urllib.request.Request(url, headers={
+                "User-Agent": "VOLVE-0287-CI-readonly/1.0",
+                "Accept": "application/vnd.github+json" if kind == "github-git-blob" else "text/plain",
+            })
+            with urllib.request.urlopen(request, timeout=35) as response:
+                if response.geturl() != url:
+                    raise ValueError("unpinned source HTTP redirect")
+                payload = response.read(MAX_BYTES * 2 + 1 if kind == "github-git-blob" else MAX_BYTES + 1)
+            if kind == "github-git-blob":
+                obj = json.loads(payload)
+                if obj.get("sha") != BLOB_SHA1 or obj.get("encoding") != "base64":
+                    raise ValueError("untrusted Git blob metadata")
+                data = base64.b64decode(obj["content"], validate=False)
+            else:
+                data = payload
+            if len(data) != BYTE_COUNT or len(data) > MAX_BYTES:
+                raise ValueError("downloaded source size differs from pinned Git blob")
+            if git_blob_sha1(data) != BLOB_SHA1 or hashlib.sha256(data).hexdigest() != SHA256_PIN:
+                raise ValueError("downloaded source does not match BOTH pinned checksums")
+            return data
+        except (OSError, TimeoutError, ValueError, KeyError, json.JSONDecodeError) as error:
+            failures.append(f"{kind}: {type(error).__name__}")
+    raise ValueError("all three pinned official-source transports failed closed: " + "; ".join(failures))
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
