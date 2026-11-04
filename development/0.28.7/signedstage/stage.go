@@ -28,6 +28,10 @@ func prepare(ctx context.Context,source,destination string,key ed25519.PublicKey
  if !canonical(source)||!canonical(destination)||!strings.HasPrefix(filepath.Base(destination),PreparedPrefix){return nil,errors.New("canonical absolute CI-only paths required")}
  if strings.EqualFold(source,destination)||filepath.Dir(source)!=filepath.Dir(destination){return nil,errors.New("source and inactive destination must be distinct siblings")}
  if err:=realParents(filepath.Dir(source));err!=nil{return nil,err}
+ // Lock before inspecting/creating pending state: recovery cannot race a writer.
+ unlock,lockErr:=acquireStageLock(destination)
+ if lockErr!=nil{return nil,fmt.Errorf("exclusive inactive staging lock unavailable: %w",lockErr)}
+ defer unlock()
  pending:=destination+".pending"
  for _,p:=range []string{destination,pending} {
   if _,e:=os.Lstat(p);e==nil{return nil,fmt.Errorf("existing version or pending state: %s",p)}else if !os.IsNotExist(e){return nil,e}
