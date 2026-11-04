@@ -19,7 +19,7 @@ func testReceipt() InstalledReceipt {
     sort.Strings(ids)
     files:=make([]ReceiptFile,0,len(ids))
     for _,id:=range ids {
-        files=append(files,ReceiptFile{ID:id,File:names[id],Size:128,SHA256:strings.Repeat("a",64)})
+        files=append(files,ReceiptFile{ID:id,File:names[id],Root:"install",Size:128,SHA256:strings.Repeat("a",64)})
     }
     return InstalledReceipt{
         Schema:1,Release:"0.28.7",Platform:"windows-amd64",
@@ -100,6 +100,8 @@ func TestReceiptSignatureAndCanonicalJSONRejectManipulation(t *testing.T){
 func TestSignedReceiptRejectsIncorrectOwnersMissingFilesAndUnsafeRoots(t *testing.T){
     for name,change:=range map[string]func(*InstalledReceipt){
         "missing-file":func(r *InstalledReceipt){r.Files=r.Files[:7]},
+        "missing-root":func(r *InstalledReceipt){r.Files[0].Root=""},
+        "wrong-root":func(r *InstalledReceipt){r.Files[0].Root="windows"},
         "unsorted":func(r *InstalledReceipt){r.Files[0],r.Files[1]=r.Files[1],r.Files[0]},
         "duplicate-file":func(r *InstalledReceipt){r.Files[1]=r.Files[0]},
         "wrong-filename":func(r *InstalledReceipt){r.Files[0].File="VOLVE_FAKE.exe"},
