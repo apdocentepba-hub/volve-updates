@@ -1,0 +1,69 @@
+name: VOLVE 0.28.7 original source export for owner Setup (NO RELEASE)
+on:
+  pull_request:
+    branches: [feature/motor-updater-0287-pilot]
+    paths:
+      - '.github/workflows/volve-0287-owner-source-export-pr.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  authenticated-source:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.x'
+      - name: Reconstruct previously pinned Go source and check each archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import hashlib, zipfile, pathlib
+          root=pathlib.Path("development/0.28.7")
+          parts=sorted((root/"complete-source-parts").glob("part-*.bin"))
+          assert [p.name for p in parts]==[f"part-{i:02d}.bin" for i in range(10)]
+          payload=b"".join(p.read_bytes() for p in parts)
+          assert hashlib.sha256(payload).hexdigest()=="92b3536559151260375b17a64eedd009df8399e45460637208027b7ca0587ba5"
+          with zipfile.ZipFile(__import__("io").BytesIO(payload)) as z:
+              for info in z.infolist():
+                  path=pathlib.PurePosixPath(info.filename)
+                  assert not path.is_absolute() and ".." not in path.parts and path.parts and path.parts[0]=="codigo"
+                  assert not ((info.external_attr >> 16)&0o170000)==0o120000
+              z.extractall("build")
+          for name, sha in (
+              ("VOLVE_0287_PRECHECK_RESCATE_OVERLAY_NO_INSTALAR.zip","fdfd31f21df81fe6da6075bfd442354297874576b6dc2c38f19bd35a681d95cd"),
+              ("VOLVE_0287_RECUPERACION_INTERRUPCION_FORZADA_NO_INSTALAR_v3.zip","773bd5eb5f1c4883021cc321856636354e964d3605dba9017e2fb5d1a7401b40")
+          ):
+              b=(root/name).read_bytes()
+              assert hashlib.sha256(b).hexdigest()==sha
+              with zipfile.ZipFile(__import__("io").BytesIO(b)) as z:
+                  for info in z.infolist():
+                      path=pathlib.PurePosixPath(info.filename)
+                      assert not path.is_absolute() and ".." not in path.parts
+                      assert not ((info.external_attr >> 16)&0o170000)==0o120000
+                  z.extractall("build")
+          for path in (root/"journal").glob("*.go"):
+              dest=pathlib.Path("build/codigo/motorupdate")/path.name
+              assert dest.parent.is_dir()
+              dest.write_bytes(path.read_bytes())
+          print("PASS PINNED_SOURCE_AND_OVERLAYS SHA256")
+          PY
+          go run development/0.28.7/inapp/apply_overlay.go build/codigo
+          test -f build/codigo/go.mod
+      - name: Prepare source archive for private owner-only local integration
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          tar -C build -czf out/VOLVE_0287_FUENTE_AUDITADA_SOLO_DESARROLLO.tar.gz codigo
+          sha256sum out/VOLVE_0287_FUENTE_AUDITADA_SOLO_DESARROLLO.tar.gz | tee out/SHA256SUMS.txt
+          echo "SOURCE_ONLY_NOT_INSTALLER_NOT_A_RELEASE" > out/NO_INSTALAR.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: VOLVE-0287-AUDITED-SOURCE-NO-INSTALL
+          path: out/
+          if-no-files-found: error
+          retention-days: 3
