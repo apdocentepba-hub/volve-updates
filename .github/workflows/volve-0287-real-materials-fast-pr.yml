@@ -1,0 +1,33 @@
+name: VOLVE 0.28.7 mixed real-material compiler gate (NO RELEASE)
+on:
+  pull_request:
+    branches: [feature/motor-updater-0287-pilot]
+    paths:
+      - 'development/0.28.7/release-materials/mixedbundleci/**'
+      - 'development/0.28.7/unifiedbundle/**'
+      - 'development/0.28.7/signedstage/**'
+      - '.github/workflows/volve-0287-real-materials-fast-pr.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  audit-mixed-build-gate:
+    runs-on: windows-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.x'
+      - name: Compile and test strictly non-releasable materials binder
+        working-directory: development/0.28.7/release-materials/mixedbundleci
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          go test -count=1 -v ./...
+          if($LASTEXITCODE -ne 0){throw 'Real materials binding negative tests failed'}
+          go vet ./...
+          if($LASTEXITCODE -ne 0){throw 'Go vet failed'}
+          go build ./...
+          if($LASTEXITCODE -ne 0){throw 'Windows compile failed'}
+          Write-Host 'PASS VOLVE_REAL_MATERIALS_BINDER_FAST_WINDOWS NO_INSTALL NO_RELEASE'
