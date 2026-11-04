@@ -412,3 +412,99 @@ jobs:
           $afterTasks=@(Get-ScheduledTask -ErrorAction Stop | Where-Object {$_.TaskName -match '^(?i:VOLVE[-_])'}).Count
           if($beforeDns -cne $afterDns -or $beforeTasks -ne $afterTasks){throw 'Loopback DNS test modified host DNS or scheduled tasks'}
           Write-Host 'PASS VOLVE_REAL_PINNED_HAGEZI_FULL_PRODUCTION_PARSER_WINDOWS_LOOPBACK_UDP NO_PORT53 NO_DNS_CHANGE NO_TASKS NO_INSTALL NO_RELEASE'
+
+      - name: Build one actual Windows PE with ALL SEVEN real-source components (CI NO INSTALL)
+        timeout-minutes: 6
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          if($env:GITHUB_ACTIONS -ne 'true' -or $env:RUNNER_ENVIRONMENT -ne 'github-hosted'){throw 'Hosted disposable Windows required'}
+          $root=Join-Path $env:RUNNER_TEMP 'VOLVE-CI-MIXED-REAL-5'
+          $pubPath=Join-Path $env:RUNNER_TEMP 'VOLVE-CI-MIXED-PUBLIC-KEY.hex'
+          $pub=(Get-Content -LiteralPath $pubPath -Raw -ErrorAction Stop).Trim()
+          if($pub -cnotmatch '^[0-9a-f]{64}$' -or -not (Test-Path -LiteralPath $root -PathType Container)){
+            throw 'No trustworthy complete source bundle and ephemeral public key'
+          }
+          if(Test-Path -LiteralPath (Join-Path $root 'VOLVE_Uninstall.exe')){
+            throw 'CRITICAL: owner-only uninstaller entered the single-PE source'
+          }
+          python development/0.28.7/singlefile-overlay/restore_pinned_real_container.py
+          if($LASTEXITCODE -ne 0){throw 'Original singlefile Go source reconstruction refused'}
+          python development/0.28.7/singlefile-overlay/enforce_public_seven.py
+          if($LASTEXITCODE -ne 0){throw 'Owner-uninstaller public-bundle source adaptation failed'}
+          $boot=Join-Path $env:RUNNER_TEMP 'VOLVE-CI-Bootstrap-REAL7.exe'
+          $unsigned=Join-Path $env:RUNNER_TEMP 'VOLVE-CI-REAL7-Unsigned-OnePE.exe'
+          Push-Location 'development/0.28.7/singlefile'
+          try{
+            go build -ldflags "-X main.trustedKeyHex=$pub" -o $boot ./cmd/bootstrapper
+            if($LASTEXITCODE -ne 0){throw 'Windows bootstrapper did not compile'}
+            go run ./cmd/assemble --bootstrapper $boot --bundle $root --out $unsigned --pubkey $pub
+            if($LASTEXITCODE -ne 0){throw 'Seven REAL material roles could not be embedded in the one-PE bundle'}
+            $report=(& $unsigned --verify-bundle | Out-String)
+            if($LASTEXITCODE -ne 0 -or $report -notmatch 'PASS VOLVE_SINGLEFILE_SIGNED_BUNDLE release=0.28.7 items=7 NO_INSTALL'){
+              throw 'Actual Windows PE failed embedded real-source Ed25519 verification'
+            }
+            $corrupted=Join-Path $env:RUNNER_TEMP 'VOLVE-CI-REAL7-Corrupt-Refused.exe'
+            $bytes=[IO.File]::ReadAllBytes($unsigned)
+            $bytes[$bytes.Length-57]=$bytes[$bytes.Length-57] -bxor 1
+            [IO.File]::WriteAllBytes($corrupted,$bytes)
+            $PSNativeCommandUseErrorActionPreference=$false
+            $bad=(& $corrupted --verify-bundle 2>&1 | Out-String)
+            if($LASTEXITCODE -eq 0){throw 'CRITICAL: tampered one-PE real-component payload accepted'}
+          } finally {Pop-Location}
+          $firstSha=(Get-FileHash -LiteralPath $unsigned -Algorithm SHA256).Hash.ToLowerInvariant()
+          Write-Host "PASS VOLVE_REAL_SEVEN_ONE_PE_SIGNED_MANIFEST verified=true roles=7 corrupt_refused=true sha256=$firstSha NO_INSTALL NO_DNS NO_TASKS NO_RELEASE"
+      - name: Authenticode-sign one-PE genuine-seven LAB container and verify dual trust (NO RELEASE)
+        timeout-minutes: 5
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          if($env:RUNNER_ENVIRONMENT -ne 'github-hosted' -or $env:GITHUB_ACTIONS -ne 'true'){throw 'Not disposable Windows CI'}
+          $who=[Security.Principal.WindowsPrincipal]::new([Security.Principal.WindowsIdentity]::GetCurrent())
+          if(-not $who.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)){throw 'Hosted Windows admin required for CI cert trust'}
+          $unsigned=Join-Path $env:RUNNER_TEMP 'VOLVE-CI-REAL7-Unsigned-OnePE.exe'
+          $signed=Join-Path $env:RUNNER_TEMP 'VOLVE-CI-REAL7-Signed-OnePE-NO-INSTALL.exe'
+          $pub=(Get-Content -LiteralPath (Join-Path $env:RUNNER_TEMP 'VOLVE-CI-MIXED-PUBLIC-KEY.hex') -Raw).Trim()
+          $cert=New-SelfSignedCertificate -Type CodeSigningCert -Subject 'CN=VOLVE REAL SEVEN CI ONLY NEVER DISTRIBUTE' -CertStoreLocation 'Cert:\CurrentUser\My' -KeyAlgorithm RSA -KeyLength 2048 -Provider 'Microsoft Software Key Storage Provider' -NotAfter (Get-Date).AddDays(2)
+          if($null -eq $cert -or -not $cert.HasPrivateKey){throw 'Ephemeral CI code-signing certificate missing'}
+          $der=Join-Path $env:RUNNER_TEMP 'VOLVE-CI-REAL7-PUBLIC-EDITOR.cer'
+          [IO.File]::WriteAllBytes($der,$cert.Export([Security.Cryptography.X509Certificates.X509ContentType]::Cert))
+          $certutil=Join-Path $env:SystemRoot 'System32\certutil.exe'
+          & $certutil -f -addstore Root $der
+          if($LASTEXITCODE -ne 0){throw 'Temporary hosted Windows trust root unavailable'}
+          & $certutil -f -addstore TrustedPublisher $der
+          if($LASTEXITCODE -ne 0){throw 'Temporary hosted Windows TrustedPublisher unavailable'}
+          Copy-Item -LiteralPath $unsigned -Destination $signed -ErrorAction Stop
+          $signature=Set-AuthenticodeSignature -FilePath $signed -Certificate $cert -HashAlgorithm SHA256 -IncludeChain All
+          $check=Get-AuthenticodeSignature -LiteralPath $signed -ErrorAction Stop
+          if($signature.Status -ne 'Valid' -or $check.Status -ne 'Valid' -or $null -eq $check.SignerCertificate){
+            throw ('Authenticode signature is not verified by Windows: '+$signature.Status+'/'+$check.Status)
+          }
+          $certSHA=[Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($check.SignerCertificate.GetRawCertData())).ToLowerInvariant()
+          $exeSHA=(Get-FileHash -LiteralPath $signed -Algorithm SHA256).Hash.ToLowerInvariant()
+          $after=(& $signed --verify-bundle | Out-String)
+          if($LASTEXITCODE -ne 0 -or $after -notmatch 'PASS VOLVE_SINGLEFILE_SIGNED_BUNDLE release=0.28.7 items=7 NO_INSTALL'){
+            throw 'PE publisher signature altered internal real-material Ed25519 signature'
+          }
+          Push-Location 'development/0.28.7/singlefile'
+          try{
+            $gate=Join-Path $env:RUNNER_TEMP 'VOLVE-CI-REAL7-DoubleSignatureGate.exe'
+            go build -o $gate ./cmd/stageci
+            if($LASTEXITCODE -ne 0){throw 'Dual-signature stage gate did not compile'}
+            $staged=Join-Path $env:RUNNER_TEMP 'VOLVE-CI-REAL7-DUAL-SIGNED-STAGE'
+            $result=(& $gate --exe $signed --out $staged --pubkey $pub --certsha $certSHA --filehash $exeSHA | Out-String)
+            if($LASTEXITCODE -ne 0 -or $result -notmatch 'PASS VOLVE_DUAL_SIGNED_STAGE_LAB release=0.28.7 items=7 NO_INSTALL'){
+              throw 'Authenticode+Ed25519+file SHA256 double verification of real one-PE failed'
+            }
+            $PSNativeCommandUseErrorActionPreference=$false
+            $reject=(& $gate --exe $signed --out (Join-Path $env:RUNNER_TEMP 'VOLVE-CI-REAL7-FOREIGN-REFUSED') --pubkey $pub --certsha ('0'*64) --filehash $exeSHA 2>&1 | Out-String)
+            if($LASTEXITCODE -eq 0){throw 'Foreign Authenticode certificate was accepted'}
+          } finally {Pop-Location}
+          $root=Join-Path $env:RUNNER_TEMP 'VOLVE-CI-MIXED-REAL-5'
+          foreach($filename in @('VOLVE_Centro_Updater.exe','VOLVE_DNS_Motor_0_28_7.exe','VOLVE_DNS_Motor_0_28_7.exe.json','VOLVE_DNS_Motor_0_28_7.exe.sig','VOLVE_Managed_Watchdog.exe','VOLVE_Browser_Policies.json','VOLVE_Full_Catalog.txt')){
+            $a=(Get-FileHash -LiteralPath (Join-Path $root $filename) -Algorithm SHA256).Hash
+            $b=(Get-FileHash -LiteralPath (Join-Path $staged $filename) -Algorithm SHA256).Hash
+            if($a -cne $b){throw ('Embedded real component differs from audited original: '+$filename)}
+          }
+          if(Test-Path -LiteralPath (Join-Path $staged 'VOLVE_Uninstall.exe')){throw 'CRITICAL private owner uninstaller present'}
+          Write-Host "PASS VOLVE_ONE_PE_SEVEN_ACTUAL_COMPONENTS_DUAL_SIGNATURE_WINDOWS sha256=$exeSHA certsha=$certSHA items=7 NO_INSTALL NO_DNS_CHANGE NO_TASKS NO_RELEASE"
