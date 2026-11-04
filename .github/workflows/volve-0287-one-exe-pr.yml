@@ -236,6 +236,33 @@ jobs:
           Write-Host 'CHECKPOINT 5/5 PASS: dual-signed Windows Authenticode + pinned SHA256 + Ed25519 bundle + staged integrity + negative cases; NO INSTALL NO DNS NO RELEASE'
           exit 0
 
+      - name: Prepare verified seven-part INACTIVE CI version (never install)
+        timeout-minutes: 4
+        shell: pwsh
+        working-directory: development/0.28.7/signedstage
+        run: |
+          $ErrorActionPreference='Stop'
+          if($env:RUNNER_ENVIRONMENT -ne 'github-hosted' -or $env:GITHUB_ACTIONS -ne 'true'){throw 'Not disposable hosted Windows CI'}
+          $source=Join-Path $env:RUNNER_TEMP 'VOLVE-CI-verified-extraction'
+          $inactive=Join-Path $env:RUNNER_TEMP 'VOLVE-CI-VERSION-0287-INACTIVE'
+          if(-not (Test-Path -LiteralPath $source -PathType Container)){throw 'Dual-signed seven-component stage is missing'}
+          $beforeDNS=Get-DnsClientServerAddress -ErrorAction Stop | Sort-Object InterfaceIndex,AddressFamily | Select-Object InterfaceIndex,AddressFamily,ServerAddresses | ConvertTo-Json -Depth 5 -Compress
+          $beforeTasks=@(Get-ScheduledTask -ErrorAction Stop | Where-Object {$_.TaskName -match '^(?i:VOLVE[-_])'}).Count
+          go test -count=1 ./...
+          if($LASTEXITCODE -ne 0){throw 'Incomplete or unsafe signed inactive staging tests'}
+          go vet ./...
+          if($LASTEXITCODE -ne 0){throw 'Signed inactive staging static analysis failed'}
+          $result=(& go run ./cmd/preparelab --source $source --out $inactive --pubkey $env:VOLVE_CI_ED25519_PUB | Out-String)
+          if($LASTEXITCODE -ne 0 -or $result -notmatch 'PASS VOLVE_SEVEN_COMPONENT_INACTIVE_VERSION_PREPARED release=0.28.7 items=7'){
+            throw 'Signed inactive version preparation was not verified'
+          }
+          if(Test-Path -LiteralPath (Join-Path $inactive 'VOLVE_Uninstall.exe')){throw 'CRITICAL: owner-only uninstaller included'}
+          $afterDNS=Get-DnsClientServerAddress -ErrorAction Stop | Sort-Object InterfaceIndex,AddressFamily | Select-Object InterfaceIndex,AddressFamily,ServerAddresses | ConvertTo-Json -Depth 5 -Compress
+          $afterTasks=@(Get-ScheduledTask -ErrorAction Stop | Where-Object {$_.TaskName -match '^(?i:VOLVE[-_])'}).Count
+          if($beforeDNS -cne $afterDNS -or $beforeTasks -ne $afterTasks){throw 'Inactive preparation changed DNS or scheduled tasks'}
+          Write-Host $result
+          Write-Host 'PASS VOLVE_SAME_VOLUME_INACTIVE_PROMOTION_WINDOWS NO_INSTALL NO_DNS NO_SYSTEM_TASK NO_RELEASE'
+
       - name: Join real Windows six-inventory route to the already verified signed EXE
         timeout-minutes: 8
         shell: pwsh
