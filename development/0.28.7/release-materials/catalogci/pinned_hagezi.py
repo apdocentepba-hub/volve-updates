@@ -52,12 +52,13 @@ def inspect_catalog(
         if record.startswith(b"#"):
             comments += 1
             continue
-        if record.startswith(b"*."):
-            record = record[2:]
-        if len(record) > 253 or not DOMAIN.fullmatch(record):
+        # Bare and wildcard records are intentionally distinct: preserve the
+        # upstream rule semantics. Do not broaden *.example.com into example.com.
+        domain = record[2:] if record.startswith(b"*.") else record
+        if len(domain) > 253 or not DOMAIN.fullmatch(domain):
             raise ValueError(f"non-domain or malformed entry at line {line_num}")
         if record in seen:
-            raise ValueError(f"duplicate domain in pinned upstream catalog at line {line_num}")
+            raise ValueError(f"duplicate upstream rule at line {line_num}")
         seen.add(record)
         if len(seen) > MAX_DOMAIN_COUNT:
             raise ValueError("overlarge gambling domain count")
