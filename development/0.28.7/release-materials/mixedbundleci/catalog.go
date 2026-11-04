@@ -16,6 +16,7 @@ import (
 const (
  PinnedFullCatalogCommit="81bbd1b9009893d65358146b23282647634c26be"
  PinnedFullCatalogBlobSHA1="096ce47515721f7aac2ce8138fb5b421aa6fb1e1"
+ PinnedFullCatalogSHA256="ec700a88cdaedcc90cd482105ecbdeb7177289029303d61e35365ed1ea9c2347"
  PinnedFullCatalogBytes=11040215
  PinnedFullCatalogURL="https://raw.githubusercontent.com/hagezi/dns-blocklists/"+PinnedFullCatalogCommit+"/wildcard/gambling-onlydomains.txt"
 )
@@ -43,6 +44,7 @@ func VerifyPinnedFullCatalog(content,receipt []byte)error{
  _,_ = sum.Write([]byte("blob "+strconv.Itoa(len(content))))
  _,_ = sum.Write([]byte{0})
  _,_ = sum.Write(content)
+ if SHA256(content)!=PinnedFullCatalogSHA256{return errors.New("HaGeZi source mismatches fixed SHA-256, independent of Git SHA-1")}
  if hex.EncodeToString(sum.Sum(nil))!=PinnedFullCatalogBlobSHA1{
   return errors.New("HaGeZi source mismatches fixed upstream Git blob")
  }
