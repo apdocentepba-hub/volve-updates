@@ -118,9 +118,11 @@ jobs:
           for rel in ("staging.go","staging_test.go","cmd/stageci/main.go","cmd/stageci/publisher_windows.go","cmd/stageci/publisher_nonwindows.go"):
               p=root/"singlefile-overlay"/rel
               assert p.is_file()
-              shutil.copy2(p,root/"singlefile"/rel)
+              dest=root/"singlefile"/rel
+              dest.parent.mkdir(parents=True,exist_ok=True)
+              shutil.copy2(p,dest)
           '@ | python -
-          if($LASTEXITCODE -ne 0){throw 'Pinned self-contained EXE source tampered'}
+          if($LASTEXITCODE -ne 0){throw 'Pinned self-contained EXE source reconstruction failed'}
           python development/0.28.7/singlefile-overlay/enforce_public_seven.py
           if($LASTEXITCODE -ne 0){throw 'Cannot exclude private uninstaller from the single EXE'}
           Push-Location 'development/0.28.7/singlefile'
