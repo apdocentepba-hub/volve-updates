@@ -22,6 +22,34 @@ func patch(path, old, replacement string) error {
     return os.WriteFile(path, out, 0600)
 }
 
+// patchPublicOwnerOnlyUninstall removes the publicly accessible
+// --uninstall dispatch from the reconstructed Centro. Emergency --dns-restore
+// remains available because network recovery is NOT product uninstallation.
+// This does not touch the owner's separate, private removal program.
+func patchPublicOwnerOnlyUninstall(path string) error {
+    const publicInstallAndUninstall = `if len(os.Args) == 2 && (os.Args[1] == "--install" || os.Args[1] == "--uninstall") {`
+    const publicInstallOnly = `if len(os.Args) == 2 && os.Args[1] == "--install" {`
+    if err := patch(path, publicInstallAndUninstall, publicInstallOnly); err != nil { return err }
+    const previousDispatch = `var e error
+        if mode == "--install" {
+            e = install()
+        } else {
+            e = uninstall()
+        }`
+    const safeDispatch = `e := install()`
+    if err := patch(path, previousDispatch, safeDispatch); err != nil { return err }
+    const previousHelp = `--selftest / --uninstall`
+    const safeHelp = `--selftest (desinstalación: herramienta privada del propietario)`
+    if err := patch(path, previousHelp, safeHelp); err != nil { return err }
+    const previousMessage = `e = uninstall()`
+    content,err := os.ReadFile(path); if err != nil { return err }
+    if strings.Contains(string(content), previousMessage) ||
+        strings.Contains(string(content), `os.Args[1] == "--uninstall"`) {
+        return fmt.Errorf("public Centro uninstaller entrypoint remained reachable")
+    }
+    return nil
+}
+
 // Preserve the production --dns-service behavior, fixed port 53 and live
 // installation root. Move the SAME dual-stack runner into an injected helper
 // which CI exercises ONLY with ephemeral loopback ports and temp catalogs.
@@ -185,6 +213,13 @@ func fullEngineAt(root string) (*blocker.Engine, error) {
     }
     ` + oldMain
     if err := patch(filepath.Join(target, "main_windows.go"), oldMain, newMain); err != nil { panic(err) }
+    if err := patchPublicOwnerOnlyUninstall(filepath.Join(target, "main_windows.go")); err != nil { panic(err) }
+    // A dedicated regression test is compiled with the reconstructed real
+    // public Centro, so it is impossible to pass CI by editing only this tool.
+    guardSrc, err := os.ReadFile(filepath.Join(srcDir, "owner_only_public_uninstall_windows_test.go"))
+    if err != nil { panic(err) }
+    guardFmt, err := format.Source(guardSrc); if err != nil { panic(err) }
+    if err := os.WriteFile(filepath.Join(target, "owner_only_public_uninstall_windows_test.go"), guardFmt, 0600); err != nil { panic(err) }
     const oldPanel = `result := panelToolBounded("--check-app-updates", 120*time.Second)`
     const newPanel = `result := panelToolBounded("--check-all-updates", 120*time.Second)`
     if err := patch(filepath.Join(target, "panel_windows.go"), oldPanel, newPanel); err != nil { panic(err) }
