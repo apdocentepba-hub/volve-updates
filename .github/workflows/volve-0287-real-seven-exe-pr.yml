@@ -163,5 +163,6 @@ jobs:
           path: |
             ${{ runner.temp }}/VOLVE_0287_7_COMPONENTES_REALES_CI_NO_INSTALAR.exe
             ${{ runner.temp }}/VOLVE_0287_7_COMPONENTES_REALES_CI_NO_INSTALAR.json
+            ${{ runner.temp }}/VOLVE-CI-MIXED-PUBLIC-KEY.hex
           if-no-files-found: error
           retention-days: 3
