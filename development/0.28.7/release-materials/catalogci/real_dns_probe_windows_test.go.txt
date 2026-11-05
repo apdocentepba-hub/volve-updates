@@ -1,0 +1,86 @@
+//go:build windows
+
+package main
+
+// This is a disposable Windows CI test only. It uses the production catalog
+// parser and real UDP DNS proxy on an ephemeral 127.0.0.1 port, never port 53.
+// It does not modify Windows DNS, scheduled tasks, files in ProgramData,
+// registry policies, hosts or the running VOLVE installation.
+import(
+ "context"
+ "errors"
+ "fmt"
+ "io"
+ "net"
+ "os"
+ "path/filepath"
+ "testing"
+ "time"
+
+ "volve-browser-protection/dnsproxy"
+)
+
+func TestOfficialPinnedHaGeZiFullLoadedByActualDNSMotorOnLoopback(t *testing.T){
+ source:=os.Getenv("VOLVE_CI_HAGEZI_FULL_SOURCE")
+ if os.Getenv("GITHUB_ACTIONS")!="true"||os.Getenv("RUNNER_ENVIRONMENT")!="github-hosted"||
+  source==""||!filepath.IsAbs(source)||filepath.Base(source)!="VOLVE_Full_Catalog.txt"{
+  t.Fatal("requires verified full HaGeZi catalog and disposable hosted Windows CI")
+ }
+ original,err:=os.Stat(source)
+ if err!=nil||original.Size()!=11040215{t.Fatalf("exact published source not available: %v",err)}
+ root:=t.TempDir()
+ feedDir:=filepath.Join(root,"catalog","feeds")
+ if err:=os.MkdirAll(feedDir,0700);err!=nil{t.Fatal(err)}
+ trustedFeed:=filepath.Join(feedDir,"hagezi_gambling_full.txt")
+ in,err:=os.Open(source);if err!=nil{t.Fatal(err)};defer in.Close()
+ out,err:=os.OpenFile(trustedFeed,os.O_WRONLY|os.O_CREATE|os.O_EXCL,0600);if err!=nil{t.Fatal(err)}
+ copied,copyErr:=io.Copy(out,in);syncErr:=out.Sync();closeErr:=out.Close()
+ if copyErr!=nil||syncErr!=nil||closeErr!=nil||copied!=11040215{
+  t.Fatalf("full source copy failed: n=%d copy=%v sync=%v close=%v",copied,copyErr,syncErr,closeErr)
+ }
+ // This exercises the ACTUAL fullEngineAt and blocker.Parse code path.
+ engine,err:=fullEngineAt(root)
+ if err!=nil{t.Fatalf("production full catalog parser rejected exact original: %v",err)}
+ // Windows runners may reserve all ephemeral :0 TCP ports. Choose a free
+ // shared UDP/TCP high loopback port in the established test-only range.
+ port:=0
+ for attempt:=0;attempt<4096;attempt++{
+  p:=20000+((os.Getpid()+attempt)%20000)
+  a:=fmt.Sprintf("127.0.0.1:%d",p)
+  udp,uErr:=net.ListenPacket("udp4",a);if uErr!=nil{continue}
+  tcp,tErr:=net.Listen("tcp4",a)
+  if tErr==nil{port=p;_ =tcp.Close()}
+  _ =udp.Close()
+  if port!=0{break}
+ }
+ if port==0{t.Fatal("no paired disposable localhost UDP/TCP DNS test port")}
+ ctx,cancel:=context.WithCancel(context.Background());defer cancel()
+ server:=dnsproxy.New(engine,nil)
+ completed:=make(chan error,1)
+ go func(){completed<-server.Run(ctx,"127.0.0.1",port)}()
+ select{
+ case <-server.Ready():
+ case err:=<-completed:t.Fatalf("real DNS proxy failed to start: %v",err)
+ case <-time.After(6*time.Second):t.Fatal("DNS proxy did not become ready on ephemeral loopback")
+ }
+ // Grounded entries from the same pinned 11,040,215-byte HaGeZi source.
+ target:=fmt.Sprintf("127.0.0.1:%d",port)
+ for _,domain:=range []string{
+  "argentina-app-betwarrior.com",
+  "argentina-casino-betwarrior.com",
+ }{
+  qctx,stop:=context.WithTimeout(ctx,5*time.Second)
+  response,queryErr:=dnsproxy.QueryRCode(qctx,target,domain)
+  stop()
+  if queryErr!=nil||response!=3{
+   t.Fatalf("real pinned HaGeZi source not blocked by real motor: %s rcode=%d err=%v",domain,response,queryErr)
+  }
+ }
+ cancel()
+ select{
+ case err:=<-completed:
+  if err!=nil&&!errors.Is(err,context.Canceled){t.Fatalf("DNS test server shutdown error: %v",err)}
+ case <-time.After(6*time.Second):t.Fatal("DNS loopback test server did not exit")
+ }
+ t.Log("PASS VOLVE_REAL_HAGEZI_FULL_WITH_ACTUAL_PRODUCTION_DNS_PARSER_AND_LOOPBACK_UDP catalog=626316 NO_PORT53 NO_DNS_CHANGE NO_TASKS NO_RELEASE")
+}

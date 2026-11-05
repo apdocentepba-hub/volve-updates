@@ -91,7 +91,8 @@ func(h *residentPinnedBootHealthWindows)VerifyRunningIdentity(
   "$t.State -ne 'Running' -or @($t.Actions).Count -ne 1 -or "+
   "[string]$t.Actions[0].Execute -ine $old -or "+
   "[string]$t.Actions[0].Arguments -cne '--dns-service'){throw 'original SYSTEM task is not exact and Running'};"+
-  "$now=(Get-FileHash -LiteralPath $old -Algorithm SHA256 -ErrorAction Stop).Hash.ToLowerInvariant();"+
+  "$handle=[IO.File]::OpenRead($old);$hasher=[Security.Cryptography.SHA256]::Create();"+
+  "try{$now=[BitConverter]::ToString($hasher.ComputeHash($handle)).Replace('-','').ToLowerInvariant()}finally{$handle.Dispose();$hasher.Dispose()};"+
   "if($now -cne $sha){throw 'original bytes changed during health'};"+
   "$p=@(Get-CimInstance Win32_Process -ErrorAction Stop|Where-Object{[string]$_.ExecutablePath -ieq $old});"+
   "if($p.Count -ne 1){throw 'restored original has no unique running process'};"+

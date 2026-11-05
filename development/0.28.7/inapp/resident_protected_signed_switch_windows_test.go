@@ -141,3 +141,157 @@ func TestProtectedSignedDriverRejectsHandoffMissing(t *testing.T){
   t.Fatal("signed transition accepted driver that cannot release mutex for watchdog")
  }
 }
+
+
+// A wrapper must never expose the embedded unprotected driver operations.
+// These checks do not require Administrator because no system lock is acquired.
+func TestProtectedSignedLeaseMethodsRejectWithoutOSLock(t *testing.T){
+ wrapped,err:=NewProtectedSignedLegacySwitchDriver(&unsafeLeaseStub{})
+ if err!=nil{t.Fatal(err)}
+ ctx:=context.Background()
+ checks:=[]struct{name string; fn func()error}{
+  {"preflight",func()error{return wrapped.Preflight(ctx,Manifest{})}},
+  {"independent-watchdog",func()error{return wrapped.IndependentRecoveryReady(ctx,VerifiedLegacyMigrationProof{})}},
+  {"snapshot",func()error{return wrapped.Snapshot(ctx)}},
+  {"install",func()error{return wrapped.InstallVersionedCandidate(ctx,"not-a-product")}},
+  {"prepared-target",func()error{return wrapped.VerifyPreparedTarget(ctx,Manifest{})}},
+  {"switch",func()error{return wrapped.Switch(ctx)}},
+  {"local-dns",func()error{return wrapped.Probe(ctx)}},
+  {"external-network",func()error{return wrapped.ProbeConnectivity(ctx)}},
+  {"commit",func()error{return wrapped.Commit(ctx,Manifest{})}},
+  {"restore",func()error{return wrapped.Restore(ctx)}},
+ }
+ for _,test:=range checks{
+  t.Run(test.name,func(t *testing.T){
+   // The unsafe stub embeds an unimplemented interface: an unguarded
+   // delegate invocation would panic rather than returning an error.
+   if err:=test.fn();err==nil{t.Fatal("operation bypassed protected named mutex")}
+  })
+ }
+}
+
+type protectedLeaseOperationSpy struct{
+ unsafeLeaseStub
+ snapshots int
+ switches int
+ commits int
+}
+func(s *protectedLeaseOperationSpy)Snapshot(context.Context)error{s.snapshots++;return nil}
+func(s *protectedLeaseOperationSpy)Switch(context.Context)error{s.switches++;return nil}
+func(s *protectedLeaseOperationSpy)Commit(context.Context,Manifest)error{s.commits++;return nil}
+
+func TestProtectedSignedLeaseAllowsOperationsOnlyUntilRelease(t *testing.T){
+ if os.Getenv("GITHUB_ACTIONS")!="true"||os.Getenv("RUNNER_ENVIRONMENT")!="github-hosted"{
+  t.Skip("real protected mutex test runs only on hosted Windows CI")
+ }
+ spy:=&protectedLeaseOperationSpy{}
+ wrapped,err:=NewProtectedSignedLegacySwitchDriver(spy)
+ if err!=nil{t.Fatal(err)}
+ ctx:=context.Background()
+ release,err:=wrapped.AcquireExclusiveMigration(ctx)
+ if err!=nil{t.Fatal(err)}
+ if err:=wrapped.Snapshot(ctx);err!=nil{t.Fatal(err)}
+ if err:=wrapped.Switch(ctx);err!=nil{t.Fatal(err)}
+ if err:=wrapped.Commit(ctx,Manifest{});err!=nil{t.Fatal(err)}
+ release()
+ release()
+ if spy.snapshots!=1||spy.switches!=1||spy.commits!=1{
+  t.Fatalf("delegation did not run exactly once: %+v",spy)
+ }
+ if err:=wrapped.Switch(ctx);err==nil{t.Fatal("switch allowed after release")}
+ if spy.switches!=1{t.Fatal("unlocked switch reached unprotected driver")}
+}
+
+// The finalizer from a past transaction must not release the named mutex
+// after a new transaction has acquired it on the SAME adapter instance.
+func TestProtectedSignedLeaseStaleFinalizerCannotUnlockLaterTransaction(t *testing.T){
+ if os.Getenv("GITHUB_ACTIONS")!="true"||os.Getenv("RUNNER_ENVIRONMENT")!="github-hosted"{
+  t.Skip("real protected mutex test runs only on hosted Windows CI")
+ }
+ wrapped,err:=NewProtectedSignedLegacySwitchDriver(&unsafeLeaseStub{})
+ if err!=nil{t.Fatal(err)}
+ oldDone,err:=wrapped.AcquireExclusiveMigration(context.Background())
+ if err!=nil{t.Fatal(err)}
+ oldDone()
+ newDone,err:=wrapped.AcquireExclusiveMigration(context.Background())
+ if err!=nil{t.Fatal(err)}
+ defer newDone()
+ oldDone() // Must be a no-op, not unlock the new lease.
+ ctx,cancel:=context.WithTimeout(context.Background(),250*time.Millisecond)
+ defer cancel()
+ done:=make(chan error,1)
+ go func(){
+  release,err:=AcquireProtectedResidentTransitionLease(ctx)
+  if release!=nil{release()}
+  done<-err
+ }()
+ select{
+ case err:=<-done:
+  if !errors.Is(err,context.DeadlineExceeded){
+   t.Fatalf("stale finalizer released a newer kernel lease: %v",err)
+  }
+ case <-time.After(3*time.Second):
+  t.Fatal("OS lock did not respect bounded negative test")
+ }
+ newDone()
+ last,err:=AcquireProtectedResidentTransitionLease(context.Background())
+ if err!=nil{t.Fatalf("new lease failed to release: %v",err)}
+ last()
+}
+
+
+type blockedProtectedSwitchSpy struct{
+ unsafeLeaseStub
+ started chan struct{}
+ proceed chan struct{}
+}
+func(s *blockedProtectedSwitchSpy)Switch(ctx context.Context)error{
+ close(s.started)
+ select{
+ case <-s.proceed:return nil
+ case <-ctx.Done():return ctx.Err()
+ }
+}
+
+// A release callback racing with an in-flight OS switch must wait until the
+// switch is finished. Otherwise a second process could take the kernel mutex
+// while the old engine task is still being changed.
+func TestProtectedSignedLeaseFinalizerWaitsForInFlightSwitch(t *testing.T){
+ if os.Getenv("GITHUB_ACTIONS")!="true"||os.Getenv("RUNNER_ENVIRONMENT")!="github-hosted"{
+  t.Skip("real protected mutex test runs only on hosted Windows CI")
+ }
+ spy:=&blockedProtectedSwitchSpy{
+  started:make(chan struct{}),proceed:make(chan struct{}),
+ }
+ wrapped,err:=NewProtectedSignedLegacySwitchDriver(spy)
+ if err!=nil{t.Fatal(err)}
+ release,err:=wrapped.AcquireExclusiveMigration(context.Background())
+ if err!=nil{t.Fatal(err)}
+ defer release()
+ ctx,cancel:=context.WithTimeout(context.Background(),5*time.Second)
+ defer cancel()
+ switchDone:=make(chan error,1)
+ go func(){switchDone<-wrapped.Switch(ctx)}()
+ select{
+ case <-spy.started:
+ case <-ctx.Done():t.Fatal("protected switch never entered driver")
+ }
+ released:=make(chan struct{})
+ go func(){release();close(released)}()
+ select{
+ case <-released:t.Fatal("kernel lease released while protected switch still running")
+ case <-time.After(150*time.Millisecond):
+ }
+ close(spy.proceed)
+ select{
+ case err:=<-switchDone:if err!=nil{t.Fatal(err)}
+ case <-ctx.Done():t.Fatal("protected switch did not finish")
+ }
+ select{
+ case <-released:
+ case <-ctx.Done():t.Fatal("release callback stayed blocked after switch ended")
+ }
+ reacquired,err:=AcquireProtectedResidentTransitionLease(ctx)
+ if err!=nil{t.Fatalf("lease remains locked after serialized release: %v",err)}
+ reacquired()
+}

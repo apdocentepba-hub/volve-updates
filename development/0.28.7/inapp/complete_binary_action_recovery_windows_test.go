@@ -50,7 +50,7 @@ func signedCompleteApplicationCandidate(t *testing.T,root,compiledExe string) (s
         Schema:1,Component:"dns-engine",Version:"0.28.7",MinPanelVersion:"0.28.7",
         URL:"https://github.com/apdocentepba-hub/volve-updates/releases/download/v0.28.7/VOLVE_DNS_Motor_0_28_7.exe",
         SHA256:sha,Size:n,
-        Notes:"CI proof only; complete VOLVE build; binary is never started as DNS",
+        Notes:"CI proof only; complete VOLVE build; disposable VM exercise, never a product motor release",
     }
     manifest,err:=json.Marshal(m);if err!=nil{t.Fatal(err)}
     public,private,err:=ed25519.GenerateKey(rand.Reader);if err!=nil{t.Fatal(err)}

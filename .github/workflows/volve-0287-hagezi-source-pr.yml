@@ -1,0 +1,44 @@
+name: VOLVE 0.28.7 official HaGeZi full source pin (CI, NO RELEASE)
+on:
+  pull_request:
+    branches: [feature/motor-updater-0287-pilot]
+    paths:
+      - 'development/0.28.7/release-materials/catalogci/**'
+      - 'development/0.28.7/release-materials/mixedbundleci/catalog.go'
+      - '.github/workflows/volve-0287-hagezi-source-pr.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  pinned-source-only:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate upstream source parser offline
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s development/0.28.7/release-materials/catalogci -p 'test_pinned_hagezi.py' -v
+      - name: Fetch exact Git commit and prove byte-identity of FULL gambling list (NO RELEASE)
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 development/0.28.7/release-materials/catalogci/pinned_hagezi.py \
+            --out "$RUNNER_TEMP/VOLVE_Full_Catalog.txt" \
+            --receipt "$RUNNER_TEMP/VOLVE_Full_Catalog_SOURCE_ONLY.json"
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          root=Path(os.environ['RUNNER_TEMP'])
+          receipt=json.loads((root/'VOLVE_Full_Catalog_SOURCE_ONLY.json').read_text(encoding='utf-8'))
+          assert receipt['source_verified'] is True
+          assert receipt['size']==11040215
+          assert receipt['domain_count']>=400000
+          assert receipt['production_install_authorized'] is False
+          assert receipt['compatible_with_dns_motor_verified'] is False
+          assert receipt['publish_release_authorized'] is False
+          assert receipt['license']=='GPL-3.0'
+          assert (root/'VOLVE_Full_Catalog.txt').stat().st_size==receipt['size']
+          print('PASS VOLVE_HAGEZI_EXACT_GIT_BLOB_AUDIT_NO_RELEASE_NO_INSTALL')
+          PY

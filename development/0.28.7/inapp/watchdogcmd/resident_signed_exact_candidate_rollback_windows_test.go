@@ -138,13 +138,13 @@ func TestSignedExactCandidateBootPolicyFinalizesOnlyAfterHealthyProbes(t *testin
  defer cancel()
  journalDir:=filepath.Join(root,residentRecoveryParent,residentJournalDirName)
  actions:=0
- deps.Task.RunWindowsTask=func(context.Context,string)(string,error){
+ deps.Task.RunWindowsTask=func(_ context.Context,script string)(string,error){
   actions++
   got,err:=os.ReadFile(old)
   if err!=nil||string(got)!=string(expected){
-   return "",errors.New("policy reached task restore before signed original file rollback")
+   return "",errors.New("policy reached Scheduler before signed original file rollback")
   }
-  return "VOLVE_SIGNED_ORIGINAL_TASK_RESTORED",nil
+  return signedRecoveryTaskFixtureResult(script)
  }
  ops,err:=newResidentSignedBootOriginalOps(root,key,deps)
  if err!=nil{t.Fatal(err)}
@@ -154,7 +154,7 @@ func TestSignedExactCandidateBootPolicyFinalizesOnlyAfterHealthyProbes(t *testin
  health:=&ciBootHealth{firstOriginalMissing:true}
  status,err:=motorupdate.RecoverPendingResidentAfterBoot(ctx,journalDir,
   seal,durableWindowsACL,health,driver)
- if err!=nil||status!="restored"||actions!=1||health.identityChecks<3{
+ if err!=nil||status!="restored"||actions!=2||health.identityChecks<3{
   t.Fatalf("signed candidate did not recover through complete boot policy: status=%q actions=%d identity=%d err=%v",
    status,actions,health.identityChecks,err)
  }
@@ -168,7 +168,7 @@ func TestSignedExactCandidateBootPolicyFinalizesOnlyAfterHealthyProbes(t *testin
  }
  repeat,err:=motorupdate.RecoverPendingResidentAfterBoot(ctx,journalDir,
   seal,durableWindowsACL,&ciBootHealth{},driver)
- if err!=nil||repeat!="restored"||actions!=1{
+ if err!=nil||repeat!="restored"||actions!=2{
   t.Fatalf("completed candidate recovery replayed: status=%q actions=%d err=%v",repeat,actions,err)
  }
 }
@@ -184,9 +184,9 @@ func TestSignedExactCandidateBootPolicyUnhealthyDNSLeavesPendingOriginal(t *test
  defer cancel()
  journalDir:=filepath.Join(root,residentRecoveryParent,residentJournalDirName)
  calls:=0
- deps.Task.RunWindowsTask=func(context.Context,string)(string,error){
+ deps.Task.RunWindowsTask=func(_ context.Context,script string)(string,error){
   calls++
-  return "VOLVE_SIGNED_ORIGINAL_TASK_RESTORED",nil
+  return signedRecoveryTaskFixtureResult(script)
  }
  ops,err:=newResidentSignedBootOriginalOps(root,key,deps)
  if err!=nil{t.Fatal(err)}
@@ -195,7 +195,7 @@ func TestSignedExactCandidateBootPolicyUnhealthyDNSLeavesPendingOriginal(t *test
  seal:=func(path string)error{hardenedTestACL(t,path,path);return nil}
  status,err:=motorupdate.RecoverPendingResidentAfterBoot(ctx,journalDir,
   seal,durableWindowsACL,&ciBootHealth{firstOriginalMissing:true,rejectDNS:true},driver)
- if err==nil||status!=""||calls!=1{
+ if err==nil||status!=""||calls!=2{
   t.Fatalf("unhealthy post-rollback DNS incorrectly finished: status=%q calls=%d err=%v",status,calls,err)
  }
  got,err:=os.ReadFile(old)

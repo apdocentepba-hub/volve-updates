@@ -53,7 +53,11 @@ func readResidentRunningEvidenceWithQuery(
   `$ipv4=@(Get-NetUDPEndpoint -LocalAddress '127.0.0.1' -LocalPort 53 -ErrorAction Stop);`+
   `$ipv6=@(Get-NetUDPEndpoint -LocalAddress '::1' -LocalPort 53 -ErrorAction Stop);`+
   `if($ipv4.Count -ne 1 -or $ipv6.Count -ne 1){throw 'DNS listener ownership ambiguous'};`+
-  `$digest=(Get-FileHash -LiteralPath $exe -Algorithm SHA256 -ErrorAction Stop).Hash.ToLowerInvariant();`+
+  // Use BCL SHA-256 directly. Some restricted Windows PowerShell launches
+  // do not expose the Get-FileHash cmdlet even though .NET is available.
+  // Fail closed on file open/hash errors, and dispose handles in all paths.
+  `$handle=[IO.File]::OpenRead($exe);$hashAlg=[Security.Cryptography.SHA256]::Create();`+
+  `try{$digest=[BitConverter]::ToString($hashAlg.ComputeHash($handle)).Replace('-','').ToLowerInvariant()}finally{$handle.Dispose();$hashAlg.Dispose()};`+
   `$result=[ordered]@{task_name=[string]$task.TaskName;task_folder=[string]$task.TaskPath;`+
   `task_principal=[string]$task.Principal.UserId;task_state=[string]$task.State;`+
   `task_action_count=[int]@($task.Actions).Count;`+

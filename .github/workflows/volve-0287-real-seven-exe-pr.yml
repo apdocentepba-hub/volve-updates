@@ -1,0 +1,168 @@
+name: VOLVE 0.28.7 real seven-piece single EXE integration CI (NO INSTALL)
+on:
+  pull_request:
+    branches: [feature/motor-updater-0287-pilot]
+    paths:
+      - '.github/workflows/volve-0287-real-seven-exe-pr.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  real-seven-single-exe:
+    runs-on: windows-latest
+    timeout-minutes: 29
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.x'
+      - name: Refuse any non-disposable Windows runner or installed protection
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          if($env:GITHUB_ACTIONS -ne 'true' -or $env:RUNNER_ENVIRONMENT -ne 'github-hosted'){throw 'Only isolated GitHub Windows CI permitted'}
+          foreach($name in @('VOLVE-DNS-SERVER-0270','VOLVE-DNS-RESCUE-0270','VOLVE-CATALOGO-0230')){
+            if(Get-ScheduledTask -TaskName $name -ErrorAction SilentlyContinue){throw 'Cannot touch a runner with VOLVE production tasks'}
+          }
+      - name: Rebuild hash-pinned real 0.28.7 Centro and watchdog sources
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          @'
+          import hashlib,zipfile,shutil
+          from pathlib import Path
+          root=Path("development/0.28.7")
+          parts=sorted((root/"complete-source-parts").glob("part-*.bin"))
+          assert [p.name for p in parts]==[f"part-{i:02d}.bin" for i in range(10)]
+          contents=b"".join(p.read_bytes() for p in parts)
+          assert hashlib.sha256(contents).hexdigest()=="92b3536559151260375b17a64eedd009df8399e45460637208027b7ca0587ba5"
+          Path("source-verified.zip").write_bytes(contents)
+          with zipfile.ZipFile("source-verified.zip") as z:
+              for item in z.infolist():
+                  p=Path(item.filename)
+                  assert not p.is_absolute() and ".." not in p.parts and p.parts[0]=="codigo"
+              z.extractall("build")
+          for name,sha in (
+              ("VOLVE_0287_PRECHECK_RESCATE_OVERLAY_NO_INSTALAR.zip","fdfd31f21df81fe6da6075bfd442354297874576b6dc2c38f19bd35a681d95cd"),
+              ("VOLVE_0287_RECUPERACION_INTERRUPCION_FORZADA_NO_INSTALAR_v3.zip","773bd5eb5f1c4883021cc321856636354e964d3605dba9017e2fb5d1a7401b40")
+          ):
+              p=root/name; raw=p.read_bytes()
+              assert hashlib.sha256(raw).hexdigest()==sha
+              with zipfile.ZipFile(p) as z:z.extractall("build")
+          for path in (root/"journal").glob("*.go"):
+              shutil.copy2(path,Path("build/codigo/motorupdate")/path.name)
+          '@ | python -
+          if($LASTEXITCODE -ne 0){throw 'Pinned original Go source reconstruction failed'}
+          go run development/0.28.7/inapp/apply_overlay.go build/codigo
+          if($LASTEXITCODE -ne 0){throw 'Publisher-pinned source overlay failed'}
+          Push-Location build/codigo
+          try {
+            go test -count=1 ./motorupdate ./dnsproxy
+            if($LASTEXITCODE -ne 0){throw 'Core real source tests failed'}
+            go build -trimpath -o (Join-Path $env:RUNNER_TEMP 'VOLVE_Centro_Updater.exe') .
+            if($LASTEXITCODE -ne 0){throw 'Actual Centro compile failed'}
+            go build -trimpath -o (Join-Path $env:RUNNER_TEMP 'VOLVE_Managed_Watchdog.exe') ./cmd/volve-managed-watchdog
+            if($LASTEXITCODE -ne 0){throw 'Actual watchdog compile failed'}
+          } finally {Pop-Location}
+      - name: Obtain and authenticate historical publisher-signed motor and pinned Full catalog
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference='Stop'
+          $temp=$env:RUNNER_TEMP
+          gh release download v0.28.7 --repo "${{ github.repository }}" --pattern VOLVE_0_28_7_CENTRO.exe --dir $temp
+          if($LASTEXITCODE -ne 0){throw 'Pinned historic published motor unavailable'}
+          $motor=Join-Path $temp 'VOLVE_DNS_Motor_0_28_7.exe'
+          Move-Item -LiteralPath (Join-Path $temp 'VOLVE_0_28_7_CENTRO.exe') -Destination $motor -ErrorAction Stop
+          if((Get-FileHash -LiteralPath $motor -Algorithm SHA256).Hash.ToLowerInvariant() -cne 'e451b6289116636986ddd67b39dc15f02e471ebde7be9508b38d7bcb0155b414'){
+            throw 'Historic publisher motor bytes changed'
+          }
+          if((Get-Item -LiteralPath $motor).Length -ne 18168832){throw 'Historic motor size mismatch'}
+          Copy-Item 'development/0.28.7/motor-release-candidate/VOLVE_DNS_Motor_0_28_7.exe.json' -Destination $temp
+          Copy-Item 'development/0.28.7/motor-release-candidate/VOLVE_DNS_Motor_0_28_7.exe.sig' -Destination $temp
+          python development/0.28.7/release-materials/catalogci/pinned_hagezi.py --out (Join-Path $temp 'VOLVE_Full_Catalog.txt') --receipt (Join-Path $temp 'VOLVE_Full_Catalog_SOURCE_ONLY.json')
+          if($LASTEXITCODE -ne 0){throw 'Full official HaGeZi catalog SHA256 or provenance rejected'}
+          $audit=Join-Path $temp 'VOLVE-CI-REAL-MATERIALS-AUDIT.json'
+          python development/0.28.7/release-materials/inspect_materials.py --centro (Join-Path $temp 'VOLVE_Centro_Updater.exe') --watchdog (Join-Path $temp 'VOLVE_Managed_Watchdog.exe') --pinned-published-motor $motor --go-contract development/0.28.7/unifiedbundle/bundle.go --report $audit
+          if($LASTEXITCODE -ne 0){throw 'Independent actual material audit rejected'}
+      - name: Create genuine-source seven-role inactive bundle signed by EPHEMERAL CI-only key
+        shell: pwsh
+        working-directory: development/0.28.7/release-materials/mixedbundleci
+        run: |
+          $ErrorActionPreference='Stop'
+          $t=$env:RUNNER_TEMP
+          $out=Join-Path $t 'VOLVE-CI-MIXED-REAL-5'
+          $inactive=Join-Path $t 'VOLVE-CI-VERSION-0287-MIXED'
+          $pub=Join-Path $t 'VOLVE-CI-MIXED-PUBLIC-KEY.hex'
+          go run ./cmd/mixedbundle --centro (Join-Path $t 'VOLVE_Centro_Updater.exe') --watchdog (Join-Path $t 'VOLVE_Managed_Watchdog.exe') --historic-motor (Join-Path $t 'VOLVE_DNS_Motor_0_28_7.exe') --motor-manifest (Join-Path $t 'VOLVE_DNS_Motor_0_28_7.exe.json') --motor-signature (Join-Path $t 'VOLVE_DNS_Motor_0_28_7.exe.sig') --catalog (Join-Path $t 'VOLVE_Full_Catalog.txt') --catalog-receipt (Join-Path $t 'VOLVE_Full_Catalog_SOURCE_ONLY.json') --audit (Join-Path $t 'VOLVE-CI-REAL-MATERIALS-AUDIT.json') --out $out --inactive $inactive --pubkey-file $pub
+          if($LASTEXITCODE -ne 0){throw 'Seven real-source Windows CI roles rejected'}
+          if(Test-Path (Join-Path $out 'VOLVE_Uninstall.exe')){throw 'PRIVATE uninstaller leaked into bundle'}
+          if(@(Get-ChildItem -LiteralPath $out -File).Count -ne 9){throw 'Not precisely seven roles and two signature files'}
+          Write-Host 'PASS SEVEN_GENUINE_SOURCE_ROLES ONE_BROWSER_POLICY_PLAN CI_KEY_NOT_PRODUCT_KEY NO_INSTALL'
+      - name: Rebuild PINNED seven-file self-contained Windows EXE bootstrapper
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          @'
+          import hashlib,tarfile,shutil
+          from pathlib import Path
+          root=Path("development/0.28.7")
+          source=root/"singlefile-src.tar.xz"
+          assert hashlib.sha256(source.read_bytes()).hexdigest()=="01294e1d5ce51928098d30bd90f04b7979e1764993d4b419c66489b67676e215"
+          with tarfile.open(source,"r:xz") as tar:
+              for item in tar.getmembers():
+                  p=Path(item.name)
+                  assert item.isfile() and not p.is_absolute() and ".." not in p.parts and p.parts[0]=="singlefile"
+              tar.extractall(root)
+          for rel in ("staging.go","staging_test.go","cmd/stageci/main.go","cmd/stageci/publisher_windows.go","cmd/stageci/publisher_nonwindows.go"):
+              p=root/"singlefile-overlay"/rel
+              assert p.is_file()
+              dest=root/"singlefile"/rel
+              dest.parent.mkdir(parents=True,exist_ok=True)
+              shutil.copy2(p,dest)
+          '@ | python -
+          if($LASTEXITCODE -ne 0){throw 'Pinned self-contained EXE source reconstruction failed'}
+          python development/0.28.7/singlefile-overlay/enforce_public_seven.py
+          if($LASTEXITCODE -ne 0){throw 'Cannot exclude private uninstaller from the single EXE'}
+          Push-Location 'development/0.28.7/singlefile'
+          try {
+            $pub=(Get-Content -LiteralPath (Join-Path $env:RUNNER_TEMP 'VOLVE-CI-MIXED-PUBLIC-KEY.hex') -Raw).Trim()
+            if($pub -cnotmatch '^[0-9a-f]{64}$'){throw 'Invalid ephemeral CI publisher public key'}
+            $boot=Join-Path $env:RUNNER_TEMP 'VOLVE-CI-Real-7-Bootstrapper.exe'
+            $one=Join-Path $env:RUNNER_TEMP 'VOLVE_0287_7_COMPONENTES_REALES_CI_NO_INSTALAR.exe'
+            go build -ldflags "-X main.trustedKeyHex=$pub" -o $boot ./cmd/bootstrapper
+            if($LASTEXITCODE -ne 0){throw 'Pinned PE bootstrapper compilation failed'}
+            go run ./cmd/assemble --bootstrapper $boot --bundle (Join-Path $env:RUNNER_TEMP 'VOLVE-CI-MIXED-REAL-5') --out $one --pubkey $pub
+            if($LASTEXITCODE -ne 0){throw 'Could not assemble seven real sources into single PE'}
+            $outText=(& $one --verify-bundle | Out-String)
+            if($LASTEXITCODE -ne 0 -or $outText -notmatch 'PASS VOLVE_SINGLEFILE_SIGNED_BUNDLE release=0.28.7 items=7 NO_INSTALL'){throw 'Actual single Windows EXE did not verify all seven roles'}
+            $data=[IO.File]::ReadAllBytes($one)
+            $data[$data.Length - 57] = $data[$data.Length - 57] -bxor 1
+            $tampered=Join-Path $env:RUNNER_TEMP 'VOLVE-CI-REAL-SEVEN-TAMPERED.exe'
+            [IO.File]::WriteAllBytes($tampered,$data)
+            $PSNativeCommandUseErrorActionPreference=$false
+            & $tampered --verify-bundle *> $null
+            if($LASTEXITCODE -eq 0){throw 'Tampering with actual material was accepted'}
+            $receipt=@{
+              schema=1;release="0.28.7";kind="VOLVE_REAL_SEVEN_CI_SINGLE_EXE_NOT_INSTALLABLE";
+              authentic_source_parts=6;authored_browser_policy_plans=1;parts=7;
+              publisher="EPHEMERAL_SELF_SIGNED_CI_ONLY";can_install=$false;
+              can_publish=$false;cannot_replace_0286=$true;uninstaller_included=$false;
+              single_exe_sha256=(Get-FileHash -LiteralPath $one -Algorithm SHA256).Hash.ToLowerInvariant();
+              size=(Get-Item -LiteralPath $one).Length;
+            }
+            $receipt|ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $env:RUNNER_TEMP 'VOLVE_0287_7_COMPONENTES_REALES_CI_NO_INSTALAR.json') -Encoding utf8
+            Write-Host $outText
+            Write-Host 'PASS VOLVE_0287_SINGLE_EXE_REAL_SEVEN_PIECES_EPHEMERAL_CI_KEY NO_INSTALL NO_RELEASE'
+            exit 0
+          } finally {Pop-Location}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: VOLVE-0287-REAL-SEVEN-PIECE-SINGLE-EXE-NO-INSTALL
+          path: |
+            ${{ runner.temp }}/VOLVE_0287_7_COMPONENTES_REALES_CI_NO_INSTALAR.exe
+            ${{ runner.temp }}/VOLVE_0287_7_COMPONENTES_REALES_CI_NO_INSTALAR.json
+            ${{ runner.temp }}/VOLVE-CI-MIXED-PUBLIC-KEY.hex
+          if-no-files-found: error
+          retention-days: 3

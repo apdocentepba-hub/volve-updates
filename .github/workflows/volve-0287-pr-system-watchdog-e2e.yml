@@ -1,0 +1,79 @@
+name: VOLVE 0.28.7 PR signed migration + actual SYSTEM watchdog E2E (NO RELEASE)
+on:
+  pull_request:
+    branches: [feature/motor-updater-0287-pilot]
+    paths:
+      - '.github/workflows/volve-0287-pr-system-watchdog-e2e.yml'
+      - 'development/0.28.7/inapp/signed_legacy_windows_task_lab_test.go'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  signed-legacy-and-system-watchdog:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.x'
+      - name: Verify hosted disposable VM and no installed VOLVE motor
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          if($env:GITHUB_ACTIONS -ne 'true' -or $env:RUNNER_ENVIRONMENT -ne 'github-hosted'){throw 'Hosted CI VM only'}
+          $vm=Get-CimInstance Win32_ComputerSystem -ErrorAction Stop
+          if(($vm.Manufacturer+' '+$vm.Model) -notmatch '(?i:virtual machine|vmware|hyper-v|kvm|qemu|virtualbox)'){throw 'Not a VM'}
+          foreach($task in @('VOLVE-DNS-SERVER-0270','VOLVE-DNS-RESCUE-0270')){
+            if(Get-ScheduledTask -TaskName $task -ErrorAction SilentlyContinue){throw 'Production VOLVE task present; refuse test'}
+          }
+      - name: Reconstruct SHA-256 pinned VOLVE base and reviewed 0.28.7 source
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import zipfile,hashlib,shutil
+          base=Path('development/0.28.7')
+          parts=sorted((base/'complete-source-parts').glob('part-*.bin'))
+          assert [p.name for p in parts]==[f'part-{i:02d}.bin' for i in range(10)]
+          data=b''.join(p.read_bytes() for p in parts)
+          assert hashlib.sha256(data).hexdigest()=='92b3536559151260375b17a64eedd009df8399e45460637208027b7ca0587ba5'
+          Path('source.zip').write_bytes(data)
+          Path('build').mkdir(exist_ok=True)
+          with zipfile.ZipFile('source.zip') as z:z.extractall('build')
+          patches=[
+            ('VOLVE_0287_PRECHECK_RESCATE_OVERLAY_NO_INSTALAR.zip','fdfd31f21df81fe6da6075bfd442354297874576b6dc2c38f19bd35a681d95cd'),
+            ('VOLVE_0287_RECUPERACION_INTERRUPCION_FORZADA_NO_INSTALAR_v3.zip','773bd5eb5f1c4883021cc321856636354e964d3605dba9017e2fb5d1a7401b40')]
+          for name,digest in patches:
+            p=base/name
+            assert hashlib.sha256(p.read_bytes()).hexdigest()==digest
+            with zipfile.ZipFile(p) as z:z.extractall('build')
+          for p in (base/'journal').glob('*.go'):
+            shutil.copy2(p,Path('build/codigo/motorupdate')/p.name)
+          print('Authenticated source assembled; no real installation touched.')
+          PY
+          go run development/0.28.7/inapp/apply_overlay.go build/codigo
+      - name: Execute signed Windows CI task switch with actual independent SYSTEM watchdog
+        shell: pwsh
+        working-directory: build/codigo
+        run: |
+          $ErrorActionPreference='Stop'
+          $helper=Join-Path $env:RUNNER_TEMP 'VOLVE_CI_Standalone_Motor_Watchdog.exe'
+          go build -trimpath -o $helper ./cmd/volve-managed-watchdog
+          if($LASTEXITCODE -ne 0 -or -not (Test-Path $helper)){throw 'Independent watchdog did not build'}
+          $env:VOLVE_CI_MANAGED_WATCHDOG_EXE=$helper
+          go test ./motorupdate -run '^(TestDurablePublisherGrant|TestDurablePublisherBoundWindowsBoot)' -count=1 -timeout 3m -v
+          if($LASTEXITCODE -ne 0){throw 'Durable grant failed persisted file/fresh process negative tests'}
+          go test ./motorupdate -run '^(TestSignedPublisherBootRecovery|TestPublisherBoundProtectedBoot)' -count=1 -timeout 2m -v
+          if($LASTEXITCODE -ne 0){throw 'Signed publisher grant and resident journal binding failed'}
+          go test ./motorupdate -run '^(TestProtectedSignedSwitchAndBootRecoveryShareProductionMutex|TestProtectedAdaptersFailClosedWithoutTrustedOperations|TestProtectedSignedRollbackHandsOffThenReacquiresBeforeHealth|TestProtectedSignedDriverRejectsHandoffMissing)$' -count=1 -timeout 3m -v
+          if($LASTEXITCODE -ne 0){throw 'Production switch and boot recovery did not share protected mutex'}
+          go test ./cmd/volve-managed-watchdog -run '^(TestIndependentWatchdogUsesMigrationBootLockEvenForTerminalJournal|TestProtectedResidentBootPolicyUsesProductionMutexBeforeReadingJournal|TestProtectedBootPlanAuditWaitsForProductionUpdateMutex|TestIndependentBootAuditAcrossFreshProcesses|TestDurableWindowsGrant)' -count=1 -timeout 6m -v
+          if($LASTEXITCODE -ne 0){throw 'Watchdog did not respect migration-held BootLock'}
+          $census=@(go test . -list '^TestWindowsSignedUnversionedMigrationWithActualSYSTEMRecovery$')
+          if($LASTEXITCODE -ne 0 -or -not ($census -contains 'TestWindowsSignedUnversionedMigrationWithActualSYSTEMRecovery')){
+            throw 'CRITICAL: actual SYSTEM signed migration E2E test missing from reconstructed Centro'
+          }
+          go test . -run '^TestWindowsSignedUnversionedMigrationWithActualSYSTEMRecovery$' -count=1 -timeout 9m -v
+          if($LASTEXITCODE -ne 0){throw 'Signed disposable SYSTEM transaction and watchdog rollback failed'}
+          Write-Host 'PASS: disposable signed migration and independent real SYSTEM watchdog rollback; no installed VOLVE motor touched.'

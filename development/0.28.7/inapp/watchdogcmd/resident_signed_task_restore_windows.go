@@ -137,7 +137,8 @@ func restoreSignedOriginalSYSTEMTaskLocked(ctx context.Context,root string,
   "$tcp=@(Get-NetTCPConnection -State Listen -ErrorAction Stop|Where-Object{[int]$_.LocalPort -eq 53});"+
   "if($running.Count -ne 0 -or $udp.Count -ne 0 -or $tcp.Count -ne 0){throw 'DNS port 53 or VOLVE DNS process still active'};"+
   "if(-not [IO.File]::Exists($old)){throw 'Legacy motor disappeared'};"+
-  "$actualOld=(Get-FileHash -LiteralPath $old -Algorithm SHA256 -ErrorAction Stop).Hash.ToLowerInvariant();"+
+  "$oldHandle=[IO.File]::OpenRead($old);$oldHasher=[Security.Cryptography.SHA256]::Create();"+
+  "try{$actualOld=[BitConverter]::ToString($oldHasher.ComputeHash($oldHandle)).Replace('-','').ToLowerInvariant()}finally{$oldHandle.Dispose();$oldHasher.Dispose()};"+
   "if($actualOld -cne $oldSHA){throw 'Original executable bytes changed'};"+
   "$bytes=[IO.File]::ReadAllBytes($xmlFile);"+
   "$sha=[Security.Cryptography.SHA256]::Create();"+

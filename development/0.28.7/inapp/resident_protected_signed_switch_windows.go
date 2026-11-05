@@ -9,6 +9,7 @@ import (
  "context"
  "errors"
  "fmt"
+ "sync"
 )
 
 // ProtectedSignedRecoveryHandoff is mandatory for a production signed
@@ -22,37 +23,48 @@ type ProtectedSignedRecoveryHandoff interface {
 }
 
 type protectedSignedLegacyDriver struct {
- SignedLegacySwitchDriver
+ operations SignedLegacySwitchDriver
  handoff ProtectedSignedRecoveryHandoff
+
+ // The Go lock serializes wrapper calls and finalizers; the named Windows
+ // kernel mutex is the actual cross-process exclusion mechanism.
+ stateMu sync.Mutex
  currentRelease func()
+ leaseSerial uint64
 }
 
 // NewProtectedSignedLegacySwitchDriver makes the signed transition use the
 // same SYSTEM/Admin-only OS kernel mutex as the independent boot watchdog.
-// Reject an underlying driver that cannot explicitly hand off the lock during
-// rollback, because waiting on a watchdog while holding its own mutex would
-// deadlock. No publication or production modification is enabled here.
+// The wrapper does not authorize productive installation or motor changes.
 func NewProtectedSignedLegacySwitchDriver(operations SignedLegacySwitchDriver)(SignedLegacySwitchDriver,error){
  if operations==nil{return nil,errors.New("missing trusted signed migration operations")}
  handoff,ok:=operations.(ProtectedSignedRecoveryHandoff)
  if !ok||handoff==nil{
   return nil,errors.New("signed migration driver lacks independent protected watchdog handoff")
  }
- return &protectedSignedLegacyDriver{SignedLegacySwitchDriver:operations,handoff:handoff},nil
+ return &protectedSignedLegacyDriver{operations:operations,handoff:handoff},nil
 }
 
 func(d *protectedSignedLegacyDriver)AcquireExclusiveMigration(ctx context.Context)(func(),error){
- if d==nil||d.SignedLegacySwitchDriver==nil||d.handoff==nil{
+ if d==nil||d.operations==nil||d.handoff==nil{
   return nil,errors.New("missing protected signed migration adapter")
  }
+ d.stateMu.Lock()
+ defer d.stateMu.Unlock()
  if d.currentRelease!=nil{return nil,errors.New("signed migration already owns protected system mutex")}
+ if err:=ctx.Err();err!=nil{return nil,err}
  release,err:=AcquireProtectedResidentTransitionLease(ctx)
  if err!=nil{return nil,err}
  if release==nil{return nil,errors.New("protected system mutex supplied no release callback")}
+ d.leaseSerial++
+ serial:=d.leaseSerial
  d.currentRelease=release
- // This dynamic finalizer releases the NEW lease after a rollback handoff,
- // not the original lease abandoned before the independent SYSTEM rescue.
+ // The finalizer may outlive the transaction: an old finalizer must NEVER
+ // release the mutex acquired by a later independent transaction.
  return func(){
+  d.stateMu.Lock()
+  defer d.stateMu.Unlock()
+  if d.leaseSerial!=serial{return}
   if d.currentRelease!=nil{
    d.currentRelease()
    d.currentRelease=nil
@@ -60,21 +72,55 @@ func(d *protectedSignedLegacyDriver)AcquireExclusiveMigration(ctx context.Contex
  },nil
 }
 
-// Restore is called by the signed transaction's existing rollback path.
-// No remaining ownership may be held while the SYSTEM watchdog waits for the
-// same protected mutex. A fresh bounded recovery context is already supplied
-// by restoreManagedAndVerify; reacquisition is mandatory EVEN ON ERROR.
+// withProtectedLease holds the local state mutex for the entire delegate
+// operation, preventing a concurrent finalizer or rollback handoff from
+// releasing the named system mutex in the middle of a write or health probe.
+// A named, non-embedded delegate prevents new interface methods from being
+// silently promoted into unguarded write operations.
+func(d *protectedSignedLegacyDriver)withProtectedLease(ctx context.Context,action func()error)error{
+ if d==nil||d.operations==nil{return errors.New("missing protected signed migration adapter")}
+ d.stateMu.Lock()
+ defer d.stateMu.Unlock()
+ if d.currentRelease==nil{return errors.New("signed migration operation refused without protected system mutex")}
+ if err:=ctx.Err();err!=nil{return err}
+ return action()
+}
+
+func(d *protectedSignedLegacyDriver)Preflight(ctx context.Context,manifest Manifest)error{
+ return d.withProtectedLease(ctx,func()error{return d.operations.Preflight(ctx,manifest)})
+}
+func(d *protectedSignedLegacyDriver)IndependentRecoveryReady(ctx context.Context,proof VerifiedLegacyMigrationProof)error{
+ return d.withProtectedLease(ctx,func()error{return d.operations.IndependentRecoveryReady(ctx,proof)})
+}
+func(d *protectedSignedLegacyDriver)Snapshot(ctx context.Context)error{
+ return d.withProtectedLease(ctx,func()error{return d.operations.Snapshot(ctx)})
+}
+func(d *protectedSignedLegacyDriver)InstallVersionedCandidate(ctx context.Context,candidate string)error{
+ return d.withProtectedLease(ctx,func()error{return d.operations.InstallVersionedCandidate(ctx,candidate)})
+}
+func(d *protectedSignedLegacyDriver)VerifyPreparedTarget(ctx context.Context,manifest Manifest)error{
+ return d.withProtectedLease(ctx,func()error{return d.operations.VerifyPreparedTarget(ctx,manifest)})
+}
+func(d *protectedSignedLegacyDriver)Switch(ctx context.Context)error{
+ return d.withProtectedLease(ctx,func()error{return d.operations.Switch(ctx)})
+}
+func(d *protectedSignedLegacyDriver)Commit(ctx context.Context,manifest Manifest)error{
+ return d.withProtectedLease(ctx,func()error{return d.operations.Commit(ctx,manifest)})
+}
+
+// Restore hands off the OS mutex to a DIFFERENT SYSTEM watchdog process.
+// Hold the local state mutex through the handoff to prevent a second updater
+// call from racing with the unprotected recovery interval. Even when the
+// watchdog fails, reacquire the exact OS mutex before any health checks.
 func(d *protectedSignedLegacyDriver)Restore(ctx context.Context)error{
- if d==nil||d.handoff==nil||d.currentRelease==nil{
-  return errors.New("cannot hand off recovery without protected transition mutex")
- }
+ if d==nil||d.handoff==nil{return errors.New("missing trusted SYSTEM recovery handoff")}
+ d.stateMu.Lock()
+ defer d.stateMu.Unlock()
+ if d.currentRelease==nil{return errors.New("cannot hand off recovery without protected transition mutex")}
  release:=d.currentRelease
  d.currentRelease=nil
  release()
  recoverErr:=d.handoff.RestoreAfterProtectedHandoff(ctx)
- // The watchdog can have just written the final journal. Do not claim a
- // healthy recovery or probe DNS from an unprotected transaction. The new
- // mutex ownership is retained until the outer deferred finalizer runs.
  nextRelease,lockErr:=AcquireProtectedResidentTransitionLease(ctx)
  if lockErr!=nil{
   return errors.Join(recoverErr,fmt.Errorf("CRÍTICO: exclusive mutex could not be reacquired after watchdog: %w",lockErr))
@@ -87,10 +133,8 @@ func(d *protectedSignedLegacyDriver)Restore(ctx context.Context)error{
 }
 
 func(d *protectedSignedLegacyDriver)Probe(ctx context.Context)error{
- if d==nil||d.currentRelease==nil{return errors.New("refusing DNS health probe without protected transition mutex")}
- return d.SignedLegacySwitchDriver.Probe(ctx)
+ return d.withProtectedLease(ctx,func()error{return d.operations.Probe(ctx)})
 }
 func(d *protectedSignedLegacyDriver)ProbeConnectivity(ctx context.Context)error{
- if d==nil||d.currentRelease==nil{return errors.New("refusing Internet health probe without protected transition mutex")}
- return d.SignedLegacySwitchDriver.ProbeConnectivity(ctx)
+ return d.withProtectedLease(ctx,func()error{return d.operations.ProbeConnectivity(ctx)})
 }

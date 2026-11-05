@@ -222,6 +222,23 @@ func run(ctx context.Context,path string) error {
     }
 }
 func main(){
+    // Future single-file installer may register this INTERNAL watchdog
+    // entrypoint only after publisher grant, protected backup and persistent
+    // reboot recovery acceptance. There are NO caller-selected roots,
+    // tasks or binaries. Without a genuine signed grant it fails closed.
+    if len(os.Args)==2 && os.Args[1]=="--recover-pinned-signed-boot" {
+        ctx,cancel:=context.WithTimeout(context.Background(),240*time.Second)
+        defer cancel()
+        phase,err:=runPinnedResidentBootRecoveryCLIWindows(ctx)
+        if err!=nil{
+            fmt.Fprintln(os.Stderr,"VOLVE: RESCATE SYSTEM FIRMADO RECHAZADO. Journal permanece pendiente:",err)
+            os.Exit(1)
+        }
+        // An already terminal journal is not proof that this invocation
+        // performed new DNS/Internet checks; print its exact phase only.
+        fmt.Printf("VOLVE_PINNED_BOOT_JOURNAL_PHASE=%s\n",phase)
+        return
+    }
     // Explicit opt-in from a hosted Windows CI sandbox ONLY. This exercises
     // the separately COMPILED watchdog binary, not a Go test child process.
     // The CLI has no route to VOLVE-DNS-SERVER-0270 or a production root.

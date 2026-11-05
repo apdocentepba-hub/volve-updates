@@ -49,6 +49,12 @@ func TestSignedOriginalSYSTEMTaskRestoresOnlyAuthenticatedPendingXMLAndDoesNotFi
     "$validTriggers.Count -lt 1", "$bootTriggers.Count -lt 1", "MSFT_TaskBootTrigger", "Where-Object{ $null -ne $_ }", "-not $restored.Settings.Enabled",
    }
    for _,q:=range required{if !strings.Contains(script,q){t.Errorf("missing required privilege check: %s",q)}}
+   if strings.Contains(script,"Get-FileHash"){
+    t.Error("signed task recovery still depends on optional Get-FileHash cmdlet")
+   }
+   for _,token:=range []string{"[IO.File]::OpenRead($old)","[Security.Cryptography.SHA256]::Create()","finally{$oldHandle.Dispose();$oldHasher.Dispose()}"}{
+    if !strings.Contains(script,token){t.Errorf("signed task recovery native hash missing %s",token)}
+   }
    if strings.Contains(script,"if($isOriginal){Write-Output 'VOLVE_SIGNED_ORIGINAL_TASK_RESTORED';return}"){
     t.Error("already-original task wrongly skipped sealed XML re-import / trigger restoration")
    }

@@ -1,0 +1,472 @@
+name: VOLVE one-EXE signed bundle lab (NO RELEASE)
+on:
+  pull_request:
+    branches: [feature/motor-updater-0287-pilot]
+    paths:
+      - 'development/0.28.7/singlefile-*'
+      - 'development/0.28.7/singlefile-overlay/**'
+      - 'development/0.28.7/hostroutebridge/**'
+      - 'development/0.28.7/browserpolicytx/**'
+      - 'development/0.28.7/authenticode-source/**'
+      - 'development/0.28.7/unifiedbundle/**'
+      - '.github/workflows/volve-0287-one-exe-pr.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  verify-windows-exe:
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.x'
+      - name: Validate browser-policy rollback contract (non-Windows lab store)
+        shell: pwsh
+        working-directory: development/0.28.7/browserpolicytx
+        run: |
+          $ErrorActionPreference='Stop'
+          $events=@(go test -count=1 -json ./...)
+          if($LASTEXITCODE -ne 0){
+            $events | Select-Object -Last 50 | Write-Host
+            throw 'Browser policy trial and reversal failed'
+          }
+          $records=@($events | Where-Object {$_ -match '^\s*\{'} | ForEach-Object {$_ | ConvertFrom-Json})
+          foreach($name in @(
+            'TestExact772PolicyAndJSON',
+            'TestTrialFullPolicyRollsBackAll772Values',
+            'TestTrialRejectsUnownedExistingWithoutWrites',
+            'TestTrialReversesInterruptedWriteAndFailsClosed',
+            'TestTrialNeverCallsStoreOnInvalidPlanOrCancelledContext',
+            'TestActualWindowsRegistrySandbox772ValueRoundTrip',
+            'TestActualWindowsRegistryRefusesPreExistingUnownedValue',
+            'TestRealWindowsCrossProcessAbruptCrashRecovery317Of772',
+            'TestRealWindowsRecoveryRejectsTamperedJournalAndForeignValue'
+          )){
+            $passes=@($records | Where-Object { $_.Test -eq $name -and $_.Action -eq 'pass' })
+            $skips=@($records | Where-Object { $_.Test -eq $name -and $_.Action -eq 'skip' })
+            if($passes.Count -ne 1 -or $skips.Count -ne 0){
+              throw ('Mandatory actual browser transaction test skipped or absent: '+$name)
+            }
+          }
+          go vet ./...
+          if($LASTEXITCODE -ne 0){throw 'Browser policy trial vet failed'}
+          go build ./...
+          if($LASTEXITCODE -ne 0){throw 'Browser policy trial compilation failed'}
+          if($env:GITHUB_ACTIONS -ne 'true' -or $env:RUNNER_ENVIRONMENT -ne 'github-hosted'){
+            throw 'Native Registry lab requires isolated hosted Windows'
+          }
+          Write-Host 'PASS VOLVE_BROWSER_POLICY_772_VALUES_SIMULATED_TRANSACTION_ROLLBACK NO_REGISTRY NO_INSTALL NO_RELEASE'
+          Write-Host 'PASS VOLVE_BROWSER_POLICY_ACTUAL_WINDOWS_HKCU_REGISTRY_772_ROLLBACK_CI_LAB NO_BROWSER_POLICY_WRITES'
+      - name: Validate exact Go source archive
+        shell: pwsh
+        run: |
+          @'
+          import hashlib, tarfile
+          from pathlib import Path
+          root=Path("development/0.28.7")
+          path=root/"singlefile-src.tar.xz"
+          assert hashlib.sha256(path.read_bytes()).hexdigest()=="01294e1d5ce51928098d30bd90f04b7979e1764993d4b419c66489b67676e215"
+          with tarfile.open(path,"r:xz") as a:
+              for item in a.getmembers():
+                  parts=Path(item.name).parts
+                  assert item.isfile() and parts[0]=="singlefile" and ".." not in parts
+                  dest=root/item.name
+                  dest.parent.mkdir(parents=True,exist_ok=True)
+                  dest.write_bytes(a.extractfile(item).read())
+          for rel in ('staging.go','staging_test.go','cmd/stageci/main.go','cmd/stageci/publisher_windows.go','cmd/stageci/publisher_nonwindows.go'):
+              source=root/'singlefile-overlay'/rel
+              dest=root/'singlefile'/rel
+              assert source.is_file(), f'Missing mandatory staging source: {rel}'
+              dest.parent.mkdir(parents=True,exist_ok=True)
+              dest.write_bytes(source.read_bytes())
+          '@ | python -
+          if($LASTEXITCODE -ne 0){throw 'Source archive hash or path invalid'}
+      - name: Migrate CI source to the seven-part public bundle (owner uninstaller excluded)
+        shell: pwsh
+        run: |
+          python development/0.28.7/singlefile-overlay/enforce_public_seven.py
+          if($LASTEXITCODE -ne 0){throw 'Failed to enforce public seven-piece bundle; do not build historical eight-piece candidate'}
+
+
+
+      - name: Reconstruct pinned Authenticode Windows source overlay
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          @'
+          import hashlib, tarfile
+          from pathlib import Path
+          root=Path('development/0.28.7')
+          payload=root/'authenticode-overlay.tar.xz'
+          assert hashlib.sha256(payload.read_bytes()).hexdigest()=='cdb9cb776552ee9a08668aae71e8031c7b3d4fb3b6fadf6e6690abfb20fc36a0'
+          allowed={'authenticode_windows.go','authenticode_windows_test.go'}
+          with tarfile.open(payload,'r:xz') as archive:
+              files=archive.getmembers()
+              assert {e.name for e in files}==allowed and len(files)==2
+              for e in files:
+                  assert e.isfile() and e.size < 65536
+                  target=root/'singlefile'/e.name
+                  assert not target.exists()
+                  target.write_bytes(archive.extractfile(e).read())
+          # The readable reviewable Go source overrides only its exact path.
+          # Keep binary archived fixture tests intact and pinned by SHA256.
+          source=root/'authenticode-source/authenticode_windows.go'
+          target=root/'singlefile/authenticode_windows.go'
+          assert source.is_file() and target.is_file()
+          assert b'EncodedCommand' in source.read_bytes()
+          target.write_bytes(source.read_bytes())
+          '@ | python -
+          if($LASTEXITCODE -ne 0){throw 'Publisher trust overlay rejected'}
+      - name: Build and integrity-check unsigned CI-only container
+        timeout-minutes: 3
+        shell: pwsh
+        working-directory: development/0.28.7/singlefile
+        run: |
+          $ErrorActionPreference='Stop'
+          if($env:RUNNER_ENVIRONMENT -ne 'github-hosted' -or $env:GITHUB_ACTIONS -ne 'true'){throw 'Not an isolated hosted Windows CI runner'}
+          foreach($name in @('VOLVE-DNS-SERVER-0270','VOLVE-DNS-RESCUE-0270','VOLVE-CATALOGO-0230')){
+            if(Get-ScheduledTask -TaskName $name -ErrorAction SilentlyContinue){throw 'Productive VOLVE task detected on CI runner'}
+          }
+          Write-Host 'CHECKPOINT 1/5: generating synthetic signed bundle'
+          $fixture=Join-Path $env:RUNNER_TEMP 'VOLVE-CI-signed-inputs'
+          $pub=(go run ./cmd/fixture --out $fixture | Select-Object -Last 1).Trim()
+          if($LASTEXITCODE -ne 0 -or $pub.Length -ne 64){throw 'Synthetic publisher Ed25519 fixture failed'}
+          $boot=Join-Path $env:RUNNER_TEMP 'VOLVE-CI-Bootstrap-LAB.exe'
+          $unsigned=Join-Path $env:RUNNER_TEMP 'VOLVE-CI-Unsigned-Container.exe'
+          go build -ldflags "-X main.trustedKeyHex=$pub" -o $boot ./cmd/bootstrapper
+          if($LASTEXITCODE -ne 0){throw 'Windows PE bootstrap compilation failed'}
+          go run ./cmd/assemble --bootstrapper $boot --bundle $fixture --out $unsigned --pubkey $pub
+          if($LASTEXITCODE -ne 0){throw 'Single EXE signed bundle assembly failed'}
+          $original=(& $unsigned --verify-bundle | Out-String)
+          if($LASTEXITCODE -ne 0 -or $original -notmatch 'PASS VOLVE_SINGLEFILE_SIGNED_BUNDLE release=0.28.7 items=7 NO_INSTALL'){
+            throw 'Unsigned PE cannot verify its internal Ed25519-signed bundle'
+          }
+          $bytes=[IO.File]::ReadAllBytes($unsigned)
+          $bytes[$bytes.Length-57] = $bytes[$bytes.Length-57] -bxor 1
+          $tampered=Join-Path $env:RUNNER_TEMP 'VOLVE-CI-Tampered-Container.exe'
+          [IO.File]::WriteAllBytes($tampered,$bytes)
+          $rejected=(& $tampered --verify-bundle 2>&1 | Out-String)
+          if($LASTEXITCODE -eq 0){throw 'CRITICAL: altered embedded ZIP was accepted'}
+          Add-Content -LiteralPath $env:GITHUB_ENV -Value "VOLVE_CI_ED25519_PUB=$pub"
+          Write-Host 'CHECKPOINT 1/5 PASS: single EXE authenticates 7 test files and rejects tampering'
+          exit 0
+      - name: Create isolated short-lived signing certificate
+        timeout-minutes: 2
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          if($env:RUNNER_ENVIRONMENT -ne 'github-hosted'){throw 'Refuse to create CI cert outside hosted disposable Windows'}
+          Write-Host 'CHECKPOINT 2/5: begin certificate issuance'
+          $ciCert=New-SelfSignedCertificate -Type CodeSigningCert -Subject 'CN=VOLVE CI ONLY NEVER DISTRIBUTE' -CertStoreLocation 'Cert:\CurrentUser\My' -KeyAlgorithm RSA -KeyLength 2048 -Provider 'Microsoft Software Key Storage Provider' -NotAfter (Get-Date).AddDays(2)
+          if($null -eq $ciCert -or -not $ciCert.HasPrivateKey){throw 'CI-only code signing certificate not generated with private key'}
+          Add-Content -LiteralPath $env:GITHUB_ENV -Value "VOLVE_CI_CERT_THUMBPRINT=$($ciCert.Thumbprint)"
+          Write-Host 'CHECKPOINT 2/5 PASS: ephemeral certificate created; no key exported'
+      - name: Sign synthetic EXE and verify Windows publisher status
+        timeout-minutes: 3
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          if($env:RUNNER_ENVIRONMENT -ne 'github-hosted'){throw 'Not a hosted runner'}
+          $thumb=$env:VOLVE_CI_CERT_THUMBPRINT
+          if([string]::IsNullOrWhiteSpace($thumb)){throw 'Missing CI cert thumbprint'}
+          $cert=Get-Item -LiteralPath ("Cert:\CurrentUser\My\"+$thumb) -ErrorAction Stop
+          if(-not $cert.HasPrivateKey){throw 'Signing private key unavailable'}
+          $unsigned=Join-Path $env:RUNNER_TEMP 'VOLVE-CI-Unsigned-Container.exe'
+          $signed=Join-Path $env:RUNNER_TEMP 'VOLVE-CI-Signed-Container.exe'
+          Copy-Item -LiteralPath $unsigned -Destination $signed -ErrorAction Stop
+          # CurrentUser Root X509Store.Add may display an invisible confirmation
+          # dialog on a noninteractive CI session, hanging until timeout.
+          # Trust the CI-only public certificate via the documented elevated
+          # machine-store certutil route on a DISPOSABLE hosted runner only.
+          $principal=[Security.Principal.WindowsPrincipal]::new([Security.Principal.WindowsIdentity]::GetCurrent())
+          if(-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)){
+            throw 'Refusing test-root import without elevated isolated Windows runner'
+          }
+          $der=Join-Path $env:RUNNER_TEMP 'VOLVE-CI-test-only-editor.cer'
+          [IO.File]::WriteAllBytes($der,$cert.Export([Security.Cryptography.X509Certificates.X509ContentType]::Cert))
+          $certutil=Join-Path $env:SystemRoot 'System32/certutil.exe'
+          Write-Host 'CHECKPOINT 3/5: certutil machine Root import BEGIN (CI-only)'
+          & $certutil -f -addstore Root $der
+          if($LASTEXITCODE -ne 0){throw 'CI-only machine Root import failed'}
+          Write-Host 'CHECKPOINT 3/5: certutil machine Root import PASS'
+          & $certutil -f -addstore TrustedPublisher $der
+          if($LASTEXITCODE -ne 0){throw 'CI-only TrustedPublisher import failed'}
+          $root=Get-Item -LiteralPath ("Cert:\LocalMachine\Root\"+$thumb) -ErrorAction Stop
+          if($root.Thumbprint -ne $thumb){throw 'Machine trust fingerprint mismatch'}
+          Write-Host 'CHECKPOINT 3/5: Set-AuthenticodeSignature BEGIN'
+          $auth=Set-AuthenticodeSignature -FilePath $signed -Certificate $cert -HashAlgorithm SHA256 -IncludeChain All
+          Write-Host ("CHECKPOINT 3/5: Set-AuthenticodeSignature returned "+$auth.Status)
+          $check=Get-AuthenticodeSignature -LiteralPath $signed -ErrorAction Stop
+          if($check.Status -ne 'Valid' -or $null -eq $check.SignerCertificate){
+            throw ("Windows does not trust the signed synthetic EXE: "+$check.Status+" "+$auth.Status)
+          }
+          $sha=[Security.Cryptography.SHA256]::Create()
+          try {
+            $certDigest=$sha.ComputeHash($check.SignerCertificate.GetRawCertData())
+            $fs=[IO.File]::OpenRead($signed)
+            try {$exeDigest=$sha.ComputeHash($fs)} finally {$fs.Dispose()}
+            Add-Content -LiteralPath $env:GITHUB_ENV -Value ("VOLVE_CI_AUTHENTICODE_OS_BINARY="+$signed)
+            Add-Content -LiteralPath $env:GITHUB_ENV -Value ("VOLVE_CI_AUTHENTICODE_CERT_SHA256="+[BitConverter]::ToString($certDigest).Replace('-','').ToLowerInvariant())
+            Add-Content -LiteralPath $env:GITHUB_ENV -Value ("VOLVE_CI_AUTHENTICODE_FILE_SHA256="+[BitConverter]::ToString($exeDigest).Replace('-','').ToLowerInvariant())
+          } finally {$sha.Dispose()}
+          Write-Host 'CHECKPOINT 3/5 PASS: signed Windows PE, trusted publisher and SHA256 pinned'
+      - name: Test Windows Authenticode pins and complete regression
+        timeout-minutes: 4
+        shell: pwsh
+        working-directory: development/0.28.7/singlefile
+        run: |
+          $ErrorActionPreference='Stop'
+          if([string]::IsNullOrWhiteSpace($env:VOLVE_CI_AUTHENTICODE_CERT_SHA256)){throw 'No trusted editor pin from prior step'}
+          Write-Host 'CHECKPOINT 4/5: Windows pinned editor and negative-authenticity tests'
+          go test -count=1 -v ./...
+          if($LASTEXITCODE -ne 0){throw 'Windows Authenticode and signed-bundle regression failed'}
+          go vet ./...
+          if($LASTEXITCODE -ne 0){throw 'Go static analysis failed'}
+          Write-Host 'CHECKPOINT 4/5 PASS: Windows signed-positive, wrong pins and unsigned negatives'
+      - name: Execute signed EXE and re-verify seven staged components
+        timeout-minutes: 3
+        shell: pwsh
+        working-directory: development/0.28.7/singlefile
+        run: |
+          $ErrorActionPreference='Stop'
+          $signed=$env:VOLVE_CI_AUTHENTICODE_OS_BINARY
+          if(-not (Test-Path -LiteralPath $signed -PathType Leaf)){throw 'Signed Windows PE missing'}
+          Write-Host 'CHECKPOINT 5/5: actual Windows signed EXE verification'
+          $result=(& $signed --verify-bundle | Out-String)
+          if($LASTEXITCODE -ne 0 -or $result -notmatch 'PASS VOLVE_SINGLEFILE_SIGNED_BUNDLE release=0.28.7 items=7 NO_INSTALL'){
+            throw 'Signed Windows PE failed authenticated payload check'
+          }
+          # A single CI gate now refuses staging unless BOTH Windows
+          # Authenticode pins and the Ed25519 manifest are valid.
+          $gate=Join-Path $env:RUNNER_TEMP 'VOLVE-CI-Dual-Signature-Gate.exe'
+          go build -o $gate ./cmd/stageci
+          if($LASTEXITCODE -ne 0){throw 'Windows dual-signature gate build failed'}
+          $staged=Join-Path $env:RUNNER_TEMP 'VOLVE-CI-verified-extraction'
+          $stageResult=(& $gate --exe $signed --out $staged --pubkey $env:VOLVE_CI_ED25519_PUB --certsha $env:VOLVE_CI_AUTHENTICODE_CERT_SHA256 --filehash $env:VOLVE_CI_AUTHENTICODE_FILE_SHA256 | Out-String)
+          if($LASTEXITCODE -ne 0 -or $stageResult -notmatch 'PASS VOLVE_DUAL_SIGNED_STAGE_LAB release=0.28.7 items=7 NO_INSTALL'){
+            throw 'Dual-signed Windows EXE failed protected extraction and re-verification'
+          }
+          Write-Host 'CHECKPOINT 5/5: correct publisher+file+Ed25519 dual-auth passed'
+          $invalidCert=('0'*64)
+          if($invalidCert -eq $env:VOLVE_CI_AUTHENTICODE_CERT_SHA256){$invalidCert=('1'*64)}
+          $wrongPublisherDest=Join-Path $env:RUNNER_TEMP 'VOLVE-CI-WrongPublisher-REFUSED'
+          $PSNativeCommandUseErrorActionPreference=$false
+          $rejectWrongPublisher=(& $gate --exe $signed --out $wrongPublisherDest --pubkey $env:VOLVE_CI_ED25519_PUB --certsha $invalidCert --filehash $env:VOLVE_CI_AUTHENTICODE_FILE_SHA256 2>&1 | Out-String)
+          if($LASTEXITCODE -eq 0 -or (Test-Path -LiteralPath $wrongPublisherDest)){throw 'CRITICAL: wrong publisher pin staged files'}
+          $wrongExeDest=Join-Path $env:RUNNER_TEMP 'VOLVE-CI-WrongEXEHash-REFUSED'
+          $rejectWrongExe=(& $gate --exe $signed --out $wrongExeDest --pubkey $env:VOLVE_CI_ED25519_PUB --certsha $env:VOLVE_CI_AUTHENTICODE_CERT_SHA256 --filehash ('0'*64) 2>&1 | Out-String)
+          if($LASTEXITCODE -eq 0 -or (Test-Path -LiteralPath $wrongExeDest)){throw 'CRITICAL: wrong EXE hash staged files'}
+          $wrongManifestDest=Join-Path $env:RUNNER_TEMP 'VOLVE-CI-WrongEd25519-REFUSED'
+          $rejectWrongManifest=(& $gate --exe $signed --out $wrongManifestDest --pubkey ('0'*64) --certsha $env:VOLVE_CI_AUTHENTICODE_CERT_SHA256 --filehash $env:VOLVE_CI_AUTHENTICODE_FILE_SHA256 2>&1 | Out-String)
+          if($LASTEXITCODE -eq 0 -or (Test-Path -LiteralPath $wrongManifestDest)){throw 'CRITICAL: wrong Ed25519 publisher staged files'}
+          $missingPublisherDest=Join-Path $env:RUNNER_TEMP 'VOLVE-CI-NoCert-REFUSED'
+          $rejectNoCert=(& $gate --exe $signed --out $missingPublisherDest --pubkey $env:VOLVE_CI_ED25519_PUB --filehash $env:VOLVE_CI_AUTHENTICODE_FILE_SHA256 2>&1 | Out-String)
+          if($LASTEXITCODE -eq 0 -or (Test-Path -LiteralPath $missingPublisherDest)){throw 'CRITICAL: missing Authenticode pin staged files'}
+          Write-Host 'CHECKPOINT 5/5: rejection tests passed (wrong cert, wrong exe hash, wrong manifest key, absent cert pin)'
+
+          foreach($name in @('VOLVE_DNS_Motor_0_28_7.exe','VOLVE_Managed_Watchdog.exe','VOLVE_Browser_Policies.json','VOLVE_Full_Catalog.txt','manifest.json','manifest.ed25519')){
+            if(-not (Test-Path -LiteralPath (Join-Path $staged $name) -PathType Leaf)){throw ('Missing staged asset '+$name)}
+          }
+          Write-Host $result
+          Write-Host $stageResult
+          Write-Host 'CHECKPOINT 5/5 PASS: dual-signed Windows Authenticode + pinned SHA256 + Ed25519 bundle + staged integrity + negative cases; NO INSTALL NO DNS NO RELEASE'
+          exit 0
+
+      - name: Prepare verified seven-part INACTIVE CI version (never install)
+        timeout-minutes: 4
+        shell: pwsh
+        working-directory: development/0.28.7/signedstage
+        run: |
+          $ErrorActionPreference='Stop'
+          if($env:RUNNER_ENVIRONMENT -ne 'github-hosted' -or $env:GITHUB_ACTIONS -ne 'true'){throw 'Not disposable hosted Windows CI'}
+          $source=Join-Path $env:RUNNER_TEMP 'VOLVE-CI-verified-extraction'
+          $inactive=Join-Path $env:RUNNER_TEMP 'VOLVE-CI-VERSION-0287-INACTIVE'
+          if(-not (Test-Path -LiteralPath $source -PathType Container)){throw 'Dual-signed seven-component stage is missing'}
+          $beforeDNS=Get-DnsClientServerAddress -ErrorAction Stop | Sort-Object InterfaceIndex,AddressFamily | Select-Object InterfaceIndex,AddressFamily,ServerAddresses | ConvertTo-Json -Depth 5 -Compress
+          $beforeTasks=@(Get-ScheduledTask -ErrorAction Stop | Where-Object {$_.TaskName -match '^(?i:VOLVE[-_])'}).Count
+          go test -count=1 ./...
+          if($LASTEXITCODE -ne 0){throw 'Incomplete or unsafe signed inactive staging tests'}
+          go vet ./...
+          if($LASTEXITCODE -ne 0){throw 'Signed inactive staging static analysis failed'}
+          $result=(& go run ./cmd/preparelab --source $source --out $inactive --pubkey $env:VOLVE_CI_ED25519_PUB | Out-String)
+          if($LASTEXITCODE -ne 0 -or $result -notmatch 'PASS VOLVE_SEVEN_COMPONENT_INACTIVE_VERSION_PREPARED release=0.28.7 items=7'){
+            throw 'Signed inactive version preparation was not verified'
+          }
+          if(Test-Path -LiteralPath (Join-Path $inactive 'VOLVE_Uninstall.exe')){throw 'CRITICAL: owner-only uninstaller included'}
+
+          # Simulate an interrupted write to a different INACTIVE CI version.
+          $probe=Join-Path $env:RUNNER_TEMP 'VOLVE-CI-VERSION-0287-CRASH-PROBE'
+          $pending=$probe+'.pending'
+          New-Item -ItemType Directory -Path $pending -ErrorAction Stop | Out-Null
+          $catalog=[IO.File]::ReadAllBytes((Join-Path $source 'VOLVE_Full_Catalog.txt'))
+          if($catalog.Length -lt 2){throw 'Synthetic CI catalog unexpectedly empty'}
+          $prefix=$catalog[0..([Math]::Min(15,$catalog.Length-1))]
+          [IO.File]::WriteAllBytes((Join-Path $pending 'VOLVE_Full_Catalog.txt'),[byte[]]$prefix)
+          [IO.File]::WriteAllBytes((Join-Path $pending 'manifest.ed25519'),[byte[]]@())
+          $recovered=(& go run ./cmd/preparelab --recover-pending --source $source --out $probe --pubkey $env:VOLVE_CI_ED25519_PUB | Out-String)
+          if($LASTEXITCODE -ne 0 -or $recovered -notmatch 'PASS VOLVE_LAB_ABANDONED_STAGE_RECOVERY status=VERIFIED_INCOMPLETE_CI_STAGE_CLEANED'){
+            throw 'Incomplete signed copy was not safely recovered'
+          }
+          if(Test-Path -LiteralPath $pending){throw 'Interrupted CI pending folder still exists'}
+          $retry=(& go run ./cmd/preparelab --source $source --out $probe --pubkey $env:VOLVE_CI_ED25519_PUB | Out-String)
+          if($LASTEXITCODE -ne 0 -or $retry -notmatch 'PASS VOLVE_SEVEN_COMPONENT_INACTIVE_VERSION_PREPARED release=0.28.7 items=7'){
+            throw 'Recovered stage did not permit verified new inactive preparation'
+          }
+          Write-Host $recovered
+          Write-Host $retry
+
+          $afterDNS=Get-DnsClientServerAddress -ErrorAction Stop | Sort-Object InterfaceIndex,AddressFamily | Select-Object InterfaceIndex,AddressFamily,ServerAddresses | ConvertTo-Json -Depth 5 -Compress
+          $afterTasks=@(Get-ScheduledTask -ErrorAction Stop | Where-Object {$_.TaskName -match '^(?i:VOLVE[-_])'}).Count
+          if($beforeDNS -cne $afterDNS -or $beforeTasks -ne $afterTasks){throw 'Inactive preparation changed DNS or scheduled tasks'}
+          Write-Host $result
+          Write-Host 'PASS VOLVE_SAME_VOLUME_INACTIVE_PROMOTION_WINDOWS NO_INSTALL NO_DNS NO_SYSTEM_TASK NO_RELEASE'
+
+      - name: Join real Windows six-inventory route to the already verified signed EXE
+        timeout-minutes: 8
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          if($env:GITHUB_ACTIONS -ne 'true' -or $env:RUNNER_ENVIRONMENT -ne 'github-hosted'){
+            throw 'Host route integration requires disposable GitHub-hosted Windows'
+          }
+          if(-not (Test-Path -LiteralPath $env:VOLVE_CI_AUTHENTICODE_OS_BINARY -PathType Leaf)){
+            throw 'Signed Windows laboratory EXE missing'
+          }
+          if([string]::IsNullOrWhiteSpace($env:VOLVE_CI_AUTHENTICODE_CERT_SHA256) -or
+             [string]::IsNullOrWhiteSpace($env:VOLVE_CI_AUTHENTICODE_FILE_SHA256) -or
+             [string]::IsNullOrWhiteSpace($env:VOLVE_CI_ED25519_PUB)){
+            throw 'Independent publisher/manifest pins missing'
+          }
+          Write-Host 'BRIDGE CHECKPOINT 1/3: reconstruct previously authenticated original motorupdate source'
+          @'
+          import hashlib,zipfile,shutil
+          from pathlib import Path
+          root=Path('development/0.28.7')
+          parts=sorted((root/'complete-source-parts').glob('part-*.bin'))
+          assert [p.name for p in parts]==[f'part-{i:02d}.bin' for i in range(10)]
+          payload=b''.join(p.read_bytes() for p in parts)
+          assert hashlib.sha256(payload).hexdigest()=='92b3536559151260375b17a64eedd009df8399e45460637208027b7ca0587ba5'
+          Path('source.zip').write_bytes(payload)
+          Path('build').mkdir(exist_ok=True)
+          with zipfile.ZipFile('source.zip') as z:
+              z.extractall('build')
+          for name,digest in (
+            ('VOLVE_0287_PRECHECK_RESCATE_OVERLAY_NO_INSTALAR.zip','fdfd31f21df81fe6da6075bfd442354297874576b6dc2c38f19bd35a681d95cd'),
+            ('VOLVE_0287_RECUPERACION_INTERRUPCION_FORZADA_NO_INSTALAR_v3.zip','773bd5eb5f1c4883021cc321856636354e964d3605dba9017e2fb5d1a7401b40')
+          ):
+              p=root/name
+              assert hashlib.sha256(p.read_bytes()).hexdigest()==digest
+              with zipfile.ZipFile(p) as z: z.extractall('build')
+          for p in (root/'journal').glob('*.go'):
+              shutil.copy2(p,Path('build/codigo/motorupdate')/p.name)
+          bridge=root/'hostroutebridge'
+          target=root/'singlefile/hostroutebridge'
+          target.mkdir(parents=True,exist_ok=True)
+          for name in ('bridge_windows.go','bridge_windows_test.go','plan_windows.go','plan_windows_test.go','plan_native_windows_test.go','browser_policy_windows.go','browser_policy_windows_test.go'):
+              original=bridge/name
+              assert original.is_file()
+              assert not (target/name).exists()
+              shutil.copy2(original,target/name)
+          # Include an ACTUAL executable preflight entrypoint, not only tests
+          # of a library that the eventual Setup cannot launch.
+          cmdsrc=bridge/'cmd/setupreview'
+          cmddst=root/'singlefile/cmd/setupreview'
+          cmddst.mkdir(parents=True,exist_ok=True)
+          for name in ('main_windows.go','main_windows_test.go'):
+              original=cmdsrc/name
+              assert original.is_file()
+              assert not (cmddst/name).exists()
+              shutil.copy2(original,cmddst/name)
+          '@ | python -
+          if($LASTEXITCODE -ne 0){throw 'Host route sources could not be independently authenticated'}
+          go run development/0.28.7/inapp/apply_overlay.go build/codigo
+          if($LASTEXITCODE -ne 0){throw 'Windows six-inventory source overlay failed'}
+          Write-Host 'BRIDGE CHECKPOINT 2/3: link native motorupdate into test-only singlefile module'
+          $module=(Resolve-Path 'build/codigo').Path.Replace('\','/')
+          Push-Location 'development/0.28.7/singlefile'
+          try {
+            go mod edit '-require=volve-browser-protection@v0.0.0'
+            if($LASTEXITCODE -ne 0){throw 'Cannot require original motorupdate for bridge CI'}
+            go mod edit "-replace=volve-browser-protection=$module"
+            if($LASTEXITCODE -ne 0){throw 'Cannot local-replace original motorupdate for bridge CI'}
+            Write-Host 'BRIDGE CHECKPOINT 3/3: Windows real 6-inventory + 2 independent publisher signatures'
+            $events=@(go test -mod=mod -count=1 -timeout 6m -json ./hostroutebridge ./cmd/setupreview)
+            if($LASTEXITCODE -ne 0){
+              $events | Select-Object -Last 75 | Write-Host
+              throw 'Dual-signed EXE / Windows six-inventory route bridge failed'
+            }
+            $records=@($events | Where-Object {$_ -match '^\s*\{'} | ForEach-Object {$_ | ConvertFrom-Json})
+            foreach($name in @(
+              'TestSixInventoryActualWindowsBridgeOnlyReturnsReview',
+              'TestSignedBridgeRefusesWrongPinsAndMissingInventory',
+              'TestSignedBridgeRejectsCancellationAndRelativePath',
+              'TestLegacyMotorFileCannotBeMisclassifiedAsFresh',
+              'TestBridgeRejectsPEAlteredDuringWindowsInventory',
+              'TestAllWindowsInstallRoutesHaveNonAuthorizingPlans',
+              'TestRoutePlanRejectsUnsignedIncompleteOrForgedReviews',
+              'TestRoutePlanRequiresContextAndVerifiedCallback',
+              'TestRoutePlanNeverConfusesLegacyWithFresh',
+              'TestSignedPackageRealWindowsRouteProducesNonAuthorizingPlan',
+              'TestSignedHostPlanRefusesWrongPublisherBeforeHostInspection',
+              'TestBrowserPolicyInventoryFindsAllCleanOrOwnedUnknownLocations',
+              'TestBrowserPolicyInventoryNeverCallsExistingPoliciesOwned',
+              'TestBrowserPolicyInventoryFailsClosedOnErrorOrCancel',
+              'TestActualBrowserPolicyCensusUsesWindowsReadOnlyRegistry',
+              'TestSetupReviewActualWindowsEXENeverAuthorizes',
+              'TestSetupReviewFailsClosedOnWrongPublisherAndBadRoot',
+              'TestSetupReviewRefusesNonHostedExecution'
+            )){
+              $passes=@($records | Where-Object {$_.Test -eq $name -and $_.Action -eq 'pass'})
+              $skips=@($records | Where-Object {$_.Test -eq $name -and $_.Action -eq 'skip'})
+              if($passes.Count -ne 1 -or $skips.Count -ne 0){throw ('Mandatory bridge test skipped or missing: '+$name)}
+            }
+            # Execute the compiled PREVIEW program as Windows PE (not only
+            # go test). It requires the exact dual-signed CI fixture and
+            # genuinely inspects all six Windows state dimensions.
+            $reviewExe=Join-Path $env:RUNNER_TEMP 'VOLVE_CI_SetupPreflight_ONLY.exe'
+            go build -mod=mod -trimpath -o $reviewExe ./cmd/setupreview
+            if($LASTEXITCODE -ne 0){throw 'Windows setup preflight executable compilation failed'}
+            $scanRoot=Join-Path $env:RUNNER_TEMP 'VOLVE-CI-SetupReview'
+            New-Item -ItemType Directory -Path $scanRoot -ErrorAction Stop | Out-Null
+            $json=(& $reviewExe --exe $env:VOLVE_CI_AUTHENTICODE_OS_BINARY --pubkey $env:VOLVE_CI_ED25519_PUB --certsha $env:VOLVE_CI_AUTHENTICODE_CERT_SHA256 --filehash $env:VOLVE_CI_AUTHENTICODE_FILE_SHA256 --installed-root $scanRoot | Out-String)
+            if($LASTEXITCODE -ne 0){throw 'Actual Windows setup review EXE failed'}
+            $result=$json | ConvertFrom-Json -ErrorAction Stop
+            if($result.schema -ne 1 -or $result.release_approved -ne $false -or
+               $result.review.inventories_checked -ne 6 -or $result.review.package_parts -ne 7 -or
+               $result.review.browser_policy_locations_checked -ne 14 -or
+               $result.plan.browser_policy_locations_checked -ne 14 -or
+               $result.plan.can_install -ne $false -or $result.plan.can_upgrade -ne $false -or
+               $result.plan.can_change_dns -ne $false -or $result.plan.can_change_tasks -ne $false -or
+               $result.executable_action -ne 'NONE_REVIEW_ONLY_NO_INSTALL_NO_DNS_NO_TASKS'){
+              throw 'Executable preflight falsely authorized mutation or did not complete actual six-inventory census'
+            }
+            # Read-only diagnosis of an unanticipated blocking route on a
+            # hosted runner. NEVER change a conflict to Fresh automatically.
+            Write-Host ('VOLVE_HOST_ROUTE_DIAGNOSTIC reason='+$result.review.reason)
+            Write-Host ('VOLVE_BROWSER_POLICY_INVENTORY slots='+$result.review.browser_policy_locations_checked+' existing='+$result.review.browser_policy_existing_locations+' require_review='+$result.review.browser_policy_review_required)
+            $tasks=@(Get-ScheduledTask -ErrorAction Stop | Where-Object { $_.TaskName -match '^(?i:VOLVE[-_])' })
+            $udp53=@(Get-NetUDPEndpoint -LocalPort 53 -ErrorAction SilentlyContinue)
+            $tcp53=@(Get-NetTCPConnection -LocalPort 53 -State Listen -ErrorAction SilentlyContinue)
+            Write-Host ('VOLVE_HOST_ROUTE_DIAGNOSTIC named_volve_tasks='+$tasks.Count+' udp53_listeners='+$udp53.Count+' tcp53_listeners='+$tcp53.Count)
+            if($result.plan.mode -eq 'STOP_CONFLICTING_PROTECTION' -and $tasks.Count -eq 0){
+              # Print only the exact relevant classifier source excerpt from
+              # the reconstructed authenticated Go archive; no secrets.
+              $fileMatches=@(Get-ChildItem -LiteralPath (Join-Path $module 'motorupdate') -Filter '*.go' |
+                Select-String -Pattern 'contradictory-installed-protection-no-write' -List)
+              Write-Host ('VOLVE_HOST_ROUTE_DIAGNOSTIC classifier_source_hits='+$fileMatches.Count)
+              foreach($hit in $fileMatches | Select-Object -First 2){
+                $fileLines=[IO.File]::ReadAllLines($hit.Path)
+                $start=[Math]::Max(0,$hit.LineNumber-48)
+                $end=[Math]::Min($fileLines.Length-1,$hit.LineNumber+18)
+                for($i=$start;$i -le $end;$i++){
+                  Write-Host ('VOLVE_CLASSIFIER_LINE '+($i+1)+': '+$fileLines[$i])
+                }
+              }
+            }
+            Write-Host ('PASS VOLVE_SETUP_PREFLIGHT_EXE_WINDOWS mode='+$result.plan.mode+' route='+$result.plan.host_route+' RELEASE_APPROVED=false NO_INSTALL NO_DNS_CHANGE')
+            Write-Host 'PASS VOLVE_SIGNED_EXE_PLUS_REAL_WINDOWS_6_INVENTORIES REVIEW_ONLY NO_INSTALL NO_DNS_CHANGE'
+          } finally {
+            Pop-Location
+          }

@@ -75,11 +75,24 @@ func(d *durablePublisherBootDriver)verifyDurableEvidence(ctx context.Context,int
  }
  return nil
 }
+// The durable grant, exact pending intent, and privileged original are
+// protected by one continuous kernel-lease interval. Never read a signed
+// recovery file before establishing the local + Windows mutex gate.
+func(d *durablePublisherBootDriver)withDurableSignedLease(
+ ctx context.Context,intent ResidentRecoveryIntent,restore bool,
+)error{
+ if d==nil||d.ResidentBootRecoveryDriver==nil{return errors.New("missing protected durable SYSTEM recovery adapter")}
+ protected,ok:=d.ResidentBootRecoveryDriver.(*protectedResidentBootDriver)
+ if !ok||protected==nil{return errors.New("durable SYSTEM recovery lacks native protected Windows mutex")}
+ return protected.underProtectedLease(ctx,func()error{
+  if err:=d.verifyDurableEvidence(ctx,intent);err!=nil{return err}
+  if restore{return protected.operations.RestoreOriginal(ctx,intent)}
+  return protected.operations.VerifySealedOriginal(ctx,intent)
+ })
+}
 func(d *durablePublisherBootDriver)VerifySealedOriginal(ctx context.Context,intent ResidentRecoveryIntent)error{
- if err:=d.verifyDurableEvidence(ctx,intent);err!=nil{return err}
- return d.ResidentBootRecoveryDriver.VerifySealedOriginal(ctx,intent)
+ return d.withDurableSignedLease(ctx,intent,false)
 }
 func(d *durablePublisherBootDriver)RestoreOriginal(ctx context.Context,intent ResidentRecoveryIntent)error{
- if err:=d.verifyDurableEvidence(ctx,intent);err!=nil{return err}
- return d.ResidentBootRecoveryDriver.RestoreOriginal(ctx,intent)
+ return d.withDurableSignedLease(ctx,intent,true)
 }

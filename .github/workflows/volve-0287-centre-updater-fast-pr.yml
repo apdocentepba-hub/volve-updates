@@ -1,0 +1,516 @@
+name: VOLVE 0.28.7 Centre+Updater actual Windows integration (FAST, NO RELEASE)
+on:
+  pull_request:
+    branches: [feature/motor-updater-0287-pilot]
+    paths:
+      - 'development/0.28.7/inapp/**'
+      - 'development/0.28.7/release-materials/**'
+      - '.github/workflows/volve-0287-centre-updater-fast-pr.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: volve-0287-centre-fast-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  windows-real-centre-compile:
+    runs-on: windows-latest
+    timeout-minutes: 22
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.x'
+      - name: Prove Windows is disposable and has no productive VOLVE DNS tasks
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          if($env:GITHUB_ACTIONS -ne 'true' -or $env:RUNNER_ENVIRONMENT -ne 'github-hosted'){throw 'Not isolated CI'}
+          foreach($name in @('VOLVE-DNS-SERVER-0270','VOLVE-DNS-RESCUE-0270','VOLVE-CATALOGO-0230')){
+            if(Get-ScheduledTask -TaskName $name -ErrorAction SilentlyContinue){throw 'Production task detected: refusing build'}
+          }
+      - name: Reconstruct exact authenticated original Centro and overlays
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          @'
+          import hashlib,zipfile,shutil
+          from pathlib import Path
+          root=Path("development/0.28.7")
+          parts=sorted((root/"complete-source-parts").glob("part-*.bin"))
+          assert [p.name for p in parts]==[f"part-{i:02d}.bin" for i in range(10)]
+          payload=b"".join(p.read_bytes() for p in parts)
+          assert hashlib.sha256(payload).hexdigest()=="92b3536559151260375b17a64eedd009df8399e45460637208027b7ca0587ba5"
+          Path("source.zip").write_bytes(payload)
+          Path("build").mkdir(exist_ok=True)
+          with zipfile.ZipFile("source.zip") as z:z.extractall("build")
+          for name,digest in (
+            ("VOLVE_0287_PRECHECK_RESCATE_OVERLAY_NO_INSTALAR.zip","fdfd31f21df81fe6da6075bfd442354297874576b6dc2c38f19bd35a681d95cd"),
+            ("VOLVE_0287_RECUPERACION_INTERRUPCION_FORZADA_NO_INSTALAR_v3.zip","773bd5eb5f1c4883021cc321856636354e964d3605dba9017e2fb5d1a7401b40")
+          ):
+            p=root/name
+            assert hashlib.sha256(p.read_bytes()).hexdigest()==digest
+            with zipfile.ZipFile(p) as z:z.extractall("build")
+          for p in (root/"journal").glob("*.go"):
+            shutil.copy2(p,Path("build/codigo/motorupdate")/p.name)
+          '@ | python -
+          if($LASTEXITCODE -ne 0){throw 'Authenticated source archive reconstruction failed'}
+          go run development/0.28.7/inapp/apply_overlay.go build/codigo
+          if($LASTEXITCODE -ne 0){throw 'Authenticated source overlay failed'}
+      - name: Focused actual Centro, signed update button and production mutex contract
+        shell: pwsh
+        working-directory: build/codigo
+        run: |
+          $ErrorActionPreference='Stop'
+          $required=@(
+            'TestMergeUpdateReportsPreservesPanelInstallMarker',
+            'TestMergeUpdateReportsNoPanelCandidate',
+            'TestPreparedSignedMigrationValidIsReadOnlyAndNeverClaimsInstalled',
+            'TestMotorMigrationStatusUsesSignedPermitInsteadOfMissingOldVersion',
+            'TestInstalledPublisherReviewBridgeRequiresRepeatedLiveSYSTEMTaskXMLAndDNS',
+            'TestInstalledUnsignedMigrationDraftBindsFourLiveSYSTEMObservationsAndNeverAuthorizes',
+            'TestInstalledUnsignedMigrationDraftRejectsHostDriftBetweenReviewAndDraft',
+            'TestWindowsResidentProcessEvidenceUsesReadOnlySystemCommands',
+            'TestWindowsResidentProcessEvidenceFailsClosed',
+            'TestProtectedMotorTargetNativePathAllowlist'
+          )
+          $listed=@(go test . -list '^Test')
+          if($LASTEXITCODE -ne 0){throw 'Centre tests did not compile'}
+          foreach($name in $required){
+            if(-not ($listed -contains $name)){throw ('REQUIRED Centro test not compiled: '+$name)}
+          }
+          go test . -run '^Test(MergeUpdateReports|PreparedSignedMigration|MotorMigrationStatus|InstalledPublisherReview|InstalledUnsignedMigrationDraft|WindowsResidentProcessEvidence|ProtectedMotorTarget)' -count=1 -timeout 5m
+          if($LASTEXITCODE -ne 0){throw 'Centro signed migration/inapp tests failed'}
+          $motorTests=@(go test ./motorupdate -list '^TestProtectedMotor')
+          foreach($required in @(
+            'TestProtectedMotorPreparedOnlySignedBundleAndNoActivation',
+            'TestProtectedMotorPreparationFailsClosedBeforeAnyWrite',
+            'TestProtectedMotorPreparationKeepsInterruptedBundleUnusable'
+          )){
+            if($LASTEXITCODE -ne 0 -or -not ($motorTests -contains $required)){
+              throw ('protected motor staging test absent: '+$required)
+            }
+          }
+          go test ./motorupdate -run '^(TestProtectedBoot|TestProtectedSigned|TestPublisherBoundBootEvidence|TestPublisherBoundBootFinalizer|TestDurablePublisherBootEvidence|TestProtectedMotor)' -count=1 -timeout 6m
+          if($LASTEXITCODE -ne 0){throw 'Protected signed bridge tests failed'}
+          # Real WinNTFS ACL exercise on a disposable hosted VM only.
+          $nativeRequired=@(
+            'TestWindowsNativeProtectedMotorStagingRealNTFS',
+            'TestWindowsNativeProtectedMotorStageRootAndLease'
+          )
+          $census=@(go test -tags volveci . -list '^TestWindowsNativeProtectedMotor')
+          if($LASTEXITCODE -ne 0){throw 'WinNTFS staged motor native tests did not compile'}
+          foreach($test in $nativeRequired){
+            if(-not ($census -contains $test)){
+              throw ('CRITICAL: native Windows SYSTEM/NTFS test missing: '+$test)
+            }
+          }
+          $events=@(go test -tags volveci . -run '^TestWindowsNativeProtectedMotor' -count=1 -timeout 6m -json)
+          if($LASTEXITCODE -ne 0){
+            $events | Select-Object -Last 65 | Write-Host
+            throw 'Real NTFS, OS-wide mutex, publisher signing and protected motor staging failed'
+          }
+          $report=@($events | Where-Object {$_ -match '^\s*\{'} | ForEach-Object {$_ | ConvertFrom-Json})
+          foreach($test in $nativeRequired){
+            $passed=@($report | Where-Object {$_.Test -eq $test -and $_.Action -eq 'pass'})
+            $skipped=@($report | Where-Object {$_.Test -eq $test -and $_.Action -eq 'skip'})
+            if($passed.Count -ne 1 -or $skipped.Count -ne 0){
+              throw ('CRITICAL: protected Windows motor test missing or skipped: '+$test)
+            }
+          }
+          Write-Host 'PASS: native WinNTFS SYSTEM/Admin create-only root and signed bundle, actual shared kernel lock, no installed receipt, no DNS/task writes'
+          # Real compiled Windows watchdog source, no real SYSTEM task writes.
+          $watchdogRequired=@(
+            'TestSignedOriginalSYSTEMStartRequiresSignedPendingTaskAndNeverCommits',
+            'TestSignedOriginalSYSTEMStartFailClosedBeforeTaskMutation',
+            'TestPinnedResidentTerminalReceiptExactPathAndNoAlias',
+            'TestPinnedResidentBootEntryRejectsNonSYSTEMWithoutTouchingInstallation',
+            'TestPinnedResidentBootTerminalSourceHasNoReleaseOrTaskRegistration',
+            'TestPinnedResidentBootCLIFailsClosedWithoutActualSYSTEM',
+            'TestPinnedResidentBootCLIRefusesCancelledContext',
+            'TestPinnedRecoveryBootCLIHasNoUserControlledRootOrAutomaticTask',
+            'TestPinnedBootHealthQueriesLiveTaskProcessAndBothDNS53Owners',
+            'TestSignedOriginalSYSTEMTaskRestoresOnlyAuthenticatedPendingXMLAndDoesNotFinish'
+          )
+          $watchdogCensus=@(go test ./cmd/volve-managed-watchdog -list '^Test')
+          if($LASTEXITCODE -ne 0){throw 'Independent watchdog Windows code does not compile'}
+          foreach($test in $watchdogRequired){
+            if(-not ($watchdogCensus -contains $test)){
+              throw ('CRITICAL: independent signed boot watchdog test not compiled: '+$test)
+            }
+          }
+          go test ./cmd/volve-managed-watchdog -run '^(TestSignedOriginalSYSTEMStart|TestPinnedBootHealthQueriesLiveTaskProcessAndBothDNS53Owners|TestSignedOriginalSYSTEMTaskRestoresOnlyAuthenticatedPendingXMLAndDoesNotFinish|TestPinnedResidentTerminal|TestPinnedResidentBootEntry|TestPinnedResidentBootTerminalSource|TestPinnedResidentBootCLI|TestPinnedRecoveryBootCLI)' -count=1 -timeout 6m
+          if($LASTEXITCODE -ne 0){throw 'Protected SYSTEM original task restart/health rollback tests failed'}
+          go vet . ./motorupdate
+          if($LASTEXITCODE -ne 0){throw 'Centre updater vet failed'}
+      - name: Build and inspect real integrated Win64 GUI (NO DISTRIBUTION)
+        shell: pwsh
+        working-directory: build/codigo
+        run: |
+          $ErrorActionPreference='Stop'
+          $env:CGO_ENABLED='0'
+          $file=Join-Path $env:RUNNER_TEMP 'VOLVE_0287_Centro_Updater_LAB_NO_INSTALAR.exe'
+          # Keep build metadata independent of PR commit SHA and destination path.
+          # Two independently linked files must be byte-exact within this run.
+          Write-Host ('Go toolchain: '+(go version))
+          $file2=Join-Path $env:RUNNER_TEMP 'VOLVE_0287_Centro_Updater_RELINK_NO_INSTALAR.exe'
+          go build -buildvcs=false -trimpath -ldflags '-H windowsgui -buildid=' -o $file .
+          if($LASTEXITCODE -ne 0){throw 'First exact Centro+Updater Win64 build failed'}
+          go build -buildvcs=false -trimpath -ldflags '-H windowsgui -buildid=' -o $file2 .
+          if($LASTEXITCODE -ne 0){throw 'Second independent Centro+Updater Win64 link failed'}
+          $digest1=(Get-FileHash -Algorithm SHA256 -LiteralPath $file).Hash.ToLowerInvariant()
+          $digest2=(Get-FileHash -Algorithm SHA256 -LiteralPath $file2).Hash.ToLowerInvariant()
+          if($digest1 -cne $digest2){throw 'CRITICAL: Centro+Updater not byte-identical across independent link outputs'}
+          Write-Host ('PASS: REPRODUCIBLE_CENTRO_WITHIN_RUN SHA256='+$digest1)
+          $meta=Get-Item -LiteralPath $file -ErrorAction Stop
+          if($meta.Length -lt 1048576){throw 'Windows GUI is incomplete'}
+          $handle=[IO.File]::OpenRead($file)
+          try{$a=$handle.ReadByte();$b=$handle.ReadByte()}finally{$handle.Dispose()}
+          if($a -ne 77 -or $b -ne 90){throw 'Result is not a PE executable'}
+          $h=(Get-FileHash -Algorithm SHA256 -LiteralPath $file).Hash.ToLowerInvariant()
+          Write-Host ('PASS: compile actual Centro+Updater 0.28.7 for Windows; bytes='+$meta.Length+' SHA256='+$h)
+          Write-Host 'NO RELEASE, NO INSTALLER, NO FILE DISTRIBUTION, NO DNS/TASK MODIFICATIONS'
+
+      - name: Compile actual independent Windows watchdog and audit 2 of 7 public inputs (NO RELEASE)
+        shell: pwsh
+        working-directory: build/codigo
+        run: |
+          $ErrorActionPreference='Stop'
+          $env:CGO_ENABLED='0'
+          $centro=Join-Path $env:RUNNER_TEMP 'VOLVE_0287_Centro_Updater_LAB_NO_INSTALAR.exe'
+          $watchdog=Join-Path $env:RUNNER_TEMP 'VOLVE_0287_Managed_Watchdog_LAB_NO_INSTALAR.exe'
+          if(-not (Test-Path -LiteralPath $centro -PathType Leaf)){
+            throw 'Integrated Centre binary from previous Windows build is missing'
+          }
+          $watchdog2=Join-Path $env:RUNNER_TEMP 'VOLVE_0287_Managed_Watchdog_RELINK_NO_INSTALAR.exe'
+          go build -buildvcs=false -trimpath -ldflags '-buildid=' -o $watchdog ./cmd/volve-managed-watchdog
+          if($LASTEXITCODE -ne 0){throw 'First independent native Windows watchdog build failed'}
+          go build -buildvcs=false -trimpath -ldflags '-buildid=' -o $watchdog2 ./cmd/volve-managed-watchdog
+          if($LASTEXITCODE -ne 0){throw 'Second independent native Windows watchdog build failed'}
+          $digest1=(Get-FileHash -Algorithm SHA256 -LiteralPath $watchdog).Hash.ToLowerInvariant()
+          $digest2=(Get-FileHash -Algorithm SHA256 -LiteralPath $watchdog2).Hash.ToLowerInvariant()
+          if($digest1 -cne $digest2){throw 'CRITICAL: watchdog not byte-identical across independent link outputs'}
+          Write-Host ('PASS: REPRODUCIBLE_WATCHDOG_WITHIN_RUN SHA256='+$digest1)
+          $meta=Get-Item -LiteralPath $watchdog -ErrorAction Stop
+          if($meta.Length -lt 1048576){throw 'Compiled watchdog binary is suspiciously small'}
+          Write-Host 'MATERIALS CHECK 1/2: execute adversarial auditor tests'
+          python -m unittest discover -s ../../development/0.28.7/release-materials -p 'test_inspect_materials.py' -v
+          if($LASTEXITCODE -ne 0){throw 'Materials audit negative/contract tests failed'}
+          Write-Host 'MATERIALS CHECK 2/2: inventory actual PE32+ binaries, with NONE approved for install'
+          python ../../development/0.28.7/release-materials/inspect_materials.py `
+            --centro $centro `
+            --watchdog $watchdog `
+            --go-contract ../../development/0.28.7/unifiedbundle/bundle.go `
+            --report (Join-Path $env:RUNNER_TEMP 'VOLVE_0287_CI_INPUTS_NO_RELEASE.json')
+          if($LASTEXITCODE -ne 0){throw 'Actual Windows release material inspection failed'}
+          $proof=Get-Content -LiteralPath (Join-Path $env:RUNNER_TEMP 'VOLVE_0287_CI_INPUTS_NO_RELEASE.json') -Raw | ConvertFrom-Json
+          if($proof.checked_compiled_roles -ne 2 -or $proof.missing_production_release_roles -ne 7 -or
+             @($proof.materials).Count -ne 7 -or
+             @($proof.materials | Where-Object {$_.filename -eq 'VOLVE_Uninstall.exe' -or $_.id -eq 'uninstaller'}).Count -ne 0 -or
+             $proof.production_install_authorized -ne $false -or $proof.can_publish_release -ne $false){
+            throw 'Unsigned CI components were incorrectly treated as installable release'
+          }
+          Write-Host 'PASS: Centro and independent watchdog compiled from authenticated real source; 2/7 CI build inputs; 0/7 release-approved'
+          Write-Host 'NO EXPORT/UPLOAD, NO RELEASE, NO INSTALLER, NO DNS/TASK CHANGE'
+
+      - name: Verify exact old editor-signed DNS motor candidate as THIRD material (NO RELEASE)
+        shell: pwsh
+        working-directory: build/codigo
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference='Stop'
+          $root=Join-Path $env:RUNNER_TEMP 'VOLVE-CI-PINNED-MOTOR-NO-INSTALAR'
+          New-Item -ItemType Directory -Path $root -ErrorAction Stop | Out-Null
+          gh release download v0.28.7 --repo "$env:GITHUB_REPOSITORY" --pattern 'VOLVE_0_28_7_CENTRO.exe' --dir $root
+          if($LASTEXITCODE -ne 0){throw 'Original published and pinned v0.28.7 motor candidate unavailable'}
+          $original=Join-Path $root 'VOLVE_0_28_7_CENTRO.exe'
+          $originalHash=(Get-FileHash -Algorithm SHA256 -LiteralPath $original).Hash.ToLowerInvariant()
+          if((Get-Item -LiteralPath $original).Length -ne 18168832 -or
+             $originalHash -cne 'e451b6289116636986ddd67b39dc15f02e471ebde7be9508b38d7bcb0155b414'){
+            throw 'Published motor candidate does not match exact pinned original release bytes'
+          }
+          # This is an OLD published candidate, not this PR's new Centro binary.
+          # It is not authorized for migration, nor signed as a complete Setup.
+          $motor=Join-Path $root 'VOLVE_DNS_Motor_0_28_7.exe'
+          Copy-Item -LiteralPath $original -Destination $motor -ErrorAction Stop
+          Copy-Item -LiteralPath '../../development/0.28.7/motor-release-candidate/VOLVE_DNS_Motor_0_28_7.exe.json' -Destination ($motor+'.json') -ErrorAction Stop
+          Copy-Item -LiteralPath '../../development/0.28.7/motor-release-candidate/VOLVE_DNS_Motor_0_28_7.exe.sig' -Destination ($motor+'.sig') -ErrorAction Stop
+          $env:VOLVE_CI_PINNED_MOTOR=$motor
+          @'
+          //go:build windows
+          package motorupdate
+          import (
+            "crypto/ed25519"
+            "encoding/base64"
+            "os"
+            "path/filepath"
+            "testing"
+          )
+          func TestExactPublisherSignedHistoricMotorForAudit(t *testing.T) {
+            path:=os.Getenv("VOLVE_CI_PINNED_MOTOR")
+            if path==""{t.Fatal("required published candidate not specified")}
+            key,e:=base64.StdEncoding.DecodeString("6pa2qoWNv+J7u0ulDXvqlBd7qEeDzPBdxmU6NpqTGHk=")
+            if e!=nil || len(key)!=ed25519.PublicKeySize {t.Fatal("pinned original publisher key invalid")}
+            manifest,e:=VerifyStaged(path,ed25519.PublicKey(key))
+            if e!=nil {t.Fatalf("published old signed motor refused: %v",e)}
+            if manifest.Version!="0.28.7" || manifest.Component!="dns-engine" ||
+              manifest.Size!=18168832 ||
+              manifest.SHA256!="e451b6289116636986ddd67b39dc15f02e471ebde7be9508b38d7bcb0155b414"{
+              t.Fatalf("published old signed motor identity wrong: %+v",manifest)
+            }
+            modified:=filepath.Join(t.TempDir(),"VOLVE_DNS_Motor_0_28_7.exe")
+            raw,e:=os.ReadFile(path);if e!=nil{t.Fatal(e)}
+            raw[100]^=0x01
+            if e=os.WriteFile(modified,raw,0600);e!=nil{t.Fatal(e)}
+            for _,ext:=range []string{".json",".sig"}{
+              bytes,e:=os.ReadFile(path+ext);if e!=nil{t.Fatal(e)}
+              if e=os.WriteFile(modified+ext,bytes,0600);e!=nil{t.Fatal(e)}
+            }
+            if _,e=VerifyStaged(modified,ed25519.PublicKey(key));e==nil{
+              t.Fatal("modified published motor was erroneously accepted")
+            }
+          }
+          '@ | Set-Content -LiteralPath 'motorupdate/ci_pinned_motor_materials_windows_test.go' -Encoding utf8
+          go test ./motorupdate -run '^TestExactPublisherSignedHistoricMotorForAudit$' -count=1 -timeout 3m -v
+          if($LASTEXITCODE -ne 0){throw 'Original motor Editor Ed25519 signature verification failed'}
+          $centro=Join-Path $env:RUNNER_TEMP 'VOLVE_0287_Centro_Updater_LAB_NO_INSTALAR.exe'
+          $watchdog=Join-Path $env:RUNNER_TEMP 'VOLVE_0287_Managed_Watchdog_LAB_NO_INSTALAR.exe'
+          $report=Join-Path $env:RUNNER_TEMP 'VOLVE_0287_PINNED_THREE_MATERIALS_NO_RELEASE.json'
+          python ../../development/0.28.7/release-materials/inspect_materials.py `
+            --centro $centro `
+            --watchdog $watchdog `
+            --pinned-published-motor $motor `
+            --go-contract ../../development/0.28.7/unifiedbundle/bundle.go `
+            --report $report
+          if($LASTEXITCODE -ne 0){throw 'Three-component material audit refused old motor candidate'}
+          $proof=Get-Content -LiteralPath $report -Raw | ConvertFrom-Json
+          $m=@($proof.materials | Where-Object {$_.id -eq 'dns-motor'})
+          if($proof.checked_compiled_roles -ne 2 -or
+             $proof.checked_historic_candidate_roles -ne 1 -or
+             $proof.checked_build_material_roles -ne 3 -or
+             @($proof.materials).Count -ne 7 -or
+             @($proof.materials | Where-Object {$_.filename -eq 'VOLVE_Uninstall.exe' -or $_.id -eq 'uninstaller'}).Count -ne 0 -or
+             $proof.missing_production_release_roles -ne 7 -or
+             $proof.production_install_authorized -ne $false -or
+             $m.Count -ne 1 -or
+             $m[0].state -cne 'PINNED_HISTORIC_SIGNED_DNS_CANDIDATE_NOT_INSTALLABLE'){
+            throw 'Candidate presence must never grant installation or release permission'
+          }
+          Write-Host 'PASS: 2 distinct actual Windows builds + 1 SHA256-pinned historical publisher-signed DNS motor verified with genuine original Go verifier.'
+          Write-Host '3/7 CI audit materials, 0/7 production approved; missing signed migration and final Setup. NO INSTALL OR RELEASE.'
+
+      - name: Stage six real-source files and reviewed three-browser no-write policy declaration (NO RELEASE)
+        timeout-minutes: 5
+        shell: pwsh
+        working-directory: development/0.28.7/release-materials/mixedbundleci
+        run: |
+          $ErrorActionPreference='Stop'
+          if($env:GITHUB_ACTIONS -ne 'true' -or $env:RUNNER_ENVIRONMENT -ne 'github-hosted'){throw 'Not hosted Windows CI'}
+          # Fetch one exact HaGeZi Git commit/blob, never a floating latest.
+          # No release: upstream GPL-3.0 license and motor compatibility need review.
+          python -m unittest discover -s ../catalogci -p 'test_pinned_hagezi.py' -v
+          if($LASTEXITCODE -ne 0){throw 'Pinned official catalog parser negative tests failed'}
+          $catalog=Join-Path $env:RUNNER_TEMP 'VOLVE_Full_Catalog.txt'
+          $catalogReceipt=Join-Path $env:RUNNER_TEMP 'VOLVE_Full_Catalog_SOURCE_ONLY.json'
+          python ../catalogci/pinned_hagezi.py --out $catalog --receipt $catalogReceipt
+          if($LASTEXITCODE -ne 0){throw 'Official HaGeZi gambling catalog does not match fixed source blob/size/format'}
+          go test -count=1 -v ./...
+          if($LASTEXITCODE -ne 0){throw 'Mixed real-material provenance negative tests failed'}
+          go vet ./...
+          if($LASTEXITCODE -ne 0){throw 'Mixed real-material vet failed'}
+          $centro=Join-Path $env:RUNNER_TEMP 'VOLVE_0287_Centro_Updater_LAB_NO_INSTALAR.exe'
+          $watchdog=Join-Path $env:RUNNER_TEMP 'VOLVE_0287_Managed_Watchdog_LAB_NO_INSTALAR.exe'
+          $motor=Join-Path $env:RUNNER_TEMP 'VOLVE-CI-PINNED-MOTOR-NO-INSTALAR/VOLVE_DNS_Motor_0_28_7.exe'
+          $audit=Join-Path $env:RUNNER_TEMP 'VOLVE_0287_PINNED_THREE_MATERIALS_NO_RELEASE.json'
+          $root=Join-Path $env:RUNNER_TEMP 'VOLVE-CI-MIXED-REAL-5'
+          $inactive=Join-Path $env:RUNNER_TEMP 'VOLVE-CI-VERSION-0287-MIXED'
+          $publicKeyFile=Join-Path $env:RUNNER_TEMP 'VOLVE-CI-MIXED-PUBLIC-KEY.hex'
+          $sidecar=(Resolve-Path '../../motor-release-candidate/VOLVE_DNS_Motor_0_28_7.exe.json').Path
+          $signature=(Resolve-Path '../../motor-release-candidate/VOLVE_DNS_Motor_0_28_7.exe.sig').Path
+          $result=(& go run ./cmd/mixedbundle --centro $centro --watchdog $watchdog --historic-motor $motor --motor-manifest $sidecar --motor-signature $signature --catalog $catalog --catalog-receipt $catalogReceipt --audit $audit --out $root --inactive $inactive --pubkey-file $publicKeyFile | Out-String)
+          if($LASTEXITCODE -ne 0 -or $result -notmatch 'PASS VOLVE_REAL_MATERIALS_MIXED_CI_INACTIVE_STAGE actual_source_files=6 authored_browser_policy_plans=1 synthetic_roles=0 native_PE=3 total=7 RELEASE_APPROVED=false'){
+            throw 'Actual Windows components could not be signed and staged in inactive CI'
+          }
+          foreach($test in @(
+            @($centro, (Join-Path $inactive 'VOLVE_Centro_Updater.exe')),
+            @($watchdog, (Join-Path $inactive 'VOLVE_Managed_Watchdog.exe')),
+            @($motor, (Join-Path $inactive 'VOLVE_DNS_Motor_0_28_7.exe')),
+            @($sidecar, (Join-Path $inactive 'VOLVE_DNS_Motor_0_28_7.exe.json')),
+            @($signature, (Join-Path $inactive 'VOLVE_DNS_Motor_0_28_7.exe.sig'))
+          )){
+            $a=(Get-FileHash -Algorithm SHA256 -LiteralPath $test[0]).Hash
+            $b=(Get-FileHash -Algorithm SHA256 -LiteralPath $test[1]).Hash
+            if($a -cne $b){throw ('Real asset changed while staging: '+$test[1])}
+          }
+          # This is a verified DESIRED-STATE policy definition only.
+          # No registry keys are set; no enforcement is claimed.
+          $policy=(Get-Content -LiteralPath (Join-Path $inactive 'VOLVE_Browser_Policies.json') -Raw | ConvertFrom-Json)
+          if($policy.component -cne 'browser-policies' -or
+             $policy.status -cne 'DESIRED_STATE_ONLY_NOT_APPLIED' -or
+             $policy.source_commit -cne '81bbd1b9009893d65358146b23282647634c26be' -or
+             $policy.distinct_blocked_domains -ne 256 -or
+             $policy.list_limit -ne 1000 -or
+             $policy.conflict_rule -cne 'REFUSE_OR_SKIP_EXISTING_UNOWNED_VALUES' -or
+             $policy.browser_enforcement_verified -ne $false -or
+             $policy.registry_write_authorized -ne $false -or
+             $policy.production_install_authorized -ne $false -or
+             $policy.can_publish_release -ne $false -or
+             @($policy.registry_values).Count -ne 772){
+            throw 'Chrome/Edge/Firefox desired-state contract is malformed or falsely claiming activation'
+          }
+          $chrome=@($policy.registry_values | Where-Object {$_.browser -eq 'chrome'})
+          $edge=@($policy.registry_values | Where-Object {$_.browser -eq 'edge'})
+          $firefox=@($policy.registry_values | Where-Object {$_.browser -eq 'firefox'})
+          if($chrome.Count -ne 257 -or $edge.Count -ne 257 -or $firefox.Count -ne 258){
+            throw 'Browser policy role counts or max 1000 cap violated'
+          }
+          foreach($name in @('chrome','edge','firefox')){
+            $matches=@($policy.registry_values | Where-Object {
+              $_.browser -eq $name -and $_.name -eq '1' -and
+              $_.value -match 'argentina-app-betwarrior[.]com'
+            })
+            if($matches.Count -ne 1){throw ('Priority policy host missing from '+$name)}
+          }
+          Write-Host 'PASS VOLVE_AUTHORED_BROWSER_POLICY_PLAN chrome=256 edge=256 firefox=256 doh=4 applied=false'
+
+          $sourceHash=(Get-FileHash -Algorithm SHA256 -LiteralPath $catalog).Hash
+          $stagedHash=(Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $inactive 'VOLVE_Full_Catalog.txt')).Hash
+          if($sourceHash -cne $stagedHash){throw 'Pinned official full source changed during inactive stage'}
+          if((Get-Item -LiteralPath (Join-Path $inactive 'VOLVE_Full_Catalog.txt')).Length -ne 11040215){
+            throw 'Staged complete gambling catalog truncated'
+          }
+          if(Test-Path -LiteralPath (Join-Path $inactive 'VOLVE_Uninstall.exe')){throw 'Owner uninstaller entered public payload'}
+          Write-Host $result
+          Write-Host 'PASS VOLVE_MIXED_REAL_SOURCE_INACTIVE_CI_WIREUP; ZERO PRODUCTION-APPROVED COMPONENTS; BROWSER POLICY ONLY DESIRED STATE; HAGEZI GPL COMPLIANCE PENDING; NO SETUP NO INSTALL NO RELEASE'
+
+      - name: Exercise exact HaGeZi full list with REAL resident DNS parser on Windows loopback (NO INSTALL)
+        timeout-minutes: 7
+        shell: pwsh
+        working-directory: build/codigo
+        run: |
+          $ErrorActionPreference='Stop'
+          if($env:GITHUB_ACTIONS -ne 'true' -or $env:RUNNER_ENVIRONMENT -ne 'github-hosted'){throw 'Not isolated Windows CI'}
+          $source=Join-Path $env:RUNNER_TEMP 'VOLVE_Full_Catalog.txt'
+          if(-not (Test-Path -LiteralPath $source -PathType Leaf)){throw 'Pinned full source was not verified earlier'}
+          if((Get-Item -LiteralPath $source).Length -ne 11040215){throw 'Full source identity changed before DNS test'}
+          $beforeDns=Get-DnsClientServerAddress -ErrorAction Stop | Sort-Object InterfaceIndex,AddressFamily | Select-Object InterfaceIndex,AddressFamily,ServerAddresses | ConvertTo-Json -Depth 5 -Compress
+          $beforeTasks=@(Get-ScheduledTask -ErrorAction Stop | Where-Object {$_.TaskName -match '^(?i:VOLVE[-_])'}).Count
+          $probe=(Resolve-Path '../../development/0.28.7/release-materials/catalogci/real_dns_probe_windows_test.go.txt').Path
+          Copy-Item -LiteralPath $probe -Destination './ci_real_hagezi_full_windows_test.go' -ErrorAction Stop
+          $env:VOLVE_CI_HAGEZI_FULL_SOURCE=$source
+          $events=@(go test . -run '^TestOfficialPinnedHaGeZiFullLoadedByActualDNSMotorOnLoopback$' -count=1 -timeout 6m -json)
+          if($LASTEXITCODE -ne 0){
+            $events | Select-Object -Last 75 | Write-Host
+            throw 'Actual pinned HaGeZi full catalog did not load/block in production DNS parser'
+          }
+          $parsed=@($events | Where-Object {$_ -match '^\s*\{'} | ForEach-Object {$_ | ConvertFrom-Json})
+          $passed=@($parsed | Where-Object {$_.Action -eq 'pass' -and $_.Test -eq 'TestOfficialPinnedHaGeZiFullLoadedByActualDNSMotorOnLoopback'})
+          $skipped=@($parsed | Where-Object {$_.Action -eq 'skip' -and $_.Test -eq 'TestOfficialPinnedHaGeZiFullLoadedByActualDNSMotorOnLoopback'})
+          if($passed.Count -ne 1 -or $skipped.Count -ne 0){throw 'Live loopback test skipped or absent'}
+          $afterDns=Get-DnsClientServerAddress -ErrorAction Stop | Sort-Object InterfaceIndex,AddressFamily | Select-Object InterfaceIndex,AddressFamily,ServerAddresses | ConvertTo-Json -Depth 5 -Compress
+          $afterTasks=@(Get-ScheduledTask -ErrorAction Stop | Where-Object {$_.TaskName -match '^(?i:VOLVE[-_])'}).Count
+          if($beforeDns -cne $afterDns -or $beforeTasks -ne $afterTasks){throw 'Loopback DNS test modified host DNS or scheduled tasks'}
+          Write-Host 'PASS VOLVE_REAL_PINNED_HAGEZI_FULL_PRODUCTION_PARSER_WINDOWS_LOOPBACK_UDP NO_PORT53 NO_DNS_CHANGE NO_TASKS NO_INSTALL NO_RELEASE'
+
+      - name: Build one actual Windows PE with ALL SEVEN real-source components (CI NO INSTALL)
+        timeout-minutes: 6
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          if($env:GITHUB_ACTIONS -ne 'true' -or $env:RUNNER_ENVIRONMENT -ne 'github-hosted'){throw 'Hosted disposable Windows required'}
+          $root=Join-Path $env:RUNNER_TEMP 'VOLVE-CI-MIXED-REAL-5'
+          $pubPath=Join-Path $env:RUNNER_TEMP 'VOLVE-CI-MIXED-PUBLIC-KEY.hex'
+          $pub=(Get-Content -LiteralPath $pubPath -Raw -ErrorAction Stop).Trim()
+          if($pub -cnotmatch '^[0-9a-f]{64}$' -or -not (Test-Path -LiteralPath $root -PathType Container)){
+            throw 'No trustworthy complete source bundle and ephemeral public key'
+          }
+          if(Test-Path -LiteralPath (Join-Path $root 'VOLVE_Uninstall.exe')){
+            throw 'CRITICAL: owner-only uninstaller entered the single-PE source'
+          }
+          python development/0.28.7/singlefile-overlay/restore_pinned_real_container.py
+          if($LASTEXITCODE -ne 0){throw 'Original singlefile Go source reconstruction refused'}
+          python development/0.28.7/singlefile-overlay/enforce_public_seven.py
+          if($LASTEXITCODE -ne 0){throw 'Owner-uninstaller public-bundle source adaptation failed'}
+          $boot=Join-Path $env:RUNNER_TEMP 'VOLVE-CI-Bootstrap-REAL7.exe'
+          $unsigned=Join-Path $env:RUNNER_TEMP 'VOLVE-CI-REAL7-Unsigned-OnePE.exe'
+          Push-Location 'development/0.28.7/singlefile'
+          try{
+            go build -ldflags "-X main.trustedKeyHex=$pub" -o $boot ./cmd/bootstrapper
+            if($LASTEXITCODE -ne 0){throw 'Windows bootstrapper did not compile'}
+            go run ./cmd/assemble --bootstrapper $boot --bundle $root --out $unsigned --pubkey $pub
+            if($LASTEXITCODE -ne 0){throw 'Seven REAL material roles could not be embedded in the one-PE bundle'}
+            $report=(& $unsigned --verify-bundle | Out-String)
+            if($LASTEXITCODE -ne 0 -or $report -notmatch 'PASS VOLVE_SINGLEFILE_SIGNED_BUNDLE release=0.28.7 items=7 NO_INSTALL'){
+              throw 'Actual Windows PE failed embedded real-source Ed25519 verification'
+            }
+            $corrupted=Join-Path $env:RUNNER_TEMP 'VOLVE-CI-REAL7-Corrupt-Refused.exe'
+            $bytes=[IO.File]::ReadAllBytes($unsigned)
+            $bytes[$bytes.Length-57]=$bytes[$bytes.Length-57] -bxor 1
+            [IO.File]::WriteAllBytes($corrupted,$bytes)
+            $PSNativeCommandUseErrorActionPreference=$false
+            $bad=(& $corrupted --verify-bundle 2>&1 | Out-String)
+            if($LASTEXITCODE -eq 0){throw 'CRITICAL: tampered one-PE real-component payload accepted'}
+          } finally {Pop-Location}
+          $firstSha=(Get-FileHash -LiteralPath $unsigned -Algorithm SHA256).Hash.ToLowerInvariant()
+          Write-Host "PASS VOLVE_REAL_SEVEN_ONE_PE_SIGNED_MANIFEST verified=true roles=7 corrupt_refused=true sha256=$firstSha NO_INSTALL NO_DNS NO_TASKS NO_RELEASE"
+          # The intentional negative tests set LASTEXITCODE to nonzero.
+          # Return success only after all explicit assertions above passed.
+          exit 0
+      - name: Authenticode-sign one-PE genuine-seven LAB container and verify dual trust (NO RELEASE)
+        timeout-minutes: 5
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          if($env:RUNNER_ENVIRONMENT -ne 'github-hosted' -or $env:GITHUB_ACTIONS -ne 'true'){throw 'Not disposable Windows CI'}
+          $who=[Security.Principal.WindowsPrincipal]::new([Security.Principal.WindowsIdentity]::GetCurrent())
+          if(-not $who.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)){throw 'Hosted Windows admin required for CI cert trust'}
+          $unsigned=Join-Path $env:RUNNER_TEMP 'VOLVE-CI-REAL7-Unsigned-OnePE.exe'
+          $signed=Join-Path $env:RUNNER_TEMP 'VOLVE-CI-REAL7-Signed-OnePE-NO-INSTALL.exe'
+          $pub=(Get-Content -LiteralPath (Join-Path $env:RUNNER_TEMP 'VOLVE-CI-MIXED-PUBLIC-KEY.hex') -Raw).Trim()
+          $cert=New-SelfSignedCertificate -Type CodeSigningCert -Subject 'CN=VOLVE REAL SEVEN CI ONLY NEVER DISTRIBUTE' -CertStoreLocation 'Cert:\CurrentUser\My' -KeyAlgorithm RSA -KeyLength 2048 -Provider 'Microsoft Software Key Storage Provider' -NotAfter (Get-Date).AddDays(2)
+          if($null -eq $cert -or -not $cert.HasPrivateKey){throw 'Ephemeral CI code-signing certificate missing'}
+          $der=Join-Path $env:RUNNER_TEMP 'VOLVE-CI-REAL7-PUBLIC-EDITOR.cer'
+          [IO.File]::WriteAllBytes($der,$cert.Export([Security.Cryptography.X509Certificates.X509ContentType]::Cert))
+          $certutil=Join-Path $env:SystemRoot 'System32\certutil.exe'
+          & $certutil -f -addstore Root $der
+          if($LASTEXITCODE -ne 0){throw 'Temporary hosted Windows trust root unavailable'}
+          & $certutil -f -addstore TrustedPublisher $der
+          if($LASTEXITCODE -ne 0){throw 'Temporary hosted Windows TrustedPublisher unavailable'}
+          Copy-Item -LiteralPath $unsigned -Destination $signed -ErrorAction Stop
+          $signature=Set-AuthenticodeSignature -FilePath $signed -Certificate $cert -HashAlgorithm SHA256 -IncludeChain All
+          $check=Get-AuthenticodeSignature -LiteralPath $signed -ErrorAction Stop
+          if($signature.Status -ne 'Valid' -or $check.Status -ne 'Valid' -or $null -eq $check.SignerCertificate){
+            throw ('Authenticode signature is not verified by Windows: '+$signature.Status+'/'+$check.Status)
+          }
+          $certSHA=[Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($check.SignerCertificate.GetRawCertData())).ToLowerInvariant()
+          $exeSHA=(Get-FileHash -LiteralPath $signed -Algorithm SHA256).Hash.ToLowerInvariant()
+          $after=(& $signed --verify-bundle | Out-String)
+          if($LASTEXITCODE -ne 0 -or $after -notmatch 'PASS VOLVE_SINGLEFILE_SIGNED_BUNDLE release=0.28.7 items=7 NO_INSTALL'){
+            throw 'PE publisher signature altered internal real-material Ed25519 signature'
+          }
+          Push-Location 'development/0.28.7/singlefile'
+          try{
+            $gate=Join-Path $env:RUNNER_TEMP 'VOLVE-CI-REAL7-DoubleSignatureGate.exe'
+            go build -o $gate ./cmd/stageci
+            if($LASTEXITCODE -ne 0){throw 'Dual-signature stage gate did not compile'}
+            $staged=Join-Path $env:RUNNER_TEMP 'VOLVE-CI-REAL7-DUAL-SIGNED-STAGE'
+            $result=(& $gate --exe $signed --out $staged --pubkey $pub --certsha $certSHA --filehash $exeSHA | Out-String)
+            if($LASTEXITCODE -ne 0 -or $result -notmatch 'PASS VOLVE_DUAL_SIGNED_STAGE_LAB release=0.28.7 items=7 NO_INSTALL'){
+              throw 'Authenticode+Ed25519+file SHA256 double verification of real one-PE failed'
+            }
+            $PSNativeCommandUseErrorActionPreference=$false
+            $reject=(& $gate --exe $signed --out (Join-Path $env:RUNNER_TEMP 'VOLVE-CI-REAL7-FOREIGN-REFUSED') --pubkey $pub --certsha ('0'*64) --filehash $exeSHA 2>&1 | Out-String)
+            if($LASTEXITCODE -eq 0){throw 'Foreign Authenticode certificate was accepted'}
+          } finally {Pop-Location}
+          $root=Join-Path $env:RUNNER_TEMP 'VOLVE-CI-MIXED-REAL-5'
+          foreach($filename in @('VOLVE_Centro_Updater.exe','VOLVE_DNS_Motor_0_28_7.exe','VOLVE_DNS_Motor_0_28_7.exe.json','VOLVE_DNS_Motor_0_28_7.exe.sig','VOLVE_Managed_Watchdog.exe','VOLVE_Browser_Policies.json','VOLVE_Full_Catalog.txt')){
+            $a=(Get-FileHash -LiteralPath (Join-Path $root $filename) -Algorithm SHA256).Hash
+            $b=(Get-FileHash -LiteralPath (Join-Path $staged $filename) -Algorithm SHA256).Hash
+            if($a -cne $b){throw ('Embedded real component differs from audited original: '+$filename)}
+          }
+          if(Test-Path -LiteralPath (Join-Path $staged 'VOLVE_Uninstall.exe')){throw 'CRITICAL private owner uninstaller present'}
+          Write-Host "PASS VOLVE_ONE_PE_SEVEN_ACTUAL_COMPONENTS_DUAL_SIGNATURE_WINDOWS sha256=$exeSHA certsha=$certSHA items=7 NO_INSTALL NO_DNS_CHANGE NO_TASKS NO_RELEASE"
+          # The intentional negative tests set LASTEXITCODE to nonzero.
+          # Return success only after all explicit assertions above passed.
+          exit 0

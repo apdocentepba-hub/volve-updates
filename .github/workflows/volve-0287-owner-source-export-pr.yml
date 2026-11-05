@@ -1,0 +1,197 @@
+name: VOLVE 0.28.7 original source export for owner Setup (NO RELEASE)
+on:
+  pull_request:
+    branches: [feature/motor-updater-0287-pilot]
+    paths:
+      - '.github/workflows/volve-0287-owner-source-export-pr.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  authenticated-source:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.x'
+      - name: Reconstruct previously pinned Go source and check each archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import hashlib, zipfile, pathlib
+          root=pathlib.Path("development/0.28.7")
+          parts=sorted((root/"complete-source-parts").glob("part-*.bin"))
+          assert [p.name for p in parts]==[f"part-{i:02d}.bin" for i in range(10)]
+          payload=b"".join(p.read_bytes() for p in parts)
+          assert hashlib.sha256(payload).hexdigest()=="92b3536559151260375b17a64eedd009df8399e45460637208027b7ca0587ba5"
+          with zipfile.ZipFile(__import__("io").BytesIO(payload)) as z:
+              for info in z.infolist():
+                  path=pathlib.PurePosixPath(info.filename)
+                  assert not path.is_absolute() and ".." not in path.parts and path.parts and path.parts[0]=="codigo"
+                  assert not ((info.external_attr >> 16)&0o170000)==0o120000
+              z.extractall("build")
+          for name, sha in (
+              ("VOLVE_0287_PRECHECK_RESCATE_OVERLAY_NO_INSTALAR.zip","fdfd31f21df81fe6da6075bfd442354297874576b6dc2c38f19bd35a681d95cd"),
+              ("VOLVE_0287_RECUPERACION_INTERRUPCION_FORZADA_NO_INSTALAR_v3.zip","773bd5eb5f1c4883021cc321856636354e964d3605dba9017e2fb5d1a7401b40")
+          ):
+              b=(root/name).read_bytes()
+              assert hashlib.sha256(b).hexdigest()==sha
+              with zipfile.ZipFile(__import__("io").BytesIO(b)) as z:
+                  for info in z.infolist():
+                      path=pathlib.PurePosixPath(info.filename)
+                      assert not path.is_absolute() and ".." not in path.parts
+                      assert not ((info.external_attr >> 16)&0o170000)==0o120000
+                  z.extractall("build")
+          for path in (root/"journal").glob("*.go"):
+              dest=pathlib.Path("build/codigo/motorupdate")/path.name
+              assert dest.parent.is_dir()
+              dest.write_bytes(path.read_bytes())
+          print("PASS PINNED_SOURCE_AND_OVERLAYS SHA256")
+          PY
+          go run development/0.28.7/inapp/apply_overlay.go build/codigo
+          test -f build/codigo/go.mod
+      - name: Prepare source archive for private owner-only local integration
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          tar -C build -czf out/VOLVE_0287_FUENTE_AUDITADA_SOLO_DESARROLLO.tar.gz codigo
+          sha256sum out/VOLVE_0287_FUENTE_AUDITADA_SOLO_DESARROLLO.tar.gz | tee out/SHA256SUMS.txt
+          echo "SOURCE_ONLY_NOT_INSTALLER_NOT_A_RELEASE" > out/NO_INSTALAR.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: VOLVE-0287-AUDITED-SOURCE-NO-INSTALL
+          path: out/
+          if-no-files-found: error
+          retention-days: 3
+
+  verified-executables-windows:
+    needs: authenticated-source
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.x'
+      - uses: actions/download-artifact@v4
+        with:
+          name: VOLVE-0287-AUDITED-SOURCE-NO-INSTALL
+          path: signed-source
+      - name: Validate source archive SHA256 and compile real Windows components
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $archive='signed-source/VOLVE_0287_FUENTE_AUDITADA_SOLO_DESARROLLO.tar.gz'
+          $receipt=(Get-Content -LiteralPath 'signed-source/SHA256SUMS.txt' -Raw).Trim().Split(' ')[0].Trim()
+          if($receipt -cnotmatch '^[a-f0-9]{64}$' -or (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant() -cne $receipt){
+            throw 'Reconstructed release source archive SHA256 invalid'
+          }
+          New-Item -ItemType Directory -Path build -Force | Out-Null
+          tar -xzf $archive -C build
+          if($LASTEXITCODE -ne 0){throw 'Cannot read verified original sources'}
+          Push-Location build/codigo
+          try {
+            go test -count=1 ./motorupdate ./dnsproxy
+            if($LASTEXITCODE -ne 0){throw 'Selected engine and DNS tests failed on native Windows'}
+            # Execute previously gated REAL NTFS owner/DACL, journal attestation
+            # and administrator-versus-SYSTEM refusal tests on a disposable host.
+            # No VOLVE task, installed ProgramData or live DNS is changed.
+            $env:VOLVE_CI_READONLY_ADAPTER_INSPECTION='1'
+            go test -count=1 -v -run '^(TestWindowsDNSRealNTFSProtectedACLReadOnly|TestWindowsRealNTFSSealedJournalAttestorReadOnly|TestWindowsRealSYSTEMIdentityRequiredForDNSRecovery)
+            go vet ./motorupdate ./dnsproxy
+            if($LASTEXITCODE -ne 0){throw 'Native Windows Go vet failed'}
+            go build -trimpath -o ../../VOLVE_CENTRO_0287_CI_WINDOWS_NO_INSTALAR.exe .
+            if($LASTEXITCODE -ne 0){throw 'Actual 0.28.7 Centro PE could not compile'}
+            go build -trimpath -o ../../VOLVE_WATCHDOG_0287_CI_WINDOWS_NO_INSTALAR.exe ./cmd/volve-managed-watchdog
+            if($LASTEXITCODE -ne 0){throw 'Actual 0.28.7 watchdog PE could not compile'}
+          } finally { Pop-Location }
+          foreach($name in @('VOLVE_CENTRO_0287_CI_WINDOWS_NO_INSTALAR.exe','VOLVE_WATCHDOG_0287_CI_WINDOWS_NO_INSTALAR.exe')){
+            $file=Get-Item -LiteralPath $name
+            if($file.Length -lt 1000000){throw ('PE too small: '+$name)}
+            $raw=[IO.File]::ReadAllBytes($file.FullName)
+            if($raw[0] -ne 77 -or $raw[1] -ne 90){throw ('Not Windows PE: '+$name)}
+            Write-Host ($name+' SHA256 '+(Get-FileHash -LiteralPath $name -Algorithm SHA256).Hash.ToLowerInvariant())
+          }
+          Write-Host 'PASS VOLVE_0287_REAL_CENTRO_AND_WATCHDOG_WINDOWS_BUILT_AND_NATIVE_ENGINE_TESTS NO_INSTALL'
+      - name: Execute real Windows read-only refusal without touching installed protection
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          if($env:GITHUB_ACTIONS -ne 'true' -or $env:RUNNER_ENVIRONMENT -ne 'github-hosted'){throw 'Not disposable Windows hosted CI'}
+          $beforeDNS=Get-DnsClientServerAddress -ErrorAction Stop | Sort-Object InterfaceIndex,AddressFamily | Select-Object InterfaceIndex,AddressFamily,ServerAddresses | ConvertTo-Json -Depth 5 -Compress
+          $beforeTasks=@(Get-ScheduledTask -ErrorAction Stop | Where-Object {$_.TaskName -match '(?i)^VOLVE[-_]'}).Count
+          if($beforeTasks -ne 0){throw 'Unexpected product task in hosted runner'}
+          $PSNativeCommandUseErrorActionPreference=$false
+          $result=(& ./VOLVE_CENTRO_0287_CI_WINDOWS_NO_INSTALAR.exe --motor-route-readonly 2>&1 | Out-String)
+          $exit=$LASTEXITCODE
+          if($exit -ne 0 -and $result.Length -gt 20000){throw 'Unbounded native diagnostic output'}
+          # Both refusal (no installed motor) and recognized clean read-only
+          # report are valid here. This is not a provisioning test.
+          $afterDNS=Get-DnsClientServerAddress -ErrorAction Stop | Sort-Object InterfaceIndex,AddressFamily | Select-Object InterfaceIndex,AddressFamily,ServerAddresses | ConvertTo-Json -Depth 5 -Compress
+          $afterTasks=@(Get-ScheduledTask -ErrorAction Stop | Where-Object {$_.TaskName -match '(?i)^VOLVE[-_]'}).Count
+          if($beforeDNS -cne $afterDNS -or $beforeTasks -ne $afterTasks){throw 'Read-only run changed Windows DNS or tasks'}
+          Write-Host 'PASS VOLVE_0287_REAL_CENTRO_READ_ONLY_WINDOWS_PE NO_DNS NO_TASKS NO_INSTALL'
+          # Read-only refusal of a missing installed motor is EXPECTED to exit 1.
+          # PowerShell exposes the last native exit status to GitHub at step end.
+          # The before/after comparisons above have already confirmed no writes.
+          exit 0
+      - uses: actions/upload-artifact@v4
+        with:
+          name: VOLVE-0287-WINDOWS-REAL-PE-TESTED-NO-INSTALL
+          path: |
+            VOLVE_CENTRO_0287_CI_WINDOWS_NO_INSTALAR.exe
+            VOLVE_WATCHDOG_0287_CI_WINDOWS_NO_INSTALAR.exe
+          if-no-files-found: error
+          retention-days: 3
+ ./motorupdate
+            if($LASTEXITCODE -ne 0){throw 'REAL Windows original recovery NTFS or SYSTEM identity tests failed'}
+            Remove-Item Env:\VOLVE_CI_READONLY_ADAPTER_INSPECTION
+            go vet ./motorupdate ./dnsproxy
+            if($LASTEXITCODE -ne 0){throw 'Native Windows Go vet failed'}
+            go build -trimpath -o ../../VOLVE_CENTRO_0287_CI_WINDOWS_NO_INSTALAR.exe .
+            if($LASTEXITCODE -ne 0){throw 'Actual 0.28.7 Centro PE could not compile'}
+            go build -trimpath -o ../../VOLVE_WATCHDOG_0287_CI_WINDOWS_NO_INSTALAR.exe ./cmd/volve-managed-watchdog
+            if($LASTEXITCODE -ne 0){throw 'Actual 0.28.7 watchdog PE could not compile'}
+          } finally { Pop-Location }
+          foreach($name in @('VOLVE_CENTRO_0287_CI_WINDOWS_NO_INSTALAR.exe','VOLVE_WATCHDOG_0287_CI_WINDOWS_NO_INSTALAR.exe')){
+            $file=Get-Item -LiteralPath $name
+            if($file.Length -lt 1000000){throw ('PE too small: '+$name)}
+            $raw=[IO.File]::ReadAllBytes($file.FullName)
+            if($raw[0] -ne 77 -or $raw[1] -ne 90){throw ('Not Windows PE: '+$name)}
+            Write-Host ($name+' SHA256 '+(Get-FileHash -LiteralPath $name -Algorithm SHA256).Hash.ToLowerInvariant())
+          }
+          Write-Host 'PASS VOLVE_0287_REAL_CENTRO_AND_WATCHDOG_WINDOWS_BUILT_AND_NATIVE_ENGINE_TESTS NO_INSTALL'
+      - name: Execute real Windows read-only refusal without touching installed protection
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          if($env:GITHUB_ACTIONS -ne 'true' -or $env:RUNNER_ENVIRONMENT -ne 'github-hosted'){throw 'Not disposable Windows hosted CI'}
+          $beforeDNS=Get-DnsClientServerAddress -ErrorAction Stop | Sort-Object InterfaceIndex,AddressFamily | Select-Object InterfaceIndex,AddressFamily,ServerAddresses | ConvertTo-Json -Depth 5 -Compress
+          $beforeTasks=@(Get-ScheduledTask -ErrorAction Stop | Where-Object {$_.TaskName -match '(?i)^VOLVE[-_]'}).Count
+          if($beforeTasks -ne 0){throw 'Unexpected product task in hosted runner'}
+          $PSNativeCommandUseErrorActionPreference=$false
+          $result=(& ./VOLVE_CENTRO_0287_CI_WINDOWS_NO_INSTALAR.exe --motor-route-readonly 2>&1 | Out-String)
+          $exit=$LASTEXITCODE
+          if($exit -ne 0 -and $result.Length -gt 20000){throw 'Unbounded native diagnostic output'}
+          # Both refusal (no installed motor) and recognized clean read-only
+          # report are valid here. This is not a provisioning test.
+          $afterDNS=Get-DnsClientServerAddress -ErrorAction Stop | Sort-Object InterfaceIndex,AddressFamily | Select-Object InterfaceIndex,AddressFamily,ServerAddresses | ConvertTo-Json -Depth 5 -Compress
+          $afterTasks=@(Get-ScheduledTask -ErrorAction Stop | Where-Object {$_.TaskName -match '(?i)^VOLVE[-_]'}).Count
+          if($beforeDNS -cne $afterDNS -or $beforeTasks -ne $afterTasks){throw 'Read-only run changed Windows DNS or tasks'}
+          Write-Host 'PASS VOLVE_0287_REAL_CENTRO_READ_ONLY_WINDOWS_PE NO_DNS NO_TASKS NO_INSTALL'
+          # Read-only refusal of a missing installed motor is EXPECTED to exit 1.
+          # PowerShell exposes the last native exit status to GitHub at step end.
+          # The before/after comparisons above have already confirmed no writes.
+          exit 0
+      - uses: actions/upload-artifact@v4
+        with:
+          name: VOLVE-0287-WINDOWS-REAL-PE-TESTED-NO-INSTALL
+          path: |
+            VOLVE_CENTRO_0287_CI_WINDOWS_NO_INSTALAR.exe
+            VOLVE_WATCHDOG_0287_CI_WINDOWS_NO_INSTALAR.exe
+          if-no-files-found: error
+          retention-days: 3

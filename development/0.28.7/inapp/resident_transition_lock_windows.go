@@ -132,15 +132,46 @@ func residentRequireExactSD(handle uintptr)error{
  return nil
 }
 
-// AcquireProtectedResidentTransitionLease is the privileged production
-// synchronization PRIMITIVE. It does NOT authorize any motor migration.
+// AcquireProtectedResidentTransitionLease owns the native Windows kernel mutex
+// on ONE dedicated locked OS thread. A Windows mutex belongs to an OS thread,
+// NOT a goroutine: releasing it from a different goroutine/thread fails even
+// if the Go callback was otherwise synchronized.
 //
-// Kernel mutex ownership is per Windows OS thread, not per Go goroutine.
-// The caller MUST invoke the returned release callback on the SAME goroutine
-// after all task and network health checks. On exit release is idempotent.
-// Both signed-updater and independent SYSTEM recovery must use this exact API.
-// Closing or abandoning an owner cannot be interpreted as migration success.
+// The returned callback is idempotent and CAN be invoked by another goroutine
+// (including a cancellation handler). It explicitly waits for the owner
+// thread to release the kernel object before a new transaction proceeds.
+// No production motor/task/DNS operations are implemented by this primitive.
 func AcquireProtectedResidentTransitionLease(ctx context.Context)(func(),error){
+ if err:=ctx.Err();err!=nil{return nil,err}
+ type acquisition struct {
+  release func()
+  err error
+ }
+ result:=make(chan acquisition,1)
+ requestRelease:=make(chan struct{})
+ ownerFinished:=make(chan struct{})
+ go func(){
+  defer close(ownerFinished)
+  // The helper pins THIS worker to the Windows thread through release.
+  release,err:=acquireProtectedResidentThreadBound(ctx)
+  result<-acquisition{release:release,err:err}
+  if err!=nil{return}
+  <-requestRelease
+  release()
+ }()
+ acquired:=<-result
+ if acquired.err!=nil{return nil,acquired.err}
+ if acquired.release==nil{return nil,errors.New("protected Windows mutex acquired without owner release")}
+ var once sync.Once
+ return func(){
+  once.Do(func(){close(requestRelease)})
+  <-ownerFinished
+ },nil
+}
+
+// Only the dedicated owner goroutine may invoke this thread-bound helper's
+// release. The exported API above prevents cross-thread use by construction.
+func acquireProtectedResidentThreadBound(ctx context.Context)(func(),error){
  if err:=ctx.Err();err!=nil{return nil,err}
  if err:=residentCurrentIsPrivileged();err!=nil{return nil,err}
  runtime.LockOSThread()
@@ -158,9 +189,6 @@ func AcquireProtectedResidentTransitionLease(ctx context.Context)(func(),error){
  if handle==0{return nil,residentWinErr("CreateMutexW protected resident motor",last)}
  owned:=false
  defer func(){if !owned{residentCloseHandle.Call(handle)}}()
- // A pre-existing object might have been created by an untrusted account
- // before the privileged worker started. Never use it unless ACL and
- // owner match the exact protected descriptor.
  if err:=residentRequireExactSD(handle);err!=nil{return nil,err}
  for {
   if err:=ctx.Err();err!=nil{return nil,err}
@@ -169,12 +197,16 @@ func AcquireProtectedResidentTransitionLease(ctx context.Context)(func(),error){
   case residentTransitionWaitObject0,residentTransitionWaitAbandoned:
    owned=true
    pinned=false
-   var once sync.Once
-   return func(){once.Do(func(){
-    residentReleaseMutex.Call(handle)
-    residentCloseHandle.Call(handle)
+   // This closure ONLY runs on the exact same pinned Windows thread.
+   // A ReleaseMutex failure must not be silently interpreted as an unlock:
+   // fail hard so independent boot recovery can detect an interrupted process.
+   return func(){
+    ok,_,releaseErr:=residentReleaseMutex.Call(handle)
+    closed,_,closeErr:=residentCloseHandle.Call(handle)
     runtime.UnlockOSThread()
-   })},nil
+    if ok==0{panic(residentWinErr("CRITICAL ReleaseMutex resident transition",releaseErr))}
+    if closed==0{panic(residentWinErr("CRITICAL CloseHandle resident transition",closeErr))}
+   },nil
   case residentTransitionWaitTimeout:continue
   case residentTransitionWaitFailed:return nil,residentWinErr("WaitForSingleObject resident transition",waitErr)
   default:return nil,fmt.Errorf("unexpected resident mutex wait code %d",result)
