@@ -30,7 +30,12 @@ func patchPublicOwnerOnlyUninstall(path string) error {
     const publicInstallAndUninstall = `if len(os.Args) == 2 && (os.Args[1] == "--install" || os.Args[1] == "--uninstall") {`
     const publicInstallOnly = `if len(os.Args) == 2 && os.Args[1] == "--install" {`
     if err := patch(path, publicInstallAndUninstall, publicInstallOnly); err != nil { return err }
-    const previousDispatch = "var e error\\n\\t\\tif mode == \\"--install\\" {\\n\\t\\t\\te = install()\\n\\t\\t} else {\\n\\t\\t\\te = uninstall()\\n\\t\\t}"
+    const previousDispatch = `var e error
+		if mode == "--install" {
+			e = install()
+		} else {
+			e = uninstall()
+		}`
     const safeDispatch = `e := install()`
     if err := patch(path, previousDispatch, safeDispatch); err != nil { return err }
     const previousHelp = `--selftest / --uninstall`
