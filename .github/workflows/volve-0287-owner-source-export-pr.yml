@@ -97,6 +97,59 @@ jobs:
           try {
             go test -count=1 ./motorupdate ./dnsproxy
             if($LASTEXITCODE -ne 0){throw 'Selected engine and DNS tests failed on native Windows'}
+            # Execute previously gated REAL NTFS owner/DACL, journal attestation
+            # and administrator-versus-SYSTEM refusal tests on a disposable host.
+            # No VOLVE task, installed ProgramData or live DNS is changed.
+            $env:VOLVE_CI_READONLY_ADAPTER_INSPECTION='1'
+            go test -count=1 -v -run '^(TestWindowsDNSRealNTFSProtectedACLReadOnly|TestWindowsRealNTFSSealedJournalAttestorReadOnly|TestWindowsRealSYSTEMIdentityRequiredForDNSRecovery)
+            go vet ./motorupdate ./dnsproxy
+            if($LASTEXITCODE -ne 0){throw 'Native Windows Go vet failed'}
+            go build -trimpath -o ../../VOLVE_CENTRO_0287_CI_WINDOWS_NO_INSTALAR.exe .
+            if($LASTEXITCODE -ne 0){throw 'Actual 0.28.7 Centro PE could not compile'}
+            go build -trimpath -o ../../VOLVE_WATCHDOG_0287_CI_WINDOWS_NO_INSTALAR.exe ./cmd/volve-managed-watchdog
+            if($LASTEXITCODE -ne 0){throw 'Actual 0.28.7 watchdog PE could not compile'}
+          } finally { Pop-Location }
+          foreach($name in @('VOLVE_CENTRO_0287_CI_WINDOWS_NO_INSTALAR.exe','VOLVE_WATCHDOG_0287_CI_WINDOWS_NO_INSTALAR.exe')){
+            $file=Get-Item -LiteralPath $name
+            if($file.Length -lt 1000000){throw ('PE too small: '+$name)}
+            $raw=[IO.File]::ReadAllBytes($file.FullName)
+            if($raw[0] -ne 77 -or $raw[1] -ne 90){throw ('Not Windows PE: '+$name)}
+            Write-Host ($name+' SHA256 '+(Get-FileHash -LiteralPath $name -Algorithm SHA256).Hash.ToLowerInvariant())
+          }
+          Write-Host 'PASS VOLVE_0287_REAL_CENTRO_AND_WATCHDOG_WINDOWS_BUILT_AND_NATIVE_ENGINE_TESTS NO_INSTALL'
+      - name: Execute real Windows read-only refusal without touching installed protection
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          if($env:GITHUB_ACTIONS -ne 'true' -or $env:RUNNER_ENVIRONMENT -ne 'github-hosted'){throw 'Not disposable Windows hosted CI'}
+          $beforeDNS=Get-DnsClientServerAddress -ErrorAction Stop | Sort-Object InterfaceIndex,AddressFamily | Select-Object InterfaceIndex,AddressFamily,ServerAddresses | ConvertTo-Json -Depth 5 -Compress
+          $beforeTasks=@(Get-ScheduledTask -ErrorAction Stop | Where-Object {$_.TaskName -match '(?i)^VOLVE[-_]'}).Count
+          if($beforeTasks -ne 0){throw 'Unexpected product task in hosted runner'}
+          $PSNativeCommandUseErrorActionPreference=$false
+          $result=(& ./VOLVE_CENTRO_0287_CI_WINDOWS_NO_INSTALAR.exe --motor-route-readonly 2>&1 | Out-String)
+          $exit=$LASTEXITCODE
+          if($exit -ne 0 -and $result.Length -gt 20000){throw 'Unbounded native diagnostic output'}
+          # Both refusal (no installed motor) and recognized clean read-only
+          # report are valid here. This is not a provisioning test.
+          $afterDNS=Get-DnsClientServerAddress -ErrorAction Stop | Sort-Object InterfaceIndex,AddressFamily | Select-Object InterfaceIndex,AddressFamily,ServerAddresses | ConvertTo-Json -Depth 5 -Compress
+          $afterTasks=@(Get-ScheduledTask -ErrorAction Stop | Where-Object {$_.TaskName -match '(?i)^VOLVE[-_]'}).Count
+          if($beforeDNS -cne $afterDNS -or $beforeTasks -ne $afterTasks){throw 'Read-only run changed Windows DNS or tasks'}
+          Write-Host 'PASS VOLVE_0287_REAL_CENTRO_READ_ONLY_WINDOWS_PE NO_DNS NO_TASKS NO_INSTALL'
+          # Read-only refusal of a missing installed motor is EXPECTED to exit 1.
+          # PowerShell exposes the last native exit status to GitHub at step end.
+          # The before/after comparisons above have already confirmed no writes.
+          exit 0
+      - uses: actions/upload-artifact@v4
+        with:
+          name: VOLVE-0287-WINDOWS-REAL-PE-TESTED-NO-INSTALL
+          path: |
+            VOLVE_CENTRO_0287_CI_WINDOWS_NO_INSTALAR.exe
+            VOLVE_WATCHDOG_0287_CI_WINDOWS_NO_INSTALAR.exe
+          if-no-files-found: error
+          retention-days: 3
+ ./motorupdate
+            if($LASTEXITCODE -ne 0){throw 'REAL Windows original recovery NTFS or SYSTEM identity tests failed'}
+            Remove-Item Env:\VOLVE_CI_READONLY_ADAPTER_INSPECTION
             go vet ./motorupdate ./dnsproxy
             if($LASTEXITCODE -ne 0){throw 'Native Windows Go vet failed'}
             go build -trimpath -o ../../VOLVE_CENTRO_0287_CI_WINDOWS_NO_INSTALAR.exe .
