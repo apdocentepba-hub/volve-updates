@@ -52,7 +52,7 @@ var mandatoryBeforeAnyMutation = []string{
     "compatibility-and-live-state-recheck-under-lock",
     "native-NTFS-ACL-and-rollback-restart-evidence",
  "durable-hosts-browser-catalog-and-original-DNS-snapshot",
- "verify-DHCP-static-DNS-source-and-exact-adapter-identity",
+ "persist-and-seal-original-DNS-source-and-exact-adapter-identity",
  "restore-hosts-browser-catalog-and-DNS-after-crash-tested",
 }
 
