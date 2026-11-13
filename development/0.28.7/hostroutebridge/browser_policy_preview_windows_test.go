@@ -16,9 +16,9 @@ func fakeBrowserSnapshot(chrome int) motorupdate.WindowsBrowserPolicyEvidence {
  return motorupdate.WindowsBrowserPolicyEvidence{
   Schema:1,Component:"browser-policy-registry-read-only",
   Records:[]motorupdate.WindowsBrowserPolicyRecord{
-   {Name:"chrome",Present:true,NumberedEntries:chrome},
-   {Name:"edge",Present:true,NumberedEntries:3},
-   {Name:"firefox",Present:true,NumberedEntries:2},
+   {Name:"chrome",Present:true,NumberedEntries:chrome,ContentSHA256:strings.Repeat("a",64)},
+   {Name:"edge",Present:true,NumberedEntries:3,ContentSHA256:strings.Repeat("b",64)},
+   {Name:"firefox",Present:true,NumberedEntries:2,ContentSHA256:strings.Repeat("c",64)},
   },
   TotalNumberedEntries:chrome+5,NoRegistryValuesCollected:true,
   BrowserEnforcementVerified:false,DNSMotorVerified:false,
@@ -31,6 +31,13 @@ func TestBrowserCensusStableCountsDoNotCertifyProtection(t *testing.T) {
  tampered:=fakeBrowserSnapshot(5)
  if err:=validateStableReadOnlyBrowserEvidence(original,tampered);err==nil{
   t.Fatal("changing browser registry count did not block preflight")
+ }
+ // Same number of entries but a different digest means one or more policy
+ // values changed; count-only comparison would miss this regression.
+ contentChanged:=fakeBrowserSnapshot(4)
+ contentChanged.Records[0].ContentSHA256=strings.Repeat("f",64)
+ if err:=validateStableReadOnlyBrowserEvidence(original,contentChanged);err==nil{
+  t.Fatal("same-count browser policy content change was accepted")
  }
  claimed:=fakeBrowserSnapshot(4)
  claimed.BrowserEnforcementVerified=true
@@ -54,13 +61,11 @@ func TestProtectedBrowserCensusRejectsStalePolicyRegistryWithoutAnyPermit(t *tes
    return nil,errors.New("unsafe browser policy query")
   }
   reads++
-  current:=4
-  if reads>1{current=6} // Simulate a concurrent policy change.
-  return []byte(`[{"Name":"chrome","Present":true,"NumberedEntries":`+
-   func()string{if current==4{return "4"};return "6"}()+
-   `,"InvalidEntries":0,"UnexpectedEntries":0},`+
-   `{"Name":"edge","Present":false,"NumberedEntries":0,"InvalidEntries":0,"UnexpectedEntries":0},`+
-   `{"Name":"firefox","Present":false,"NumberedEntries":0,"InvalidEntries":0,"UnexpectedEntries":0}]`),nil
+  digest:=strings.Repeat("a",64)
+  if reads>1{digest=strings.Repeat("f",64)} // Same count, altered underlying policy value.
+  return []byte(`[{"Name":"chrome","Present":true,"NumberedEntries":4,"InvalidEntries":0,"UnexpectedEntries":0,"ContentSHA256":"`+digest+`"},`+
+   `{"Name":"edge","Present":false,"NumberedEntries":0,"InvalidEntries":0,"UnexpectedEntries":0,"ContentSHA256":"`+strings.Repeat("b",64)+`"},`+
+   `{"Name":"firefox","Present":false,"NumberedEntries":0,"InvalidEntries":0,"UnexpectedEntries":0,"ContentSHA256":"`+strings.Repeat("c",64)+`"}]`),nil
  }
  review,plan,counts,err:=InspectAndPlanWithBrowserCensusUnderProtectedLeaseReadOnly(
   ctx,fixture.exe,fixture.key,fixture.certPin,fixture.exePin,
