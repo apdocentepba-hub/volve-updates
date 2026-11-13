@@ -31,6 +31,11 @@ type setupPreviewReport struct {
  WindowsInventories int `json:"windows_inventories_checked"`
  SignedCIContainerVerified bool `json:"synthetic_ci_signed_container_verified"`
  ProtectedTransitionMutexHeld bool `json:"protected_transition_mutex_held_during_review"`
+ BrowserRegistryKeysChecked int `json:"browser_registry_keys_checked"`
+ BrowserRegistryNumberedEntries int `json:"browser_registry_numbered_entries"`
+ BrowserPolicyCensusStable bool `json:"browser_policy_census_stable_under_lock"`
+ BrowserPolicyValuesCollected bool `json:"browser_policy_values_collected"`
+ BrowserEnforcementVerified bool `json:"browser_enforcement_verified"`
  Preconditions []string `json:"unmet_production_prerequisites"`
  CanInstall bool `json:"can_install"`
  CanUpgrade bool `json:"can_upgrade"`
@@ -84,11 +89,17 @@ func inspectCIHostWithProtectedOption(ctx context.Context, holdProtectedMutex bo
  // same native kernel mutex owned by the updater and SYSTEM watchdog.
  var review bridge.Review
  var plan bridge.InstallerPlanReadOnly
+ var browser motorupdate.WindowsBrowserPolicyEvidence
  inspectors:=motorupdate.DefaultWindowsMotorRouteInspectors()
  if holdProtectedMutex {
-  review,plan,err=bridge.InspectAndPlanUnderProtectedLeaseReadOnly(
+  review,plan,browser,err=bridge.InspectAndPlanWithBrowserCensusUnderProtectedLeaseReadOnly(
    ctx,exe,ed25519.PublicKey(pub),cert,fileHash,root,inspectors,
+   motorupdate.DefaultWindowsBrowserPolicyInspect,
   )
+  if err==nil && (len(browser.Records)!=3||!browser.NoRegistryValuesCollected||
+   browser.BrowserEnforcementVerified||browser.DNSMotorVerified){
+   err=errors.New("protected browser census could not prove three independent read-only observations")
+  }
  }else{
   review,plan,err=bridge.InspectAndPlanWindowsHostReadOnly(
    ctx,exe,ed25519.PublicKey(pub),cert,fileHash,root,inspectors,
@@ -111,6 +122,11 @@ func inspectCIHostWithProtectedOption(ctx context.Context, holdProtectedMutex bo
   WindowsInventories:review.InventoriesChecked,
   SignedCIContainerVerified:true,
   ProtectedTransitionMutexHeld:holdProtectedMutex,
+  BrowserRegistryKeysChecked:len(browser.Records),
+  BrowserRegistryNumberedEntries:browser.TotalNumberedEntries,
+  BrowserPolicyCensusStable:holdProtectedMutex&&len(browser.Records)==3,
+  BrowserPolicyValuesCollected:false,
+  BrowserEnforcementVerified:false,
   Preconditions:append([]string(nil),plan.Prerequisites...),
   CanInstall:false,CanUpgrade:false,CanChangeDNS:false,CanChangeTasks:false,
   Status:"NO_INSTALL_OR_DNS_CHANGE_AUTHORIZED",
