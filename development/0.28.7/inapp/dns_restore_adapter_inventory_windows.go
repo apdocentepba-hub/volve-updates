@@ -57,7 +57,20 @@ func DefaultWindowsReadOnlyPowerShell(ctx context.Context,script string)([]byte,
  }
  cmd:=exec.CommandContext(ctx,executable,"-NoLogo","-NoProfile","-NonInteractive","-Command",script)
  out,err:=cmd.Output()
- if err!=nil{return nil,fmt.Errorf("Windows read-only inventory failed: %w",err)}
+ if err!=nil{
+  safe:="PowerShell or Windows inventory command failed"
+  if exitErr,ok:=err.(*exec.ExitError);ok{
+   diagnostic:=string(exitErr.Stderr)
+   for _,known:=range []string{
+    "Unknown DNS client address family",
+    "DNS interface index does not map to exactly one adapter GUID",
+    "DNS assignment registry key missing",
+   }{
+    if strings.Contains(diagnostic,known){safe=known;break}
+   }
+  }
+  return nil,fmt.Errorf("Windows read-only inventory failed (%s): %w",safe,err)
+ }
  return out,nil
 }
 func parseWindowsAdapterInventory(raw []byte)([]WindowsAdapterBinding,error){
