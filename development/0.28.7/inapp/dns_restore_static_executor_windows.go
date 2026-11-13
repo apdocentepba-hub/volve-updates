@@ -100,17 +100,16 @@ func validateWindowsStaticRecoveryRecord(r DNSRestoreRecord) error {
     return nil
 }
 
-// ExecuteWindowsStaticDNSRestore resumes from a verified prefix after an
-// interrupted multi-server restore, without overwriting unrelated DNS values.
-// This pilot deliberately refuses automatic/DHCP mode: effective addresses
-// alone cannot prove a restored DHCP/RA assignment source.
-func ExecuteWindowsStaticDNSRestore(
+// ExecuteWindowsDNSRestore resumes a verified static prefix or restores an
+// original automatic (DHCP/RA) assignment using source-mode provenance.
+// Every write is rechecked against the live GUID and source before/after.
+func ExecuteWindowsDNSRestore(
     ctx context.Context, r DNSRestoreRecord,
     inspect WindowsReadOnlyPowerShell, write WindowsDNSRestoreWriter,
 ) error {
     if inspect == nil || write == nil { return errors.New("trusted DNS inspector and writer required") }
     if err := ctx.Err(); err != nil { return err }
-    if err := validateWindowsStaticRecoveryRecord(r); err != nil { return err }
+    if err := validateWindowsDNSRecoveryRecord(r); err != nil { return err }
     index, stage, err := observeWindowsDNSRestoreStage(ctx, r, inspect)
     if err != nil { return err }
     cmds, err := PlanWindowsDNSRestore(r.Original, index)
@@ -135,14 +134,24 @@ func ExecuteWindowsStaticDNSRestore(
 }
 
 
-// ExecuteWindowsStaticDNSRestoreBatch is the multi-adapter transaction gate.
+
+// ExecuteWindowsStaticDNSRestore is the compatibility entry point for callers
+// that explicitly require a static original DNS assignment.
+func ExecuteWindowsStaticDNSRestore(
+    ctx context.Context,r DNSRestoreRecord,inspect WindowsReadOnlyPowerShell,write WindowsDNSRestoreWriter,
+)error{
+    if err:=validateWindowsDNSRecoveryRecord(r);err!=nil{return err}
+    return ExecuteWindowsDNSRestore(ctx,r,inspect,write)
+}
+
+// ExecuteWindowsDNSRestoreBatch is the multi-adapter transaction gate for static and automatic original assignments.
 // It validates *every* protected journal record, rejects duplicate interface
 // families, and independently inspects *all* live adapters BEFORE any write.
 // This prevents an unsafe later IPv6/adapter record from causing a partial
 // earlier IPv4 restoration. A caller must still hold a cross-process lock,
 // have attested SYSTEM and the sealed journal, and leave the journal pending
 // until subsequent DNS/Internet health probes pass.
-func ExecuteWindowsStaticDNSRestoreBatch(
+func ExecuteWindowsDNSRestoreBatch(
     ctx context.Context, records []DNSRestoreRecord,
     inspect WindowsReadOnlyPowerShell, write WindowsDNSRestoreWriter,
 ) error {
@@ -167,9 +176,20 @@ func ExecuteWindowsStaticDNSRestoreBatch(
         }
     }
     for _,r := range ordered {
-        if err:=ExecuteWindowsStaticDNSRestore(ctx,r,inspect,write);err!=nil {
+        if err:=ExecuteWindowsDNSRestore(ctx,r,inspect,write);err!=nil {
             return fmt.Errorf("recovery incomplete for %s %s: %w",r.Original.InterfaceGUID,r.Original.Family,err)
         }
     }
     return nil
+}
+
+ 
+// ExecuteWindowsStaticDNSRestoreBatch preserves the static-only API contract.
+func ExecuteWindowsStaticDNSRestoreBatch(
+    ctx context.Context,records []DNSRestoreRecord,inspect WindowsReadOnlyPowerShell,write WindowsDNSRestoreWriter,
+)error{
+    for _,record:=range records{
+        if err:=validateWindowsStaticRecoveryRecord(record);err!=nil{return err}
+    }
+    return ExecuteWindowsDNSRestoreBatch(ctx,records,inspect,write)
 }
