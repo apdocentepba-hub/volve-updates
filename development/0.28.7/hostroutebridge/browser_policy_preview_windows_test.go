@@ -72,12 +72,12 @@ func TestProtectedBrowserCensusRejectsStalePolicyRegistryWithoutAnyPermit(t *tes
    `{"Name":"edge","Present":false,"NumberedEntries":0,"InvalidEntries":0,"UnexpectedEntries":0,"ContentSHA256":"`+strings.Repeat("b",64)+`"},`+
    `{"Name":"firefox","Present":false,"NumberedEntries":0,"InvalidEntries":0,"UnexpectedEntries":0,"ContentSHA256":"`+strings.Repeat("c",64)+`"}]`),nil
  }
- review,plan,counts,err:=InspectAndPlanWithBrowserCensusUnderProtectedLeaseReadOnly(
+ review,plan,counts,snapshot,err:=InspectAndPlanWithBrowserCensusUnderProtectedLeaseReadOnly(
   ctx,fixture.exe,fixture.key,fixture.certPin,fixture.exePin,
   t.TempDir(),motorupdate.DefaultWindowsMotorRouteInspectors(),policy,
  )
  if err==nil||!strings.Contains(err.Error(),"changed during preinstallation review")||
-  reads!=2||review.Component!=""||plan.Mode!=""||len(counts.Records)!=0{
+  reads!=2||review.Component!=""||plan.Mode!=""||len(counts.Records)!=0||snapshot.HostsSHA256!=""{
   t.Fatalf("drifting policies returned trusted preflight: calls=%d review=%+v plan=%+v counts=%+v err=%v",
    reads,review,plan,counts,err)
  }
@@ -116,6 +116,7 @@ func TestProtectedBrowserCensusRunsNativeRegistryInventoryUnderSameLease(t *test
  if err!=nil{t.Fatal(err)}
  if reads!=2||review.InventoriesChecked!=6||!plan.SignedPackageVerified||
   len(counts.Records)!=3||!counts.NoRegistryValuesExported||
+  snapshot.HostsSHA256==""||snapshot.ChromePoliciesSHA256==""||snapshot.CatalogTaskDefinitionSHA256==""||
   counts.BrowserEnforcementVerified||counts.DNSMotorVerified||
   plan.CanInstall||plan.CanChangeDNS||plan.CanChangeTasks{
   t.Fatalf("registry + signed Windows census was not bounded and review-only: reads=%d review=%+v plan=%+v policy=%+v",
