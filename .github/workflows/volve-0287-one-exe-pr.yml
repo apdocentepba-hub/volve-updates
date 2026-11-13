@@ -512,6 +512,7 @@ jobs:
               throw 'Protected preflight touched Windows DNS adapter or VOLVE scheduled tasks'
             }
                         Write-Host 'PASS VOLVE_NATIVE_WINDOWS_SETUP_PREVIEW_6_INVENTORIES_SIGNED_PACKAGE NO_INSTALL NO_DNS NO_TASKS'
+            $global:LASTEXITCODE=0
           } finally {
             Pop-Location
           }
