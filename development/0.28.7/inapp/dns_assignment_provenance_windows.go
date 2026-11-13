@@ -32,9 +32,9 @@ $items=@(foreach($d in $dnsRows){
  $adapterGUIDs=@($adapters | Where-Object {[uint32]$_.InterfaceIndex -eq [uint32]$d.InterfaceIndex} | ForEach-Object {[string]$_.InterfaceGuid} | Sort-Object -Unique);
  if($adapterGUIDs.Count -eq 0){
   if(@($d.ServerAddresses).Count -eq 0){continue}
-  throw 'DNS interface index does not map to exactly one adapter GUID'
+  throw 'DNS servers exist on an interface without a unique adapter GUID'
  };
- if($adapterGUIDs.Count -ne 1){throw 'DNS interface index does not map to exactly one adapter GUID'};
+ if($adapterGUIDs.Count -ne 1){throw 'DNS interface index maps to conflicting adapter GUIDs'};
  $guid='{'+([string]$adapterGUIDs[0]).Trim('{}')+'}';
  $service=if($family -eq 'IPv4'){'Tcpip'}else{'Tcpip6'};
  $path='Registry::HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Services\'+$service+'\Parameters\Interfaces\'+$guid;
