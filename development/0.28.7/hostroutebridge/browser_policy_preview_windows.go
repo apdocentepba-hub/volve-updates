@@ -3,8 +3,9 @@
 package hostroutebridge
 
 // Browser policy registry census for a SIGNED, mutex-bound preinstallation
-// inspection. It observes only numeric entry counts, not policy URLs or
-// browser history. It cannot prove browser enforcement or authorize writes.
+// inspection. It fingerprints all registry values locally and returns only entry counts
+// plus hashes; raw policy values and browser history are never exported.
+// A registry key or stable digest cannot prove browser enforcement.
 import (
  "context"
  "crypto/ed25519"
@@ -20,15 +21,15 @@ func validateStableReadOnlyBrowserEvidence(before,after motorupdate.WindowsBrows
   before.Component!="browser-policy-registry-read-only"||
   after.Component!="browser-policy-registry-read-only"||
   len(before.Records)!=3||len(after.Records)!=3||
-  !before.NoRegistryValuesCollected||!after.NoRegistryValuesCollected||
+  !before.NoRegistryValuesExported||!after.NoRegistryValuesExported||
   before.BrowserEnforcementVerified||after.BrowserEnforcementVerified||
   before.DNSMotorVerified||after.DNSMotorVerified {
   return errors.New("browser policy census incomplete or falsely claims protection")
  }
- // Count equality is NOT content equality: production still requires
- // separately sealed hashes of complete policy values + hosts/task backups.
+ // The full-content SHA-256 fingerprints catch value changes even when entry
+ // counts stay equal. This is still NOT a durable backup or restore source.
  if !reflect.DeepEqual(before,after){
-  return errors.New("browser policy registry counts changed during preinstallation review")
+  return errors.New("browser policy registry content changed during preinstallation review")
  }
  return nil
 }
@@ -36,7 +37,8 @@ func validateStableReadOnlyBrowserEvidence(before,after motorupdate.WindowsBrows
 // InspectAndPlanWithBrowserCensusUnderProtectedLeaseReadOnly observes the
 // three registry policy groups on both sides of the dual-signed Windows
 // six-inventory census, all under the SAME OS-wide protected mutex.
-// It returns only anonymous counts. No installation capability can result.
+// It returns only counts and non-reversible content fingerprints. No values
+// are exported and no installation capability can result.
 func InspectAndPlanWithBrowserCensusUnderProtectedLeaseReadOnly(
  ctx context.Context,
  signedEXE string,
