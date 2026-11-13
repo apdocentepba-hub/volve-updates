@@ -118,6 +118,7 @@ func TestWindowsProtectionSnapshotRequiresPinnedExistingCatalogTask(t *testing.T
   WindowsProtectionSnapshotInspectors{
    Hosts:hosts,Browser:browser,
    Tasks:func(context.Context,string)([]byte,error){return taskJSON(exe,args),nil},
+   DNS:protectionSnapshotDNSInspect,
   })
  if err==nil{t.Fatal("existing but unpinned catalog task accepted")}
 }
@@ -159,6 +160,7 @@ func TestWindowsProtectionSnapshotCannotPassIfHostBaselineIsMalformed(t *testing
    Hosts:func(context.Context)(WindowsHostsFileEvidence,error){return WindowsHostsFileEvidence{SHA256:"bad"},nil},
    Browser:func(context.Context,string)([]byte,error){return protectionSnapshotBrowserJSON(),nil},
    Tasks:func(context.Context,string)([]byte,error){return []byte("[]"),nil},
+   DNS:protectionSnapshotDNSInspect,
   })
  if err==nil{t.Fatal("malformed hosts baseline accepted")}
 }
