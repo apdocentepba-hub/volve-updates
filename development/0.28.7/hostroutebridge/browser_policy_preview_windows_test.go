@@ -116,7 +116,7 @@ func TestProtectedBrowserCensusRunsNativeRegistryInventoryUnderSameLease(t *test
  if err!=nil{t.Fatal(err)}
  if reads!=2||review.InventoriesChecked!=6||!plan.SignedPackageVerified||
   len(counts.Records)!=3||!counts.NoRegistryValuesExported||
-  snapshot.HostsSHA256==""||snapshot.ChromePoliciesSHA256==""||snapshot.CatalogTaskDefinitionSHA256==""||
+  snapshot.HostsSHA256==""||snapshot.ChromePoliciesSHA256==""||snapshot.CatalogTaskDefinitionSHA256==""||snapshot.DNSAdaptersSHA256==""||
   counts.BrowserEnforcementVerified||counts.DNSMotorVerified||
   plan.CanInstall||plan.CanChangeDNS||plan.CanChangeTasks{
   t.Fatalf("registry + signed Windows census was not bounded and review-only: reads=%d review=%+v plan=%+v policy=%+v",
