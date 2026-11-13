@@ -1,0 +1,66 @@
+name: VOLVE single-EXE exact-file pin (CI LAB / NO INSTALL)
+on:
+  push:
+    branches:
+      - work/0287-single-exe-hash-pin-20261113
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  pin-gate:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.x'
+      - name: Restore pinned original sources and overlay; never run setup
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import hashlib,tarfile
+          root=Path("development/0.28.7")
+          archive=root/"singlefile-src.tar.xz"
+          expected="01294e1d5ce51928098d30bd90f04b7979e1764993d4b419c66489b67676e215"
+          assert hashlib.sha256(archive.read_bytes()).hexdigest()==expected, "original source archive fingerprint mismatch"
+          with tarfile.open(archive,"r:xz") as tar:
+              for item in tar.getmembers():
+                  parts=Path(item.name).parts
+                  assert item.isfile() and parts[0]=="singlefile" and ".." not in parts, "unsafe archived Go source path"
+                  dst=root/item.name
+                  dst.parent.mkdir(parents=True,exist_ok=True)
+                  dst.write_bytes(tar.extractfile(item).read())
+          for relative in ("staging.go","staging_test.go","cmd/stageci/main.go","cmd/stageci/publisher_windows.go","cmd/stageci/publisher_nonwindows.go"):
+              source=root/"singlefile-overlay"/relative
+              assert source.is_file(), "missing signed-staging overlay"
+              dest=root/"singlefile"/relative
+              dest.parent.mkdir(parents=True,exist_ok=True)
+              dest.write_bytes(source.read_bytes())
+          auth=root/"authenticode-overlay.tar.xz"
+          assert hashlib.sha256(auth.read_bytes()).hexdigest()=="cdb9cb776552ee9a08668aae71e8031c7b3d4fb3b6fadf6e6690abfb20fc36a0", "pinned Authenticode test overlay mismatch"
+          with tarfile.open(auth,"r:xz") as tar:
+              members=tar.getmembers()
+              assert set(x.name for x in members)=={"authenticode_windows.go","authenticode_windows_test.go"}
+              for item in members:
+                  assert item.isfile() and item.size<65536
+                  dest=root/"singlefile"/item.name
+                  assert not dest.exists(), "AuthentiCode extracted twice"
+                  dest.write_bytes(tar.extractfile(item).read())
+          source=root/"authenticode-source"/"authenticode_windows.go"
+          assert b"EncodedCommand" in source.read_bytes()
+          (root/"singlefile"/"authenticode_windows.go").write_bytes(source.read_bytes())
+          PY
+          python development/0.28.7/singlefile-overlay/enforce_public_seven.py
+      - name: Prove opened EXE matches previous signer pin; no installation
+        shell: bash
+        working-directory: development/0.28.7/singlefile
+        run: |
+          go test -count=1 -v -run '^TestStageInLabPinned' ./...
+          go vet ./...
+          go build ./...
