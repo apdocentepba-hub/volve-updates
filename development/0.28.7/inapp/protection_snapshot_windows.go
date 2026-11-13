@@ -2,10 +2,10 @@
 
 package motorupdate
 
-// A read-only baseline of the existing VOLVE-adjacent protections that a
-// future installer must preserve. It captures fingerprints only: no hosts
-// contents, browser policy values, task XML, DNS values or user paths are
-// returned. This is NOT a durable backup and cannot restore any setting.
+// A read-only PARTIAL baseline of three existing protection surfaces that a
+// future installer must preserve: hosts file, browser policies and the catalog
+// task. DNS adapter provenance and motor/task recovery are separate evidence.
+// Only fingerprints/counts are returned; this is NOT a durable restore backup.
 import (
  "context"
  "crypto/sha256"
