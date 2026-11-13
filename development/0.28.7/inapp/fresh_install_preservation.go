@@ -21,9 +21,18 @@ type ProtectionSnapshot struct {
 }
 var protectionDigest=regexp.MustCompile("^[a-f0-9]{64}$")
 func validProtectionSnapshot(s ProtectionSnapshot) bool {
- if !protectionDigest.MatchString(strings.ToLower(s.HostsSHA256)) || s.HostsBlockedRuleCount<0 {return false}
- for _,d:=range []string{s.ChromePoliciesSHA256,s.EdgePoliciesSHA256,s.FirefoxPoliciesSHA256,s.CatalogTaskDefinitionSHA256} {
-  if d!="" && !protectionDigest.MatchString(strings.ToLower(d)) {return false}
+ if !protectionDigest.MatchString(strings.ToLower(s.HostsSHA256)) ||
+  s.HostsBlockedRuleCount<0 || s.HostsBlockedRuleCount>1_000_000 {
+  return false
+ }
+ // A preservation comparison is meaningless if any protected surface was
+ // not fingerprinted. Missing evidence must never compare equal to missing
+ // evidence and silently pass a future install/upgrade transaction.
+ for _,d:=range []string{
+  s.ChromePoliciesSHA256,s.EdgePoliciesSHA256,
+  s.FirefoxPoliciesSHA256,s.CatalogTaskDefinitionSHA256,
+ } {
+  if !protectionDigest.MatchString(strings.ToLower(d)) {return false}
  }
  return true
 }
