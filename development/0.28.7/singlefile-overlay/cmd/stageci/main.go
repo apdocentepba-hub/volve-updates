@@ -51,10 +51,10 @@ func main() {
         os.Exit(1)
     }
 
-    // Gate 2: signed ZIP payload, exact 8 components, hash, and second
+    // Gate 2: same OPENED EXE SHA256 as publisher-verified file; signed ZIP payload, exact 7 components, hash, and second
     // verification after staging. StageInLab creates NO destination until
     // it has inspected the complete signed embedded bundle.
-    manifest, err := singlefile.StageInLab(*exe, ed25519.PublicKey(key), *out)
+    manifest, err := singlefile.StageInLabPinned(*exe, ed25519.PublicKey(key), *out, *exeSHA)
     if err != nil {
         fmt.Fprintln(os.Stderr, "REFUSED: embedded bundle or lab staging:", err)
         os.Exit(1)
