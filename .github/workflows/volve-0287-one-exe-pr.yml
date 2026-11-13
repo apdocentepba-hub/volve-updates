@@ -482,7 +482,7 @@ jobs:
                $protected.protected_transition_mutex_held_during_review -ne $true -or
                $protected.browser_registry_keys_checked -ne 3 -or
                $protected.hosts_baseline_checked -ne $true -or
-               $protected.dns_assignment_baseline_checked -ne $true -or
+               $protected.dns_adapter_assignment_baseline_checked -ne $true -or
                $protected.catalog_task_baseline_checked -ne $true -or
                $protected.partial_protection_snapshot_stable_under_lock -ne $true -or
                $protected.browser_registry_numbered_entries -lt 0 -or
