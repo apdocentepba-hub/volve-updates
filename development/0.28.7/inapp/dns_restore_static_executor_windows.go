@@ -35,47 +35,67 @@ func sameDNSAddresses(a, b []string) bool {
 func observeWindowsDNSRestoreStage(
     ctx context.Context, r DNSRestoreRecord, inspect WindowsReadOnlyPowerShell,
 ) (uint32, int, error) {
-    index, err := FindWindowsAdapterIndex(ctx, r.Original.InterfaceGUID, inspect)
-    if err != nil { return 0, 0, err }
-    raw, err := inspect(ctx, windowsEffectiveDNSQuery)
-    if err != nil { return 0, 0, err }
-    observed, err := parseEffectiveDNS(raw, index, r.Original.Family)
-    if err != nil { return 0, 0, err }
-    checked, err := FindWindowsAdapterIndex(ctx, r.Original.InterfaceGUID, inspect)
-    if err != nil || checked != index {
-        return 0, 0, errors.New("Windows adapter identity changed during DNS restore")
+    index,err:=FindWindowsAdapterIndex(ctx,r.Original.InterfaceGUID,inspect)
+    if err!=nil{return 0,0,err}
+    evidence,err:=InspectWindowsDNSAssignmentProvenanceReadOnly(ctx,inspect)
+    if err!=nil{return 0,0,fmt.Errorf("cannot attest current DNS assignment source: %w",err)}
+    var current *DNSServerState
+    for i:=range evidence.States{
+        state:=&evidence.States[i]
+        if strings.EqualFold(state.InterfaceGUID,r.Original.InterfaceGUID)&&state.Family==r.Original.Family{
+            if current!=nil{return 0,0,errors.New("duplicate live adapter/family DNS provenance")}
+            current=state
+        }
     }
-    // Prefer the longest historical prefix when its first server also
-    // happens to be localhost: then the remaining add commands can resume.
-    for n := len(r.Original.Servers); n > 0; n-- {
-        if sameDNSAddresses(observed, r.Original.Servers[:n]) { return index, n, nil }
+    if current==nil{return 0,0,errors.New("original adapter/family missing from DNS provenance census")}
+    checked,err:=FindWindowsAdapterIndex(ctx,r.Original.InterfaceGUID,inspect)
+    if err!=nil||checked!=index{
+        return 0,0,errors.New("Windows adapter identity changed during DNS restore")
     }
-    if sameDNSAddresses(observed, r.Expected.Servers) { return index, 0, nil }
-    return 0, 0, errors.New("unexpected DNS state; external change or unsafe partial restore")
+    cmds,err:=PlanWindowsDNSRestore(r.Original,index)
+    if err!=nil{return 0,0,err}
+    if r.Original.Mode==DNSAutomatic{
+        if sameDNSState(*current,r.Original){return index,len(cmds),nil}
+        if sameDNSState(*current,r.Expected){return index,0,nil}
+        return 0,0,errors.New("automatic DNS source is neither original nor exact VOLVE localhost; external change refused")
+    }
+    if current.Mode!=DNSStatic{return 0,0,errors.New("static DNS source changed to automatic or unknown mode")}
+    // Prefer the longest exact historical prefix to resume an interrupted
+    // multi-server restore without replacing any unrelated DNS value.
+    for n:=len(r.Original.Servers);n>0;n--{
+        prefix:=DNSServerState{InterfaceGUID:r.Original.InterfaceGUID,Family:r.Original.Family,Mode:DNSStatic,Servers:r.Original.Servers[:n]}
+        if sameDNSState(*current,prefix){return index,n,nil}
+    }
+    if sameDNSState(*current,r.Expected){return index,0,nil}
+    return 0,0,errors.New("unexpected DNS assignment source; external change or unsafe partial restore")
 }
 
-// Validate the recovery intent before looking at live Windows state.
-// If the original first server was the same VOLVE localhost address,
-// an observed single localhost address cannot distinguish before/after
-// states. Without an assignment-mode inspector that ambiguity is unsafe.
-func validateWindowsStaticRecoveryRecord(r DNSRestoreRecord) error {
-    if err := validDNSState(r.Original); err != nil { return err }
-    if err := validDNSState(r.Expected); err != nil { return err }
-    if r.Original.Mode != DNSStatic {
-        return errors.New("automatic DNS provenance not yet attested; refusing to execute")
-    }
-    if !strings.EqualFold(r.Original.InterfaceGUID,r.Expected.InterfaceGUID) ||
-        r.Original.Family != r.Expected.Family ||
-        r.Expected.Mode != DNSStatic || len(r.Expected.Servers) != 1 {
+// validateWindowsDNSRecoveryRecord validates both static and automatic
+// original DNS provenance. Expected is always VOLVE's exact localhost source.
+func validateWindowsDNSRecoveryRecord(r DNSRestoreRecord) error {
+    if err:=validDNSState(r.Original);err!=nil{return err}
+    if err:=validDNSState(r.Expected);err!=nil{return err}
+    if !strings.EqualFold(r.Original.InterfaceGUID,r.Expected.InterfaceGUID)||
+        r.Original.Family!=r.Expected.Family||r.Expected.Mode!=DNSStatic||len(r.Expected.Servers)!=1{
         return errors.New("inconsistent protected DNS recovery record")
     }
-    loopback := "127.0.0.1"
-    if r.Original.Family == DNSIPv6 { loopback = "::1" }
-    if !sameDNSAddresses(r.Expected.Servers, []string{loopback}) {
+    loopback:="127.0.0.1"
+    if r.Original.Family==DNSIPv6{loopback="::1"}
+    if !sameDNSAddresses(r.Expected.Servers,[]string{loopback}){
         return errors.New("non-VOLVE localhost DNS expected state")
     }
-    if sameDNSAddresses(r.Original.Servers[:1], r.Expected.Servers) {
+    if r.Original.Mode==DNSStatic&&sameDNSAddresses(r.Original.Servers[:1],r.Expected.Servers){
         return errors.New("original first DNS server equals VOLVE localhost; restore provenance ambiguous")
+    }
+    return nil
+}
+
+// validateWindowsStaticRecoveryRecord preserves the older static-only entry
+// point. New transaction callers should use validateWindowsDNSRecoveryRecord.
+func validateWindowsStaticRecoveryRecord(r DNSRestoreRecord) error {
+    if err:=validateWindowsDNSRecoveryRecord(r);err!=nil{return err}
+    if r.Original.Mode!=DNSStatic{
+        return errors.New("automatic DNS recovery requires the provenance-aware executor")
     }
     return nil
 }
