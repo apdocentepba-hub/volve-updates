@@ -109,7 +109,7 @@ func TestProtectedBrowserCensusRunsNativeRegistryInventoryUnderSameLease(t *test
   }
   return motorupdate.DefaultWindowsBrowserPolicyInspect(ctx,query)
  }
- review,plan,counts,err:=InspectAndPlanWithBrowserCensusUnderProtectedLeaseReadOnly(
+ review,plan,counts,snapshot,err:=InspectAndPlanWithBrowserCensusUnderProtectedLeaseReadOnly(
   ctx,fixture.exe,fixture.key,fixture.certPin,fixture.exePin,
   t.TempDir(),motorupdate.DefaultWindowsMotorRouteInspectors(),policy,
  )
