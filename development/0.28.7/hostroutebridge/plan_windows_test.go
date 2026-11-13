@@ -53,6 +53,11 @@ func TestAllWindowsInstallRoutesHaveNonAuthorizingPlans(t *testing.T) {
                 if v==tc.mustInclude {found=true}
             }
             if !found{t.Fatalf("route-specific requirement %q absent in %v",tc.mustInclude,plan.Prerequisites)}
+            for _,required:=range mandatoryBeforeAnyMutation{
+                present:=false
+                for _,item:=range plan.Prerequisites{if item==required{present=true;break}}
+                if !present{t.Fatalf("route %s omitted mandatory safety gate %q",tc.route,required)}
+            }
             if plan.Notes==""{t.Fatal("planning route must explain risk")}
         })
     }
