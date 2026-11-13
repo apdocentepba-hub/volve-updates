@@ -82,6 +82,7 @@ func InspectAndPlanWithBrowserCensusUnderProtectedLeaseReadOnly(
   Hosts:motorupdate.DefaultWindowsHostsFileInspect,
   Browser:policyInspect,
   Tasks:readers.Host.Tasks,
+  DNS:motorupdate.DefaultWindowsReadOnlyPowerShell,
  }
  beforeSnapshot,beforeBrowser,err:=motorupdate.InspectWindowsProtectionSnapshotReadOnly(
   ctx,"","",snapshotInspectors,
