@@ -132,3 +132,30 @@ func hasResidentDNSAddress(reply []byte, off int, qtype uint16) bool {
  }
  return false
 }
+
+// ProbeResidentInternetAt checks direct external TCP reachability, independent
+// of the local DNS resolver. Only numeric IP endpoints are allowed; production
+// should provide multiple independent trusted networks. No HTTP is requested.
+func ProbeResidentInternetAt(ctx context.Context, endpoints []string) error {
+ if err:=ctx.Err();err!=nil{return err}
+ if len(endpoints)==0 || len(endpoints)>6{return errors.New("missing or excessive connectivity endpoints")}
+ for _,address:=range endpoints {
+  host,port,err:=net.SplitHostPort(address)
+  if err!=nil || net.ParseIP(host)==nil {return errors.New("connectivity endpoint must be an IP literal")}
+  number,err:=strconv.Atoi(port)
+  if err!=nil || number<1 || number>65535 {return errors.New("invalid connectivity probe port")}
+ }
+ for _,address:=range endpoints {
+  if err:=ctx.Err();err!=nil{return err}
+  step,cancel:=context.WithTimeout(ctx,residentProbeTimeout)
+  d:=net.Dialer{Timeout:residentProbeTimeout}
+  conn,err:=d.DialContext(step,"tcp",address)
+  if err==nil{conn.Close();cancel();return nil}
+  cancel()
+ }
+ return errors.New("all configured network connectivity endpoints failed")
+}
+
+func ProbeResidentExternalInternet(ctx context.Context)error {
+ return ProbeResidentInternetAt(ctx,[]string{"1.1.1.1:443","9.9.9.9:443"})
+}
