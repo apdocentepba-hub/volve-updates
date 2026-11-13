@@ -29,9 +29,13 @@ $items=@(foreach($d in $dnsRows){
   'InterNetwork' {'IPv4'} 'InterNetworkV6' {'IPv6'}
   default {throw 'Unknown DNS client address family'}
  };
- $adapterMatches=@($adapters | Where-Object {[uint32]$_.InterfaceIndex -eq [uint32]$d.InterfaceIndex});
- if($adapterMatches.Count -ne 1){throw 'DNS interface index does not map to exactly one adapter GUID'};
- $guid='{'+([string]$adapterMatches[0].InterfaceGuid).Trim('{}')+'}';
+ $adapterGUIDs=@($adapters | Where-Object {[uint32]$_.InterfaceIndex -eq [uint32]$d.InterfaceIndex} | ForEach-Object {[string]$_.InterfaceGuid} | Sort-Object -Unique);
+ if($adapterGUIDs.Count -eq 0){
+  if(@($d.ServerAddresses).Count -eq 0){continue}
+  throw 'DNS interface index does not map to exactly one adapter GUID'
+ };
+ if($adapterGUIDs.Count -ne 1){throw 'DNS interface index does not map to exactly one adapter GUID'};
+ $guid='{'+([string]$adapterGUIDs[0]).Trim('{}')+'}';
  $service=if($family -eq 'IPv4'){'Tcpip'}else{'Tcpip6'};
  $path='Registry::HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Services\'+$service+'\Parameters\Interfaces\'+$guid;
  if(-not (Test-Path -LiteralPath $path -PathType Container -ErrorAction Stop)){throw 'DNS assignment registry key missing'};
