@@ -12,8 +12,8 @@ import (
 const testDNSGUID="{01234567-89ab-cdef-0123-456789abcdef}"
 
 func protectionSnapshotDNSJSON()[]byte{
- return []byte(`[{"InterfaceGUID":"`+testDNSGUID+`","InterfaceIndex":7,"Family":"IPv4","RegistryKeyPresent":true,"NameServerPresent":true,"NameServerKind":"String","NameServerNonEmpty":true,"ProfileNameServerPresent":false,"Mode":"static","Servers":["1.1.1.1","8.8.8.8"],"EffectiveServers":["1.1.1.1","8.8.8.8"]},`+
-  `{"InterfaceGUID":"`+testDNSGUID+`","InterfaceIndex":7,"Family":"IPv6","RegistryKeyPresent":true,"NameServerPresent":false,"NameServerKind":"Missing","NameServerNonEmpty":false,"ProfileNameServerPresent":false,"Mode":"automatic","Servers":[],"EffectiveServers":["2606:4700:4700::1111"]}]`)
+ return []byte(`[{"InterfaceGUID":"`+testDNSGUID+`","InterfaceIndex":7,"Family":"IPv4","RegistryKeyPresent":true,"NameServerPresent":true,"NameServerKind":"String","NameServerNonEmpty":true,"ProfileNameServerNonEmpty":false,"Mode":"static","Servers":["1.1.1.1","8.8.8.8"],"EffectiveServers":["1.1.1.1","8.8.8.8"]},`+
+  `{"InterfaceGUID":"`+testDNSGUID+`","InterfaceIndex":7,"Family":"IPv6","RegistryKeyPresent":true,"NameServerPresent":false,"NameServerKind":"Missing","NameServerNonEmpty":false,"ProfileNameServerNonEmpty":false,"Mode":"automatic","Servers":[],"EffectiveServers":["2606:4700:4700::1111"]}]`)
 }
 
 func TestWindowsDNSAssignmentProvenanceSeparatesStaticAndAutomatic(t *testing.T){
@@ -40,7 +40,7 @@ func TestWindowsDNSAssignmentProvenanceSeparatesStaticAndAutomatic(t *testing.T)
 func TestWindowsDNSAssignmentProvenanceRejectsUnknownOrConflictingSource(t *testing.T){
  base:=string(protectionSnapshotDNSJSON())
  cases:=[]struct{name,replace string}{
-  {"profile-specific",`"ProfileNameServerPresent":false`},
+  {"profile-specific",`"ProfileNameServerNonEmpty":false`},
   {"unsupported-type",`"NameServerKind":"UnsupportedValueType"`},
   {"static-effective-mismatch",`"EffectiveServers":["9.9.9.9","8.8.8.8"]`},
   {"wrong-family-ip",`"Servers":["2001:4860:4860::8888"]`},
@@ -51,7 +51,7 @@ func TestWindowsDNSAssignmentProvenanceRejectsUnknownOrConflictingSource(t *test
  for _,tc:=range cases{t.Run(tc.name,func(t *testing.T){
   raw:=base
   switch tc.name{
-  case "profile-specific":raw=strings.Replace(raw,`"ProfileNameServerPresent":false`,`"ProfileNameServerPresent":true`,1)
+  case "profile-specific":raw=strings.Replace(raw,`"ProfileNameServerNonEmpty":false`,`"ProfileNameServerNonEmpty":true`,1)
   case "unsupported-type":raw=strings.Replace(raw,`"NameServerKind":"String"`,tc.replace,1)
   case "static-effective-mismatch":raw=strings.Replace(raw,`"EffectiveServers":["1.1.1.1","8.8.8.8"]`,tc.replace,1)
   case "wrong-family-ip":raw=strings.Replace(raw,`"Servers":["1.1.1.1","8.8.8.8"]`,tc.replace,1)
@@ -68,7 +68,7 @@ func TestWindowsDNSAssignmentProvenanceRejectsUnknownOrConflictingSource(t *test
 func TestWindowsDNSAssignmentProvenanceRejectsDuplicateOrIncompleteFamilies(t *testing.T){
  base:=string(protectionSnapshotDNSJSON())
  duplicate:=strings.Replace(base,`{"InterfaceGUID":"`+testDNSGUID+`","InterfaceIndex":7,"Family":"IPv6"`,`{"InterfaceGUID":"`+testDNSGUID+`","InterfaceIndex":7,"Family":"IPv4"`,1)
- missingIPv6:=strings.Replace(base,`,{"InterfaceGUID":"`+testDNSGUID+`","InterfaceIndex":7,"Family":"IPv6","RegistryKeyPresent":true,"NameServerPresent":false,"NameServerKind":"Missing","NameServerNonEmpty":false,"ProfileNameServerPresent":false,"Mode":"automatic","Servers":[],"EffectiveServers":["2606:4700:4700::1111"]}`,`]`,1)
+ missingIPv6:=strings.Replace(base,`,{"InterfaceGUID":"`+testDNSGUID+`","InterfaceIndex":7,"Family":"IPv6","RegistryKeyPresent":true,"NameServerPresent":false,"NameServerKind":"Missing","NameServerNonEmpty":false,"ProfileNameServerNonEmpty":false,"Mode":"automatic","Servers":[],"EffectiveServers":["2606:4700:4700::1111"]}`,`]`,1)
  for name,raw:=range map[string]string{"duplicate-family":duplicate,"missing-ipv6":missingIPv6}{
   t.Run(name,func(t *testing.T){
    if _,err:=InspectWindowsDNSAssignmentProvenanceReadOnly(context.Background(),func(context.Context,string)([]byte,error){return []byte(raw),nil});err==nil{
