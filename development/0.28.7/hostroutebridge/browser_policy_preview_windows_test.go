@@ -56,6 +56,22 @@ func TestBrowserCensusStableCountsDoNotCertifyProtection(t *testing.T) {
  }
 }
 
+func protectedDNSAssignmentInspector() motorupdate.WindowsReadOnlyPowerShell {
+ return func(context.Context,string)([]byte,error){
+  return []byte(`[{"InterfaceGUID":"{01234567-89ab-cdef-0123-456789abcdef}","InterfaceIndex":7,"Family":"IPv4","RegistryKeyPresent":true,"NameServerPresent":true,"NameServerKind":"String","NameServerNonEmpty":true,"ProfileNameServerNonEmpty":false,"Mode":"static","Servers":["1.1.1.1"],"EffectiveServers":["1.1.1.1"]},`+
+   `{"InterfaceGUID":"{01234567-89ab-cdef-0123-456789abcdef}","InterfaceIndex":7,"Family":"IPv6","RegistryKeyPresent":true,"NameServerPresent":false,"NameServerKind":"Missing","NameServerNonEmpty":false,"ProfileNameServerNonEmpty":false,"Mode":"automatic","Servers":[],"EffectiveServers":[]}]`),nil
+ }
+}
+
+func protectedSnapshotInspectors(readers motorupdate.WindowsMotorRouteInspectors,browser motorupdate.WindowsBrowserPolicyInspect) motorupdate.WindowsProtectionSnapshotInspectors{
+ return motorupdate.WindowsProtectionSnapshotInspectors{
+  Hosts:motorupdate.DefaultWindowsHostsFileInspect,
+  Browser:browser,
+  Tasks:readers.Host.Tasks,
+  DNS:protectedDNSAssignmentInspector(),
+ }
+}
+
 func TestProtectedBrowserCensusRejectsStalePolicyRegistryWithoutAnyPermit(t *testing.T) {
  fixture:=labEvidence(t)
  ctx,cancel:=context.WithTimeout(context.Background(),120*time.Second)
@@ -72,9 +88,10 @@ func TestProtectedBrowserCensusRejectsStalePolicyRegistryWithoutAnyPermit(t *tes
    `{"Name":"edge","Present":false,"NumberedEntries":0,"InvalidEntries":0,"UnexpectedEntries":0,"ContentSHA256":"`+strings.Repeat("b",64)+`"},`+
    `{"Name":"firefox","Present":false,"NumberedEntries":0,"InvalidEntries":0,"UnexpectedEntries":0,"ContentSHA256":"`+strings.Repeat("c",64)+`"}]`),nil
  }
- review,plan,counts,snapshot,err:=InspectAndPlanWithBrowserCensusUnderProtectedLeaseReadOnly(
+ readers:=motorupdate.DefaultWindowsMotorRouteInspectors()
+ review,plan,counts,snapshot,err:=InspectAndPlanWithProtectionSnapshotUnderProtectedLeaseReadOnly(
   ctx,fixture.exe,fixture.key,fixture.certPin,fixture.exePin,
-  t.TempDir(),motorupdate.DefaultWindowsMotorRouteInspectors(),policy,
+  t.TempDir(),readers,protectedSnapshotInspectors(readers,policy),
  )
  if err==nil||!strings.Contains(err.Error(),"changed during preinstallation review")||
   reads!=2||review.Component!=""||plan.Mode!=""||len(counts.Records)!=0||snapshot.HostsSHA256!=""{
@@ -109,12 +126,30 @@ func TestProtectedBrowserCensusRunsNativeRegistryInventoryUnderSameLease(t *test
   }
   return motorupdate.DefaultWindowsBrowserPolicyInspect(ctx,query)
  }
- review,plan,counts,snapshot,err:=InspectAndPlanWithBrowserCensusUnderProtectedLeaseReadOnly(
+ dnsReads:=0
+ inspectors:=protectedSnapshotInspectors(motorupdate.DefaultWindowsMotorRouteInspectors(),policy)
+ inspectors.DNS=func(ctx context.Context,_ string)([]byte,error){
+  dnsReads++
+  otherCtx,finish:=context.WithTimeout(ctx,120*time.Millisecond)
+  defer finish()
+  done:=make(chan error,1)
+  go func(){
+   unlock,err:=motorupdate.AcquireProtectedResidentTransitionLease(otherCtx)
+   if unlock!=nil{unlock()}
+   done<-err
+  }()
+  if err:=<-done;!errors.Is(err,context.DeadlineExceeded){
+   return nil,errors.New("DNS source census ran outside protected OS lease")
+  }
+  return protectedDNSAssignmentInspector()(ctx,"")
+ }
+ readers:=motorupdate.DefaultWindowsMotorRouteInspectors()
+ review,plan,counts,snapshot,err:=InspectAndPlanWithProtectionSnapshotUnderProtectedLeaseReadOnly(
   ctx,fixture.exe,fixture.key,fixture.certPin,fixture.exePin,
-  t.TempDir(),motorupdate.DefaultWindowsMotorRouteInspectors(),policy,
+  t.TempDir(),readers,inspectors,
  )
  if err!=nil{t.Fatal(err)}
- if reads!=2||review.InventoriesChecked!=6||!plan.SignedPackageVerified||
+ if reads!=2||dnsReads!=2||review.InventoriesChecked!=6||!plan.SignedPackageVerified||
   len(counts.Records)!=3||!counts.NoRegistryValuesExported||
   snapshot.HostsSHA256==""||snapshot.ChromePoliciesSHA256==""||snapshot.CatalogTaskDefinitionSHA256==""||snapshot.DNSAdaptersSHA256==""||
   counts.BrowserEnforcementVerified||counts.DNSMotorVerified||
