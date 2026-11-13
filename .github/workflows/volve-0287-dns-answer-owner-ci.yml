@@ -1,0 +1,56 @@
+name: VOLVE 0.28.7 DNS answer-owner recovery gate (NO RELEASE)
+on:
+  push:
+    branches:
+      - work/0287-dns-owner-health-guard-20261113
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  dns-recovery-owner:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.x'
+      - name: Reconstruct pinned source with read-only overlay (no installation)
+        shell: bash
+        run: |
+          python - <<'PY'
+          import hashlib,zipfile,shutil
+          from pathlib import Path
+          root=Path("development/0.28.7")
+          parts=sorted((root/"complete-source-parts").glob("part-*.bin"))
+          assert len(parts)==10 and [p.name for p in parts]==[f"part-{i:02d}.bin" for i in range(10)]
+          blob=b"".join(p.read_bytes() for p in parts)
+          assert hashlib.sha256(blob).hexdigest()=="92b3536559151260375b17a64eedd009df8399e45460637208027b7ca0587ba5"
+          Path("build").mkdir(exist_ok=True)
+          with zipfile.ZipFile(__import__("io").BytesIO(blob)) as z:
+              for item in z.infolist():
+                  p=Path(item.filename)
+                  assert ".." not in p.parts and not p.is_absolute() and not item.is_dir() or item.is_dir() and ".." not in p.parts and not p.is_absolute()
+              z.extractall("build")
+          for filename,digest in [
+            ("VOLVE_0287_PRECHECK_RESCATE_OVERLAY_NO_INSTALAR.zip","fdfd31f21df81fe6da6075bfd442354297874576b6dc2c38f19bd35a681d95cd"),
+            ("VOLVE_0287_RECUPERACION_INTERRUPCION_FORZADA_NO_INSTALAR_v3.zip","773bd5eb5f1c4883021cc321856636354e964d3605dba9017e2fb5d1a7401b40")]:
+              src=root/filename
+              assert hashlib.sha256(src.read_bytes()).hexdigest()==digest
+              with zipfile.ZipFile(src) as z:z.extractall("build")
+          for src in (root/"journal").glob("*.go"):
+              shutil.copy2(src,Path("build/codigo/motorupdate")/src.name)
+          print("Pinned original source restored, no user host touched.")
+          PY
+          go run development/0.28.7/inapp/apply_overlay.go build/codigo
+      - name: Regression - DNS answer name must match requested name and rollback stay pending
+        shell: bash
+        working-directory: build/codigo
+        run: |
+          go test ./motorupdate -run '^TestResident(Health|Recovery|Completion)' -count=1 -timeout 5m -v
+          go vet ./motorupdate
+          echo 'PASS DNS owner health and resident recovery gate (LAB NO INSTALL)'
