@@ -51,6 +51,9 @@ var mandatoryBeforeAnyMutation = []string{
     "durable-independent-boot-watchdog",
     "compatibility-and-live-state-recheck-under-lock",
     "native-NTFS-ACL-and-rollback-restart-evidence",
+ "durable-hosts-browser-catalog-and-original-DNS-snapshot",
+ "verify-DHCP-static-DNS-source-and-exact-adapter-identity",
+ "restore-hosts-browser-catalog-and-DNS-after-crash-tested",
 }
 
 // PlanFromVerifiedReview only accepts a complete NON-AUTHORIZING review.
