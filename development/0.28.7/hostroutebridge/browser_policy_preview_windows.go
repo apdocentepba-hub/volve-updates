@@ -65,10 +65,11 @@ func InspectAndPlanWithBrowserCensusUnderProtectedLeaseReadOnly(
  windowsSignerCertSHA256, signedEXESHA256, installedRoot string,
  readers motorupdate.WindowsMotorRouteInspectors,
  policyInspect motorupdate.WindowsBrowserPolicyInspect,
-) (Review,InstallerPlanReadOnly,motorupdate.WindowsBrowserPolicyEvidence,error) {
+) (Review,InstallerPlanReadOnly,motorupdate.WindowsBrowserPolicyEvidence,motorupdate.ProtectionSnapshot,error) {
  var emptyReview Review
  var emptyPlan InstallerPlanReadOnly
  var emptyPolicy motorupdate.WindowsBrowserPolicyEvidence
+ var emptySnapshot motorupdate.ProtectionSnapshot
  if ctx==nil{return emptyReview,emptyPlan,emptyPolicy,errors.New("missing Windows inspection context")}
  if err:=ctx.Err();err!=nil{return emptyReview,emptyPlan,emptyPolicy,err}
  if policyInspect==nil{return emptyReview,emptyPlan,emptyPolicy,errors.New("fixed read-only browser policy inspector required")}
@@ -77,21 +78,35 @@ func InspectAndPlanWithBrowserCensusUnderProtectedLeaseReadOnly(
  if release==nil{return emptyReview,emptyPlan,emptyPolicy,errors.New("protected OS mutex missing release callback")}
  defer release()
 
- before,err:=motorupdate.InspectWindowsBrowserPoliciesReadOnly(ctx,policyInspect)
- if err!=nil{return emptyReview,emptyPlan,emptyPolicy,fmt.Errorf("browser census before signed review failed: %w",err)}
+ snapshotInspectors:=motorupdate.WindowsProtectionSnapshotInspectors{
+  Hosts:motorupdate.DefaultWindowsHostsFileInspect,
+  Browser:policyInspect,
+  Tasks:readers.Host.Tasks,
+ }
+ beforeSnapshot,beforeBrowser,err:=motorupdate.InspectWindowsProtectionSnapshotReadOnly(
+  ctx,"","",snapshotInspectors,
+ )
+ if err!=nil{return emptyReview,emptyPlan,emptyPolicy,emptySnapshot,fmt.Errorf("complete protection baseline before signed review failed: %w",err)}
  review,plan,err:=InspectAndPlanWindowsHostReadOnly(
   ctx,signedEXE,publisherPublicKey,windowsSignerCertSHA256,
   signedEXESHA256,installedRoot,readers,
  )
- if err!=nil{return emptyReview,emptyPlan,emptyPolicy,err}
- after,err:=motorupdate.InspectWindowsBrowserPoliciesReadOnly(ctx,policyInspect)
- if err!=nil{return emptyReview,emptyPlan,emptyPolicy,fmt.Errorf("browser census after signed review failed: %w",err)}
- if err:=validateStableReadOnlyBrowserEvidence(before,after);err!=nil{return emptyReview,emptyPlan,emptyPolicy,err}
+ if err!=nil{return emptyReview,emptyPlan,emptyPolicy,emptySnapshot,err}
+ afterSnapshot,afterBrowser,err:=motorupdate.InspectWindowsProtectionSnapshotReadOnly(
+  ctx,"","",snapshotInspectors,
+ )
+ if err!=nil{return emptyReview,emptyPlan,emptyPolicy,emptySnapshot,fmt.Errorf("complete protection baseline after signed review failed: %w",err)}
+ if err:=validateStableReadOnlyBrowserEvidence(beforeBrowser,afterBrowser);err!=nil{
+  return emptyReview,emptyPlan,emptyPolicy,emptySnapshot,err
+ }
+ if err:=motorupdate.VerifyPartialProtectionPreserved(beforeSnapshot,afterSnapshot);err!=nil{
+  return emptyReview,emptyPlan,emptyPolicy,emptySnapshot,fmt.Errorf("existing hosts/browser/catalog protection changed during review: %w",err)
+ }
  if review.InstallAuthorized||review.UpgradeAuthorized||review.CanModifyDNS||
   plan.CanInstall||plan.CanUpgrade||plan.CanChangeDNS||plan.CanChangeTasks||
   plan.Disposition!="READ_ONLY_PLAN_NOT_AN_INSTALLATION_PERMIT" {
-  return emptyReview,emptyPlan,emptyPolicy,errors.New("preinstallation browser census unexpectedly authorized any write")
+  return emptyReview,emptyPlan,emptyPolicy,emptySnapshot,errors.New("preinstallation browser census unexpectedly authorized any write")
  }
  if err:=ctx.Err();err!=nil{return emptyReview,emptyPlan,emptyPolicy,err}
- return review,plan,after,nil
+ return review,plan,afterBrowser,afterSnapshot,nil
 }
