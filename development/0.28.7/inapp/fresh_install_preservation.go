@@ -18,6 +18,7 @@ type ProtectionSnapshot struct {
  EdgePoliciesSHA256 string
  FirefoxPoliciesSHA256 string
  CatalogTaskDefinitionSHA256 string
+ DNSAdaptersSHA256 string
 }
 var protectionDigest=regexp.MustCompile("^[a-f0-9]{64}$")
 func validProtectionSnapshot(s ProtectionSnapshot) bool {
@@ -30,7 +31,7 @@ func validProtectionSnapshot(s ProtectionSnapshot) bool {
  // evidence and silently pass a future install/upgrade transaction.
  for _,d:=range []string{
   s.ChromePoliciesSHA256,s.EdgePoliciesSHA256,
-  s.FirefoxPoliciesSHA256,s.CatalogTaskDefinitionSHA256,
+  s.FirefoxPoliciesSHA256,s.CatalogTaskDefinitionSHA256,s.DNSAdaptersSHA256,
  } {
   if !protectionDigest.MatchString(strings.ToLower(d)) {return false}
  }
@@ -52,6 +53,7 @@ func VerifyPartialProtectionPreserved(before,after ProtectionSnapshot) error {
   {"Edge",before.EdgePoliciesSHA256,after.EdgePoliciesSHA256},
   {"Firefox",before.FirefoxPoliciesSHA256,after.FirefoxPoliciesSHA256},
   {"catalog task",before.CatalogTaskDefinitionSHA256,after.CatalogTaskDefinitionSHA256},
+  {"DNS adapter assignment",before.DNSAdaptersSHA256,after.DNSAdaptersSHA256},
  } {
   if !strings.EqualFold(p.old,p.new) {return fmt.Errorf("%s existing protection changed",p.name)}
  }
