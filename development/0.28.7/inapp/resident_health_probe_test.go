@@ -212,3 +212,45 @@ func TestResidentHealthMatchesExactOwnerWithSafeDNSCompression(t *testing.T) {
   })
  }
 }
+
+
+func TestResidentHealthValidCNAMEChainAndUnrelatedAnswer(t *testing.T) {
+ question:=[]byte{7,'e','x','a','m','p','l','e',3,'c','o','m',0,0,1,0,1}
+ // A compressed name "alias.example.com" refers only backwards to the
+ // question at byte 12. This is a normal DNS alias answer, not a fake owner.
+ alias:=[]byte{5,'a','l','i','a','s',0xc0,0x0c}
+ root:=[]byte{0xc0,0x0c}
+ other:=[]byte{4,'e','v','i','l',4,'t','e','s','t',0}
+ makeRR:=func(owner []byte,kind uint16,data []byte) []byte {
+  rr:=append([]byte(nil),owner...)
+  fixed:=[]byte{0,0,0,1,0,0,0,30,0,0}
+  binary.BigEndian.PutUint16(fixed[0:2],kind)
+  binary.BigEndian.PutUint16(fixed[8:10],uint16(len(data)))
+  rr=append(rr,fixed...)
+  return append(rr,data...)
+ }
+ makeDNS:=func(answers ...[]byte) ([]byte,int) {
+  msg:=append(make([]byte,12),question...)
+  binary.BigEndian.PutUint16(msg[6:8],uint16(len(answers)))
+  pos:=len(msg)
+  for _,rr:=range answers{msg=append(msg,rr...)}
+  return msg,pos
+ }
+ cases:=[]struct{name string;records [][]byte;want bool}{
+  {"normal-cname-to-a",[][]byte{makeRR(root,5,alias),makeRR(alias,1,[]byte{1,2,3,4})},true},
+  {"wrong-cname-owner",[][]byte{makeRR(other,5,alias),makeRR(alias,1,[]byte{1,2,3,4})},false},
+  {"alias-without-cname",[][]byte{makeRR(alias,1,[]byte{1,2,3,4})},false},
+  {"cname-no-a",[][]byte{makeRR(root,5,alias)},false},
+  {"cname-ends-in-unrelated-address",[][]byte{makeRR(root,5,alias),makeRR(other,1,[]byte{1,2,3,4})},false},
+  {"cname-cycle-with-unrelated-address",[][]byte{makeRR(root,5,alias),makeRR(alias,5,root),makeRR(other,1,[]byte{1,2,3,4})},false},
+  {"malformed-cname-target",[][]byte{makeRR(root,5,[]byte{0xc0,0xff}),makeRR(alias,1,[]byte{1,2,3,4})},false},
+  {"cname-target-has-trailing-byte",[][]byte{makeRR(root,5,append(append([]byte{},alias...),0)),makeRR(alias,1,[]byte{1,2,3,4})},false},
+ }
+ for _,tc:=range cases{
+  t.Run(tc.name,func(t *testing.T){
+   msg,off:=makeDNS(tc.records...)
+   got:=hasResidentDNSAddress(msg,off,1)
+   if got!=tc.want{t.Fatalf("DNS alias verification got=%t want=%t",got,tc.want)}
+  })
+ }
+}
