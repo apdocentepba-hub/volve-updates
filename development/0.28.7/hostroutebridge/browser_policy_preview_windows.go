@@ -9,6 +9,7 @@ package hostroutebridge
 import (
  "context"
  "crypto/ed25519"
+ "encoding/hex"
  "errors"
  "fmt"
  "reflect"
@@ -26,8 +27,26 @@ func validateStableReadOnlyBrowserEvidence(before,after motorupdate.WindowsBrows
   before.DNSMotorVerified||after.DNSMotorVerified {
   return errors.New("browser policy census incomplete or falsely claims protection")
  }
- // The full-content SHA-256 fingerprints catch value changes even when entry
- // counts stay equal. This is still NOT a durable backup or restore source.
+ // Independently validate each browser identity and SHA-256 fingerprint
+ // before comparing. Counts alone would miss value edits that preserve slots.
+ for _,snapshot:=range []motorupdate.WindowsBrowserPolicyEvidence{before,after}{
+  seen:=map[string]bool{}
+  for _,record:=range snapshot.Records{
+   if record.Name!="chrome"&&record.Name!="edge"&&record.Name!="firefox"{
+    return errors.New("unexpected browser policy identity")
+   }
+   if seen[record.Name]{return errors.New("duplicate browser policy identity")}
+   seen[record.Name]=true
+   digest,err:=hex.DecodeString(record.ContentSHA256)
+   if err!=nil||len(digest)!=32{return errors.New("browser policy content fingerprint malformed")}
+   if record.NumberedEntries<0||record.InvalidEntries<0||record.UnexpectedEntries<0{
+    return errors.New("negative browser policy inventory count")
+   }
+  }
+  if len(seen)!=3{return errors.New("incomplete browser policy identity set")}
+ }
+ // Full-content fingerprints catch value edits even when entry counts stay
+ // equal. They are not a durable backup or restore source.
  if !reflect.DeepEqual(before,after){
   return errors.New("browser policy registry content changed during preinstallation review")
  }
