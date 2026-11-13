@@ -6,6 +6,8 @@ package singlefile
 import (
  "archive/zip"
  "crypto/ed25519"
+ "crypto/sha256"
+ "encoding/hex"
  "encoding/binary"
  "errors"
  "fmt"
@@ -17,8 +19,25 @@ import (
 )
 
 // StageInLab never executes binaries or alters DNS, tasks or registry.
+// It is the legacy LAB helper; a release gate MUST use StageInLabPinned.
 // The destination must be a NEW absolute VOLVE-CI- laboratory directory.
 func StageInLab(exe string, trusted ed25519.PublicKey, destination string) (_ *unifiedbundle.Manifest, err error) {
+ return stageInLab(exe,trusted,destination,"")
+}
+
+// StageInLabPinned binds the exact opened EXE bytes to the independently
+// approved Authenticode publisher/file-hash result. Reopening a pathname
+// after publisher verification must not allow a different signed container
+// to be staged. This remains CI-only, not a Windows installer.
+func StageInLabPinned(exe string, trusted ed25519.PublicKey, destination, expectedEXESHA256 string) (*unifiedbundle.Manifest,error) {
+ if len(expectedEXESHA256)!=64 || strings.ToLower(expectedEXESHA256)!=expectedEXESHA256 {
+  return nil,errors.New("external exact EXE SHA256 pin required")
+ }
+ if _,err:=hex.DecodeString(expectedEXESHA256);err!=nil{return nil,errors.New("external EXE SHA256 pin is not hexadecimal")}
+ return stageInLab(exe,trusted,destination,expectedEXESHA256)
+}
+
+func stageInLab(exe string, trusted ed25519.PublicKey, destination, expectedEXESHA256 string) (_ *unifiedbundle.Manifest, err error) {
  if len(trusted)!=ed25519.PublicKeySize{return nil,errors.New("trusted publisher key required")}
  if destination=="" || !filepath.IsAbs(destination) || !strings.HasPrefix(filepath.Base(destination),"VOLVE-CI-"){
   return nil,errors.New("only an absolute VOLVE-CI- lab directory is allowed")
@@ -27,6 +46,22 @@ func StageInLab(exe string, trusted ed25519.PublicKey, destination string) (_ *u
  if _,err:=InspectExecutable(exe,trusted);err!=nil{return nil,fmt.Errorf("signed embedded payload refused: %w",err)}
  f,err:=os.Open(exe);if err!=nil{return nil,err};defer f.Close()
  st,err:=f.Stat();if err!=nil{return nil,err}
+ if !st.Mode().IsRegular(){return nil,errors.New("staged EXE source must be a regular file")}
+ if expectedEXESHA256!="" {
+  // Hash the OPEN FILE, not the pathname that verifyWindowsPublisher
+  // previously checked. This closes replacement between those two calls.
+  digest:=sha256.New()
+  n,hashErr:=io.Copy(digest,f)
+  if hashErr!=nil{return nil,fmt.Errorf("opened EXE fingerprint: %w",hashErr)}
+  after,statErr:=f.Stat()
+  if statErr!=nil || n!=st.Size() || after.Size()!=st.Size(){
+   return nil,errors.New("opened EXE changed during fingerprint verification")
+  }
+  if hex.EncodeToString(digest.Sum(nil))!=expectedEXESHA256{
+   return nil,errors.New("opened EXE SHA256 differs from previously verified Authenticode file pin")
+  }
+  if _,err=f.Seek(0,io.SeekStart);err!=nil{return nil,err}
+ }
  hdr:=make([]byte,4096)
  n,err:=f.ReadAt(hdr,0);if err!=nil && err!=io.EOF{return nil,err}
  hdr=hdr[:n]
