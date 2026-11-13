@@ -34,6 +34,9 @@ type setupPreviewReport struct {
  BrowserRegistryKeysChecked int `json:"browser_registry_keys_checked"`
  BrowserRegistryNumberedEntries int `json:"browser_registry_numbered_entries"`
  BrowserPolicyCensusStable bool `json:"browser_policy_census_stable_under_lock"`
+ HostsBaselineChecked bool `json:"hosts_baseline_checked"`
+ CatalogTaskBaselineChecked bool `json:"catalog_task_baseline_checked"`
+ ProtectionSnapshotStable bool `json:"protection_snapshot_stable_under_lock"`
  BrowserPolicyValuesExported bool `json:"browser_policy_values_exported"`
  BrowserEnforcementVerified bool `json:"browser_enforcement_verified"`
  Preconditions []string `json:"unmet_production_prerequisites"`
@@ -90,13 +93,17 @@ func inspectCIHostWithProtectedOption(ctx context.Context, holdProtectedMutex bo
  var review bridge.Review
  var plan bridge.InstallerPlanReadOnly
  var browser motorupdate.WindowsBrowserPolicyEvidence
+ var protectionSnapshot motorupdate.ProtectionSnapshot
  inspectors:=motorupdate.DefaultWindowsMotorRouteInspectors()
  if holdProtectedMutex {
-  review,plan,browser,err=bridge.InspectAndPlanWithBrowserCensusUnderProtectedLeaseReadOnly(
+  review,plan,browser,protectionSnapshot,err=bridge.InspectAndPlanWithBrowserCensusUnderProtectedLeaseReadOnly(
    ctx,exe,ed25519.PublicKey(pub),cert,fileHash,root,inspectors,
    motorupdate.DefaultWindowsBrowserPolicyInspect,
   )
   if err==nil && (len(browser.Records)!=3||!browser.NoRegistryValuesExported||
+   protectionSnapshot.HostsSHA256==""||protectionSnapshot.ChromePoliciesSHA256==""||
+   protectionSnapshot.EdgePoliciesSHA256==""||protectionSnapshot.FirefoxPoliciesSHA256==""||
+   protectionSnapshot.CatalogTaskDefinitionSHA256==""||
    browser.BrowserEnforcementVerified||browser.DNSMotorVerified){
    err=errors.New("protected browser census could not prove three independent read-only observations")
   }
@@ -125,6 +132,11 @@ func inspectCIHostWithProtectedOption(ctx context.Context, holdProtectedMutex bo
   BrowserRegistryKeysChecked:len(browser.Records),
   BrowserRegistryNumberedEntries:browser.TotalNumberedEntries,
   BrowserPolicyCensusStable:holdProtectedMutex&&len(browser.Records)==3,
+  HostsBaselineChecked:holdProtectedMutex&&protectionSnapshot.HostsSHA256!="",
+  CatalogTaskBaselineChecked:holdProtectedMutex&&protectionSnapshot.CatalogTaskDefinitionSHA256!="",
+  ProtectionSnapshotStable:holdProtectedMutex&&protectionSnapshot.HostsSHA256!=""&&
+   protectionSnapshot.ChromePoliciesSHA256!=""&&protectionSnapshot.EdgePoliciesSHA256!=""&&
+   protectionSnapshot.FirefoxPoliciesSHA256!=""&&protectionSnapshot.CatalogTaskDefinitionSHA256!="",
   BrowserPolicyValuesExported:false,
   BrowserEnforcementVerified:false,
   Preconditions:append([]string(nil),plan.Prerequisites...),
