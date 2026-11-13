@@ -48,13 +48,18 @@ $items=@(foreach($d in $dnsRows){
     if($nonEmpty){$servers=@($value -split '[,;\s]+' | Where-Object {$_})}
    } elseif($null -ne $value){$kind='UnsupportedValueType'}
   }
-  $profilePresent=$names -contains 'ProfileNameServer';
+  $profilePresent=$names -contains 'ProfileNameServer';$profileNonEmpty=$false;
+  if($profilePresent){
+   $profileValue=$key.GetValue('ProfileNameServer',$null,[Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames);
+   if($profileValue -is [string]){$profileNonEmpty=$profileValue.Trim().Length -gt 0}
+   elseif($null -ne $profileValue){$profileNonEmpty=$true}
+  }
   $effective=@($d.ServerAddresses | ForEach-Object {[string]$_});
   [pscustomobject]@{
    InterfaceGUID=$guid;InterfaceIndex=[uint32]$d.InterfaceIndex;
    Family=[string]$family;RegistryKeyPresent=$true;
    NameServerPresent=[bool]$present;NameServerKind=[string]$kind;
-   NameServerNonEmpty=[bool]$nonEmpty;ProfileNameServerPresent=[bool]$profilePresent;
+   NameServerNonEmpty=[bool]$nonEmpty;ProfileNameServerNonEmpty=[bool]$profileNonEmpty;
    Mode=$(if($nonEmpty){'static'}else{'automatic'});
    Servers=@($servers);EffectiveServers=@($effective)
   }
@@ -70,7 +75,7 @@ type windowsDNSAssignmentRecord struct {
  NameServerPresent bool `json:"NameServerPresent"`
  NameServerKind string `json:"NameServerKind"`
  NameServerNonEmpty bool `json:"NameServerNonEmpty"`
- ProfileNameServerPresent bool `json:"ProfileNameServerPresent"`
+ ProfileNameServerNonEmpty bool `json:"ProfileNameServerNonEmpty"`
  Mode string `json:"Mode"`
  Servers []string `json:"Servers"`
  EffectiveServers []string `json:"EffectiveServers"`
@@ -116,7 +121,7 @@ func InspectWindowsDNSAssignmentProvenanceReadOnly(
  for _,r:=range records{
   guid:="{"+strings.ToLower(strings.Trim(r.InterfaceGUID,"{}"))+"}"
   family:=DNSAddressFamily(r.Family)
-  if r.InterfaceIndex==0||!r.RegistryKeyPresent||r.ProfileNameServerPresent{
+  if r.InterfaceIndex==0||!r.RegistryKeyPresent||r.ProfileNameServerNonEmpty{
    return empty,errors.New("DNS interface identity or unsupported profile-specific source")
   }
   if family!=DNSIPv4&&family!=DNSIPv6{return empty,errors.New("unsupported DNS assignment family")}
