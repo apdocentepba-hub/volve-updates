@@ -68,7 +68,7 @@ func protectionSnapshotBrowserJSON()[]byte{
   `{"Name":"firefox","Present":false,"NumberedEntries":0,"InvalidEntries":0,"UnexpectedEntries":0,"ContentSHA256":"`+strings.Repeat("c",64)+`"}]`)
 }
 
-func TestWindowsProtectionSnapshotCapturesAllExistingSurfaces(t *testing.T){
+func TestWindowsProtectionSnapshotCapturesAllDeclaredSurfaces(t *testing.T){
  expectedHosts:=strings.Repeat("d",64)
  snapshot,browser,err:=InspectWindowsProtectionSnapshotReadOnly(context.Background(),"","",
   WindowsProtectionSnapshotInspectors{
