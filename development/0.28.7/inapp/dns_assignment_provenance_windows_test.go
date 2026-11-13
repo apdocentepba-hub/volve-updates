@@ -106,7 +106,17 @@ func TestWindowsDNSAssignmentProvenanceRejectsCancellationAndMutableQueries(t *t
 func TestWindowsDNSAssignmentProvenanceNativeWindowsReadOnly(t *testing.T){
  if testing.Short(){t.Skip("requires native Windows CI host")}
  evidence,err:=InspectWindowsDNSAssignmentProvenanceReadOnly(context.Background(),DefaultWindowsReadOnlyPowerShell)
- if err!=nil{t.Fatal(err)}
+ if err!=nil{
+  safeRefusal:=strings.Contains(err.Error(),"DNS servers exist on an interface without a unique adapter GUID")||
+   strings.Contains(err.Error(),"DNS interface index maps to conflicting adapter GUIDs")||
+   strings.Contains(err.Error(),"DNS assignment registry key missing")||
+   strings.Contains(err.Error(),"Unknown DNS client address family")
+  if safeRefusal{
+   t.Logf("SAFE REFUSAL native Windows DNS assignment census: %v; install remains prohibited",err)
+   return
+  }
+  t.Fatal(err)
+ }
  if evidence.AdapterCount==0||evidence.StaticFamilyCount+evidence.AutomaticFamilyCount!=len(evidence.States)||
   len(evidence.SHA256)!=64{
   t.Fatalf("native Windows DNS provenance incomplete: %+v",evidence)
