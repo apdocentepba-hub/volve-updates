@@ -328,7 +328,7 @@ jobs:
           bridge=root/'hostroutebridge'
           target=root/'singlefile/hostroutebridge'
           target.mkdir(parents=True,exist_ok=True)
-          for name in ('bridge_windows.go','bridge_windows_test.go','plan_windows.go','plan_windows_test.go','plan_native_windows_test.go','protected_preview_windows.go','protected_preview_windows_test.go'):
+          for name in ('bridge_windows.go','bridge_windows_test.go','plan_windows.go','plan_windows_test.go','plan_native_windows_test.go','protected_preview_windows.go','protected_preview_windows_test.go','browser_policy_preview_windows.go','browser_policy_preview_windows_test.go'):
               original=bridge/name
               assert original.is_file()
               assert not (target/name).exists()
@@ -374,7 +374,10 @@ jobs:
               'TestSignedHostPlanRefusesWrongPublisherBeforeHostInspection',
               'TestProtectedPreflightRefusesCancelledContextBeforeKernelObject',
               'TestProtectedPreflightCannotReadHostDuringAnotherTransaction',
-              'TestProtectedPreflightHoldsRealMutexThroughoutSignedWindowsCensus'
+              'TestProtectedPreflightHoldsRealMutexThroughoutSignedWindowsCensus',
+              'TestBrowserCensusStableCountsDoNotCertifyProtection',
+              'TestProtectedBrowserCensusRejectsStalePolicyRegistryWithoutAnyPermit',
+              'TestProtectedBrowserCensusRunsNativeRegistryInventoryUnderSameLease'
             )){
               $passes=@($records | Where-Object {$_.Test -eq $name -and $_.Action -eq 'pass'})
               $skips=@($records | Where-Object {$_.Test -eq $name -and $_.Action -eq 'skip'})
@@ -419,6 +422,11 @@ jobs:
                $protected.windows_inventories_checked -ne 6 -or
                $protected.synthetic_ci_signed_container_verified -ne $true -or
                $protected.protected_transition_mutex_held_during_review -ne $true -or
+               $protected.browser_registry_keys_checked -ne 3 -or
+               $protected.browser_registry_numbered_entries -lt 0 -or
+               $protected.browser_policy_census_stable_under_lock -ne $true -or
+               $protected.browser_policy_values_collected -ne $false -or
+               $protected.browser_enforcement_verified -ne $false -or
                $protected.result -ne 'REVIEW_ONLY' -or
                $protected.can_install -ne $false -or
                $protected.can_upgrade -ne $false -or
@@ -433,7 +441,7 @@ jobs:
               throw 'Protected preflight touched Windows DNS adapter or VOLVE scheduled tasks'
             }
             Write-Host $protectedRaw
-            Write-Host 'PASS VOLVE_NATIVE_PROTECTED_SIGNED_HOST_PREFLIGHT SIX_INVENTORIES KERNEL_MUTEX EXCLUSIVE NO_INSTALL NO_DNS NO_TASKS'
+            Write-Host 'PASS VOLVE_NATIVE_PROTECTED_SIGNED_HOST_PREFLIGHT SIX_INVENTORIES THREE_BROWSER_POLICIES KERNEL_MUTEX EXCLUSIVE NO_INSTALL NO_DNS NO_TASKS'
             Write-Host 'PASS VOLVE_NATIVE_WINDOWS_SETUP_PREVIEW_6_INVENTORIES_SIGNED_PACKAGE NO_INSTALL NO_DNS NO_TASKS'
           } finally {
             Pop-Location
