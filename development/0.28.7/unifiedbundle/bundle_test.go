@@ -37,7 +37,7 @@ func reject(t *testing.T,dir string,pub ed25519.PublicKey){
 func TestSignedCompleteBundle(t *testing.T){
  dir,pub,_,_:=setup(t)
  m,err:=Verify(dir,pub);if err!=nil{t.Fatal(err)}
- if len(m.Components)!=7{t.Fatal("eight parts required")}
+ if len(m.Components)!=7{t.Fatal("seven public parts required")}
 }
 func TestMissingCriticalPartsFail(t *testing.T){
  for _,id:=range []string{"dns-motor","system-watchdog","browser-policies","full-catalog"}{
@@ -103,4 +103,28 @@ func TestOwnerOnlyUninstallerNeverIncludedInPublicBundle(t *testing.T){
  if _,exists:=RequiredFiles()["uninstaller"];exists{t.Fatal("owner-only removal tool entered public component allowlist")}
  if err:=os.WriteFile(filepath.Join(dir,"VOLVE_Uninstall.exe"),[]byte("owner-only forbidden"),0600);err!=nil{t.Fatal(err)}
  reject(t,dir,pub)
+}
+
+// A path can have a real directory as its final component and still walk
+// through a symlink in an ancestor. That must not be accepted as a trusted
+// installer payload location, even when all seven files have valid signatures.
+func TestSignedBundleRejectsLinkedParent(t *testing.T) {
+ dir,pub,_,_:=setup(t)
+ linkedParent:=filepath.Join(t.TempDir(),"linked-ancestor")
+ if err:=os.Symlink(filepath.Dir(dir),linkedParent);err!=nil{
+  t.Skip("cannot create directory link on this runner: "+err.Error())
+ }
+ redirectedRoot:=filepath.Join(linkedParent,filepath.Base(dir))
+ if info,err:=os.Lstat(redirectedRoot);err!=nil||!info.IsDir(){
+  t.Fatal("invalid symlink test fixture: final root must be a real directory")
+ }
+ reject(t,redirectedRoot,pub)
+}
+
+func TestSignedBundleRejectsNoncanonicalRoot(t *testing.T) {
+ dir,pub,_,_:=setup(t)
+ reject(t,dir+string(filepath.Separator)+".",pub)
+ if _,err:=Verify(filepath.Base(dir),pub);err==nil{
+  t.Fatal("relative bundle root accepted")
+ }
 }
