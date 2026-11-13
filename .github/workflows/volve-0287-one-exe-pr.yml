@@ -1,5 +1,7 @@
 name: VOLVE one-EXE signed bundle lab (NO RELEASE)
 on:
+  push:
+    branches: [work/0287-native-setup-preview-20261113]
   pull_request:
     branches: [feature/motor-updater-0287-pilot]
     paths:
@@ -331,6 +333,14 @@ jobs:
               assert original.is_file()
               assert not (target/name).exists()
               shutil.copy2(original,target/name)
+          preview=bridge/'cmd/preview'
+          out=target/'cmd/preview'
+          out.mkdir(parents=True,exist_ok=True)
+          for name in ('main_windows.go','main_windows_test.go'):
+              original=preview/name
+              assert original.is_file()
+              assert not (out/name).exists()
+              shutil.copy2(original,out/name)
           '@ | python -
           if($LASTEXITCODE -ne 0){throw 'Host route sources could not be independently authenticated'}
           go run development/0.28.7/inapp/apply_overlay.go build/codigo
@@ -368,6 +378,35 @@ jobs:
               if($passes.Count -ne 1 -or $skips.Count -ne 0){throw ('Mandatory bridge test skipped or missing: '+$name)}
             }
             Write-Host 'PASS VOLVE_SIGNED_EXE_PLUS_REAL_WINDOWS_6_INVENTORIES REVIEW_ONLY NO_INSTALL NO_DNS_CHANGE'
+            Write-Host 'PREVIEW CHECKPOINT: produce actual native Windows setup decision JSON'
+            $dnsBefore=Get-DnsClientServerAddress -ErrorAction Stop | Sort-Object InterfaceIndex,AddressFamily | Select-Object InterfaceIndex,AddressFamily,ServerAddresses | ConvertTo-Json -Depth 6 -Compress
+            $tasksBefore=@(Get-ScheduledTask -ErrorAction Stop | Where-Object {$_.TaskName -match '^(?i:VOLVE[-_])'}).Count
+            go test -mod=mod -count=1 -v ./hostroutebridge/cmd/preview
+            if($LASTEXITCODE -ne 0){throw 'Hosted CI-only setup preview fail-closed tests failed'}
+            $raw=(& go run -mod=mod ./hostroutebridge/cmd/preview --review-only | Out-String).Trim()
+            if($LASTEXITCODE -ne 0){throw 'Native signed Windows setup preview execution failed'}
+            $report=$raw | ConvertFrom-Json -ErrorAction Stop
+            if($report.component -ne 'VOLVE-0287-WINDOWS-SETUP-PREVIEW-CI' -or
+               $report.scope -ne 'DISPOSABLE_WINDOWS_CI_ONLY_NOT_USER_PC' -or
+               $report.result -ne 'REVIEW_ONLY' -or
+               $report.target_release -ne '0.28.7' -or
+               $report.windows_inventories_checked -ne 6 -or
+               $report.synthetic_ci_signed_container_verified -ne $true -or
+               $report.status -ne 'NO_INSTALL_OR_DNS_CHANGE_AUTHORIZED' -or
+               $report.can_install -ne $false -or
+               $report.can_upgrade -ne $false -or
+               $report.can_change_dns -ne $false -or
+               $report.can_change_tasks -ne $false -or
+               @($report.unmet_production_prerequisites).Count -lt 7){
+              throw ('Unsafe or incomplete native Windows preinstallation preview: '+$raw)
+            }
+            $dnsAfter=Get-DnsClientServerAddress -ErrorAction Stop | Sort-Object InterfaceIndex,AddressFamily | Select-Object InterfaceIndex,AddressFamily,ServerAddresses | ConvertTo-Json -Depth 6 -Compress
+            $tasksAfter=@(Get-ScheduledTask -ErrorAction Stop | Where-Object {$_.TaskName -match '^(?i:VOLVE[-_])'}).Count
+            if($dnsBefore -cne $dnsAfter -or $tasksBefore -ne $tasksAfter){
+              throw 'Native preinstallation preview changed DNS or VOLVE SYSTEM task count'
+            }
+            Write-Host $raw
+            Write-Host 'PASS VOLVE_NATIVE_WINDOWS_SETUP_PREVIEW_6_INVENTORIES_SIGNED_PACKAGE NO_INSTALL NO_DNS NO_TASKS'
           } finally {
             Pop-Location
           }
