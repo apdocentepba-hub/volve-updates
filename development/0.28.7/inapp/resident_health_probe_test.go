@@ -125,3 +125,90 @@ func TestResidentActiveHealthNeverAssumesSystemIdentity(t *testing.T){
   t.Fatal("missing privileged Windows verifier was silently allowed")
  }
 }
+
+func dnsOwnerStub(t *testing.T, network, listenAddr string, answerOwner []byte) string {
+ t.Helper()
+ sock,err:=net.ListenPacket(network,listenAddr)
+ if err!=nil{t.Skipf("test runner has no %s loopback: %v",network,err)}
+ t.Cleanup(func(){sock.Close()})
+ go func(){
+  req:=make([]byte,512)
+  sock.SetReadDeadline(time.Now().Add(3*time.Second))
+  n,peer,err:=sock.ReadFrom(req);if err!=nil||n<20{return}
+  request:=req[:n]
+  response:=append([]byte(nil),request...)
+  response[2]=0x81;response[3]=0x80;response[6]=0;response[7]=1
+  qtype:=binary.BigEndian.Uint16(request[n-4:n-2])
+  tail:=[]byte{0,0,0,1,0,0,0,30,0,0}
+  binary.BigEndian.PutUint16(tail[0:2],qtype)
+  var rdata []byte
+  if qtype==1{rdata=[]byte{1,2,3,4}}else{
+   rdata=make([]byte,16)
+   rdata[0]=0x20;rdata[1]=0x01;rdata[15]=1
+  }
+  binary.BigEndian.PutUint16(tail[8:10],uint16(len(rdata)))
+  answer:=append(append(append([]byte(nil),answerOwner...),tail...),rdata...)
+  sock.WriteTo(append(response,answer...),peer)
+ }()
+ return sock.LocalAddr().String()
+}
+
+func TestResidentHealthRejectsAnswerBelongingToAnotherDomain(t *testing.T) {
+ // The DNS question is example.com, but a syntactically valid A/AAAA
+ // answer advertises a different owner. A transaction ID + RDATA alone
+ // is not proof that the requested domain resolved correctly.
+ other:=[]byte{4,'e','v','i','l',4,'t','e','s','t',0}
+ v4:=dnsOwnerStub(t,"udp4","127.0.0.1:0",other)
+ v6:=dnsStub(t,"udp6","[::1]:0",false)
+ if err:=ProbeResidentDNSLoopbacks(context.Background(),v4,v6);err==nil{
+  t.Fatal("unrelated but well-formed DNS answer was treated as healthy")
+ }
+}
+
+func TestResidentRecoveryNeverClosesOnDifferentAnswerOwner(t *testing.T) {
+ other:=[]byte{4,'e','v','i','l',4,'t','e','s','t',0}
+ v4:=dnsOwnerStub(t,"udp4","127.0.0.1:0",other)
+ v6:=dnsStub(t,"udp6","[::1]:0",false)
+ tcp,err:=net.Listen("tcp","127.0.0.1:0");if err!=nil{t.Fatal(err)}
+ defer tcp.Close()
+ dir:=t.TempDir()
+ if _,err:=ArmResidentRecoveryIntent(context.Background(),dir,residentFixture(),
+  residentLabACL,residentLabACL);err!=nil{t.Fatal(err)}
+ checks:=ResidentActiveHealthChecks{
+  IPv4DNS:v4,IPv6DNS:v6,TCPAddresses:[]string{tcp.Addr().String()},
+  VerifyIdentity:func(context.Context,ResidentRecoveryIntent,string)error{return nil}, // synthetic identity (CI only)
+ }
+ if err:=ConfirmResidentRecoveryOutcome(context.Background(),dir,"restored",
+  residentLabACL,residentLabACL,checks);err==nil{
+  t.Fatal("an unrelated DNS answer closed a pending recovery")
+ }
+ state,err:=InspectResidentRecoveryJournal(context.Background(),dir,residentLabACL)
+ if err!=nil||state.Status!="recovery-required"{
+  t.Fatalf("DNS owner mismatch consumed pending rollback: %+v %v",state,err)
+ }
+}
+
+func TestResidentHealthMatchesExactOwnerWithSafeDNSCompression(t *testing.T) {
+ question:=[]byte{7,'e','x','a','m','p','l','e',3,'c','o','m',0,0,1,0,1}
+ own:=[]byte{7,'e','x','a','m','p','l','e',3,'c','o','m',0}
+ cases:=[]struct{name string;owner []byte;accept bool}{
+  {"compressed-question-owner",[]byte{0xc0,0x0c},true},
+  {"uncompressed-question-owner",own,true},
+  {"unrelated-owner",[]byte{4,'e','v','i','l',4,'t','e','s','t',0},false},
+  {"pointer-into-label-byte",[]byte{0xc0,0x0d},false},
+  {"pointer-into-header",[]byte{0xc0,0x01},false},
+  {"one-label-with-dot",[]byte{11,'e','x','a','m','p','l','e','.','c','o','m',0},false},
+ }
+ for _,tc:=range cases{
+  t.Run(tc.name,func(t *testing.T){
+   packet:=append(make([]byte,12),question...)
+   packet[6]=0;packet[7]=1
+   off:=len(packet)
+   packet=append(packet,tc.owner...)
+   packet=append(packet,[]byte{0,1,0,1,0,0,0,30,0,4,1,2,3,4}...)
+   if got:=hasResidentDNSAddress(packet,off,1);got!=tc.accept{
+    t.Fatalf("DNS answer owner classification mismatch: accepted=%t wanted=%t",got,tc.accept)
+   }
+  })
+ }
+}
