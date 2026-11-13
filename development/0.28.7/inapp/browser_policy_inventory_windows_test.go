@@ -12,9 +12,9 @@ import (
 
 func browserPolicyJSON(chrome,edge,firefox int)[]byte{
  return []byte(
-  `[{"Name":"chrome","Present":true,"NumberedEntries":`+itoaPolicy(chrome)+`,"InvalidEntries":0,"UnexpectedEntries":0},`+
-   `{"Name":"edge","Present":true,"NumberedEntries":`+itoaPolicy(edge)+`,"InvalidEntries":0,"UnexpectedEntries":0},`+
-   `{"Name":"firefox","Present":true,"NumberedEntries":`+itoaPolicy(firefox)+`,"InvalidEntries":0,"UnexpectedEntries":0}]`)
+  `[{"Name":"chrome","Present":true,"NumberedEntries":`+itoaPolicy(chrome)+`,"InvalidEntries":0,"UnexpectedEntries":0,"ContentSHA256":"`+strings.Repeat("a",64)+`"},`+
+   `{"Name":"edge","Present":true,"NumberedEntries":`+itoaPolicy(edge)+`,"InvalidEntries":0,"UnexpectedEntries":0,"ContentSHA256":"`+strings.Repeat("b",64)+`"},`+
+   `{"Name":"firefox","Present":true,"NumberedEntries":`+itoaPolicy(firefox)+`,"InvalidEntries":0,"UnexpectedEntries":0,"ContentSHA256":"`+strings.Repeat("c",64)+`"}]`)
 }
 func itoaPolicy(v int)string{return strconv.Itoa(v)}
 
@@ -51,13 +51,25 @@ func TestVOLVEBrowserPolicyReadOnlyRejectsInjectedOrAmbiguousResponses(t *testin
  }
 }
 func TestVOLVEBrowserPolicyReadOnlyMissingKeysAreNotFailedBrowserProtection(t *testing.T){
- raw:=[]byte(`[{"Name":"chrome","Present":false,"NumberedEntries":0,"InvalidEntries":0,"UnexpectedEntries":0},{"Name":"edge","Present":false,"NumberedEntries":0,"InvalidEntries":0,"UnexpectedEntries":0},{"Name":"firefox","Present":false,"NumberedEntries":0,"InvalidEntries":0,"UnexpectedEntries":0}]`)
+ raw:=[]byte(`[{"Name":"chrome","Present":false,"NumberedEntries":0,"InvalidEntries":0,"UnexpectedEntries":0,"ContentSHA256":"`+strings.Repeat("a",64)+`"},{"Name":"edge","Present":false,"NumberedEntries":0,"InvalidEntries":0,"UnexpectedEntries":0,"ContentSHA256":"`+strings.Repeat("b",64)+`"},{"Name":"firefox","Present":false,"NumberedEntries":0,"InvalidEntries":0,"UnexpectedEntries":0,"ContentSHA256":"`+strings.Repeat("c",64)+`"}]`)
  e,err:=InspectWindowsBrowserPoliciesReadOnly(context.Background(),func(context.Context,string)([]byte,error){return raw,nil})
  if err!=nil{t.Fatal(err)}
  if e.TotalNumberedEntries!=0||e.BrowserEnforcementVerified||e.DNSMotorVerified{
   t.Fatal("absent registry keys were misrepresented as actual browser state")
  }
 }
+func TestVOLVEBrowserPolicyReadOnlyRejectsMissingOrMalformedFingerprints(t *testing.T){
+ good:=string(browserPolicyJSON(1,2,3))
+ for _,bad:=range []string{
+  strings.Replace(good,`"ContentSHA256":"`+strings.Repeat("a",64)+`"`,`"ContentSHA256":""`,1),
+  strings.Replace(good,`"ContentSHA256":"`+strings.Repeat("a",64)+`"`,`"ContentSHA256":"not-a-sha256"`,1),
+ }{
+  if _,err:=InspectWindowsBrowserPoliciesReadOnly(context.Background(),func(context.Context,string)([]byte,error){return []byte(bad),nil});err==nil{
+   t.Fatal("missing or malformed full-policy fingerprint accepted")
+  }
+ }
+}
+
 func TestVOLVEBrowserPolicyReadOnlyRejectsCancelOrUnapprovedCommands(t *testing.T){
  ctx,cancel:=context.WithCancel(context.Background());cancel()
  calls:=0
