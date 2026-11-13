@@ -2,9 +2,9 @@
 
 package motorupdate
 
-// This module observes only the existence and anonymous numeric entry counts
-// of the browser policy keys used by legacy VOLVE 0.28.6. It never reads any
-// browsing history and deliberately never returns URL/filter values.
+// This module fingerprints browser policy registry content locally. It never
+// reads browsing history and never exports URL/filter values; only counts and
+// SHA-256 fingerprints leave the PowerShell process.
 // A registry entry is NOT evidence that a browser applied or enforced it.
 // In particular, motor DNS protection is a separate mechanism.
 import (
@@ -80,7 +80,7 @@ type WindowsBrowserPolicyEvidence struct{
  TotalNumberedEntries int `json:"total_numbered_entries"`
  BrowserEnforcementVerified bool `json:"browser_enforcement_verified"`
  DNSMotorVerified bool `json:"dns_motor_verified"`
- NoRegistryValuesCollected bool `json:"no_registry_values_collected"`
+ NoRegistryValuesExported bool `json:"no_registry_values_exported"`
 }
 
 // InspectWindowsBrowserPoliciesReadOnly is an independent, potentially partial
@@ -123,7 +123,7 @@ func InspectWindowsBrowserPoliciesReadOnly(ctx context.Context,inspect WindowsBr
  return WindowsBrowserPolicyEvidence{
   Schema:1,Component:"browser-policy-registry-read-only",Records:records,
   TotalNumberedEntries:total,BrowserEnforcementVerified:false,
-  DNSMotorVerified:false,NoRegistryValuesCollected:true,
+  DNSMotorVerified:false,NoRegistryValuesExported:true,
  },nil
 }
 ){
@@ -176,7 +176,7 @@ type WindowsBrowserPolicyEvidence struct{
  TotalNumberedEntries int `json:"total_numbered_entries"`
  BrowserEnforcementVerified bool `json:"browser_enforcement_verified"`
  DNSMotorVerified bool `json:"dns_motor_verified"`
- NoRegistryValuesCollected bool `json:"no_registry_values_collected"`
+ NoRegistryValuesExported bool `json:"no_registry_values_collected"`
 }
 
 // InspectWindowsBrowserPoliciesReadOnly is an independent, potentially partial
@@ -216,6 +216,6 @@ func InspectWindowsBrowserPoliciesReadOnly(ctx context.Context,inspect WindowsBr
  return WindowsBrowserPolicyEvidence{
   Schema:1,Component:"browser-policy-registry-read-only",Records:records,
   TotalNumberedEntries:total,BrowserEnforcementVerified:false,
-  DNSMotorVerified:false,NoRegistryValuesCollected:true,
+  DNSMotorVerified:false,NoRegistryValuesExported:true,
  },nil
 }
