@@ -68,6 +68,11 @@ func protectionSnapshotBrowserJSON()[]byte{
   `{"Name":"firefox","Present":false,"NumberedEntries":0,"InvalidEntries":0,"UnexpectedEntries":0,"ContentSHA256":"`+strings.Repeat("c",64)+`"}]`)
 }
 
+func protectionSnapshotDNSInspect(ctx context.Context,query string)([]byte,error){
+ if query!=windowsDNSAssignmentSourceQuery{return nil,errors.New("unexpected DNS assignment query")}
+ return protectionSnapshotDNSJSON(),nil
+}
+
 func TestWindowsProtectionSnapshotCapturesAllDeclaredSurfaces(t *testing.T){
  expectedHosts:=strings.Repeat("d",64)
  snapshot,browser,err:=InspectWindowsProtectionSnapshotReadOnly(context.Background(),"","",
@@ -75,13 +80,14 @@ func TestWindowsProtectionSnapshotCapturesAllDeclaredSurfaces(t *testing.T){
    Hosts:func(context.Context)(WindowsHostsFileEvidence,error){return WindowsHostsFileEvidence{SHA256:expectedHosts,BlockedRuleCount:2},nil},
    Browser:func(context.Context,string)([]byte,error){return protectionSnapshotBrowserJSON(),nil},
    Tasks:func(context.Context,string)([]byte,error){return []byte("[]"),nil},
+   DNS:protectionSnapshotDNSInspect,
   })
  if err!=nil{t.Fatal(err)}
  if snapshot.HostsSHA256!=expectedHosts||snapshot.HostsBlockedRuleCount!=2||
   snapshot.ChromePoliciesSHA256!=strings.Repeat("a",64)||
   snapshot.EdgePoliciesSHA256!=strings.Repeat("b",64)||
   snapshot.FirefoxPoliciesSHA256!=strings.Repeat("c",64)||
-  !validProtectionSnapshot(snapshot)||len(browser.Records)!=3||
+  snapshot.DNSAdaptersSHA256==""||!validProtectionSnapshot(snapshot)||len(browser.Records)!=3||
   !browser.NoRegistryValuesExported{
   t.Fatalf("incomplete privacy-preserving protection snapshot: %+v %+v",snapshot,browser)
  }
@@ -104,6 +110,7 @@ func TestWindowsProtectionSnapshotRequiresPinnedExistingCatalogTask(t *testing.T
   WindowsProtectionSnapshotInspectors{
    Hosts:hosts,Browser:browser,
    Tasks:func(context.Context,string)([]byte,error){return taskJSON(exe,args),nil},
+   DNS:protectionSnapshotDNSInspect,
   })
  if err!=nil{t.Fatal(err)}
  if good.CatalogTaskDefinitionSHA256!=strings.Repeat("e",64){t.Fatalf("catalog task fingerprint missing: %+v",good)}
@@ -125,6 +132,7 @@ func TestWindowsProtectionSnapshotRejectsUnknownOrContradictoryTaskInventory(t *
     Hosts:func(context.Context)(WindowsHostsFileEvidence,error){return WindowsHostsFileEvidence{SHA256:strings.Repeat("d",64)},nil},
     Browser:func(context.Context,string)([]byte,error){return protectionSnapshotBrowserJSON(),nil},
     Tasks:func(context.Context,string)([]byte,error){return raw,nil},
+    DNS:protectionSnapshotDNSInspect,
    })
   if err==nil{t.Fatal("unknown or unverified task inventory accepted")}
  }
@@ -140,6 +148,7 @@ func TestWindowsProtectionSnapshotRejectsMissingInspectorsAndCancelledContext(t 
   Hosts:func(context.Context)(WindowsHostsFileEvidence,error){calls++;return WindowsHostsFileEvidence{},nil},
   Browser:func(context.Context,string)([]byte,error){calls++;return nil,nil},
   Tasks:func(context.Context,string)([]byte,error){calls++;return nil,nil},
+  DNS:func(context.Context,string)([]byte,error){calls++;return nil,nil},
  })
  if !errors.Is(err,context.Canceled)||calls!=0{t.Fatalf("cancelled snapshot performed reads: calls=%d err=%v",calls,err)}
 }
