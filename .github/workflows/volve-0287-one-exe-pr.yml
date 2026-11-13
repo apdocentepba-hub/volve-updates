@@ -384,7 +384,7 @@ jobs:
               if($passes.Count -ne 1 -or $skips.Count -ne 0){throw ('Mandatory bridge test skipped or missing: '+$name)}
             }
             Write-Host 'BROWSER POLICY CHECKPOINT: execute focused native registry fingerprint tests in original motorupdate module'
-            $policyEvents=@(go test -mod=mod -count=1 -timeout 3m -json -run '^TestVOLVEBrowserPolicyReadOnly|^TestVOLVEBrowserPolicyRealWindowsRegistryNativeReadOnly$|^TestFreshMotorPreservesHostsBrowserPoliciesAndCatalog$|^TestFreshMotorDetectsPartialProtectionRegressions$|^TestProtectionSnapshotCannotPassWhenAnySurfaceWasNotCaptured$|^TestCountWindowsHostsBlockedRulesDoesNotReturnNames$|^TestWindowsHostsFileReadOnlyHashAndNoContentExport$|^TestWindowsHostsFileReadOnlyRejectsOversizedFile$|^TestWindowsProtectionSnapshotCapturesAllExistingSurfaces$|^TestWindowsProtectionSnapshotRequiresPinnedExistingCatalogTask$|^TestWindowsProtectionSnapshotRejectsUnknownOrContradictoryTaskInventory$|^TestWindowsProtectionSnapshotRejectsMissingInspectorsAndCancelledContext$|^TestWindowsProtectionSnapshotCannotPassIfHostBaselineIsMalformed$' volve-browser-protection/motorupdate)
+            $policyEvents=@(go test -mod=mod -count=1 -timeout 3m -json -run '^TestVOLVEBrowserPolicyReadOnly|^TestVOLVEBrowserPolicyRealWindowsRegistryNativeReadOnly$|^TestFreshMotorPreservesHostsBrowserPoliciesAndCatalog$|^TestFreshMotorDetectsPartialProtectionRegressions$|^TestProtectionSnapshotCannotPassWhenAnySurfaceWasNotCaptured$|^TestCountWindowsHostsBlockedRulesDoesNotReturnNames$|^TestWindowsHostsFileReadOnlyHashAndNoContentExport$|^TestWindowsHostsFileReadOnlyRejectsOversizedFile$|^TestWindowsProtectionSnapshotCapturesAllDeclaredSurfaces$|^TestWindowsProtectionSnapshotRequiresPinnedExistingCatalogTask$|^TestWindowsProtectionSnapshotRejectsUnknownOrContradictoryTaskInventory$|^TestWindowsProtectionSnapshotRejectsMissingInspectorsAndCancelledContext$|^TestWindowsProtectionSnapshotCannotPassIfHostBaselineIsMalformed$' volve-browser-protection/motorupdate)
             if($LASTEXITCODE -ne 0){
               $policyEvents | Select-Object -Last 60 | Write-Host
               throw 'Native browser policy fingerprint tests failed'
@@ -459,7 +459,7 @@ jobs:
                $protected.browser_registry_keys_checked -ne 3 -or
                $protected.hosts_baseline_checked -ne $true -or
                $protected.catalog_task_baseline_checked -ne $true -or
-               $protected.protection_snapshot_stable_under_lock -ne $true -or
+               $protected.partial_protection_snapshot_stable_under_lock -ne $true -or
                $protected.browser_registry_numbered_entries -lt 0 -or
                $protected.browser_policy_census_stable_under_lock -ne $true -or
                $protected.browser_policy_values_exported -ne $false -or
