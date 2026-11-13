@@ -383,11 +383,11 @@ jobs:
               $skips=@($records | Where-Object {$_.Test -eq $name -and $_.Action -eq 'skip'})
               if($passes.Count -ne 1 -or $skips.Count -ne 0){throw ('Mandatory bridge test skipped or missing: '+$name)}
             }
-            Write-Host 'BROWSER POLICY CHECKPOINT: execute focused native registry fingerprint tests in original motorupdate module'
+            Write-Host 'PROTECTION SNAPSHOT CHECKPOINT: execute native hosts/browser/catalog baseline tests in original motorupdate module'
             $policyEvents=@(go test -mod=mod -count=1 -timeout 3m -json -run '^TestVOLVEBrowserPolicyReadOnly|^TestVOLVEBrowserPolicyRealWindowsRegistryNativeReadOnly$|^TestFreshMotorPreservesHostsBrowserPoliciesAndCatalog$|^TestFreshMotorDetectsPartialProtectionRegressions$|^TestProtectionSnapshotCannotPassWhenAnySurfaceWasNotCaptured$|^TestCountWindowsHostsBlockedRulesDoesNotReturnNames$|^TestWindowsHostsFileReadOnlyHashAndNoContentExport$|^TestWindowsHostsFileReadOnlyRejectsOversizedFile$|^TestWindowsProtectionSnapshotCapturesAllDeclaredSurfaces$|^TestWindowsProtectionSnapshotRequiresPinnedExistingCatalogTask$|^TestWindowsProtectionSnapshotRejectsUnknownOrContradictoryTaskInventory$|^TestWindowsProtectionSnapshotRejectsMissingInspectorsAndCancelledContext$|^TestWindowsProtectionSnapshotCannotPassIfHostBaselineIsMalformed$' volve-browser-protection/motorupdate)
             if($LASTEXITCODE -ne 0){
               $policyEvents | Select-Object -Last 60 | Write-Host
-              throw 'Native browser policy fingerprint tests failed'
+              throw 'Native hosts/browser/catalog protection baseline tests failed'
             }
             $policyRecords=@($policyEvents | Where-Object {$_ -match '^\s*\{'} | ForEach-Object {$_ | ConvertFrom-Json})
             foreach($name in @(
@@ -414,6 +414,7 @@ jobs:
               if($passes.Count -ne 1 -or $skips.Count -ne 0){throw ('Mandatory native browser policy test skipped or missing: '+$name)}
             }
             Write-Host 'PASS VOLVE_NATIVE_BROWSER_POLICY_CONTENT_FINGERPRINTS THREE_KEYS NO_VALUE_EXPORT'
+            Write-Host 'PASS VOLVE_NATIVE_PROTECTION_SNAPSHOT HOSTS_BROWSER_CATALOG PARTIAL_BASELINE NO_RAW_VALUES'
             Write-Host 'PASS VOLVE_SIGNED_EXE_PLUS_REAL_WINDOWS_6_INVENTORIES REVIEW_ONLY NO_INSTALL NO_DNS_CHANGE'
             Write-Host 'PREVIEW CHECKPOINT: produce actual native Windows setup decision JSON'
             $dnsBefore=Get-DnsClientServerAddress -ErrorAction Stop | Sort-Object InterfaceIndex,AddressFamily | Select-Object InterfaceIndex,AddressFamily,ServerAddresses | ConvertTo-Json -Depth 6 -Compress
