@@ -20,7 +20,7 @@ func fakeBrowserSnapshot(chrome int) motorupdate.WindowsBrowserPolicyEvidence {
    {Name:"edge",Present:true,NumberedEntries:3,ContentSHA256:strings.Repeat("b",64)},
    {Name:"firefox",Present:true,NumberedEntries:2,ContentSHA256:strings.Repeat("c",64)},
   },
-  TotalNumberedEntries:chrome+5,NoRegistryValuesCollected:true,
+  TotalNumberedEntries:chrome+5,NoRegistryValuesExported:true,
   BrowserEnforcementVerified:false,DNSMotorVerified:false,
  }
 }
@@ -110,7 +110,7 @@ func TestProtectedBrowserCensusRunsNativeRegistryInventoryUnderSameLease(t *test
  )
  if err!=nil{t.Fatal(err)}
  if reads!=2||review.InventoriesChecked!=6||!plan.SignedPackageVerified||
-  len(counts.Records)!=3||!counts.NoRegistryValuesCollected||
+  len(counts.Records)!=3||!counts.NoRegistryValuesExported||
   counts.BrowserEnforcementVerified||counts.DNSMotorVerified||
   plan.CanInstall||plan.CanChangeDNS||plan.CanChangeTasks{
   t.Fatalf("registry + signed Windows census was not bounded and review-only: reads=%d review=%+v plan=%+v policy=%+v",
