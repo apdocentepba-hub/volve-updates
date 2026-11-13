@@ -140,7 +140,7 @@ func ExecuteWindowsDNSRestore(
 func ExecuteWindowsStaticDNSRestore(
     ctx context.Context,r DNSRestoreRecord,inspect WindowsReadOnlyPowerShell,write WindowsDNSRestoreWriter,
 )error{
-    if err:=validateWindowsDNSRecoveryRecord(r);err!=nil{return err}
+    if err:=validateWindowsStaticRecoveryRecord(r);err!=nil{return err}
     return ExecuteWindowsDNSRestore(ctx,r,inspect,write)
 }
 
@@ -167,7 +167,7 @@ func ExecuteWindowsDNSRestoreBatch(
     })
     seen := map[string]bool{}
     for _,r := range ordered {
-        if err:=validateWindowsStaticRecoveryRecord(r);err!=nil{return err}
+        if err:=validateWindowsDNSRecoveryRecord(r);err!=nil{return err}
         key:=strings.ToLower(r.Original.InterfaceGUID)+string(r.Original.Family)
         if seen[key] {return errors.New("duplicate interface/family in protected DNS recovery journal")}
         seen[key]=true
