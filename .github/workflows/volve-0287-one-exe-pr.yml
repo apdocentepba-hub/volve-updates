@@ -437,7 +437,7 @@ jobs:
             }
             Write-Host 'PASS VOLVE_NATIVE_BROWSER_POLICY_CONTENT_FINGERPRINTS THREE_KEYS NO_VALUE_EXPORT'
             Write-Host 'PASS VOLVE_NATIVE_PROTECTION_SNAPSHOT HOSTS_BROWSER_CATALOG PARTIAL_BASELINE NO_RAW_VALUES'
-            Write-Host 'PASS VOLVE_NATIVE_DNS_ASSIGNMENT_PROVENANCE IPV4_IPV6 STATIC_AUTOMATIC NO_WRITES'
+            Write-Host 'PASS VOLVE_DNS_ASSIGNMENT_PROVENANCE_TESTS IPV4_IPV6 STATIC_AUTOMATIC FAIL_CLOSED NO_WRITES'
             Write-Host 'PASS VOLVE_SIGNED_EXE_PLUS_REAL_WINDOWS_6_INVENTORIES REVIEW_ONLY NO_INSTALL NO_DNS_CHANGE'
             Write-Host 'PREVIEW CHECKPOINT: produce actual native Windows setup decision JSON'
             $dnsBefore=Get-DnsClientServerAddress -ErrorAction Stop | Sort-Object InterfaceIndex,AddressFamily | Select-Object InterfaceIndex,AddressFamily,ServerAddresses | ConvertTo-Json -Depth 6 -Compress
