@@ -44,6 +44,11 @@ func TestBrowserCensusStableCountsDoNotCertifyProtection(t *testing.T) {
  if err:=validateStableReadOnlyBrowserEvidence(original,claimed);err==nil{
   t.Fatal("reported browser enforcement with no live browser test")
  }
+ malformedDigest:=fakeBrowserSnapshot(4)
+ malformedDigest.Records[0].ContentSHA256="not-a-digest"
+ if err:=validateStableReadOnlyBrowserEvidence(original,malformedDigest);err==nil{
+  t.Fatal("malformed browser content fingerprint accepted")
+ }
  malformed:=fakeBrowserSnapshot(4)
  malformed.Records=malformed.Records[:2]
  if err:=validateStableReadOnlyBrowserEvidence(original,malformed);err==nil{
