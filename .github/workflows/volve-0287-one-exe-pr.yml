@@ -353,10 +353,26 @@ jobs:
             if($LASTEXITCODE -ne 0){throw 'Cannot require original motorupdate for bridge CI'}
             go mod edit "-replace=volve-browser-protection=$module"
             if($LASTEXITCODE -ne 0){throw 'Cannot local-replace original motorupdate for bridge CI'}
-            Write-Host 'BRIDGE CHECKPOINT 3/3: Windows real 6-inventory + 2 independent publisher signatures'
+            Write-Host 'BRIDGE CHECKPOINT 3/3: enumerate and execute Windows native route/snapshot tests'
+            $listed=@(go test -mod=mod -list . ./hostroutebridge)
+            if($LASTEXITCODE -ne 0){$listed | Write-Host;throw 'Cannot enumerate native hostroutebridge tests'}
+            foreach($name in @(
+              'TestSixInventoryActualWindowsBridgeOnlyReturnsReview',
+              'TestSignedBridgeRefusesWrongPinsAndMissingInventory',
+              'TestSignedBridgeRejectsCancellationAndRelativePath',
+              'TestLegacyMotorFileCannotBeMisclassifiedAsFresh',
+              'TestBridgeRejectsPEAlteredDuringWindowsInventory',
+              'TestSignedPackageRealWindowsRouteProducesNonAuthorizingPlan',
+              'TestBrowserCensusStableCountsDoNotCertifyProtection',
+              'TestProtectedBrowserCensusRejectsStalePolicyRegistryWithoutAnyPermit',
+              'TestProtectedBrowserCensusRunsNativeRegistryInventoryUnderSameLease'
+            )){
+              if(-not ($listed -contains $name)){throw ('Native bridge test not present in compiled package: '+$name)}
+            }
+            Write-Host ('COMPILED HOSTROUTE TESTS: '+($listed -join ','))
             $events=@(go test -mod=mod -count=1 -timeout 6m -json ./hostroutebridge)
             if($LASTEXITCODE -ne 0){
-              $events | Select-Object -Last 75 | Write-Host
+              foreach($line in $events){Write-Host $line}
               throw 'Dual-signed EXE / Windows six-inventory route bridge failed'
             }
             $records=@($events | Where-Object {$_ -match '^\s*\{'} | ForEach-Object {$_ | ConvertFrom-Json})
