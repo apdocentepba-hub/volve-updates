@@ -34,7 +34,7 @@ type setupPreviewReport struct {
  BrowserRegistryKeysChecked int `json:"browser_registry_keys_checked"`
  BrowserRegistryNumberedEntries int `json:"browser_registry_numbered_entries"`
  BrowserPolicyCensusStable bool `json:"browser_policy_census_stable_under_lock"`
- BrowserPolicyValuesCollected bool `json:"browser_policy_values_collected"`
+ BrowserPolicyValuesExported bool `json:"browser_policy_values_exported"`
  BrowserEnforcementVerified bool `json:"browser_enforcement_verified"`
  Preconditions []string `json:"unmet_production_prerequisites"`
  CanInstall bool `json:"can_install"`
@@ -96,7 +96,7 @@ func inspectCIHostWithProtectedOption(ctx context.Context, holdProtectedMutex bo
    ctx,exe,ed25519.PublicKey(pub),cert,fileHash,root,inspectors,
    motorupdate.DefaultWindowsBrowserPolicyInspect,
   )
-  if err==nil && (len(browser.Records)!=3||!browser.NoRegistryValuesCollected||
+  if err==nil && (len(browser.Records)!=3||!browser.NoRegistryValuesExported||
    browser.BrowserEnforcementVerified||browser.DNSMotorVerified){
    err=errors.New("protected browser census could not prove three independent read-only observations")
   }
@@ -125,7 +125,7 @@ func inspectCIHostWithProtectedOption(ctx context.Context, holdProtectedMutex bo
   BrowserRegistryKeysChecked:len(browser.Records),
   BrowserRegistryNumberedEntries:browser.TotalNumberedEntries,
   BrowserPolicyCensusStable:holdProtectedMutex&&len(browser.Records)==3,
-  BrowserPolicyValuesCollected:false,
+  BrowserPolicyValuesExported:false,
   BrowserEnforcementVerified:false,
   Preconditions:append([]string(nil),plan.Prerequisites...),
   CanInstall:false,CanUpgrade:false,CanChangeDNS:false,CanChangeTasks:false,
