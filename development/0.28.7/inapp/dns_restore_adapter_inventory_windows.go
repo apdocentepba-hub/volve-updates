@@ -64,6 +64,8 @@ func DefaultWindowsReadOnlyPowerShell(ctx context.Context,script string)([]byte,
    for _,known:=range []string{
     "Unknown DNS client address family",
     "DNS interface index does not map to exactly one adapter GUID",
+    "DNS servers exist on an interface without a unique adapter GUID",
+    "DNS interface index maps to conflicting adapter GUIDs",
     "DNS assignment registry key missing",
    }{
     if strings.Contains(diagnostic,known){safe=known;break}
