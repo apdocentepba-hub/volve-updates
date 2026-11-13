@@ -38,6 +38,13 @@ func StageInLabPinned(exe string, trusted ed25519.PublicKey, destination, expect
 }
 
 func stageInLab(exe string, trusted ed25519.PublicKey, destination, expectedEXESHA256 string) (_ *unifiedbundle.Manifest, err error) {
+ return stageInLabWithFinalHook(exe,trusted,destination,expectedEXESHA256,nil)
+}
+
+// The hook is private and always nil from both exported entrypoints. It
+// permits a deterministic CI regression: mutate a LAB EXE after extraction,
+// before the final source-integrity gate, and prove cleanup is fail-closed.
+func stageInLabWithFinalHook(exe string, trusted ed25519.PublicKey, destination, expectedEXESHA256 string, beforeFinalCheck func()) (_ *unifiedbundle.Manifest, err error) {
  if len(trusted)!=ed25519.PublicKeySize{return nil,errors.New("trusted publisher key required")}
  if destination=="" || !filepath.IsAbs(destination) || !strings.HasPrefix(filepath.Base(destination),"VOLVE-CI-"){
   return nil,errors.New("only an absolute VOLVE-CI- lab directory is allowed")
@@ -98,6 +105,24 @@ func stageInLab(exe string, trusted ed25519.PublicKey, destination, expectedEXES
  }
  m,err:=unifiedbundle.Verify(destination,trusted)
  if err!=nil{return nil,fmt.Errorf("staged output failed second signature/hash verification: %w",err)}
+ if beforeFinalCheck!=nil {beforeFinalCheck()}
+ // The opened PE is the exact source used by archive/zip. An in-place
+ // change between the first SHA check and extraction MUST invalidate
+ // staging; the deferred cleanup removes all partially verified files.
+ // This is NOT an anti-TOCTOU substitute for protected production staging.
+ if expectedEXESHA256!="" {
+  if _,err=f.Seek(0,io.SeekStart);err!=nil{return nil,fmt.Errorf("final opened EXE rewind: %w",err)}
+  finalDigest:=sha256.New()
+  finalBytes,hashErr:=io.Copy(finalDigest,f)
+  if hashErr!=nil{return nil,fmt.Errorf("final opened EXE fingerprint: %w",hashErr)}
+  finalState,statErr:=f.Stat()
+  if statErr!=nil || !os.SameFile(st,finalState) || finalBytes!=st.Size() || finalState.Size()!=st.Size() {
+   return nil,errors.New("opened EXE changed during staging (identity or size)")
+  }
+  if hex.EncodeToString(finalDigest.Sum(nil))!=expectedEXESHA256 {
+   return nil,errors.New("opened EXE changed during staging (SHA256 mismatch)")
+  }
+ }
  complete=true
  return m,nil
 }
