@@ -70,12 +70,12 @@ func InspectAndPlanWithBrowserCensusUnderProtectedLeaseReadOnly(
  var emptyPlan InstallerPlanReadOnly
  var emptyPolicy motorupdate.WindowsBrowserPolicyEvidence
  var emptySnapshot motorupdate.ProtectionSnapshot
- if ctx==nil{return emptyReview,emptyPlan,emptyPolicy,errors.New("missing Windows inspection context")}
- if err:=ctx.Err();err!=nil{return emptyReview,emptyPlan,emptyPolicy,err}
- if policyInspect==nil{return emptyReview,emptyPlan,emptyPolicy,errors.New("fixed read-only browser policy inspector required")}
+ if ctx==nil{return emptyReview,emptyPlan,emptyPolicy,emptySnapshot,errors.New("missing Windows inspection context")}
+ if err:=ctx.Err();err!=nil{return emptyReview,emptyPlan,emptyPolicy,emptySnapshot,err}
+ if policyInspect==nil{return emptyReview,emptyPlan,emptyPolicy,emptySnapshot,errors.New("fixed read-only browser policy inspector required")}
  release,err:=motorupdate.AcquireProtectedResidentTransitionLease(ctx)
- if err!=nil{return emptyReview,emptyPlan,emptyPolicy,fmt.Errorf("protected SYSTEM/updater mutex denied: %w",err)}
- if release==nil{return emptyReview,emptyPlan,emptyPolicy,errors.New("protected OS mutex missing release callback")}
+ if err!=nil{return emptyReview,emptyPlan,emptyPolicy,emptySnapshot,fmt.Errorf("protected SYSTEM/updater mutex denied: %w",err)}
+ if release==nil{return emptyReview,emptyPlan,emptyPolicy,emptySnapshot,errors.New("protected OS mutex missing release callback")}
  defer release()
 
  snapshotInspectors:=motorupdate.WindowsProtectionSnapshotInspectors{
@@ -107,6 +107,6 @@ func InspectAndPlanWithBrowserCensusUnderProtectedLeaseReadOnly(
   plan.Disposition!="READ_ONLY_PLAN_NOT_AN_INSTALLATION_PERMIT" {
   return emptyReview,emptyPlan,emptyPolicy,emptySnapshot,errors.New("preinstallation browser census unexpectedly authorized any write")
  }
- if err:=ctx.Err();err!=nil{return emptyReview,emptyPlan,emptyPolicy,err}
+ if err:=ctx.Err();err!=nil{return emptyReview,emptyPlan,emptyPolicy,emptySnapshot,err}
  return review,plan,afterBrowser,afterSnapshot,nil
 }
