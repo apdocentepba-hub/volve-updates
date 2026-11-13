@@ -403,7 +403,7 @@ jobs:
               'TestCountWindowsHostsBlockedRulesDoesNotReturnNames',
               'TestWindowsHostsFileReadOnlyHashAndNoContentExport',
               'TestWindowsHostsFileReadOnlyRejectsOversizedFile',
-              'TestWindowsProtectionSnapshotCapturesAllExistingSurfaces',
+              'TestWindowsProtectionSnapshotCapturesAllDeclaredSurfaces',
               'TestWindowsProtectionSnapshotRequiresPinnedExistingCatalogTask',
               'TestWindowsProtectionSnapshotRejectsUnknownOrContradictoryTaskInventory',
               'TestWindowsProtectionSnapshotRejectsMissingInspectorsAndCancelledContext',
