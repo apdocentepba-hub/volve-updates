@@ -32,6 +32,7 @@ type WindowsProtectionSnapshotInspectors struct {
  Hosts WindowsHostsFileInspect
  Browser WindowsBrowserPolicyInspect
  Tasks WindowsFreshTaskInspect
+ DNS WindowsReadOnlyPowerShell
 }
 
 func DefaultWindowsHostsFileInspect(ctx context.Context)(WindowsHostsFileEvidence,error){
@@ -126,7 +127,7 @@ func InspectWindowsProtectionSnapshotReadOnly(
  var emptyBrowser WindowsBrowserPolicyEvidence
  if ctx==nil{return zero,emptyBrowser,errors.New("protection snapshot context required")}
  if err:=ctx.Err();err!=nil{return zero,emptyBrowser,err}
- if inspectors.Hosts==nil||inspectors.Browser==nil||inspectors.Tasks==nil{
+ if inspectors.Hosts==nil||inspectors.Browser==nil||inspectors.Tasks==nil||inspectors.DNS==nil{
   return zero,emptyBrowser,errors.New("hosts, browser and Task Scheduler inspectors are all required")
  }
  hosts,err:=inspectors.Hosts(ctx)
@@ -139,6 +140,8 @@ func InspectWindowsProtectionSnapshotReadOnly(
  if err!=nil{return zero,emptyBrowser,fmt.Errorf("browser policy baseline unavailable: %w",err)}
  tasks,err:=InspectWindowsVOLVETasksReadOnly(ctx,expectedCatalogExecutable,expectedCatalogArguments,inspectors.Tasks)
  if err!=nil{return zero,emptyBrowser,fmt.Errorf("VOLVE catalog task baseline unavailable: %w",err)}
+ dns,err:=InspectWindowsDNSAssignmentProvenanceReadOnly(ctx,inspectors.DNS)
+ if err!=nil{return zero,emptyBrowser,fmt.Errorf("original DNS assignment provenance unavailable: %w",err)}
  var catalogDigest string
  switch {
  case tasks.VOLVETaskCount==0&&len(tasks.UnknownTaskNames)==0&&tasks.VerifiedCatalogTask==nil:
@@ -158,6 +161,7 @@ func InspectWindowsProtectionSnapshotReadOnly(
   EdgePoliciesSHA256:byName["edge"],
   FirefoxPoliciesSHA256:byName["firefox"],
   CatalogTaskDefinitionSHA256:catalogDigest,
+  DNSAdaptersSHA256:dns.SHA256,
  }
  if !validProtectionSnapshot(snapshot){
   return zero,emptyBrowser,errors.New("complete hosts/browser/catalog protection baseline could not be assembled")
@@ -171,5 +175,6 @@ func DefaultWindowsProtectionSnapshotInspectors()WindowsProtectionSnapshotInspec
   Hosts:DefaultWindowsHostsFileInspect,
   Browser:DefaultWindowsBrowserPolicyInspect,
   Tasks:DefaultWindowsFreshTaskInspect,
+  DNS:DefaultWindowsReadOnlyPowerShell,
  }
 }
