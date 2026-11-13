@@ -384,7 +384,7 @@ jobs:
               if($passes.Count -ne 1 -or $skips.Count -ne 0){throw ('Mandatory bridge test skipped or missing: '+$name)}
             }
             Write-Host 'BROWSER POLICY CHECKPOINT: execute focused native registry fingerprint tests in original motorupdate module'
-            $policyEvents=@(go test -mod=mod -count=1 -timeout 3m -json -run '^TestVOLVEBrowserPolicyReadOnly|^TestVOLVEBrowserPolicyRealWindowsRegistryNativeReadOnly$|^TestFreshMotorPreservesHostsBrowserPoliciesAndCatalog$|^TestFreshMotorDetectsPartialProtectionRegressions$|^TestProtectionSnapshotCannotPassWhenAnySurfaceWasNotCaptured$' volve-browser-protection/motorupdate)
+            $policyEvents=@(go test -mod=mod -count=1 -timeout 3m -json -run '^TestVOLVEBrowserPolicyReadOnly|^TestVOLVEBrowserPolicyRealWindowsRegistryNativeReadOnly$|^TestFreshMotorPreservesHostsBrowserPoliciesAndCatalog$|^TestFreshMotorDetectsPartialProtectionRegressions$|^TestProtectionSnapshotCannotPassWhenAnySurfaceWasNotCaptured$|^TestCountWindowsHostsBlockedRulesDoesNotReturnNames$|^TestWindowsHostsFileReadOnlyHashAndNoContentExport$|^TestWindowsHostsFileReadOnlyRejectsOversizedFile$|^TestWindowsProtectionSnapshotCapturesAllExistingSurfaces$|^TestWindowsProtectionSnapshotRequiresPinnedExistingCatalogTask$|^TestWindowsProtectionSnapshotRejectsUnknownOrContradictoryTaskInventory$|^TestWindowsProtectionSnapshotRejectsMissingInspectorsAndCancelledContext$|^TestWindowsProtectionSnapshotCannotPassIfHostBaselineIsMalformed$' volve-browser-protection/motorupdate)
             if($LASTEXITCODE -ne 0){
               $policyEvents | Select-Object -Last 60 | Write-Host
               throw 'Native browser policy fingerprint tests failed'
@@ -399,7 +399,15 @@ jobs:
               'TestVOLVEBrowserPolicyRealWindowsRegistryNativeReadOnly',
               'TestFreshMotorPreservesHostsBrowserPoliciesAndCatalog',
               'TestFreshMotorDetectsPartialProtectionRegressions',
-              'TestProtectionSnapshotCannotPassWhenAnySurfaceWasNotCaptured'
+              'TestProtectionSnapshotCannotPassWhenAnySurfaceWasNotCaptured',
+              'TestCountWindowsHostsBlockedRulesDoesNotReturnNames',
+              'TestWindowsHostsFileReadOnlyHashAndNoContentExport',
+              'TestWindowsHostsFileReadOnlyRejectsOversizedFile',
+              'TestWindowsProtectionSnapshotCapturesAllExistingSurfaces',
+              'TestWindowsProtectionSnapshotRequiresPinnedExistingCatalogTask',
+              'TestWindowsProtectionSnapshotRejectsUnknownOrContradictoryTaskInventory',
+              'TestWindowsProtectionSnapshotRejectsMissingInspectorsAndCancelledContext',
+              'TestWindowsProtectionSnapshotCannotPassIfHostBaselineIsMalformed'
             )){
               $passes=@($policyRecords | Where-Object {$_.Test -eq $name -and $_.Action -eq 'pass'})
               $skips=@($policyRecords | Where-Object {$_.Test -eq $name -and $_.Action -eq 'skip'})
@@ -439,7 +447,7 @@ jobs:
             $protectedRaw=(& go run -mod=mod ./hostroutebridge/cmd/preview --review-under-protected-lock | Out-String).Trim()
             if($LASTEXITCODE -ne 0){throw 'Protected native Windows preflight execution failed'}
             $protected=$protectedRaw | ConvertFrom-Json -ErrorAction Stop
-            if($protectedRaw -match 'ContentSHA256|URLBlocklist|PrivateURL'){
+            if($protectedRaw -match 'ContentSHA256|URLBlocklist|PrivateURL|HostsSHA256|CatalogTaskDefinitionSHA256'){
               throw 'Protected setup report leaked raw policy registry names or fingerprints'
             }
             if($protected.component -ne 'VOLVE-0287-WINDOWS-SETUP-PREVIEW-CI' -or
@@ -449,6 +457,9 @@ jobs:
                $protected.synthetic_ci_signed_container_verified -ne $true -or
                $protected.protected_transition_mutex_held_during_review -ne $true -or
                $protected.browser_registry_keys_checked -ne 3 -or
+               $protected.hosts_baseline_checked -ne $true -or
+               $protected.catalog_task_baseline_checked -ne $true -or
+               $protected.protection_snapshot_stable_under_lock -ne $true -or
                $protected.browser_registry_numbered_entries -lt 0 -or
                $protected.browser_policy_census_stable_under_lock -ne $true -or
                $protected.browser_policy_values_exported -ne $false -or
