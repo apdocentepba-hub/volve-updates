@@ -157,6 +157,6 @@ func TestProtectedBrowserCensusRunsNativeRegistryInventoryUnderSameLease(t *test
   t.Fatalf("registry + signed Windows census was not bounded and review-only: reads=%d review=%+v plan=%+v policy=%+v",
    reads,review,plan,counts)
  }
- t.Logf("PASS VOLVE_PROTECTED_BROWSER_REGISTRY_NATIVE_Windows keys=3 numbered=%d NO_URL_VALUES NO_INSTALL",
+ t.Logf("PASS VOLVE_PROTECTED_BROWSER_REGISTRY_NATIVE_WITH_DNS_FIXTURE keys=3 numbered=%d NO_URL_VALUES NO_INSTALL",
   counts.TotalNumberedEntries)
 }
