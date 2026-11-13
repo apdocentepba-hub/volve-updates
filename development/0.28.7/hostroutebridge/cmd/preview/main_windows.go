@@ -30,6 +30,7 @@ type setupPreviewReport struct {
  Mode bridge.PlanMode `json:"next_review_mode"`
  WindowsInventories int `json:"windows_inventories_checked"`
  SignedCIContainerVerified bool `json:"synthetic_ci_signed_container_verified"`
+ ProtectedTransitionMutexHeld bool `json:"protected_transition_mutex_held_during_review"`
  Preconditions []string `json:"unmet_production_prerequisites"`
  CanInstall bool `json:"can_install"`
  CanUpgrade bool `json:"can_upgrade"`
@@ -39,7 +40,17 @@ type setupPreviewReport struct {
 }
 
 func inspectCIHostReadOnly(ctx context.Context) (setupPreviewReport,error) {
+ return inspectCIHostWithProtectedOption(ctx,false)
+}
+
+func inspectCIHostUnderProtectedMutexReadOnly(ctx context.Context) (setupPreviewReport,error) {
+ return inspectCIHostWithProtectedOption(ctx,true)
+}
+
+func inspectCIHostWithProtectedOption(ctx context.Context, holdProtectedMutex bool) (setupPreviewReport,error) {
  var refused setupPreviewReport
+ if ctx==nil{return refused,errors.New("a non-nil Windows inspection context is required")}
+ if err:=ctx.Err();err!=nil{return refused,err}
  // This binary is not for customer machines. Environment gating is a CI
  // boundary, not a replacement for the future signed production installer.
  if os.Getenv("GITHUB_ACTIONS")!="true" ||
@@ -68,10 +79,21 @@ func inspectCIHostReadOnly(ctx context.Context) (setupPreviewReport,error) {
  root,err:=os.MkdirTemp(runnerTemp,"VOLVE-CI-SetupPreview-")
  if err!=nil{return refused,fmt.Errorf("temporary CI inventory root: %w",err)}
  defer os.Remove(root) // only delete our own newly-created empty root
- review,plan,err:=bridge.InspectAndPlanWindowsHostReadOnly(
-  ctx,exe,ed25519.PublicKey(pub),cert,fileHash,root,
-  motorupdate.DefaultWindowsMotorRouteInspectors(),
- )
+ // The protected path is the important rehearsal: the real signed package
+ // and entire live Windows six-inventory census are rechecked under the
+ // same native kernel mutex owned by the updater and SYSTEM watchdog.
+ var review bridge.Review
+ var plan bridge.InstallerPlanReadOnly
+ inspectors:=motorupdate.DefaultWindowsMotorRouteInspectors()
+ if holdProtectedMutex {
+  review,plan,err=bridge.InspectAndPlanUnderProtectedLeaseReadOnly(
+   ctx,exe,ed25519.PublicKey(pub),cert,fileHash,root,inspectors,
+  )
+ }else{
+  review,plan,err=bridge.InspectAndPlanWindowsHostReadOnly(
+   ctx,exe,ed25519.PublicKey(pub),cert,fileHash,root,inspectors,
+  )
+ }
  if err!=nil{return refused,fmt.Errorf("signed Windows host review rejected: %w",err)}
  if review.InstallAuthorized||review.UpgradeAuthorized||review.CanModifyDNS||
     plan.CanInstall||plan.CanUpgrade||plan.CanChangeDNS||plan.CanChangeTasks||
@@ -88,6 +110,7 @@ func inspectCIHostReadOnly(ctx context.Context) (setupPreviewReport,error) {
   Route:review.Route,Mode:plan.Mode,
   WindowsInventories:review.InventoriesChecked,
   SignedCIContainerVerified:true,
+  ProtectedTransitionMutexHeld:holdProtectedMutex,
   Preconditions:append([]string(nil),plan.Prerequisites...),
   CanInstall:false,CanUpgrade:false,CanChangeDNS:false,CanChangeTasks:false,
   Status:"NO_INSTALL_OR_DNS_CHANGE_AUTHORIZED",
@@ -95,13 +118,19 @@ func inspectCIHostReadOnly(ctx context.Context) (setupPreviewReport,error) {
 }
 
 func main() {
- if len(os.Args)!=2||os.Args[1]!="--review-only"{
-  fmt.Fprintln(os.Stderr,"VOLVE setup preview: --review-only (CI ONLY; NO INSTALL)")
+ if len(os.Args)!=2||(os.Args[1]!="--review-only"&&os.Args[1]!="--review-under-protected-lock"){
+  fmt.Fprintln(os.Stderr,"VOLVE setup preview: --review-only | --review-under-protected-lock (CI ONLY; NO INSTALL)")
   os.Exit(2)
  }
  ctx,cancel:=context.WithTimeout(context.Background(),125*time.Second)
  defer cancel()
- report,err:=inspectCIHostReadOnly(ctx)
+ var report setupPreviewReport
+ var err error
+ if os.Args[1]=="--review-under-protected-lock"{
+  report,err=inspectCIHostUnderProtectedMutexReadOnly(ctx)
+ }else{
+  report,err=inspectCIHostReadOnly(ctx)
+ }
  if err!=nil{
   fmt.Fprintln(os.Stderr,"VOLVE setup review failed closed:",err)
   os.Exit(1)
