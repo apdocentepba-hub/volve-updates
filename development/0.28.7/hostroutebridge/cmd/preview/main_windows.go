@@ -36,6 +36,7 @@ type setupPreviewReport struct {
  BrowserPolicyCensusStable bool `json:"browser_policy_census_stable_under_lock"`
  HostsBaselineChecked bool `json:"hosts_baseline_checked"`
  CatalogTaskBaselineChecked bool `json:"catalog_task_baseline_checked"`
+ DNSAssignmentBaselineChecked bool `json:"dns_assignment_baseline_checked"`
  PartialProtectionSnapshotStable bool `json:"partial_protection_snapshot_stable_under_lock"`
  BrowserPolicyValuesExported bool `json:"browser_policy_values_exported"`
  BrowserEnforcementVerified bool `json:"browser_enforcement_verified"`
@@ -104,6 +105,7 @@ func inspectCIHostWithProtectedOption(ctx context.Context, holdProtectedMutex bo
    protectionSnapshot.HostsSHA256==""||protectionSnapshot.ChromePoliciesSHA256==""||
    protectionSnapshot.EdgePoliciesSHA256==""||protectionSnapshot.FirefoxPoliciesSHA256==""||
    protectionSnapshot.CatalogTaskDefinitionSHA256==""||
+   protectionSnapshot.DNSAdaptersSHA256==""||
    browser.BrowserEnforcementVerified||browser.DNSMotorVerified){
    err=errors.New("protected browser census could not prove three independent read-only observations")
   }
@@ -134,9 +136,11 @@ func inspectCIHostWithProtectedOption(ctx context.Context, holdProtectedMutex bo
   BrowserPolicyCensusStable:holdProtectedMutex&&len(browser.Records)==3,
   HostsBaselineChecked:holdProtectedMutex&&protectionSnapshot.HostsSHA256!="",
   CatalogTaskBaselineChecked:holdProtectedMutex&&protectionSnapshot.CatalogTaskDefinitionSHA256!="",
+  DNSAssignmentBaselineChecked:holdProtectedMutex&&protectionSnapshot.DNSAdaptersSHA256!="",
   PartialProtectionSnapshotStable:holdProtectedMutex&&protectionSnapshot.HostsSHA256!=""&&
    protectionSnapshot.ChromePoliciesSHA256!=""&&protectionSnapshot.EdgePoliciesSHA256!=""&&
-   protectionSnapshot.FirefoxPoliciesSHA256!=""&&protectionSnapshot.CatalogTaskDefinitionSHA256!="",
+   protectionSnapshot.FirefoxPoliciesSHA256!=""&&protectionSnapshot.CatalogTaskDefinitionSHA256!=""&&
+   protectionSnapshot.DNSAdaptersSHA256!="",
   BrowserPolicyValuesExported:false,
   BrowserEnforcementVerified:false,
   Preconditions:append([]string(nil),plan.Prerequisites...),
