@@ -107,8 +107,9 @@ func readResidentDNSName(packet []byte, pos int) (string,int,bool) {
  return "",0,false
 }
 
-// Require the A/AAAA ANSWER owner to match the QUERY name. An unrelated
-// address is not evidence that the restored DNS engine is healthy.
+// Verify that an answer belongs to the requested name directly or through
+// a bounded, internally consistent CNAME alias chain. Unrelated A/AAAA RRs
+// cannot make an invalid recovery appear healthy. This is a read-only probe.
 func hasResidentDNSAddress(reply []byte, off int, qtype uint16) bool {
  questionName,questionEnd,ok:=readResidentDNSName(reply,12)
  if !ok||questionEnd+4!=off||off>len(reply)||questionName==""{return false}
@@ -116,6 +117,10 @@ func hasResidentDNSAddress(reply []byte, off int, qtype uint16) bool {
   binary.BigEndian.Uint16(reply[questionEnd+2:off])!=1{return false}
  answers:=int(binary.BigEndian.Uint16(reply[6:8]))
  if answers<1||answers>64{return false}
+ // Parse ALL answers before accepting any; malformed trailing entries
+ // must not turn a partial reply into certified DNS health.
+ addresses:=make(map[string]bool)
+ aliases:=make(map[string]string)
  for n:=0;n<answers;n++ {
   owner,next,ok:=readResidentDNSName(reply,off)
   if !ok{return false}
@@ -126,9 +131,33 @@ func hasResidentDNSAddress(reply []byte, off int, qtype uint16) bool {
   dataLen:=int(binary.BigEndian.Uint16(reply[off+8:off+10]))
   off+=10
   if off+dataLen>len(reply){return false}
-  if owner==questionName && recordType==qtype&&recordClass==1&&
-   ((qtype==1&&dataLen==4)||(qtype==28&&dataLen==16)){return true}
+  if recordClass==1 {
+   switch recordType {
+   case 5: // CNAME: RDATA is a DNS-encoded name, possibly compressed
+    if dataLen<2{return false}
+    target,after,valid:=readResidentDNSName(reply,off)
+    if !valid||after!=off+dataLen || target==""{return false}
+    if prior,exists:=aliases[owner];exists && prior!=target{return false}
+    aliases[owner]=target
+   case 1,28:
+    if recordType==qtype &&
+      ((qtype==1&&dataLen==4)||(qtype==28&&dataLen==16)){
+     addresses[owner]=true
+    }
+   }
+  }
   off+=dataLen
+ }
+ // Up to eight linked aliases; detect circular CNAME references and reject.
+ name:=questionName
+ seen:=make(map[string]bool)
+ for hop:=0;hop<=8;hop++ {
+  if seen[name]{return false}
+  seen[name]=true
+  if addresses[name]{return true}
+  next,exists:=aliases[name]
+  if !exists || hop==8{return false}
+  name=next
  }
  return false
 }
