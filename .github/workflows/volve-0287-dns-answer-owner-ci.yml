@@ -2,7 +2,7 @@ name: VOLVE 0.28.7 DNS answer-owner recovery gate (NO RELEASE)
 on:
   push:
     branches:
-      - work/0287-dns-owner-health-guard-20261113
+      - work/0287-dns-cname-chain-guard-20261113
   workflow_dispatch:
 permissions:
   contents: read
