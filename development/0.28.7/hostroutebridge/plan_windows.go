@@ -53,6 +53,7 @@ var mandatoryBeforeAnyMutation = []string{
     "native-NTFS-ACL-and-rollback-restart-evidence",
  "durable-hosts-browser-catalog-and-original-DNS-snapshot",
  "persist-and-seal-original-DNS-source-and-exact-adapter-identity",
+ "inventory-and-preserve-DoH-NRPT-and-group-policy-DNS-overrides",
  "restore-hosts-browser-catalog-and-DNS-after-crash-tested",
 }
 
