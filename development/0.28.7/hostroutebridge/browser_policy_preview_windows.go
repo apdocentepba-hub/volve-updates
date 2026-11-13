@@ -53,9 +53,9 @@ func validateStableReadOnlyBrowserEvidence(before,after motorupdate.WindowsBrows
  return nil
 }
 
-// InspectAndPlanWithBrowserCensusUnderProtectedLeaseReadOnly observes the
-// three registry policy groups on both sides of the dual-signed Windows
-// six-inventory census, all under the SAME OS-wide protected mutex.
+// InspectAndPlanWithBrowserCensusUnderProtectedLeaseReadOnly observes hosts,
+// browser policies and catalog-task identity before/after the signed six-way
+// Windows census, all under the SAME OS-wide protected mutex.
 // It returns only counts and SHA-256 fingerprints. No raw values
 // are exported and no installation capability can result.
 func InspectAndPlanWithBrowserCensusUnderProtectedLeaseReadOnly(
