@@ -36,7 +36,7 @@ type setupPreviewReport struct {
  BrowserPolicyCensusStable bool `json:"browser_policy_census_stable_under_lock"`
  HostsBaselineChecked bool `json:"hosts_baseline_checked"`
  CatalogTaskBaselineChecked bool `json:"catalog_task_baseline_checked"`
- ProtectionSnapshotStable bool `json:"protection_snapshot_stable_under_lock"`
+ PartialProtectionSnapshotStable bool `json:"partial_protection_snapshot_stable_under_lock"`
  BrowserPolicyValuesExported bool `json:"browser_policy_values_exported"`
  BrowserEnforcementVerified bool `json:"browser_enforcement_verified"`
  Preconditions []string `json:"unmet_production_prerequisites"`
@@ -134,7 +134,7 @@ func inspectCIHostWithProtectedOption(ctx context.Context, holdProtectedMutex bo
   BrowserPolicyCensusStable:holdProtectedMutex&&len(browser.Records)==3,
   HostsBaselineChecked:holdProtectedMutex&&protectionSnapshot.HostsSHA256!="",
   CatalogTaskBaselineChecked:holdProtectedMutex&&protectionSnapshot.CatalogTaskDefinitionSHA256!="",
-  ProtectionSnapshotStable:holdProtectedMutex&&protectionSnapshot.HostsSHA256!=""&&
+  PartialProtectionSnapshotStable:holdProtectedMutex&&protectionSnapshot.HostsSHA256!=""&&
    protectionSnapshot.ChromePoliciesSHA256!=""&&protectionSnapshot.EdgePoliciesSHA256!=""&&
    protectionSnapshot.FirefoxPoliciesSHA256!=""&&protectionSnapshot.CatalogTaskDefinitionSHA256!="",
   BrowserPolicyValuesExported:false,
