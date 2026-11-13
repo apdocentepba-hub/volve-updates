@@ -2,6 +2,9 @@ package singlefile
 
 import (
  "crypto/ed25519"
+ "crypto/sha256"
+ "encoding/hex"
+ "strings"
  "crypto/rand"
  "os"
  "path/filepath"
@@ -42,4 +45,32 @@ func TestStageInLabRejectsSymlinkedParent(t *testing.T){
  linked:=filepath.Join(t.TempDir(),"link")
  if err:=os.Symlink(t.TempDir(),linked);err!=nil{t.Skip("symlink unavailable: "+err.Error())}
  if _,err:=StageInLab(exe,pub,filepath.Join(linked,"VOLVE-CI-test"));err==nil{t.Fatal("symlink parent accepted")}
+}
+
+func TestStageInLabPinnedRequiresSameEXEBytesAsPublisherGate(t *testing.T) {
+ root,pub,_:=fixture(t)
+ exe:=filepath.Join(t.TempDir(),"signed-bundle-lab.exe")
+ if err:=Assemble(fakePE(t),root,exe,pub);err!=nil{t.Fatal(err)}
+ raw,err:=os.ReadFile(exe);if err!=nil{t.Fatal(err)}
+ sum:=sha256.Sum256(raw)
+ correct:=hex.EncodeToString(sum[:])
+ bad:=strings.Repeat("0",64)
+ if bad==correct {bad=strings.Repeat("1",64)}
+ parent:=t.TempDir()
+ wrong:=filepath.Join(parent,"VOLVE-CI-untrusted-path-replacement")
+ if _,err:=StageInLabPinned(exe,pub,wrong,bad);err==nil||!strings.Contains(err.Error(),"opened EXE SHA256"){
+  t.Fatalf("mismatched Authenticode-verified EXE hash was not rejected: %v",err)
+ }
+ if _,err:=os.Lstat(wrong);!os.IsNotExist(err){t.Fatal("invalid EXE pin wrote any staging directory")}
+ missing:=filepath.Join(parent,"VOLVE-CI-pin-missing")
+ if _,err:=StageInLabPinned(exe,pub,missing,"");err==nil{t.Fatal("missing external EXE pin accepted")}
+ if _,err:=os.Lstat(missing);!os.IsNotExist(err){t.Fatal("empty EXE pin wrote a staging directory")}
+ malformed:=filepath.Join(parent,"VOLVE-CI-pin-uppercase")
+ if _,err:=StageInLabPinned(exe,pub,malformed,strings.ToUpper(correct));err==nil{t.Fatal("noncanonical external EXE pin accepted")}
+ if _,err:=os.Lstat(malformed);!os.IsNotExist(err){t.Fatal("noncanonical EXE pin wrote a staging directory")}
+ good:=filepath.Join(parent,"VOLVE-CI-valid-exact-exe")
+ m,err:=StageInLabPinned(exe,pub,good,correct)
+ if err!=nil{t.Fatalf("exact opened EXE failed signed staging: %v",err)}
+ if len(m.Components)!=7{t.Fatalf("expected exactly seven public parts, got %d",len(m.Components))}
+ if _,err:=unifiedbundle.Verify(good,pub);err!=nil{t.Fatal(err)}
 }
