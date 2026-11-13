@@ -66,24 +66,42 @@ func InspectAndPlanWithBrowserCensusUnderProtectedLeaseReadOnly(
  readers motorupdate.WindowsMotorRouteInspectors,
  policyInspect motorupdate.WindowsBrowserPolicyInspect,
 ) (Review,InstallerPlanReadOnly,motorupdate.WindowsBrowserPolicyEvidence,motorupdate.ProtectionSnapshot,error) {
- var emptyReview Review
- var emptyPlan InstallerPlanReadOnly
- var emptyPolicy motorupdate.WindowsBrowserPolicyEvidence
- var emptySnapshot motorupdate.ProtectionSnapshot
- if ctx==nil{return emptyReview,emptyPlan,emptyPolicy,emptySnapshot,errors.New("missing Windows inspection context")}
- if err:=ctx.Err();err!=nil{return emptyReview,emptyPlan,emptyPolicy,emptySnapshot,err}
- if policyInspect==nil{return emptyReview,emptyPlan,emptyPolicy,emptySnapshot,errors.New("fixed read-only browser policy inspector required")}
- release,err:=motorupdate.AcquireProtectedResidentTransitionLease(ctx)
- if err!=nil{return emptyReview,emptyPlan,emptyPolicy,emptySnapshot,fmt.Errorf("protected SYSTEM/updater mutex denied: %w",err)}
- if release==nil{return emptyReview,emptyPlan,emptyPolicy,emptySnapshot,errors.New("protected OS mutex missing release callback")}
- defer release()
-
  snapshotInspectors:=motorupdate.WindowsProtectionSnapshotInspectors{
   Hosts:motorupdate.DefaultWindowsHostsFileInspect,
   Browser:policyInspect,
   Tasks:readers.Host.Tasks,
   DNS:motorupdate.DefaultWindowsReadOnlyPowerShell,
  }
+ return InspectAndPlanWithProtectionSnapshotUnderProtectedLeaseReadOnly(
+  ctx,signedEXE,publisherPublicKey,windowsSignerCertSHA256,signedEXESHA256,
+  installedRoot,readers,snapshotInspectors,
+ )
+}
+
+// InspectAndPlanWithProtectionSnapshotUnderProtectedLeaseReadOnly is the
+// injectable, still non-authorizing transaction review. Production supplies
+// native readers; tests can supply deterministic DNS evidence while still
+// exercising the real Win32 mutex and live Windows host census.
+func InspectAndPlanWithProtectionSnapshotUnderProtectedLeaseReadOnly(
+ ctx context.Context,
+ signedEXE string,
+ publisherPublicKey ed25519.PublicKey,
+ windowsSignerCertSHA256, signedEXESHA256, installedRoot string,
+ readers motorupdate.WindowsMotorRouteInspectors,
+ snapshotInspectors motorupdate.WindowsProtectionSnapshotInspectors,
+) (Review,InstallerPlanReadOnly,motorupdate.WindowsBrowserPolicyEvidence,motorupdate.ProtectionSnapshot,error) {
+ var emptyReview Review
+ var emptyPlan InstallerPlanReadOnly
+ var emptyPolicy motorupdate.WindowsBrowserPolicyEvidence
+ var emptySnapshot motorupdate.ProtectionSnapshot
+ if ctx==nil{return emptyReview,emptyPlan,emptyPolicy,emptySnapshot,errors.New("missing Windows inspection context")}
+ if err:=ctx.Err();err!=nil{return emptyReview,emptyPlan,emptyPolicy,emptySnapshot,err}
+ if snapshotInspectors.Browser==nil{return emptyReview,emptyPlan,emptyPolicy,emptySnapshot,errors.New("fixed read-only browser policy inspector required")}
+ release,err:=motorupdate.AcquireProtectedResidentTransitionLease(ctx)
+ if err!=nil{return emptyReview,emptyPlan,emptyPolicy,emptySnapshot,fmt.Errorf("protected SYSTEM/updater mutex denied: %w",err)}
+ if release==nil{return emptyReview,emptyPlan,emptyPolicy,emptySnapshot,errors.New("protected OS mutex missing release callback")}
+ defer release()
+
  beforeSnapshot,beforeBrowser,err:=motorupdate.InspectWindowsProtectionSnapshotReadOnly(
   ctx,"","",snapshotInspectors,
  )
