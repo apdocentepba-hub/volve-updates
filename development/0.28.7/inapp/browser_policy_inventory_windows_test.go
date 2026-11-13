@@ -26,7 +26,7 @@ func TestVOLVEBrowserPolicyReadOnlyCountsDoNotClaimEffectiveProtection(t *testin
   return browserPolicyJSON(175,183,174),nil
  })
  if err!=nil{t.Fatal(err)}
- if called!=1||e.TotalNumberedEntries!=532||len(e.Records)!=3||!e.NoRegistryValuesCollected ||
+ if called!=1||e.TotalNumberedEntries!=532||len(e.Records)!=3||!e.NoRegistryValuesExported ||
   e.BrowserEnforcementVerified||e.DNSMotorVerified{
   t.Fatalf("registry inventory falsely proved browser/DNS blocking: %+v",e)
  }
