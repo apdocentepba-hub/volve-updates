@@ -2,9 +2,10 @@
 
 package motorupdate
 
-// A read-only PARTIAL baseline of three existing protection surfaces that a
-// future installer must preserve: hosts file, browser policies and the catalog
-// task. DNS adapter provenance and motor/task recovery are separate evidence.
+// A read-only PARTIAL baseline of four existing protection surfaces that a
+// future installer must preserve: hosts file, browser policies, catalog task,
+// and per-adapter IPv4/IPv6 DNS assignment mode/static servers. Motor/task
+// recovery and durable restoration are separate evidence.
 // Only fingerprints/counts are returned; this is NOT a durable restore backup.
 import (
  "context"
