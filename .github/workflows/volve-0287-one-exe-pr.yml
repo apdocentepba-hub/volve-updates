@@ -425,7 +425,7 @@ jobs:
                $protected.browser_registry_keys_checked -ne 3 -or
                $protected.browser_registry_numbered_entries -lt 0 -or
                $protected.browser_policy_census_stable_under_lock -ne $true -or
-               $protected.browser_policy_values_collected -ne $false -or
+               $protected.browser_policy_values_exported -ne $false -or
                $protected.browser_enforcement_verified -ne $false -or
                $protected.result -ne 'REVIEW_ONLY' -or
                $protected.can_install -ne $false -or
