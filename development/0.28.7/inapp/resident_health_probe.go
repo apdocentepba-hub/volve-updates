@@ -12,6 +12,7 @@ import (
  "io"
  "net"
  "strconv"
+ "strings"
  "time"
 )
 
@@ -69,65 +70,65 @@ func probeResidentDNS(ctx context.Context,network,address string,qtype uint16)er
  return nil
 }
 
-// Verify an actual address RR, not just an ANCOUNT field with no RDATA.
-// Safely skip compressed or uncompressed owner names without dereferencing
-// compression pointers. Reject truncated or malformed resource records.
+// Parse owner names without trusting DNS compression offsets: all pointers
+// must move backwards inside the packet. Return the RR-field start offset.
+func readResidentDNSName(packet []byte, pos int) (string,int,bool) {
+ if pos<12 || pos>=len(packet){return "",0,false}
+ var labels []string
+ resume:=-1
+ totalLength:=0
+ for steps:=0;steps<128;steps++ {
+  if pos<12||pos>=len(packet){return "",0,false}
+  size:=packet[pos]
+  if size&0xc0==0xc0 {
+   if pos+1>=len(packet){return "",0,false}
+   pointer:=int(size&0x3f)<<8|int(packet[pos+1])
+   if pointer<12||pointer>=pos{return "",0,false}
+   if resume<0{resume=pos+2}
+   pos=pointer
+   continue
+  }
+  if size&0xc0!=0{return "",0,false}
+  pos++
+  if size==0 {
+   if len(labels)==0{return "",0,false}
+   if resume<0{resume=pos}
+   return strings.Join(labels,"."),resume,true
+  }
+  if size>63||pos+int(size)>len(packet){return "",0,false}
+  label:=packet[pos:pos+int(size)]
+  // A dot within one label is not a real DNS label separator.
+  if bytes.IndexByte(label,'.')>=0{return "",0,false}
+  totalLength+=int(size)+1
+  if totalLength>253{return "",0,false}
+  labels=append(labels,strings.ToLower(string(label)))
+  pos+=int(size)
+ }
+ return "",0,false
+}
+
+// Require the A/AAAA ANSWER owner to match the QUERY name. An unrelated
+// address is not evidence that the restored DNS engine is healthy.
 func hasResidentDNSAddress(reply []byte, off int, qtype uint16) bool {
+ questionName,questionEnd,ok:=readResidentDNSName(reply,12)
+ if !ok||questionEnd+4!=off||off>len(reply)||questionName==""{return false}
+ if binary.BigEndian.Uint16(reply[questionEnd:questionEnd+2])!=qtype ||
+  binary.BigEndian.Uint16(reply[questionEnd+2:off])!=1{return false}
  answers:=int(binary.BigEndian.Uint16(reply[6:8]))
  if answers<1||answers>64{return false}
  for n:=0;n<answers;n++ {
-  if off>=len(reply){return false}
-  for labels:=0;labels<128;labels++{
-   if off>=len(reply){return false}
-   size:=reply[off]
-   if size&0xc0==0xc0{
-    if off+2>len(reply){return false}
-    pointer:=int(size&0x3f)<<8|int(reply[off+1])
-    if pointer>=off{return false}
-    off+=2;break
-   }
-   if size&0xc0!=0{return false}
-   off++
-   if size==0{break}
-   if size>63||off+int(size)>len(reply){return false}
-   off+=int(size)
-   if labels==127{return false}
-  }
+  owner,next,ok:=readResidentDNSName(reply,off)
+  if !ok{return false}
+  off=next
   if off+10>len(reply){return false}
   recordType:=binary.BigEndian.Uint16(reply[off:off+2])
   recordClass:=binary.BigEndian.Uint16(reply[off+2:off+4])
   dataLen:=int(binary.BigEndian.Uint16(reply[off+8:off+10]))
   off+=10
   if off+dataLen>len(reply){return false}
-  if recordType==qtype&&recordClass==1&&((qtype==1&&dataLen==4)||(qtype==28&&dataLen==16)){return true}
+  if owner==questionName && recordType==qtype&&recordClass==1&&
+   ((qtype==1&&dataLen==4)||(qtype==28&&dataLen==16)){return true}
   off+=dataLen
  }
  return false
-}
-
-// ProbeResidentInternetAt checks direct external TCP reachability, independent
-// of the local DNS resolver. Only numeric IP endpoints are allowed; production
-// should provide multiple independent trusted networks. No HTTP is requested.
-func ProbeResidentInternetAt(ctx context.Context, endpoints []string) error {
- if err:=ctx.Err();err!=nil{return err}
- if len(endpoints)==0 || len(endpoints)>6{return errors.New("missing or excessive connectivity endpoints")}
- for _,address:=range endpoints {
-  host,port,err:=net.SplitHostPort(address)
-  if err!=nil || net.ParseIP(host)==nil {return errors.New("connectivity endpoint must be an IP literal")}
-  number,err:=strconv.Atoi(port)
-  if err!=nil || number<1 || number>65535 {return errors.New("invalid connectivity probe port")}
- }
- for _,address:=range endpoints {
-  if err:=ctx.Err();err!=nil{return err}
-  step,cancel:=context.WithTimeout(ctx,residentProbeTimeout)
-  d:=net.Dialer{Timeout:residentProbeTimeout}
-  conn,err:=d.DialContext(step,"tcp",address)
-  if err==nil{conn.Close();cancel();return nil}
-  cancel()
- }
- return errors.New("all configured network connectivity endpoints failed")
-}
-
-func ProbeResidentExternalInternet(ctx context.Context)error {
- return ProbeResidentInternetAt(ctx,[]string{"1.1.1.1:443","9.9.9.9:443"})
 }
