@@ -119,7 +119,11 @@ func InspectWindowsDNSAssignmentProvenanceReadOnly(
  families:=map[string]map[DNSAddressFamily]bool{}
  staticCount,automaticCount:=0,0
  for _,r:=range records{
-  guid:="{"+strings.ToLower(strings.Trim(r.InterfaceGUID,"{}"))+"}"
+  if strings.TrimSpace(r.InterfaceGUID)!=r.InterfaceGUID||len(r.InterfaceGUID)!=38||
+   r.InterfaceGUID[0]!='{'||r.InterfaceGUID[37]!='}'{
+   return empty,errors.New("adapter GUID is not a canonical braced Windows GUID")
+  }
+  guid:=strings.ToLower(r.InterfaceGUID)
   family:=DNSAddressFamily(r.Family)
   if r.InterfaceIndex==0||!r.RegistryKeyPresent||r.ProfileNameServerNonEmpty{
    return empty,errors.New("DNS interface identity or unsupported profile-specific source")
