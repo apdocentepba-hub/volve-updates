@@ -328,7 +328,7 @@ jobs:
           bridge=root/'hostroutebridge'
           target=root/'singlefile/hostroutebridge'
           target.mkdir(parents=True,exist_ok=True)
-          for name in ('bridge_windows.go','bridge_windows_test.go','plan_windows.go','plan_windows_test.go','plan_native_windows_test.go'):
+          for name in ('bridge_windows.go','bridge_windows_test.go','plan_windows.go','plan_windows_test.go','plan_native_windows_test.go','protected_preview_windows.go','protected_preview_windows_test.go'):
               original=bridge/name
               assert original.is_file()
               assert not (target/name).exists()
@@ -371,7 +371,10 @@ jobs:
               'TestRoutePlanRequiresContextAndVerifiedCallback',
               'TestRoutePlanNeverConfusesLegacyWithFresh',
               'TestSignedPackageRealWindowsRouteProducesNonAuthorizingPlan',
-              'TestSignedHostPlanRefusesWrongPublisherBeforeHostInspection'
+              'TestSignedHostPlanRefusesWrongPublisherBeforeHostInspection',
+              'TestProtectedPreflightRefusesCancelledContextBeforeKernelObject',
+              'TestProtectedPreflightCannotReadHostDuringAnotherTransaction',
+              'TestProtectedPreflightHoldsRealMutexThroughoutSignedWindowsCensus'
             )){
               $passes=@($records | Where-Object {$_.Test -eq $name -and $_.Action -eq 'pass'})
               $skips=@($records | Where-Object {$_.Test -eq $name -and $_.Action -eq 'skip'})
@@ -406,6 +409,31 @@ jobs:
               throw 'Native preinstallation preview changed DNS or VOLVE SYSTEM task count'
             }
             Write-Host $raw
+            Write-Host 'PROTECTED PREVIEW CHECKPOINT: repeat full Windows preflight WHILE holding updater/recovery kernel mutex'
+            $protectedRaw=(& go run -mod=mod ./hostroutebridge/cmd/preview --review-under-protected-lock | Out-String).Trim()
+            if($LASTEXITCODE -ne 0){throw 'Protected native Windows preflight execution failed'}
+            $protected=$protectedRaw | ConvertFrom-Json -ErrorAction Stop
+            if($protected.component -ne 'VOLVE-0287-WINDOWS-SETUP-PREVIEW-CI' -or
+               $protected.scope -ne 'DISPOSABLE_WINDOWS_CI_ONLY_NOT_USER_PC' -or
+               $protected.target_release -ne '0.28.7' -or
+               $protected.windows_inventories_checked -ne 6 -or
+               $protected.synthetic_ci_signed_container_verified -ne $true -or
+               $protected.protected_transition_mutex_held_during_review -ne $true -or
+               $protected.result -ne 'REVIEW_ONLY' -or
+               $protected.can_install -ne $false -or
+               $protected.can_upgrade -ne $false -or
+               $protected.can_change_dns -ne $false -or
+               $protected.can_change_tasks -ne $false -or
+               $protected.status -ne 'NO_INSTALL_OR_DNS_CHANGE_AUTHORIZED'){
+              throw ('Protected preflight granted an unauthorized write or lacked native mutex: '+$protectedRaw)
+            }
+            $lockDNSAfter=Get-DnsClientServerAddress -ErrorAction Stop | Sort-Object InterfaceIndex,AddressFamily | Select-Object InterfaceIndex,AddressFamily,ServerAddresses | ConvertTo-Json -Depth 6 -Compress
+            $lockTasksAfter=@(Get-ScheduledTask -ErrorAction Stop | Where-Object {$_.TaskName -match '^(?i:VOLVE[-_])'}).Count
+            if($dnsBefore -cne $lockDNSAfter -or $tasksBefore -ne $lockTasksAfter){
+              throw 'Protected preflight touched Windows DNS adapter or VOLVE scheduled tasks'
+            }
+            Write-Host $protectedRaw
+            Write-Host 'PASS VOLVE_NATIVE_PROTECTED_SIGNED_HOST_PREFLIGHT SIX_INVENTORIES KERNEL_MUTEX EXCLUSIVE NO_INSTALL NO_DNS NO_TASKS'
             Write-Host 'PASS VOLVE_NATIVE_WINDOWS_SETUP_PREVIEW_6_INVENTORIES_SIGNED_PACKAGE NO_INSTALL NO_DNS NO_TASKS'
           } finally {
             Pop-Location
