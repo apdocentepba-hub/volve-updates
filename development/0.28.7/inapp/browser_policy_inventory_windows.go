@@ -17,6 +17,7 @@ import (
  "os"
  "os/exec"
  "path/filepath"
+ "strings"
 )
 
 const WindowsVOLVEBrowserPolicyQuery = `$ErrorActionPreference='Stop';$ProgressPreference='SilentlyContinue';
