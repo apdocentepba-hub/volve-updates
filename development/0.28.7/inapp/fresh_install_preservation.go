@@ -3,8 +3,8 @@ package motorupdate
 // ProtectionSnapshot is an independently collected before/after baseline.
 // It proves preservation of existing protections, NOT that DNS is active.
 // The privileged Windows installer must populate it using actual hosts,
-// registry policies and Task Scheduler evidence, then compare after install
-// and after every rollback attempt.
+// browser registry policies, catalog task definition and IPv4/IPv6 DNS
+// assignment provenance, then compare after install and every rollback.
 import (
  "errors"
  "fmt"
@@ -38,7 +38,7 @@ func validProtectionSnapshot(s ProtectionSnapshot) bool {
  return true
 }
 // VerifyPartialProtectionPreserved rejects unplanned changes to existing
-// hosts rules, browser policies or the auxiliary catalog task. A deliberate
+// hosts rules, browser policies, catalog task or DNS assignment. A deliberate
 // change would require a separate authenticated migration plan.
 func VerifyPartialProtectionPreserved(before,after ProtectionSnapshot) error {
  if !validProtectionSnapshot(before)||!validProtectionSnapshot(after) {
