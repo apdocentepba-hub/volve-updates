@@ -187,3 +187,28 @@ func TestResidentRecoveryNeverClosesOnDifferentAnswerOwner(t *testing.T) {
   t.Fatalf("DNS owner mismatch consumed pending rollback: %+v %v",state,err)
  }
 }
+
+func TestResidentHealthMatchesExactOwnerWithSafeDNSCompression(t *testing.T) {
+ question:=[]byte{7,'e','x','a','m','p','l','e',3,'c','o','m',0,0,1,0,1}
+ own:=[]byte{7,'e','x','a','m','p','l','e',3,'c','o','m',0}
+ cases:=[]struct{name string;owner []byte;accept bool}{
+  {"compressed-question-owner",[]byte{0xc0,0x0c},true},
+  {"uncompressed-question-owner",own,true},
+  {"unrelated-owner",[]byte{4,'e','v','i','l',4,'t','e','s','t',0},false},
+  {"pointer-into-label-byte",[]byte{0xc0,0x0d},false},
+  {"pointer-into-header",[]byte{0xc0,0x01},false},
+  {"one-label-with-dot",[]byte{11,'e','x','a','m','p','l','e','.','c','o','m',0},false},
+ }
+ for _,tc:=range cases{
+  t.Run(tc.name,func(t *testing.T){
+   packet:=append(make([]byte,12),question...)
+   packet[6]=0;packet[7]=1
+   off:=len(packet)
+   packet=append(packet,tc.owner...)
+   packet=append(packet,[]byte{0,1,0,1,0,0,0,30,0,4,1,2,3,4}...)
+   if got:=hasResidentDNSAddress(packet,off,1);got!=tc.accept{
+    t.Fatalf("DNS answer owner classification mismatch: accepted=%t wanted=%t",got,tc.accept)
+   }
+  })
+ }
+}
