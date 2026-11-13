@@ -1,0 +1,44 @@
+name: VOLVE 0.28.7 signed-bundle path guard (LAB ONLY)
+on:
+  push:
+    branches:
+      - work/0287-unifiedbundle-path-guard-20261113
+    paths:
+      - 'development/0.28.7/unifiedbundle/**'
+      - '.github/workflows/volve-0287-bundle-pathguard-lab.yml'
+  pull_request:
+    branches:
+      - work/0287-single-exe-7real-1104
+    paths:
+      - 'development/0.28.7/unifiedbundle/**'
+      - '.github/workflows/volve-0287-bundle-pathguard-lab.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  no-install-verification:
+    name: Read-only verifier tests on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 8
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    defaults:
+      run:
+        working-directory: development/0.28.7/unifiedbundle
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.x'
+      - name: Test complete signed package and path boundaries
+        shell: bash
+        run: |
+          go test -count=1 -v ./...
+          go vet ./...
+          go build ./...
+      - name: Explicit no-release safety boundary
+        shell: bash
+        run: |
+          echo 'LAB ONLY: synthetic Ed25519 signatures, no installer execution, no DNS or SYSTEM task changes.'
