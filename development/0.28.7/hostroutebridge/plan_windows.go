@@ -79,8 +79,8 @@ func PlanFromVerifiedReview(ctx context.Context, review Review) (InstallerPlanRe
     switch review.Route {
     case motorupdate.MotorRouteFreshCandidate:
         mode=PlanFresh
-        steps=[]string{"verify-full-browser-policy-inventory","validate-signed-fresh-install-permit","preserve-original-DNS-and-adapter-inventory"}
-        notes="A clean DNS census does not prove no browser policies exist; never replace existing protection silently."
+        steps=[]string{"verify-full-browser-policy-inventory","build-durable-original-hosts-browser-catalog-and-DNS-snapshot","validate-signed-fresh-install-permit"}
+        notes="A read-only census is not a backup: seal the exact original hosts, browser, catalog and DNS configuration before any write."
     case motorupdate.MotorRouteCatalogCandidate:
         mode=PlanCatalog
         steps=[]string{"verify-catalog-task-signer-and-exact-action","preserve-existing-catalog-and-browser-policies","validate-signed-fresh-install-permit"}
