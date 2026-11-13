@@ -52,10 +52,8 @@ type Manifest struct {
 // Reverify after copying to protected installer staging; this is preflight only.
 func Verify(dir string, trusted ed25519.PublicKey) (*Manifest,error) {
  if len(trusted)!=ed25519.PublicKeySize{return nil,errors.New("missing trusted publisher public key")}
- if dir==""{return nil,errors.New("empty bundle root")}
- info,err:=os.Lstat(dir)
- if err!=nil{return nil,err}
- if !info.IsDir()||info.Mode()&os.ModeSymlink!=0{return nil,errors.New("bundle root is not a real directory")}
+ if dir==""||!filepath.IsAbs(dir)||filepath.Clean(dir)!=dir{return nil,errors.New("bundle root must be an absolute canonical path")}
+ if err:=requireUnlinkedDirectoryChain(dir);err!=nil{return nil,fmt.Errorf("bundle root: %w",err)}
  raw,err:=readFile(filepath.Join(dir,"manifest.json"),maxManifest)
  if err!=nil{return nil,fmt.Errorf("manifest: %w",err)}
  sig,err:=readFile(filepath.Join(dir,"manifest.ed25519"),ed25519.SignatureSize)
@@ -91,6 +89,20 @@ func Verify(dir string, trusted ed25519.PublicKey) (*Manifest,error) {
  }
  return &m,nil
 }
+// requireUnlinkedDirectoryChain rejects a linked ancestor, not only a linked
+// bundle root. A reparse/symlinked parent can redirect an otherwise valid
+// signed package to an unexpected filesystem location.
+func requireUnlinkedDirectoryChain(dir string) error {
+ for {
+  info,err:=os.Lstat(dir)
+  if err!=nil{return err}
+  if !info.IsDir()||info.Mode()&os.ModeSymlink!=0{return fmt.Errorf("linked or non-directory bundle path: %s",dir)}
+  parent:=filepath.Dir(dir)
+  if parent==dir{return nil}
+  dir=parent
+ }
+}
+
 func readFile(path string,limit int64)([]byte,error){
  before,err:=os.Lstat(path)
  if err!=nil{return nil,err}
@@ -101,5 +113,7 @@ func readFile(path string,limit int64)([]byte,error){
  data,err:=io.ReadAll(io.LimitReader(f,limit+1));if err!=nil{return nil,err}
  after,err:=f.Stat()
  if err!=nil||!os.SameFile(before,after)||int64(len(data))!=after.Size()||int64(len(data))>limit{return nil,errors.New("file changed while reading")}
+ current,err:=os.Lstat(path)
+ if err!=nil||!current.Mode().IsRegular()||!os.SameFile(before,current){return nil,errors.New("file path replaced while reading")}
  return data,nil
 }
