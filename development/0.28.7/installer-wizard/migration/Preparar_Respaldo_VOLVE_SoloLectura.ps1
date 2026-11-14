@@ -10,7 +10,7 @@ $ProgressPreference = 'SilentlyContinue'
 
 if ($env:OS -ne 'Windows_NT') { throw 'Solo Windows' }
 $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
-$principal = New-Object Security.Principal.WindowsPrincipal($identity)
+$principal = [Security.Principal.WindowsPrincipal]::new($identity)
 if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
  throw 'EJECUTAR COMO ADMINISTRADOR: solo lectura de Windows, escritura de un respaldo local'
 }
@@ -21,14 +21,14 @@ if ([string]::IsNullOrWhiteSpace($programData) -or -not [IO.Path]::IsPathRooted(
 $volume = Get-Volume -DriveLetter ([IO.Path]::GetPathRoot($programData).Substring(0,1)) -ErrorAction Stop
 if ($volume.FileSystem -ne 'NTFS') { throw 'Requiere un volumen NTFS para sellar el respaldo' }
 
-$system = New-Object Security.Principal.SecurityIdentifier('S-1-5-18')
-$admins = New-Object Security.Principal.SecurityIdentifier('S-1-5-32-544')
-$acl = New-Object Security.AccessControl.DirectorySecurity
+$system = [Security.Principal.SecurityIdentifier]::new('S-1-5-18')
+$admins = [Security.Principal.SecurityIdentifier]::new('S-1-5-32-544')
+$acl = [Security.AccessControl.DirectorySecurity]::new()
 $acl.SetAccessRuleProtection($true,$false)
 $acl.SetOwner($admins)
 $inherit = [Security.AccessControl.InheritanceFlags]::ContainerInherit -bor [Security.AccessControl.InheritanceFlags]::ObjectInherit
 foreach($sid in @($system,$admins)) {
- $rule = New-Object Security.AccessControl.FileSystemAccessRule(
+ $rule = [Security.AccessControl.FileSystemAccessRule]::new(
   $sid,[Security.AccessControl.FileSystemRights]::FullControl,$inherit,
   [Security.AccessControl.PropagationFlags]::None,[Security.AccessControl.AccessControlType]::Allow)
  $acl.AddAccessRule($rule)
@@ -57,15 +57,27 @@ function Verify-RestrictedACL([string]$path) {
 function Save-PrivateBytes([string]$name,[byte[]]$bytes) {
  if($name -notmatch '^[a-zA-Z0-9._-]{1,100}$') { throw 'Nombre de archivo inseguro' }
  $dst = Join-Path $script:backupDir $name
- $stream = New-Object IO.FileStream($dst,[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,
+ $stream = [IO.FileStream]::new($dst,[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,
   [IO.FileShare]::None,4096,[IO.FileOptions]::WriteThrough)
  try {
   $stream.Write($bytes,0,$bytes.Length)
   $stream.Flush($true)
  }finally { $stream.Dispose() }
+ # The directory was sealed atomically BEFORE any private bytes were written.
+ # Give each created file an independent non-inherited SYSTEM/Admin-only DACL.
+ $fileACL = [Security.AccessControl.FileSecurity]::new()
+ $fileACL.SetAccessRuleProtection($true,$false)
+ $fileACL.SetOwner($script:admins)
+ foreach($sid in @($script:system,$script:admins)) {
+  $r=[Security.AccessControl.FileSystemAccessRule]::new(
+   $sid,[Security.AccessControl.FileSystemRights]::FullControl,
+   [Security.AccessControl.AccessControlType]::Allow)
+  $fileACL.AddAccessRule($r)
+ }
+ [IO.File]::SetAccessControl($dst,$fileACL)
  Verify-RestrictedACL $dst
  $saved = [IO.File]::ReadAllBytes($dst)
- if(-not [Linq.Enumerable]::SequenceEqual([byte[]]$bytes,[byte[]]$saved)) {
+ if([Convert]::ToBase64String($bytes) -cne [Convert]::ToBase64String($saved)) {
   throw 'Respaldo no pudo releerse bit por bit'
  }
  $h=Get-FileHash -LiteralPath $dst -Algorithm SHA256 -ErrorAction Stop
@@ -76,7 +88,7 @@ $backupDir=Join-Path $programData ('VOLVE-Migration-Backup-'+[guid]::NewGuid().T
 if(Test-Path -LiteralPath $backupDir) { throw 'Carpeta de respaldo ya existe' }
 [void][IO.Directory]::CreateDirectory($backupDir,$acl)
 Verify-RestrictedACL $backupDir
-$utf8 = New-Object Text.UTF8Encoding($false)
+$utf8 = [Text.UTF8Encoding]::new($false)
 $collected=@()
 try {
  $tasks=@(Get-ScheduledTask -ErrorAction Stop | Where-Object {
