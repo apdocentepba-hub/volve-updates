@@ -1,5 +1,10 @@
 name: VOLVE 0.28.7 uninstaller ownership gate Windows (NO RELEASE)
 on:
+  push:
+    branches: [work/0287-native-setup-preview-20261113]
+    paths:
+      - 'development/0.28.7/uninstallguard/**'
+      - '.github/workflows/volve-0287-uninstallguard-pr.yml'
   pull_request:
     branches: [feature/motor-updater-0287-pilot]
     paths:
