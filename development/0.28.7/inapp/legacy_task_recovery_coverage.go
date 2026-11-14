@@ -145,11 +145,37 @@ func requireLegacyTaskRecoveryCoverage(
 	if !review.RecoverySetComplete {
 		return fmt.Errorf("three-task recovery coverage incomplete: %s", strings.Join(review.Blockers, ","))
 	}
+	if err := bindLegacyRecoverySnapshotToMigrationProof(snapshot, proof); err != nil {
+		return fmt.Errorf("three-task recovery is not bound to the signed migration proof: %w", err)
+	}
 	if review.InstallAuthorized || review.CleanupAuthorized ||
 		review.TransitiveDependenciesCertified || review.RecoveryAfterRebootVerified {
 		return errors.New("coverage review attempted to claim a capability it cannot certify")
 	}
 	return nil
+}
+
+// bindLegacyRecoverySnapshotToMigrationProof prevents a complete but unrelated
+// task backup from satisfying the signed motor transition. The DNS server task
+// XML and executable bytes must be exactly the ones covered by the signed grant.
+func bindLegacyRecoverySnapshotToMigrationProof(snapshot LegacyTaskRecoverySnapshot, proof VerifiedLegacyMigrationProof) error {
+	if !validLegacyTaskSHA256(proof.LegacySHA256) || !validLegacyTaskSHA256(proof.LegacyTaskXMLSHA256) {
+		return errors.New("signed legacy motor/task identity is missing or malformed")
+	}
+	for _, item := range snapshot.Tasks {
+		if strings.EqualFold(strings.TrimSpace(item.Name), "VOLVE-DNS-SERVER-0270") {
+			if !matchingLegacyTaskSHA256(item.SourceXMLSHA256, proof.LegacyTaskXMLSHA256) ||
+				!matchingLegacyTaskSHA256(item.BackupXMLSHA256, proof.LegacyTaskXMLSHA256) {
+				return errors.New("DNS server task XML differs from the signed migration proof")
+			}
+			if !matchingLegacyTaskSHA256(item.SourceActionSHA256, proof.LegacySHA256) ||
+				!matchingLegacyTaskSHA256(item.BackupActionSHA256, proof.LegacySHA256) {
+				return errors.New("DNS server executable differs from the signed migration proof")
+			}
+			return nil
+		}
+	}
+	return errors.New("signed DNS server task evidence is absent")
 }
 
 func requiredLegacyTaskName(name string) (string, bool) {
