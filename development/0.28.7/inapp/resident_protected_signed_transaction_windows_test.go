@@ -44,7 +44,7 @@ func(d *protectedSignedFullTransactionLab)VerifyPreparedTarget(_ context.Context
  if m.Version!="0.28.7"{return errors.New("unexpected signed motor candidate")}
  return nil
 }
-func(d *protectedSignedFullTransactionLab)VerifyLegacyTaskRecoveryCoverage(ctx context.Context,_ VerifiedLegacyMigrationProof)(LegacyTaskRecoverySnapshot,error){
+func(d *protectedSignedFullTransactionLab)VerifyLegacyTaskRecoveryCoverage(ctx context.Context,proof VerifiedLegacyMigrationProof)(LegacyTaskRecoverySnapshot,error){
  d.coverageChecks++
  probeCtx,cancel:=context.WithTimeout(ctx,125*time.Millisecond)
  defer cancel()
@@ -53,8 +53,9 @@ func(d *protectedSignedFullTransactionLab)VerifyLegacyTaskRecoveryCoverage(ctx c
  if !errors.Is(err,context.DeadlineExceeded){
   return LegacyTaskRecoverySnapshot{},errors.New("task recovery coverage review ran without the protected SYSTEM mutex")
  }
- return completeLegacyTaskRecoverySnapshot(),nil
+ return testLegacyTaskRecoverySnapshotForProof(completeLegacyTaskRecoverySnapshot(),proof),nil
 }
+
 func(d *protectedSignedFullTransactionLab)RestoreAfterProtectedHandoff(ctx context.Context)error{
  d.protectedHandoffs++
  // Recovery is a separate owner, after the signed updater has released
