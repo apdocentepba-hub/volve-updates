@@ -31,6 +31,7 @@ var (
 
 type LegacyTaskRecoveryReadOptions struct {
 	ProgramDataRoot      string
+	ExpectedManifestSHA256 string // Must come from a separate trusted migration grant.
 	InitialBackupPath    string
 	ThreeTaskBackupPath  string
 	WindowsPowerShellPath string
@@ -134,6 +135,10 @@ func ReadLegacyTaskRecoverySnapshot(ctx context.Context, o LegacyTaskRecoveryRea
 	manifestBytes, err := readLegacyBoundedFile(manifestPath, 262144, o.VerifyProtectedACL)
 	if err != nil { return empty, fmt.Errorf("initial recovery manifest rejected: %w", err) }
 	manifestHash := digestLegacyBytes(manifestBytes)
+	if !legacySHA256Pattern.MatchString(o.ExpectedManifestSHA256) ||
+		!strings.EqualFold(o.ExpectedManifestSHA256, manifestHash) {
+		return empty, errors.New("initial recovery manifest does not match the external pin")
+	}
 	var manifest legacyInitialManifest
 	if err := json.Unmarshal(manifestBytes, &manifest); err != nil { return empty, errors.New("initial recovery manifest is not valid JSON") }
 	if manifest.Schema != 1 || manifest.Component != "VOLVE-LOCAL-PRE-MIGRATION-BACKUP" ||
@@ -198,7 +203,8 @@ func ReadLegacyTaskRecoverySnapshot(ctx context.Context, o LegacyTaskRecoveryRea
 	if receipt.Schema != 1 || receipt.Component != legacyThreeTaskComponent || receipt.State != legacyThreeTaskState ||
 		!receipt.DirectActionsOnly || receipt.TransitiveDependenciesCertified || receipt.RecoveryAfterRebootVerified ||
 		receipt.PublisherAuthorizationVerified || receipt.CleanupAuthorized || receipt.InstallAuthorized ||
-		!strings.EqualFold(receipt.OriginalManifestSHA256, manifestHash) || len(receipt.Records) != 3 {
+		!strings.EqualFold(receipt.OriginalManifestSHA256, manifestHash) ||
+		!strings.EqualFold(receipt.OriginalManifestSHA256, o.ExpectedManifestSHA256) || len(receipt.Records) != 3 {
 		return empty, errors.New("three-task receipt is unpinned or claims an unsupported capability")
 	}
 	expectedArtifacts := []string{"accion-000.exe", "accion-001.ps1", "accion-002.exe"}
@@ -241,7 +247,7 @@ func ReadLegacyTaskRecoverySnapshot(ctx context.Context, o LegacyTaskRecoveryRea
 	roots := append([]string{o.ProgramDataRoot}, o.AllowedSourceRoots...)
 	roots = canonicalLegacyRoots(roots)
 	evidence := LegacyTaskRecoverySnapshot{
-		ExpectedManifestSHA256: strings.ToLower(receipt.OriginalManifestSHA256),
+		ExpectedManifestSHA256: strings.ToLower(o.ExpectedManifestSHA256),
 		ObservedManifestSHA256: manifestHash,
 		IndependentVerifierPassed: true,
 		Tasks: make([]LegacyTaskRecoveryEvidence, 0, len(requiredLegacyRecoveryTasks)),
