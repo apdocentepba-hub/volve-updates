@@ -400,7 +400,7 @@ jobs:
               if($passes.Count -ne 1 -or $skips.Count -ne 0){throw ('Mandatory bridge test skipped or missing: '+$name)}
             }
             Write-Host 'PROTECTION SNAPSHOT CHECKPOINT: execute native hosts/browser/catalog baseline tests in original motorupdate module'
-            $policyEvents=@(go test -mod=mod -count=1 -timeout 3m -json -run '^TestVOLVEBrowserPolicyReadOnly|^TestVOLVEBrowserPolicyRealWindowsRegistryNativeReadOnly$|^TestFreshMotorPreservesHostsBrowserPoliciesAndCatalog$|^TestFreshMotorDetectsPartialProtectionRegressions$|^TestProtectionSnapshotCannotPassWhenAnySurfaceWasNotCaptured$|^TestCountWindowsHostsBlockedRulesDoesNotReturnNames$|^TestWindowsHostsFileReadOnlyHashAndNoContentExport$|^TestWindowsHostsFileReadOnlyRejectsOversizedFile$|^TestWindowsProtectionSnapshotCapturesAllDeclaredSurfaces$|^TestWindowsProtectionSnapshotRequiresPinnedExistingCatalogTask$|^TestWindowsProtectionSnapshotRejectsUnknownOrContradictoryTaskInventory$|^TestWindowsProtectionSnapshotRejectsMissingInspectorsAndCancelledContext$|^TestWindowsProtectionSnapshotCannotPassIfHostBaselineIsMalformed$|^TestWindowsDNSAssignment' volve-browser-protection/motorupdate)
+            $policyEvents=@(go test -mod=mod -count=1 -timeout 3m -json -run '^TestVOLVEBrowserPolicyReadOnly|^TestVOLVEBrowserPolicyRealWindowsRegistryNativeReadOnly$|^TestFreshMotorPreservesHostsBrowserPoliciesAndCatalog$|^TestFreshMotorDetectsPartialProtectionRegressions$|^TestProtectionSnapshotCannotPassWhenAnySurfaceWasNotCaptured$|^TestCountWindowsHostsBlockedRulesDoesNotReturnNames$|^TestWindowsHostsFileReadOnlyHashAndNoContentExport$|^TestWindowsHostsFileReadOnlyRejectsOversizedFile$|^TestWindowsProtectionSnapshotCapturesAllDeclaredSurfaces$|^TestWindowsProtectionSnapshotRequiresPinnedExistingCatalogTask$|^TestWindowsProtectionSnapshotRejectsUnknownOrContradictoryTaskInventory$|^TestWindowsProtectionSnapshotRejectsMissingInspectorsAndCancelledContext$|^TestWindowsProtectionSnapshotCannotPassIfHostBaselineIsMalformed$|^TestWindowsDNSAssignment|^TestDNSRecoveryJournal|^TestDNSRecoveryPreview' volve-browser-protection/motorupdate)
             if($LASTEXITCODE -ne 0){
               $policyEvents | Select-Object -Last 60 | Write-Host
               throw 'Native hosts/browser/catalog protection baseline tests failed'
@@ -429,7 +429,13 @@ jobs:
               'TestWindowsDNSAssignmentProvenanceRejectsDuplicateOrIncompleteFamilies',
               'TestWindowsDNSAssignmentFingerprintIgnoresAutomaticLeaseAddressButPreservesStaticOrder',
               'TestWindowsDNSAssignmentProvenanceRejectsCancellationAndMutableQueries',
-              'TestWindowsDNSAssignmentProvenanceNativeWindowsReadOnly'
+              'TestWindowsDNSAssignmentProvenanceNativeWindowsReadOnly',
+              'TestDNSRecoveryJournalExactRoundTripAndWriteFreePreview',
+              'TestDNSRecoveryJournalRejectsTamperingAndMissingExternalPin',
+              'TestDNSRecoveryJournalRejectsUnknownOrIncompleteOriginals',
+              'TestDNSRecoveryPreviewRejectsExternalDNSAndNeverApplies',
+              'TestDNSRecoveryJournalCancellationFailsClosed',
+              'TestDNSRecoveryJournalRejectsUnpinnedReorderedAndDuplicateRecords'
             )){
               $passes=@($policyRecords | Where-Object {$_.Test -eq $name -and $_.Action -eq 'pass'})
               $skips=@($policyRecords | Where-Object {$_.Test -eq $name -and $_.Action -eq 'skip'})
@@ -438,6 +444,7 @@ jobs:
             Write-Host 'PASS VOLVE_NATIVE_BROWSER_POLICY_CONTENT_FINGERPRINTS THREE_KEYS NO_VALUE_EXPORT'
             Write-Host 'PASS VOLVE_NATIVE_PROTECTION_SNAPSHOT HOSTS_BROWSER_CATALOG PARTIAL_BASELINE NO_RAW_VALUES'
             Write-Host 'PASS VOLVE_DNS_ASSIGNMENT_PROVENANCE_TESTS IPV4_IPV6 STATIC_AUTOMATIC FAIL_CLOSED NO_WRITES'
+            Write-Host 'PASS VOLVE_DNS_RECOVERY_JOURNAL_PINNED_IPV4_IPV6_READ_ONLY_PREVIEW NO_INSTALL'
             Write-Host 'PASS VOLVE_SIGNED_EXE_PLUS_REAL_WINDOWS_6_INVENTORIES REVIEW_ONLY NO_INSTALL NO_DNS_CHANGE'
             Write-Host 'PREVIEW CHECKPOINT: produce actual native Windows setup decision JSON'
             $dnsBefore=Get-DnsClientServerAddress -ErrorAction Stop | Sort-Object InterfaceIndex,AddressFamily | Select-Object InterfaceIndex,AddressFamily,ServerAddresses | ConvertTo-Json -Depth 6 -Compress
