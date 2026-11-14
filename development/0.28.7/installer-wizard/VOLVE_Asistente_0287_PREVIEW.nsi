@@ -10,7 +10,7 @@ Unicode true
 Name "VOLVÉ - Asistente (DEMO SIN PROTECCIÓN)"
 OutFile "VOLVE_Asistente_VistaPrevia_0287.exe"
 RequestExecutionLevel user
-SetBrandingText "VOLVÉ 0.28.7 | Vista previa sin protección"
+BrandingText "VOLVÉ 0.28.7 | Vista previa sin protección"
 InstallDir "$LOCALAPPDATA\VOLVE-Preview"
 ShowInstDetails show
 SetCompressor /SOLID lzma
