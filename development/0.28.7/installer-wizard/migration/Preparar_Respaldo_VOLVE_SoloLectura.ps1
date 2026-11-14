@@ -175,6 +175,19 @@ try {
   $actual=(Get-FileHash -LiteralPath (Join-Path $backupDir $entry.name) -Algorithm SHA256).Hash.ToLowerInvariant()
   if($actual -cne $entry.sha256){throw 'Respaldo cambió luego de escritura: '+$entry.name}
  }
+ # El preparador nunca acredita su propio éxito: una segunda instancia
+ # de PowerShell verifica ACL, SHA-256, XML SYSTEM, HOSTS y DNS observados.
+ $verifier=Join-Path $PSScriptRoot 'Verificar_Respaldo_VOLVE_SoloLectura.ps1'
+ if(-not (Test-Path -LiteralPath $verifier -PathType Leaf)){
+  throw 'Falta verificador independiente; backup no se considera listo'
+ }
+ $powershell51=Join-Path $PSHOME 'powershell.exe'
+ $reviewOutput=@(& $powershell51 -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $verifier -BackupPath $backupDir)
+ if($LASTEXITCODE -ne 0 -or
+  @($reviewOutput | Where-Object {$_ -match '^VOLVE_BACKUP_VALIDATED_READ_ONLY;'}).Count -ne 1){
+  throw 'La verificación independiente no aprobó el backup; no se autoriza limpieza'
+ }
+ Write-Host 'VERIFICACION_INDEPENDIENTE=PASS; LIMPIEZA_AUTORIZADA=NO'
  Write-Host ('BACKUP_OK; TAREAS_VOLVE='+$taskRows.Count+'; DNS_FILAS='+$dns.Count+'; ARCHIVOS='+$collected.Count)
  Write-Host ('CARPETA_LOCAL_PROTEGIDA='+$backupDir)
  Write-Host ('MANIFEST_SHA256='+$manifestEntry.sha256)
