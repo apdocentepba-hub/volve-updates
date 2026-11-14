@@ -71,9 +71,6 @@ $utf8=[Text.UTF8Encoding]::new($false)
 $xmlBytes=$utf8.GetBytes($taskXML)
 $originalTaskFile=Join-Path $backup ([string]$record[0].xml_backup)
 $oldXml=[IO.File]::ReadAllBytes($originalTaskFile)
-if(-not [Security.Cryptography.SHA256]::HashData){
- # PowerShell 5.1 .NET Framework: hash vía Get-FileHash y algoritmo local
-}
 $sha=[Security.Cryptography.SHA256]::Create()
 try{
  $originalHash=([BitConverter]::ToString($sha.ComputeHash($oldXml))).Replace('-','').ToLowerInvariant()
