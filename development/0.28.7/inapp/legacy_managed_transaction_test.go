@@ -432,3 +432,63 @@ func TestSignedLegacyTransactionCancellationBeforeLeaseChangesNothing(t *testing
   t.Fatalf("cancelled transaction unexpectedly acquired exclusive lock: %v",err)
  }
 }
+
+
+func TestSignedLegacyTransactionStopsAtEachTaskCoverageBoundary(t *testing.T) {
+    for _, tc := range []struct {
+        name             string
+        failAt           int
+        wantSnapshot     bool
+        wantInstall      bool
+        wantRestore      bool
+    }{
+        {name: "before-snapshot", failAt: 1},
+        {name: "after-snapshot-before-install", failAt: 2, wantSnapshot: true},
+        {name: "immediately-before-switch", failAt: 3, wantSnapshot: true, wantInstall: true, wantRestore: true},
+    } {
+        t.Run(tc.name, func(t *testing.T) {
+            f := newSignedBridge(t)
+            d := newSignedLegacyDriverLab()
+            d.failCoverageAt = tc.failAt
+
+            err := runSignedLegacyLab(context.Background(), f, d, testSecureLabFolderBridge, func() error { return nil })
+            if err == nil {
+                t.Fatal("transaction accepted a failed three-task recovery coverage check")
+            }
+            if d.coverageCount != tc.failAt {
+                t.Fatalf("coverage checks=%d, want failure at check %d; calls=%v", d.coverageCount, tc.failAt, d.calls)
+            }
+
+            seen := func(call string) bool {
+                for _, item := range d.calls {
+                    if item == call {
+                        return true
+                    }
+                }
+                return false
+            }
+            if seen("snapshot") != tc.wantSnapshot || seen("install") != tc.wantInstall {
+                t.Fatalf("transaction crossed the wrong pre-switch boundary: %v", d.calls)
+            }
+            if seen("switch") || seen("commit") {
+                t.Fatalf("invalid task recovery evidence allowed switch or commit: %v", d.calls)
+            }
+            if seen("restore") != tc.wantRestore {
+                t.Fatalf("rollback behavior does not match whether the engine candidate was touched: %v", d.calls)
+            }
+            if tc.wantRestore {
+                if !strings.Contains(err.Error(), "revertida") {
+                    t.Fatalf("failure after candidate preparation was not reported as reverted: %v", err)
+                }
+                if len(d.calls) < 3 || !reflect.DeepEqual(d.calls[len(d.calls)-3:], []string{"restore", "probe", "connectivity"}) {
+                    t.Fatalf("candidate failure lacked independent recovery health checks: %v", d.calls)
+                }
+            } else if seen("restore") {
+                t.Fatalf("backup-only stage attempted unnecessary engine rollback: %v", d.calls)
+            }
+            if d.lockHeld || d.lockAcquires != 1 || d.lockReleases != 1 {
+                t.Fatalf("transaction lease leaked after coverage failure: acquires=%d releases=%d active=%t", d.lockAcquires, d.lockReleases, d.lockHeld)
+            }
+        })
+    }
+}
