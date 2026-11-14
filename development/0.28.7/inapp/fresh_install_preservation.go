@@ -3,8 +3,8 @@ package motorupdate
 // ProtectionSnapshot is an independently collected before/after baseline.
 // It proves preservation of existing protections, NOT that DNS is active.
 // The privileged Windows installer must populate it using actual hosts,
-// registry policies and Task Scheduler evidence, then compare after install
-// and after every rollback attempt.
+// browser registry policies, catalog task definition and IPv4/IPv6 DNS
+// assignment provenance, then compare after install and every rollback.
 import (
  "errors"
  "fmt"
@@ -18,17 +18,27 @@ type ProtectionSnapshot struct {
  EdgePoliciesSHA256 string
  FirefoxPoliciesSHA256 string
  CatalogTaskDefinitionSHA256 string
+ DNSAdaptersSHA256 string
 }
 var protectionDigest=regexp.MustCompile("^[a-f0-9]{64}$")
 func validProtectionSnapshot(s ProtectionSnapshot) bool {
- if !protectionDigest.MatchString(strings.ToLower(s.HostsSHA256)) || s.HostsBlockedRuleCount<0 {return false}
- for _,d:=range []string{s.ChromePoliciesSHA256,s.EdgePoliciesSHA256,s.FirefoxPoliciesSHA256,s.CatalogTaskDefinitionSHA256} {
-  if d!="" && !protectionDigest.MatchString(strings.ToLower(d)) {return false}
+ if !protectionDigest.MatchString(strings.ToLower(s.HostsSHA256)) ||
+  s.HostsBlockedRuleCount<0 || s.HostsBlockedRuleCount>1_000_000 {
+  return false
+ }
+ // A preservation comparison is meaningless if any protected surface was
+ // not fingerprinted. Missing evidence must never compare equal to missing
+ // evidence and silently pass a future install/upgrade transaction.
+ for _,d:=range []string{
+  s.ChromePoliciesSHA256,s.EdgePoliciesSHA256,
+  s.FirefoxPoliciesSHA256,s.CatalogTaskDefinitionSHA256,s.DNSAdaptersSHA256,
+ } {
+  if !protectionDigest.MatchString(strings.ToLower(d)) {return false}
  }
  return true
 }
 // VerifyPartialProtectionPreserved rejects unplanned changes to existing
-// hosts rules, browser policies or the auxiliary catalog task. A deliberate
+// hosts rules, browser policies, catalog task or DNS assignment. A deliberate
 // change would require a separate authenticated migration plan.
 func VerifyPartialProtectionPreserved(before,after ProtectionSnapshot) error {
  if !validProtectionSnapshot(before)||!validProtectionSnapshot(after) {
@@ -43,6 +53,7 @@ func VerifyPartialProtectionPreserved(before,after ProtectionSnapshot) error {
   {"Edge",before.EdgePoliciesSHA256,after.EdgePoliciesSHA256},
   {"Firefox",before.FirefoxPoliciesSHA256,after.FirefoxPoliciesSHA256},
   {"catalog task",before.CatalogTaskDefinitionSHA256,after.CatalogTaskDefinitionSHA256},
+  {"DNS adapter assignment",before.DNSAdaptersSHA256,after.DNSAdaptersSHA256},
  } {
   if !strings.EqualFold(p.old,p.new) {return fmt.Errorf("%s existing protection changed",p.name)}
  }

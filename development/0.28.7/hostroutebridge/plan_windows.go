@@ -51,6 +51,10 @@ var mandatoryBeforeAnyMutation = []string{
     "durable-independent-boot-watchdog",
     "compatibility-and-live-state-recheck-under-lock",
     "native-NTFS-ACL-and-rollback-restart-evidence",
+ "durable-hosts-browser-catalog-and-original-DNS-snapshot",
+ "persist-and-seal-original-DNS-source-and-exact-adapter-identity",
+ "inventory-and-preserve-DoH-NRPT-and-group-policy-DNS-overrides",
+ "restore-hosts-browser-catalog-and-DNS-after-crash-tested",
 }
 
 // PlanFromVerifiedReview only accepts a complete NON-AUTHORIZING review.
@@ -76,8 +80,8 @@ func PlanFromVerifiedReview(ctx context.Context, review Review) (InstallerPlanRe
     switch review.Route {
     case motorupdate.MotorRouteFreshCandidate:
         mode=PlanFresh
-        steps=[]string{"verify-full-browser-policy-inventory","validate-signed-fresh-install-permit","preserve-original-DNS-and-adapter-inventory"}
-        notes="A clean DNS census does not prove no browser policies exist; never replace existing protection silently."
+        steps=[]string{"verify-full-browser-policy-inventory","build-durable-original-hosts-browser-catalog-and-DNS-snapshot","validate-signed-fresh-install-permit"}
+        notes="A read-only census is not a backup: seal the exact original hosts, browser, catalog and DNS configuration before any write."
     case motorupdate.MotorRouteCatalogCandidate:
         mode=PlanCatalog
         steps=[]string{"verify-catalog-task-signer-and-exact-action","preserve-existing-catalog-and-browser-policies","validate-signed-fresh-install-permit"}

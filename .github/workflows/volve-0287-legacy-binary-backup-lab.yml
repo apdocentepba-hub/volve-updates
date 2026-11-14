@@ -1,0 +1,141 @@
+name: "VOLVE 0.28.7 - original SYSTEM motor recovery backup (NO INSTALL)"
+on:
+  push:
+    branches: [work/0287-native-setup-preview-20261113]
+    paths:
+      - 'development/0.28.7/installer-wizard/migration/**'
+      - '.github/workflows/volve-0287-legacy-binary-backup-lab.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  preserve-real-ntfs-motor:
+    runs-on: windows-2022
+    timeout-minutes: 15
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+      - name: Backup disposable legacy SYSTEM motor bytes and task XML without installing
+        run: |
+          $ErrorActionPreference='Stop'
+          if($env:GITHUB_ACTIONS -ne 'true' -or $env:RUNNER_ENVIRONMENT -ne 'github-hosted'){
+            throw 'This test may run only on disposable GitHub-hosted Windows'
+          }
+          $root=Join-Path $env:GITHUB_WORKSPACE 'development/0.28.7/installer-wizard/migration'
+          $maker=Join-Path $root 'Preparar_Respaldo_VOLVE_SoloLectura.ps1'
+          $motorScript=Join-Path $root 'Preparar_Motor_Legacy_Rescate_Sin_Limpieza.ps1'
+          $ps51=Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+          $name='VOLVE-DNS-SERVER-0270'
+          $existing=@(Get-ScheduledTask -TaskName $name -ErrorAction SilentlyContinue)
+          if($existing.Count -gt 0){throw 'Runner has an unrelated VOLVE motor task'}
+          $folder=Join-Path $env:ProgramFiles ('VOLVE-CI-Snapshot-'+[guid]::NewGuid().ToString('N'))
+          $exe=Join-Path $folder 'VOLVE_DNS_Server_0270.exe'
+          $created=$false
+          $taskRegistered=$false
+          $startDns=Get-DnsClientServerAddress | Sort-Object InterfaceIndex,AddressFamily |
+            Select-Object InterfaceIndex,AddressFamily,ServerAddresses | ConvertTo-Json -Depth 6 -Compress
+          $hostsPath=Join-Path $env:SystemRoot 'System32\drivers\etc\hosts'
+          $startHosts=(Get-FileHash -LiteralPath $hostsPath -Algorithm SHA256).Hash
+          try{
+            [void][IO.Directory]::CreateDirectory($folder)
+            $created=$true
+            Copy-Item -LiteralPath (Join-Path $env:SystemRoot 'System32\cmd.exe') -Destination $exe -ErrorAction Stop
+            $source=(Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash.ToLowerInvariant()
+            $action=New-ScheduledTaskAction -Execute $exe -Argument '--dns-service'
+            $trigger=New-ScheduledTaskTrigger -Once -At (Get-Date).AddDays(2)
+            $principal=New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest
+            Register-ScheduledTask -TaskName $name -Action $action -Trigger $trigger -Principal $principal -ErrorAction Stop | Out-Null
+            $taskRegistered=$true
+            $beforeXML=Export-ScheduledTask -TaskName $name -ErrorAction Stop
+            $backupResult=@(& $ps51 -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $maker 2>&1)
+            if($LASTEXITCODE -ne 0){throw ('Initial private DNS/HOSTS/Task backup failed: '+($backupResult -join '|'))}
+            $dirLine=@($backupResult | Where-Object {$_ -match '^CARPETA_LOCAL_PROTEGIDA='})
+            if($dirLine.Count -ne 1){throw 'No private ProgramData original backup'}
+            $original=$dirLine[0].Substring('CARPETA_LOCAL_PROTEGIDA='.Length)
+            $motorOutput=@(& $ps51 -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $motorScript -BackupPath $original 2>&1)
+            if($LASTEXITCODE -ne 0){throw ('Legacy motor protected copy failed: '+($motorOutput -join '|'))}
+            if(@($motorOutput | Where-Object {$_ -match '^VOLVE_LEGACY_MOTOR_BACKUP_OK;'}).Count -ne 1){
+              throw 'Legacy motor completion marker absent'
+            }
+            $receiptHash=@($motorOutput|Where-Object{$_ -match '^RECIBO_SHA256='}) |
+              Select-Object -First 1
+            if(-not $receiptHash){throw 'Signed receipt lab placeholder absent'}
+            $private=@(Get-ChildItem -LiteralPath $env:ProgramData -Directory -Force |
+              Where-Object {$_.Name -match '^VOLVE-Legacy-Motor-Recovery-[a-f0-9]{32}$'} |
+              Sort-Object CreationTimeUtc -Descending | Select-Object -First 1)
+            if($private.Count -ne 1){throw 'Protected original motor backup not created'}
+            $safe=$private[0].FullName
+            $copy=Join-Path $safe 'motor-original.exe'
+            $xml=Join-Path $safe 'tarea-system-original.xml'
+            $receipt=Join-Path $safe 'recibo-motor.json'
+            $r=Get-Content -LiteralPath $receipt -Raw -Encoding UTF8 | ConvertFrom-Json
+            if($r.component -ne 'VOLVE-LEGACY-MOTOR-BACKUP-UNSIGNED-ONLY' -or
+              $r.state -ne 'BACKUP_ONLY_NO_SWITCH_NO_CLEANUP_NO_INSTALL' -or
+              $r.cleanup_authorized -ne $false -or $r.install_authorized -ne $false -or
+              $r.recovered_after_reboot -ne $false -or $r.requires_publisher_signature -ne $true){
+              throw 'Backup receipt improperly authorizes a switch'
+            }
+            if((Get-FileHash -LiteralPath $copy -Algorithm SHA256).Hash.ToLowerInvariant() -cne $source){
+              throw 'Legacy motor original bytes not preserved'
+            }
+            $verifier=Join-Path $root 'Verificar_Motor_Legacy_Rescate_Sin_Limpieza.ps1'
+            function Verify-Legacy([string]$folder) {
+              $output=@(& $ps51 -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $verifier -OriginalBackupPath $original -MotorBackupPath $folder 2>&1)
+              return [pscustomobject]@{status=$LASTEXITCODE;detail=($output -join '|')}
+            }
+            $verified=Verify-Legacy $safe
+            if($verified.status -ne 0 -or -not $verified.detail.Contains('VOLVE_LEGACY_RECOVERY_VERIFIED_READ_ONLY;')){
+              throw ('Independent legacy binary verifier rejected intact Windows snapshot: '+$verified.detail)
+            }
+            $unchanged=[IO.File]::ReadAllBytes($copy)
+            try {
+              [IO.File]::WriteAllBytes($copy,([byte[]]($unchanged+@(0x42))))
+              $invalid=Verify-Legacy $safe
+              if($invalid.status -eq 0){throw 'Independent verifier accepted modified legacy binary'}
+            }finally{
+              [IO.File]::WriteAllBytes($copy,$unchanged)
+            }
+            $restored=Verify-Legacy $safe
+            if($restored.status -ne 0){throw ('Restored old binary no longer validated: '+$restored.detail)}
+            Write-Host 'PASS VOLVE_WINDOWS_INDEPENDENT_LEGACY_MOTOR_BINARY_TAMPER_REJECTED'
+            $actualXML=Get-Content -LiteralPath $xml -Raw -Encoding UTF8
+            if($actualXML -cne $beforeXML){throw 'SYSTEM task XML was not backed up exactly'}
+            foreach($f in @($safe,$copy,$xml,$receipt)){
+              $acl=Get-Acl -LiteralPath $f
+              if(-not $acl.AreAccessRulesProtected){throw 'Recovery file inherited weak ACL'}
+              foreach($ace in @($acl.GetAccessRules($true,$true,[Security.Principal.SecurityIdentifier]))){
+                if($ace.IsInherited -or $ace.IdentityReference.Value -notin @('S-1-5-18','S-1-5-32-544')){
+                  throw 'Recovery file contains external Windows principal'
+                }
+              }
+            }
+            $endDns=Get-DnsClientServerAddress | Sort-Object InterfaceIndex,AddressFamily |
+              Select-Object InterfaceIndex,AddressFamily,ServerAddresses | ConvertTo-Json -Depth 6 -Compress
+            if($endDns -cne $startDns -or
+              (Get-FileHash -LiteralPath $hostsPath -Algorithm SHA256).Hash -cne $startHosts -or
+              (Export-ScheduledTask -TaskName $name) -cne $beforeXML){
+              throw 'Critical: backup altered DNS, HOSTS or SYSTEM task'
+            }
+            & icacls.exe $copy '/grant' '*S-1-1-0:W' | Out-Null
+            if($LASTEXITCODE -ne 0){throw 'Cannot weaken disposable NTFS ACL'}
+            $aclReject=Verify-Legacy $safe
+            if($aclReject.status -eq 0){throw 'Verifier accepted Everyone-writable legacy recovery'}
+            $global:LASTEXITCODE=0
+            Write-Host 'PASS VOLVE_WINDOWS_INDEPENDENT_LEGACY_MOTOR_NTFS_ACL_TAMPER_REJECTED'
+            # Reject missing task rather than granting cleanup; the snapshot
+            # remains stored only on this disposable runner.
+            Unregister-ScheduledTask -TaskName $name -Confirm:$false -ErrorAction Stop
+            $taskRegistered=$false
+            $denied=@(& $ps51 -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $motorScript -BackupPath $original 2>&1)
+            if($LASTEXITCODE -eq 0){throw 'Unsafe: missing original task unexpectedly accepted'}
+            $global:LASTEXITCODE=0
+            Write-Host 'PASS VOLVE_REAL_WINDOWS_LEGACY_EXECUTABLE_COPY_SYSTEM_XML_NTFS_NO_HOST_MUTATION'
+            Write-Host 'PASS VOLVE_REAL_WINDOWS_LEGACY_MISSING_TASK_FAIL_CLOSED_NO_INSTALL'
+          }finally{
+            if($taskRegistered){Unregister-ScheduledTask -TaskName $name -Confirm:$false -ErrorAction Stop}
+            if($created){Remove-Item -LiteralPath $folder -Recurse -Force -ErrorAction Stop}
+          }
