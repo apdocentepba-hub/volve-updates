@@ -67,6 +67,47 @@ func(d *protectedSignedFullTransactionLab)RestoreAfterProtectedHandoff(ctx conte
  return d.managedDriverTest.Restore(ctx)
 }
 
+func TestProtectedSignedDriverUsesRecoveryReaderOnlyUnderNativeMutex(t *testing.T) {
+ residentProtectedCITest(t)
+ operations := &protectedSignedFullTransactionLab{managedDriverTest: &managedDriverTest{}}
+ calls := 0
+ proof := VerifiedLegacyMigrationProof{
+  LegacySHA256: testLegacyActionSHA256,
+  LegacyTaskXMLSHA256: testLegacyTaskXMLSHA256,
+ }
+ reader := ProtectedLegacyTaskRecoveryReader(func(ctx context.Context, got VerifiedLegacyMigrationProof) (LegacyTaskRecoverySnapshot, error) {
+  calls++
+  if got != proof { return LegacyTaskRecoverySnapshot{}, errors.New("signed proof was not forwarded unchanged") }
+  probeCtx, cancel := context.WithTimeout(ctx, 125*time.Millisecond)
+  defer cancel()
+  unlock, err := AcquireProtectedResidentTransitionLease(probeCtx)
+  if unlock != nil { unlock() }
+  if !errors.Is(err, context.DeadlineExceeded) {
+   return LegacyTaskRecoverySnapshot{}, errors.New("dedicated recovery reader ran without the native migration mutex")
+  }
+  return testLegacyTaskRecoverySnapshotForProof(completeLegacyTaskRecoverySnapshot(), got), nil
+ })
+ wrapped, err := NewProtectedSignedLegacySwitchDriverWithRecoveryReader(operations, reader)
+ if err != nil { t.Fatal(err) }
+ if _, err := wrapped.VerifyLegacyTaskRecoveryCoverage(context.Background(), proof); err == nil {
+  t.Fatal("recovery reader was callable before mutex acquisition")
+ }
+ if calls != 0 { t.Fatal("reader callback ran outside the protected lease") }
+ ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+ defer cancel()
+ release, err := wrapped.AcquireExclusiveMigration(ctx)
+ if err != nil { t.Fatal(err) }
+ snapshot, err := wrapped.VerifyLegacyTaskRecoveryCoverage(ctx, proof)
+ release()
+ if err != nil { t.Fatal(err) }
+ if calls != 1 || operations.coverageChecks != 0 {
+  t.Fatalf("protected reader did not replace delegated evidence source: callback=%d delegated=%d", calls, operations.coverageChecks)
+ }
+ if !ReviewLegacyTaskRecoveryCoverage(snapshot).RecoverySetComplete {
+  t.Fatal("native protected wrapper returned incomplete recovery evidence")
+ }
+}
+
 func TestProtectedSignedFullTransactionCommitAndRecoveryUnderNativeMutex(t *testing.T){
  residentProtectedCITest(t)
  for _,mode:=range []string{"commit","switch-failure","cancel-after-switch"}{
