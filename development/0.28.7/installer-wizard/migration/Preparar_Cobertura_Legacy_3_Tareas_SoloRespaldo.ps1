@@ -141,10 +141,10 @@ foreach($name in $names){
     Refuse 'El motor de rescate no usa powershell.exe de Windows confiable'
    }
    if($params -match '(?i)-(?:command|encodedcommand|enc)\b'){Refuse 'Comandos embebidos no permitidos'}
-   if(-not ($params -match '(?i)(?:^|\s)-File\s+(?:"([^"]+)"|''([^'']+)''|(\S+))\s*
+   if(-not ($params -match '(?i)(?:^|\s)-File\s+(?:"([^"]+)"|(\S+))\s*\z')){
     Refuse 'No se pudo identificar el script de rescate -File'
    }
-   $candidate=@($Matches[1],$Matches[2],$Matches[3]|Where-Object{$_})|Select-Object -First 1
+   $candidate=@($Matches[1],$Matches[2]|Where-Object{$_})|Select-Object -First 1
    $base=[IO.Path]::GetFileName([string]$candidate)
    if($base -notmatch '(?i)^VOLVE[_-].+\.ps1$'){Refuse 'Script de rescate ajeno a VOLVE'}
    $source=Expand-SafeSource ([string]$candidate) $base
