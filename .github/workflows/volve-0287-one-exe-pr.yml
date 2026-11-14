@@ -400,7 +400,2040 @@ jobs:
               if($passes.Count -ne 1 -or $skips.Count -ne 0){throw ('Mandatory bridge test skipped or missing: '+$name)}
             }
             Write-Host 'PROTECTION SNAPSHOT CHECKPOINT: execute native hosts/browser/catalog baseline tests in original motorupdate module'
-            $policyEvents=@(go test -mod=mod -count=1 -timeout 3m -json -run '^TestVOLVEBrowserPolicyReadOnly|^TestVOLVEBrowserPolicyRealWindowsRegistryNativeReadOnly$|^TestFreshMotorPreservesHostsBrowserPoliciesAndCatalog$|^TestFreshMotorDetectsPartialProtectionRegressions$|^TestProtectionSnapshotCannotPassWhenAnySurfaceWasNotCaptured$|^TestCountWindowsHostsBlockedRulesDoesNotReturnNames$|^TestWindowsHostsFileReadOnlyHashAndNoContentExport$|^TestWindowsHostsFileReadOnlyRejectsOversizedFile$|^TestWindowsProtectionSnapshotCapturesAllDeclaredSurfaces$|^TestWindowsProtectionSnapshotRequiresPinnedExistingCatalogTask$|^TestWindowsProtectionSnapshotRejectsUnknownOrContradictoryTaskInventory$|^TestWindowsProtectionSnapshotRejectsMissingInspectorsAndCancelledContext$|^TestWindowsProtectionSnapshotCannotPassIfHostBaselineIsMalformed$|^TestWindowsDNSAssignment|^TestDNSRecoveryJournal|^TestDNSRecoveryPreview|^TestDNSStagedBackup|^TestNativeWindowsDNSOriginalBackupRealNTFSAndCorruptedACL
+            $requiredTestFamilies=@(
+              '^TestVOLVEBrowserPolicyReadOnly',
+              '^TestVOLVEBrowserPolicyRealWindowsRegistryNativeReadOnly
+            if($LASTEXITCODE -ne 0){
+              $policyEvents | Select-Object -Last 60 | Write-Host
+              throw 'Native hosts/browser/catalog protection baseline tests failed'
+            }
+            $policyRecords=@($policyEvents | Where-Object {$_ -match '^\s*\{'} | ForEach-Object {$_ | ConvertFrom-Json})
+            foreach($name in @(
+              'TestVOLVEBrowserPolicyReadOnlyCountsDoNotClaimEffectiveProtection',
+              'TestVOLVEBrowserPolicyReadOnlyRejectsInjectedOrAmbiguousResponses',
+              'TestVOLVEBrowserPolicyReadOnlyMissingKeysAreNotFailedBrowserProtection',
+              'TestVOLVEBrowserPolicyReadOnlyRejectsMissingOrMalformedFingerprints',
+              'TestVOLVEBrowserPolicyReadOnlyRejectsCancelOrUnapprovedCommands',
+              'TestVOLVEBrowserPolicyRealWindowsRegistryNativeReadOnly',
+              'TestFreshMotorPreservesHostsBrowserPoliciesAndCatalog',
+              'TestFreshMotorDetectsPartialProtectionRegressions',
+              'TestProtectionSnapshotCannotPassWhenAnySurfaceWasNotCaptured',
+              'TestCountWindowsHostsBlockedRulesDoesNotReturnNames',
+              'TestWindowsHostsFileReadOnlyHashAndNoContentExport',
+              'TestWindowsHostsFileReadOnlyRejectsOversizedFile',
+              'TestWindowsProtectionSnapshotCapturesAllDeclaredSurfaces',
+              'TestWindowsProtectionSnapshotRequiresPinnedExistingCatalogTask',
+              'TestWindowsProtectionSnapshotRejectsUnknownOrContradictoryTaskInventory',
+              'TestWindowsProtectionSnapshotRejectsMissingInspectorsAndCancelledContext',
+              'TestWindowsProtectionSnapshotCannotPassIfHostBaselineIsMalformed',
+              'TestWindowsDNSAssignmentProvenanceSeparatesStaticAndAutomatic',
+              'TestWindowsDNSAssignmentProvenanceRejectsUnknownOrConflictingSource',
+              'TestWindowsDNSAssignmentProvenanceRejectsDuplicateOrIncompleteFamilies',
+              'TestWindowsDNSAssignmentFingerprintIgnoresAutomaticLeaseAddressButPreservesStaticOrder',
+              'TestWindowsDNSAssignmentProvenanceRejectsCancellationAndMutableQueries',
+              'TestWindowsDNSAssignmentProvenanceNativeWindowsReadOnly',
+              'TestDNSRecoveryJournalExactRoundTripAndWriteFreePreview',
+              'TestDNSRecoveryJournalRejectsTamperingAndMissingExternalPin',
+              'TestDNSRecoveryJournalRejectsUnknownOrIncompleteOriginals',
+              'TestDNSRecoveryPreviewRejectsExternalDNSAndNeverApplies',
+              'TestDNSRecoveryJournalCancellationFailsClosed',
+              'TestDNSRecoveryJournalRejectsUnpinnedReorderedAndDuplicateRecords',
+              'TestDNSStagedBackupCreateOnlyAndExactReadBack',
+              'TestDNSStagedBackupRejectsUntrustedInputsBeforeWriting',
+              'TestDNSStagedBackupNeverWritesPrivateDataBeforeDirectorySeal',
+              'TestDNSStagedBackupRejectsTamperAndUnexpectedFiles',
+              'TestNativeWindowsDNSOriginalBackupRealNTFSAndCorruptedACL'
+            )){
+              $passes=@($policyRecords | Where-Object {$_.Test -eq $name -and $_.Action -eq 'pass'})
+              $skips=@($policyRecords | Where-Object {$_.Test -eq $name -and $_.Action -eq 'skip'})
+              if($passes.Count -ne 1 -or $skips.Count -ne 0){throw ('Mandatory native browser policy test skipped or missing: '+$name)}
+            }
+            Write-Host 'PASS VOLVE_NATIVE_BROWSER_POLICY_CONTENT_FINGERPRINTS THREE_KEYS NO_VALUE_EXPORT'
+            Write-Host 'PASS VOLVE_NATIVE_PROTECTION_SNAPSHOT HOSTS_BROWSER_CATALOG PARTIAL_BASELINE NO_RAW_VALUES'
+            Write-Host 'PASS VOLVE_DNS_ASSIGNMENT_PROVENANCE_TESTS IPV4_IPV6 STATIC_AUTOMATIC FAIL_CLOSED NO_WRITES'
+            Write-Host 'PASS VOLVE_DNS_RECOVERY_JOURNAL_PINNED_IPV4_IPV6_READ_ONLY_PREVIEW NO_INSTALL'
+            Write-Host 'PASS VOLVE_NATIVE_NTFS_ORIGINAL_DNS_BACKUP_CREATE_ONLY_SEAL_READBACK_TAMPER_REJECT NO_DNS_WRITES'
+            Write-Host 'PASS VOLVE_SIGNED_EXE_PLUS_REAL_WINDOWS_6_INVENTORIES REVIEW_ONLY NO_INSTALL NO_DNS_CHANGE'
+            Write-Host 'PREVIEW CHECKPOINT: produce actual native Windows setup decision JSON'
+            $dnsBefore=Get-DnsClientServerAddress -ErrorAction Stop | Sort-Object InterfaceIndex,AddressFamily | Select-Object InterfaceIndex,AddressFamily,ServerAddresses | ConvertTo-Json -Depth 6 -Compress
+            $tasksBefore=@(Get-ScheduledTask -ErrorAction Stop | Where-Object {$_.TaskName -match '^(?i:VOLVE[-_])'}).Count
+            go test -mod=mod -count=1 -v ./hostroutebridge/cmd/preview
+            if($LASTEXITCODE -ne 0){throw 'Hosted CI-only setup preview fail-closed tests failed'}
+            $raw=(& go run -mod=mod ./hostroutebridge/cmd/preview --review-only | Out-String).Trim()
+            if($LASTEXITCODE -ne 0){throw 'Native signed Windows setup preview execution failed'}
+            $report=$raw | ConvertFrom-Json -ErrorAction Stop
+            if($report.component -ne 'VOLVE-0287-WINDOWS-SETUP-PREVIEW-CI' -or
+               $report.scope -ne 'DISPOSABLE_WINDOWS_CI_ONLY_NOT_USER_PC' -or
+               $report.result -ne 'REVIEW_ONLY' -or
+               $report.target_release -ne '0.28.7' -or
+               $report.windows_inventories_checked -ne 6 -or
+               $report.synthetic_ci_signed_container_verified -ne $true -or
+               $report.status -ne 'NO_INSTALL_OR_DNS_CHANGE_AUTHORIZED' -or
+               $report.can_install -ne $false -or
+               $report.can_upgrade -ne $false -or
+               $report.can_change_dns -ne $false -or
+               $report.can_change_tasks -ne $false -or
+               @($report.unmet_production_prerequisites).Count -lt 7){
+              throw ('Unsafe or incomplete native Windows preinstallation preview: '+$raw)
+            }
+            $dnsAfter=Get-DnsClientServerAddress -ErrorAction Stop | Sort-Object InterfaceIndex,AddressFamily | Select-Object InterfaceIndex,AddressFamily,ServerAddresses | ConvertTo-Json -Depth 6 -Compress
+            $tasksAfter=@(Get-ScheduledTask -ErrorAction Stop | Where-Object {$_.TaskName -match '^(?i:VOLVE[-_])'}).Count
+            if($dnsBefore -cne $dnsAfter -or $tasksBefore -ne $tasksAfter){
+              throw 'Native preinstallation preview changed DNS or VOLVE SYSTEM task count'
+            }
+            Write-Host $raw
+            Write-Host 'PROTECTED PREVIEW CHECKPOINT: repeat full Windows preflight WHILE holding updater/recovery kernel mutex'
+            $protectedRaw=(& go run -mod=mod ./hostroutebridge/cmd/preview --review-under-protected-lock 2>&1 | Out-String).Trim()
+            $protectedExit=$LASTEXITCODE
+            if($protectedExit -ne 0){
+              if($protectedRaw -notmatch 'DNS servers exist on an interface without a unique adapter GUID|DNS interface index maps to conflicting adapter GUIDs|DNS assignment registry key missing|Unknown DNS client address family'){
+                throw 'Protected native Windows preflight failed for an unexpected reason'
+              }
+              Write-Host 'SAFE REFUSAL: native Windows DNS source is ambiguous or unsupported; installation remains prohibited'
+              Write-Host 'PASS VOLVE_NATIVE_PROTECTED_PREFLIGHT_FAIL_CLOSED_UNMAPPED_DNS NO_INSTALL NO_DNS NO_TASKS'
+            }else{
+              if($protectedRaw -match 'ContentSHA256|URLBlocklist|PrivateURL|HostsSHA256|CatalogTaskDefinitionSHA256|DNSAdaptersSHA256|InterfaceGUID|EffectiveServers|NameServer'){
+                throw 'Protected setup report leaked raw policy registry names or fingerprints'
+              }
+              $protected=$protectedRaw | ConvertFrom-Json -ErrorAction Stop
+              if($protected.component -ne 'VOLVE-0287-WINDOWS-SETUP-PREVIEW-CI' -or
+                 $protected.scope -ne 'DISPOSABLE_WINDOWS_CI_ONLY_NOT_USER_PC' -or
+                 $protected.target_release -ne '0.28.7' -or
+                 $protected.windows_inventories_checked -ne 6 -or
+                 $protected.synthetic_ci_signed_container_verified -ne $true -or
+                 $protected.protected_transition_mutex_held_during_review -ne $true -or
+                 $protected.browser_registry_keys_checked -ne 3 -or
+                 $protected.hosts_baseline_checked -ne $true -or
+                 $protected.dns_adapter_assignment_baseline_checked -ne $true -or
+                 $protected.catalog_task_baseline_checked -ne $true -or
+                 $protected.partial_protection_snapshot_stable_under_lock -ne $true -or
+                 $protected.browser_registry_numbered_entries -lt 0 -or
+                 $protected.browser_policy_census_stable_under_lock -ne $true -or
+                 $protected.browser_policy_values_exported -ne $false -or
+                 $protected.browser_enforcement_verified -ne $false -or
+                 $protected.result -ne 'REVIEW_ONLY' -or
+                 $protected.can_install -ne $false -or
+                 $protected.can_upgrade -ne $false -or
+                 $protected.can_change_dns -ne $false -or
+                 $protected.can_change_tasks -ne $false -or
+                 $protected.status -ne 'NO_INSTALL_OR_DNS_CHANGE_AUTHORIZED'){
+                throw 'Protected preflight JSON granted an unauthorized write or omitted a required native check'
+              }
+              Write-Host 'PASS VOLVE_NATIVE_PROTECTED_SIGNED_HOST_PREFLIGHT SIX_INVENTORIES THREE_BROWSER_POLICIES DNS_ASSIGNMENT_BASELINE KERNEL_MUTEX EXCLUSIVE NO_INSTALL NO_DNS NO_TASKS'
+            }
+            $lockDNSAfter=Get-DnsClientServerAddress -ErrorAction Stop | Sort-Object InterfaceIndex,AddressFamily | Select-Object InterfaceIndex,AddressFamily,ServerAddresses | ConvertTo-Json -Depth 6 -Compress
+            $lockTasksAfter=@(Get-ScheduledTask -ErrorAction Stop | Where-Object {$_.TaskName -match '^(?i:VOLVE[-_])'}).Count
+            if($dnsBefore -cne $lockDNSAfter -or $tasksBefore -ne $lockTasksAfter){
+              throw 'Protected preflight touched Windows DNS adapter or VOLVE scheduled tasks'
+            }
+                        Write-Host 'PASS VOLVE_NATIVE_WINDOWS_SETUP_PREVIEW_6_INVENTORIES_SIGNED_PACKAGE NO_INSTALL NO_DNS NO_TASKS'
+            $global:LASTEXITCODE=0
+          } finally {
+            Pop-Location
+          }
+ volve-browser-protection/motorupdate)
+            if($LASTEXITCODE -ne 0){
+              $policyEvents | Select-Object -Last 60 | Write-Host
+              throw 'Native hosts/browser/catalog protection baseline tests failed'
+            }
+            $policyRecords=@($policyEvents | Where-Object {$_ -match '^\s*\{'} | ForEach-Object {$_ | ConvertFrom-Json})
+            foreach($name in @(
+              'TestVOLVEBrowserPolicyReadOnlyCountsDoNotClaimEffectiveProtection',
+              'TestVOLVEBrowserPolicyReadOnlyRejectsInjectedOrAmbiguousResponses',
+              'TestVOLVEBrowserPolicyReadOnlyMissingKeysAreNotFailedBrowserProtection',
+              'TestVOLVEBrowserPolicyReadOnlyRejectsMissingOrMalformedFingerprints',
+              'TestVOLVEBrowserPolicyReadOnlyRejectsCancelOrUnapprovedCommands',
+              'TestVOLVEBrowserPolicyRealWindowsRegistryNativeReadOnly',
+              'TestFreshMotorPreservesHostsBrowserPoliciesAndCatalog',
+              'TestFreshMotorDetectsPartialProtectionRegressions',
+              'TestProtectionSnapshotCannotPassWhenAnySurfaceWasNotCaptured',
+              'TestCountWindowsHostsBlockedRulesDoesNotReturnNames',
+              'TestWindowsHostsFileReadOnlyHashAndNoContentExport',
+              'TestWindowsHostsFileReadOnlyRejectsOversizedFile',
+              'TestWindowsProtectionSnapshotCapturesAllDeclaredSurfaces',
+              'TestWindowsProtectionSnapshotRequiresPinnedExistingCatalogTask',
+              'TestWindowsProtectionSnapshotRejectsUnknownOrContradictoryTaskInventory',
+              'TestWindowsProtectionSnapshotRejectsMissingInspectorsAndCancelledContext',
+              'TestWindowsProtectionSnapshotCannotPassIfHostBaselineIsMalformed',
+              'TestWindowsDNSAssignmentProvenanceSeparatesStaticAndAutomatic',
+              'TestWindowsDNSAssignmentProvenanceRejectsUnknownOrConflictingSource',
+              'TestWindowsDNSAssignmentProvenanceRejectsDuplicateOrIncompleteFamilies',
+              'TestWindowsDNSAssignmentFingerprintIgnoresAutomaticLeaseAddressButPreservesStaticOrder',
+              'TestWindowsDNSAssignmentProvenanceRejectsCancellationAndMutableQueries',
+              'TestWindowsDNSAssignmentProvenanceNativeWindowsReadOnly',
+              'TestDNSRecoveryJournalExactRoundTripAndWriteFreePreview',
+              'TestDNSRecoveryJournalRejectsTamperingAndMissingExternalPin',
+              'TestDNSRecoveryJournalRejectsUnknownOrIncompleteOriginals',
+              'TestDNSRecoveryPreviewRejectsExternalDNSAndNeverApplies',
+              'TestDNSRecoveryJournalCancellationFailsClosed',
+              'TestDNSRecoveryJournalRejectsUnpinnedReorderedAndDuplicateRecords'
+            )){
+              $passes=@($policyRecords | Where-Object {$_.Test -eq $name -and $_.Action -eq 'pass'})
+              $skips=@($policyRecords | Where-Object {$_.Test -eq $name -and $_.Action -eq 'skip'})
+              if($passes.Count -ne 1 -or $skips.Count -ne 0){throw ('Mandatory native browser policy test skipped or missing: '+$name)}
+            }
+            Write-Host 'PASS VOLVE_NATIVE_BROWSER_POLICY_CONTENT_FINGERPRINTS THREE_KEYS NO_VALUE_EXPORT'
+            Write-Host 'PASS VOLVE_NATIVE_PROTECTION_SNAPSHOT HOSTS_BROWSER_CATALOG PARTIAL_BASELINE NO_RAW_VALUES'
+            Write-Host 'PASS VOLVE_DNS_ASSIGNMENT_PROVENANCE_TESTS IPV4_IPV6 STATIC_AUTOMATIC FAIL_CLOSED NO_WRITES'
+            Write-Host 'PASS VOLVE_DNS_RECOVERY_JOURNAL_PINNED_IPV4_IPV6_READ_ONLY_PREVIEW NO_INSTALL'
+            Write-Host 'PASS VOLVE_SIGNED_EXE_PLUS_REAL_WINDOWS_6_INVENTORIES REVIEW_ONLY NO_INSTALL NO_DNS_CHANGE'
+            Write-Host 'PREVIEW CHECKPOINT: produce actual native Windows setup decision JSON'
+            $dnsBefore=Get-DnsClientServerAddress -ErrorAction Stop | Sort-Object InterfaceIndex,AddressFamily | Select-Object InterfaceIndex,AddressFamily,ServerAddresses | ConvertTo-Json -Depth 6 -Compress
+            $tasksBefore=@(Get-ScheduledTask -ErrorAction Stop | Where-Object {$_.TaskName -match '^(?i:VOLVE[-_])'}).Count
+            go test -mod=mod -count=1 -v ./hostroutebridge/cmd/preview
+            if($LASTEXITCODE -ne 0){throw 'Hosted CI-only setup preview fail-closed tests failed'}
+            $raw=(& go run -mod=mod ./hostroutebridge/cmd/preview --review-only | Out-String).Trim()
+            if($LASTEXITCODE -ne 0){throw 'Native signed Windows setup preview execution failed'}
+            $report=$raw | ConvertFrom-Json -ErrorAction Stop
+            if($report.component -ne 'VOLVE-0287-WINDOWS-SETUP-PREVIEW-CI' -or
+               $report.scope -ne 'DISPOSABLE_WINDOWS_CI_ONLY_NOT_USER_PC' -or
+               $report.result -ne 'REVIEW_ONLY' -or
+               $report.target_release -ne '0.28.7' -or
+               $report.windows_inventories_checked -ne 6 -or
+               $report.synthetic_ci_signed_container_verified -ne $true -or
+               $report.status -ne 'NO_INSTALL_OR_DNS_CHANGE_AUTHORIZED' -or
+               $report.can_install -ne $false -or
+               $report.can_upgrade -ne $false -or
+               $report.can_change_dns -ne $false -or
+               $report.can_change_tasks -ne $false -or
+               @($report.unmet_production_prerequisites).Count -lt 7){
+              throw ('Unsafe or incomplete native Windows preinstallation preview: '+$raw)
+            }
+            $dnsAfter=Get-DnsClientServerAddress -ErrorAction Stop | Sort-Object InterfaceIndex,AddressFamily | Select-Object InterfaceIndex,AddressFamily,ServerAddresses | ConvertTo-Json -Depth 6 -Compress
+            $tasksAfter=@(Get-ScheduledTask -ErrorAction Stop | Where-Object {$_.TaskName -match '^(?i:VOLVE[-_])'}).Count
+            if($dnsBefore -cne $dnsAfter -or $tasksBefore -ne $tasksAfter){
+              throw 'Native preinstallation preview changed DNS or VOLVE SYSTEM task count'
+            }
+            Write-Host $raw
+            Write-Host 'PROTECTED PREVIEW CHECKPOINT: repeat full Windows preflight WHILE holding updater/recovery kernel mutex'
+            $protectedRaw=(& go run -mod=mod ./hostroutebridge/cmd/preview --review-under-protected-lock 2>&1 | Out-String).Trim()
+            $protectedExit=$LASTEXITCODE
+            if($protectedExit -ne 0){
+              if($protectedRaw -notmatch 'DNS servers exist on an interface without a unique adapter GUID|DNS interface index maps to conflicting adapter GUIDs|DNS assignment registry key missing|Unknown DNS client address family'){
+                throw 'Protected native Windows preflight failed for an unexpected reason'
+              }
+              Write-Host 'SAFE REFUSAL: native Windows DNS source is ambiguous or unsupported; installation remains prohibited'
+              Write-Host 'PASS VOLVE_NATIVE_PROTECTED_PREFLIGHT_FAIL_CLOSED_UNMAPPED_DNS NO_INSTALL NO_DNS NO_TASKS'
+            }else{
+              if($protectedRaw -match 'ContentSHA256|URLBlocklist|PrivateURL|HostsSHA256|CatalogTaskDefinitionSHA256|DNSAdaptersSHA256|InterfaceGUID|EffectiveServers|NameServer'){
+                throw 'Protected setup report leaked raw policy registry names or fingerprints'
+              }
+              $protected=$protectedRaw | ConvertFrom-Json -ErrorAction Stop
+              if($protected.component -ne 'VOLVE-0287-WINDOWS-SETUP-PREVIEW-CI' -or
+                 $protected.scope -ne 'DISPOSABLE_WINDOWS_CI_ONLY_NOT_USER_PC' -or
+                 $protected.target_release -ne '0.28.7' -or
+                 $protected.windows_inventories_checked -ne 6 -or
+                 $protected.synthetic_ci_signed_container_verified -ne $true -or
+                 $protected.protected_transition_mutex_held_during_review -ne $true -or
+                 $protected.browser_registry_keys_checked -ne 3 -or
+                 $protected.hosts_baseline_checked -ne $true -or
+                 $protected.dns_adapter_assignment_baseline_checked -ne $true -or
+                 $protected.catalog_task_baseline_checked -ne $true -or
+                 $protected.partial_protection_snapshot_stable_under_lock -ne $true -or
+                 $protected.browser_registry_numbered_entries -lt 0 -or
+                 $protected.browser_policy_census_stable_under_lock -ne $true -or
+                 $protected.browser_policy_values_exported -ne $false -or
+                 $protected.browser_enforcement_verified -ne $false -or
+                 $protected.result -ne 'REVIEW_ONLY' -or
+                 $protected.can_install -ne $false -or
+                 $protected.can_upgrade -ne $false -or
+                 $protected.can_change_dns -ne $false -or
+                 $protected.can_change_tasks -ne $false -or
+                 $protected.status -ne 'NO_INSTALL_OR_DNS_CHANGE_AUTHORIZED'){
+                throw 'Protected preflight JSON granted an unauthorized write or omitted a required native check'
+              }
+              Write-Host 'PASS VOLVE_NATIVE_PROTECTED_SIGNED_HOST_PREFLIGHT SIX_INVENTORIES THREE_BROWSER_POLICIES DNS_ASSIGNMENT_BASELINE KERNEL_MUTEX EXCLUSIVE NO_INSTALL NO_DNS NO_TASKS'
+            }
+            $lockDNSAfter=Get-DnsClientServerAddress -ErrorAction Stop | Sort-Object InterfaceIndex,AddressFamily | Select-Object InterfaceIndex,AddressFamily,ServerAddresses | ConvertTo-Json -Depth 6 -Compress
+            $lockTasksAfter=@(Get-ScheduledTask -ErrorAction Stop | Where-Object {$_.TaskName -match '^(?i:VOLVE[-_])'}).Count
+            if($dnsBefore -cne $lockDNSAfter -or $tasksBefore -ne $lockTasksAfter){
+              throw 'Protected preflight touched Windows DNS adapter or VOLVE scheduled tasks'
+            }
+                        Write-Host 'PASS VOLVE_NATIVE_WINDOWS_SETUP_PREVIEW_6_INVENTORIES_SIGNED_PACKAGE NO_INSTALL NO_DNS NO_TASKS'
+            $global:LASTEXITCODE=0
+          } finally {
+            Pop-Location
+          }
+,
+              '^TestFreshMotorPreservesHostsBrowserPoliciesAndCatalog
+            if($LASTEXITCODE -ne 0){
+              $policyEvents | Select-Object -Last 60 | Write-Host
+              throw 'Native hosts/browser/catalog protection baseline tests failed'
+            }
+            $policyRecords=@($policyEvents | Where-Object {$_ -match '^\s*\{'} | ForEach-Object {$_ | ConvertFrom-Json})
+            foreach($name in @(
+              'TestVOLVEBrowserPolicyReadOnlyCountsDoNotClaimEffectiveProtection',
+              'TestVOLVEBrowserPolicyReadOnlyRejectsInjectedOrAmbiguousResponses',
+              'TestVOLVEBrowserPolicyReadOnlyMissingKeysAreNotFailedBrowserProtection',
+              'TestVOLVEBrowserPolicyReadOnlyRejectsMissingOrMalformedFingerprints',
+              'TestVOLVEBrowserPolicyReadOnlyRejectsCancelOrUnapprovedCommands',
+              'TestVOLVEBrowserPolicyRealWindowsRegistryNativeReadOnly',
+              'TestFreshMotorPreservesHostsBrowserPoliciesAndCatalog',
+              'TestFreshMotorDetectsPartialProtectionRegressions',
+              'TestProtectionSnapshotCannotPassWhenAnySurfaceWasNotCaptured',
+              'TestCountWindowsHostsBlockedRulesDoesNotReturnNames',
+              'TestWindowsHostsFileReadOnlyHashAndNoContentExport',
+              'TestWindowsHostsFileReadOnlyRejectsOversizedFile',
+              'TestWindowsProtectionSnapshotCapturesAllDeclaredSurfaces',
+              'TestWindowsProtectionSnapshotRequiresPinnedExistingCatalogTask',
+              'TestWindowsProtectionSnapshotRejectsUnknownOrContradictoryTaskInventory',
+              'TestWindowsProtectionSnapshotRejectsMissingInspectorsAndCancelledContext',
+              'TestWindowsProtectionSnapshotCannotPassIfHostBaselineIsMalformed',
+              'TestWindowsDNSAssignmentProvenanceSeparatesStaticAndAutomatic',
+              'TestWindowsDNSAssignmentProvenanceRejectsUnknownOrConflictingSource',
+              'TestWindowsDNSAssignmentProvenanceRejectsDuplicateOrIncompleteFamilies',
+              'TestWindowsDNSAssignmentFingerprintIgnoresAutomaticLeaseAddressButPreservesStaticOrder',
+              'TestWindowsDNSAssignmentProvenanceRejectsCancellationAndMutableQueries',
+              'TestWindowsDNSAssignmentProvenanceNativeWindowsReadOnly',
+              'TestDNSRecoveryJournalExactRoundTripAndWriteFreePreview',
+              'TestDNSRecoveryJournalRejectsTamperingAndMissingExternalPin',
+              'TestDNSRecoveryJournalRejectsUnknownOrIncompleteOriginals',
+              'TestDNSRecoveryPreviewRejectsExternalDNSAndNeverApplies',
+              'TestDNSRecoveryJournalCancellationFailsClosed',
+              'TestDNSRecoveryJournalRejectsUnpinnedReorderedAndDuplicateRecords',
+              'TestDNSStagedBackupCreateOnlyAndExactReadBack',
+              'TestDNSStagedBackupRejectsUntrustedInputsBeforeWriting',
+              'TestDNSStagedBackupNeverWritesPrivateDataBeforeDirectorySeal',
+              'TestDNSStagedBackupRejectsTamperAndUnexpectedFiles',
+              'TestNativeWindowsDNSOriginalBackupRealNTFSAndCorruptedACL'
+            )){
+              $passes=@($policyRecords | Where-Object {$_.Test -eq $name -and $_.Action -eq 'pass'})
+              $skips=@($policyRecords | Where-Object {$_.Test -eq $name -and $_.Action -eq 'skip'})
+              if($passes.Count -ne 1 -or $skips.Count -ne 0){throw ('Mandatory native browser policy test skipped or missing: '+$name)}
+            }
+            Write-Host 'PASS VOLVE_NATIVE_BROWSER_POLICY_CONTENT_FINGERPRINTS THREE_KEYS NO_VALUE_EXPORT'
+            Write-Host 'PASS VOLVE_NATIVE_PROTECTION_SNAPSHOT HOSTS_BROWSER_CATALOG PARTIAL_BASELINE NO_RAW_VALUES'
+            Write-Host 'PASS VOLVE_DNS_ASSIGNMENT_PROVENANCE_TESTS IPV4_IPV6 STATIC_AUTOMATIC FAIL_CLOSED NO_WRITES'
+            Write-Host 'PASS VOLVE_DNS_RECOVERY_JOURNAL_PINNED_IPV4_IPV6_READ_ONLY_PREVIEW NO_INSTALL'
+            Write-Host 'PASS VOLVE_NATIVE_NTFS_ORIGINAL_DNS_BACKUP_CREATE_ONLY_SEAL_READBACK_TAMPER_REJECT NO_DNS_WRITES'
+            Write-Host 'PASS VOLVE_SIGNED_EXE_PLUS_REAL_WINDOWS_6_INVENTORIES REVIEW_ONLY NO_INSTALL NO_DNS_CHANGE'
+            Write-Host 'PREVIEW CHECKPOINT: produce actual native Windows setup decision JSON'
+            $dnsBefore=Get-DnsClientServerAddress -ErrorAction Stop | Sort-Object InterfaceIndex,AddressFamily | Select-Object InterfaceIndex,AddressFamily,ServerAddresses | ConvertTo-Json -Depth 6 -Compress
+            $tasksBefore=@(Get-ScheduledTask -ErrorAction Stop | Where-Object {$_.TaskName -match '^(?i:VOLVE[-_])'}).Count
+            go test -mod=mod -count=1 -v ./hostroutebridge/cmd/preview
+            if($LASTEXITCODE -ne 0){throw 'Hosted CI-only setup preview fail-closed tests failed'}
+            $raw=(& go run -mod=mod ./hostroutebridge/cmd/preview --review-only | Out-String).Trim()
+            if($LASTEXITCODE -ne 0){throw 'Native signed Windows setup preview execution failed'}
+            $report=$raw | ConvertFrom-Json -ErrorAction Stop
+            if($report.component -ne 'VOLVE-0287-WINDOWS-SETUP-PREVIEW-CI' -or
+               $report.scope -ne 'DISPOSABLE_WINDOWS_CI_ONLY_NOT_USER_PC' -or
+               $report.result -ne 'REVIEW_ONLY' -or
+               $report.target_release -ne '0.28.7' -or
+               $report.windows_inventories_checked -ne 6 -or
+               $report.synthetic_ci_signed_container_verified -ne $true -or
+               $report.status -ne 'NO_INSTALL_OR_DNS_CHANGE_AUTHORIZED' -or
+               $report.can_install -ne $false -or
+               $report.can_upgrade -ne $false -or
+               $report.can_change_dns -ne $false -or
+               $report.can_change_tasks -ne $false -or
+               @($report.unmet_production_prerequisites).Count -lt 7){
+              throw ('Unsafe or incomplete native Windows preinstallation preview: '+$raw)
+            }
+            $dnsAfter=Get-DnsClientServerAddress -ErrorAction Stop | Sort-Object InterfaceIndex,AddressFamily | Select-Object InterfaceIndex,AddressFamily,ServerAddresses | ConvertTo-Json -Depth 6 -Compress
+            $tasksAfter=@(Get-ScheduledTask -ErrorAction Stop | Where-Object {$_.TaskName -match '^(?i:VOLVE[-_])'}).Count
+            if($dnsBefore -cne $dnsAfter -or $tasksBefore -ne $tasksAfter){
+              throw 'Native preinstallation preview changed DNS or VOLVE SYSTEM task count'
+            }
+            Write-Host $raw
+            Write-Host 'PROTECTED PREVIEW CHECKPOINT: repeat full Windows preflight WHILE holding updater/recovery kernel mutex'
+            $protectedRaw=(& go run -mod=mod ./hostroutebridge/cmd/preview --review-under-protected-lock 2>&1 | Out-String).Trim()
+            $protectedExit=$LASTEXITCODE
+            if($protectedExit -ne 0){
+              if($protectedRaw -notmatch 'DNS servers exist on an interface without a unique adapter GUID|DNS interface index maps to conflicting adapter GUIDs|DNS assignment registry key missing|Unknown DNS client address family'){
+                throw 'Protected native Windows preflight failed for an unexpected reason'
+              }
+              Write-Host 'SAFE REFUSAL: native Windows DNS source is ambiguous or unsupported; installation remains prohibited'
+              Write-Host 'PASS VOLVE_NATIVE_PROTECTED_PREFLIGHT_FAIL_CLOSED_UNMAPPED_DNS NO_INSTALL NO_DNS NO_TASKS'
+            }else{
+              if($protectedRaw -match 'ContentSHA256|URLBlocklist|PrivateURL|HostsSHA256|CatalogTaskDefinitionSHA256|DNSAdaptersSHA256|InterfaceGUID|EffectiveServers|NameServer'){
+                throw 'Protected setup report leaked raw policy registry names or fingerprints'
+              }
+              $protected=$protectedRaw | ConvertFrom-Json -ErrorAction Stop
+              if($protected.component -ne 'VOLVE-0287-WINDOWS-SETUP-PREVIEW-CI' -or
+                 $protected.scope -ne 'DISPOSABLE_WINDOWS_CI_ONLY_NOT_USER_PC' -or
+                 $protected.target_release -ne '0.28.7' -or
+                 $protected.windows_inventories_checked -ne 6 -or
+                 $protected.synthetic_ci_signed_container_verified -ne $true -or
+                 $protected.protected_transition_mutex_held_during_review -ne $true -or
+                 $protected.browser_registry_keys_checked -ne 3 -or
+                 $protected.hosts_baseline_checked -ne $true -or
+                 $protected.dns_adapter_assignment_baseline_checked -ne $true -or
+                 $protected.catalog_task_baseline_checked -ne $true -or
+                 $protected.partial_protection_snapshot_stable_under_lock -ne $true -or
+                 $protected.browser_registry_numbered_entries -lt 0 -or
+                 $protected.browser_policy_census_stable_under_lock -ne $true -or
+                 $protected.browser_policy_values_exported -ne $false -or
+                 $protected.browser_enforcement_verified -ne $false -or
+                 $protected.result -ne 'REVIEW_ONLY' -or
+                 $protected.can_install -ne $false -or
+                 $protected.can_upgrade -ne $false -or
+                 $protected.can_change_dns -ne $false -or
+                 $protected.can_change_tasks -ne $false -or
+                 $protected.status -ne 'NO_INSTALL_OR_DNS_CHANGE_AUTHORIZED'){
+                throw 'Protected preflight JSON granted an unauthorized write or omitted a required native check'
+              }
+              Write-Host 'PASS VOLVE_NATIVE_PROTECTED_SIGNED_HOST_PREFLIGHT SIX_INVENTORIES THREE_BROWSER_POLICIES DNS_ASSIGNMENT_BASELINE KERNEL_MUTEX EXCLUSIVE NO_INSTALL NO_DNS NO_TASKS'
+            }
+            $lockDNSAfter=Get-DnsClientServerAddress -ErrorAction Stop | Sort-Object InterfaceIndex,AddressFamily | Select-Object InterfaceIndex,AddressFamily,ServerAddresses | ConvertTo-Json -Depth 6 -Compress
+            $lockTasksAfter=@(Get-ScheduledTask -ErrorAction Stop | Where-Object {$_.TaskName -match '^(?i:VOLVE[-_])'}).Count
+            if($dnsBefore -cne $lockDNSAfter -or $tasksBefore -ne $lockTasksAfter){
+              throw 'Protected preflight touched Windows DNS adapter or VOLVE scheduled tasks'
+            }
+                        Write-Host 'PASS VOLVE_NATIVE_WINDOWS_SETUP_PREVIEW_6_INVENTORIES_SIGNED_PACKAGE NO_INSTALL NO_DNS NO_TASKS'
+            $global:LASTEXITCODE=0
+          } finally {
+            Pop-Location
+          }
+ volve-browser-protection/motorupdate)
+            if($LASTEXITCODE -ne 0){
+              $policyEvents | Select-Object -Last 60 | Write-Host
+              throw 'Native hosts/browser/catalog protection baseline tests failed'
+            }
+            $policyRecords=@($policyEvents | Where-Object {$_ -match '^\s*\{'} | ForEach-Object {$_ | ConvertFrom-Json})
+            foreach($name in @(
+              'TestVOLVEBrowserPolicyReadOnlyCountsDoNotClaimEffectiveProtection',
+              'TestVOLVEBrowserPolicyReadOnlyRejectsInjectedOrAmbiguousResponses',
+              'TestVOLVEBrowserPolicyReadOnlyMissingKeysAreNotFailedBrowserProtection',
+              'TestVOLVEBrowserPolicyReadOnlyRejectsMissingOrMalformedFingerprints',
+              'TestVOLVEBrowserPolicyReadOnlyRejectsCancelOrUnapprovedCommands',
+              'TestVOLVEBrowserPolicyRealWindowsRegistryNativeReadOnly',
+              'TestFreshMotorPreservesHostsBrowserPoliciesAndCatalog',
+              'TestFreshMotorDetectsPartialProtectionRegressions',
+              'TestProtectionSnapshotCannotPassWhenAnySurfaceWasNotCaptured',
+              'TestCountWindowsHostsBlockedRulesDoesNotReturnNames',
+              'TestWindowsHostsFileReadOnlyHashAndNoContentExport',
+              'TestWindowsHostsFileReadOnlyRejectsOversizedFile',
+              'TestWindowsProtectionSnapshotCapturesAllDeclaredSurfaces',
+              'TestWindowsProtectionSnapshotRequiresPinnedExistingCatalogTask',
+              'TestWindowsProtectionSnapshotRejectsUnknownOrContradictoryTaskInventory',
+              'TestWindowsProtectionSnapshotRejectsMissingInspectorsAndCancelledContext',
+              'TestWindowsProtectionSnapshotCannotPassIfHostBaselineIsMalformed',
+              'TestWindowsDNSAssignmentProvenanceSeparatesStaticAndAutomatic',
+              'TestWindowsDNSAssignmentProvenanceRejectsUnknownOrConflictingSource',
+              'TestWindowsDNSAssignmentProvenanceRejectsDuplicateOrIncompleteFamilies',
+              'TestWindowsDNSAssignmentFingerprintIgnoresAutomaticLeaseAddressButPreservesStaticOrder',
+              'TestWindowsDNSAssignmentProvenanceRejectsCancellationAndMutableQueries',
+              'TestWindowsDNSAssignmentProvenanceNativeWindowsReadOnly',
+              'TestDNSRecoveryJournalExactRoundTripAndWriteFreePreview',
+              'TestDNSRecoveryJournalRejectsTamperingAndMissingExternalPin',
+              'TestDNSRecoveryJournalRejectsUnknownOrIncompleteOriginals',
+              'TestDNSRecoveryPreviewRejectsExternalDNSAndNeverApplies',
+              'TestDNSRecoveryJournalCancellationFailsClosed',
+              'TestDNSRecoveryJournalRejectsUnpinnedReorderedAndDuplicateRecords'
+            )){
+              $passes=@($policyRecords | Where-Object {$_.Test -eq $name -and $_.Action -eq 'pass'})
+              $skips=@($policyRecords | Where-Object {$_.Test -eq $name -and $_.Action -eq 'skip'})
+              if($passes.Count -ne 1 -or $skips.Count -ne 0){throw ('Mandatory native browser policy test skipped or missing: '+$name)}
+            }
+            Write-Host 'PASS VOLVE_NATIVE_BROWSER_POLICY_CONTENT_FINGERPRINTS THREE_KEYS NO_VALUE_EXPORT'
+            Write-Host 'PASS VOLVE_NATIVE_PROTECTION_SNAPSHOT HOSTS_BROWSER_CATALOG PARTIAL_BASELINE NO_RAW_VALUES'
+            Write-Host 'PASS VOLVE_DNS_ASSIGNMENT_PROVENANCE_TESTS IPV4_IPV6 STATIC_AUTOMATIC FAIL_CLOSED NO_WRITES'
+            Write-Host 'PASS VOLVE_DNS_RECOVERY_JOURNAL_PINNED_IPV4_IPV6_READ_ONLY_PREVIEW NO_INSTALL'
+            Write-Host 'PASS VOLVE_SIGNED_EXE_PLUS_REAL_WINDOWS_6_INVENTORIES REVIEW_ONLY NO_INSTALL NO_DNS_CHANGE'
+            Write-Host 'PREVIEW CHECKPOINT: produce actual native Windows setup decision JSON'
+            $dnsBefore=Get-DnsClientServerAddress -ErrorAction Stop | Sort-Object InterfaceIndex,AddressFamily | Select-Object InterfaceIndex,AddressFamily,ServerAddresses | ConvertTo-Json -Depth 6 -Compress
+            $tasksBefore=@(Get-ScheduledTask -ErrorAction Stop | Where-Object {$_.TaskName -match '^(?i:VOLVE[-_])'}).Count
+            go test -mod=mod -count=1 -v ./hostroutebridge/cmd/preview
+            if($LASTEXITCODE -ne 0){throw 'Hosted CI-only setup preview fail-closed tests failed'}
+            $raw=(& go run -mod=mod ./hostroutebridge/cmd/preview --review-only | Out-String).Trim()
+            if($LASTEXITCODE -ne 0){throw 'Native signed Windows setup preview execution failed'}
+            $report=$raw | ConvertFrom-Json -ErrorAction Stop
+            if($report.component -ne 'VOLVE-0287-WINDOWS-SETUP-PREVIEW-CI' -or
+               $report.scope -ne 'DISPOSABLE_WINDOWS_CI_ONLY_NOT_USER_PC' -or
+               $report.result -ne 'REVIEW_ONLY' -or
+               $report.target_release -ne '0.28.7' -or
+               $report.windows_inventories_checked -ne 6 -or
+               $report.synthetic_ci_signed_container_verified -ne $true -or
+               $report.status -ne 'NO_INSTALL_OR_DNS_CHANGE_AUTHORIZED' -or
+               $report.can_install -ne $false -or
+               $report.can_upgrade -ne $false -or
+               $report.can_change_dns -ne $false -or
+               $report.can_change_tasks -ne $false -or
+               @($report.unmet_production_prerequisites).Count -lt 7){
+              throw ('Unsafe or incomplete native Windows preinstallation preview: '+$raw)
+            }
+            $dnsAfter=Get-DnsClientServerAddress -ErrorAction Stop | Sort-Object InterfaceIndex,AddressFamily | Select-Object InterfaceIndex,AddressFamily,ServerAddresses | ConvertTo-Json -Depth 6 -Compress
+            $tasksAfter=@(Get-ScheduledTask -ErrorAction Stop | Where-Object {$_.TaskName -match '^(?i:VOLVE[-_])'}).Count
+            if($dnsBefore -cne $dnsAfter -or $tasksBefore -ne $tasksAfter){
+              throw 'Native preinstallation preview changed DNS or VOLVE SYSTEM task count'
+            }
+            Write-Host $raw
+            Write-Host 'PROTECTED PREVIEW CHECKPOINT: repeat full Windows preflight WHILE holding updater/recovery kernel mutex'
+            $protectedRaw=(& go run -mod=mod ./hostroutebridge/cmd/preview --review-under-protected-lock 2>&1 | Out-String).Trim()
+            $protectedExit=$LASTEXITCODE
+            if($protectedExit -ne 0){
+              if($protectedRaw -notmatch 'DNS servers exist on an interface without a unique adapter GUID|DNS interface index maps to conflicting adapter GUIDs|DNS assignment registry key missing|Unknown DNS client address family'){
+                throw 'Protected native Windows preflight failed for an unexpected reason'
+              }
+              Write-Host 'SAFE REFUSAL: native Windows DNS source is ambiguous or unsupported; installation remains prohibited'
+              Write-Host 'PASS VOLVE_NATIVE_PROTECTED_PREFLIGHT_FAIL_CLOSED_UNMAPPED_DNS NO_INSTALL NO_DNS NO_TASKS'
+            }else{
+              if($protectedRaw -match 'ContentSHA256|URLBlocklist|PrivateURL|HostsSHA256|CatalogTaskDefinitionSHA256|DNSAdaptersSHA256|InterfaceGUID|EffectiveServers|NameServer'){
+                throw 'Protected setup report leaked raw policy registry names or fingerprints'
+              }
+              $protected=$protectedRaw | ConvertFrom-Json -ErrorAction Stop
+              if($protected.component -ne 'VOLVE-0287-WINDOWS-SETUP-PREVIEW-CI' -or
+                 $protected.scope -ne 'DISPOSABLE_WINDOWS_CI_ONLY_NOT_USER_PC' -or
+                 $protected.target_release -ne '0.28.7' -or
+                 $protected.windows_inventories_checked -ne 6 -or
+                 $protected.synthetic_ci_signed_container_verified -ne $true -or
+                 $protected.protected_transition_mutex_held_during_review -ne $true -or
+                 $protected.browser_registry_keys_checked -ne 3 -or
+                 $protected.hosts_baseline_checked -ne $true -or
+                 $protected.dns_adapter_assignment_baseline_checked -ne $true -or
+                 $protected.catalog_task_baseline_checked -ne $true -or
+                 $protected.partial_protection_snapshot_stable_under_lock -ne $true -or
+                 $protected.browser_registry_numbered_entries -lt 0 -or
+                 $protected.browser_policy_census_stable_under_lock -ne $true -or
+                 $protected.browser_policy_values_exported -ne $false -or
+                 $protected.browser_enforcement_verified -ne $false -or
+                 $protected.result -ne 'REVIEW_ONLY' -or
+                 $protected.can_install -ne $false -or
+                 $protected.can_upgrade -ne $false -or
+                 $protected.can_change_dns -ne $false -or
+                 $protected.can_change_tasks -ne $false -or
+                 $protected.status -ne 'NO_INSTALL_OR_DNS_CHANGE_AUTHORIZED'){
+                throw 'Protected preflight JSON granted an unauthorized write or omitted a required native check'
+              }
+              Write-Host 'PASS VOLVE_NATIVE_PROTECTED_SIGNED_HOST_PREFLIGHT SIX_INVENTORIES THREE_BROWSER_POLICIES DNS_ASSIGNMENT_BASELINE KERNEL_MUTEX EXCLUSIVE NO_INSTALL NO_DNS NO_TASKS'
+            }
+            $lockDNSAfter=Get-DnsClientServerAddress -ErrorAction Stop | Sort-Object InterfaceIndex,AddressFamily | Select-Object InterfaceIndex,AddressFamily,ServerAddresses | ConvertTo-Json -Depth 6 -Compress
+            $lockTasksAfter=@(Get-ScheduledTask -ErrorAction Stop | Where-Object {$_.TaskName -match '^(?i:VOLVE[-_])'}).Count
+            if($dnsBefore -cne $lockDNSAfter -or $tasksBefore -ne $lockTasksAfter){
+              throw 'Protected preflight touched Windows DNS adapter or VOLVE scheduled tasks'
+            }
+                        Write-Host 'PASS VOLVE_NATIVE_WINDOWS_SETUP_PREVIEW_6_INVENTORIES_SIGNED_PACKAGE NO_INSTALL NO_DNS NO_TASKS'
+            $global:LASTEXITCODE=0
+          } finally {
+            Pop-Location
+          }
+,
+              '^TestFreshMotorDetectsPartialProtectionRegressions
+            if($LASTEXITCODE -ne 0){
+              $policyEvents | Select-Object -Last 60 | Write-Host
+              throw 'Native hosts/browser/catalog protection baseline tests failed'
+            }
+            $policyRecords=@($policyEvents | Where-Object {$_ -match '^\s*\{'} | ForEach-Object {$_ | ConvertFrom-Json})
+            foreach($name in @(
+              'TestVOLVEBrowserPolicyReadOnlyCountsDoNotClaimEffectiveProtection',
+              'TestVOLVEBrowserPolicyReadOnlyRejectsInjectedOrAmbiguousResponses',
+              'TestVOLVEBrowserPolicyReadOnlyMissingKeysAreNotFailedBrowserProtection',
+              'TestVOLVEBrowserPolicyReadOnlyRejectsMissingOrMalformedFingerprints',
+              'TestVOLVEBrowserPolicyReadOnlyRejectsCancelOrUnapprovedCommands',
+              'TestVOLVEBrowserPolicyRealWindowsRegistryNativeReadOnly',
+              'TestFreshMotorPreservesHostsBrowserPoliciesAndCatalog',
+              'TestFreshMotorDetectsPartialProtectionRegressions',
+              'TestProtectionSnapshotCannotPassWhenAnySurfaceWasNotCaptured',
+              'TestCountWindowsHostsBlockedRulesDoesNotReturnNames',
+              'TestWindowsHostsFileReadOnlyHashAndNoContentExport',
+              'TestWindowsHostsFileReadOnlyRejectsOversizedFile',
+              'TestWindowsProtectionSnapshotCapturesAllDeclaredSurfaces',
+              'TestWindowsProtectionSnapshotRequiresPinnedExistingCatalogTask',
+              'TestWindowsProtectionSnapshotRejectsUnknownOrContradictoryTaskInventory',
+              'TestWindowsProtectionSnapshotRejectsMissingInspectorsAndCancelledContext',
+              'TestWindowsProtectionSnapshotCannotPassIfHostBaselineIsMalformed',
+              'TestWindowsDNSAssignmentProvenanceSeparatesStaticAndAutomatic',
+              'TestWindowsDNSAssignmentProvenanceRejectsUnknownOrConflictingSource',
+              'TestWindowsDNSAssignmentProvenanceRejectsDuplicateOrIncompleteFamilies',
+              'TestWindowsDNSAssignmentFingerprintIgnoresAutomaticLeaseAddressButPreservesStaticOrder',
+              'TestWindowsDNSAssignmentProvenanceRejectsCancellationAndMutableQueries',
+              'TestWindowsDNSAssignmentProvenanceNativeWindowsReadOnly',
+              'TestDNSRecoveryJournalExactRoundTripAndWriteFreePreview',
+              'TestDNSRecoveryJournalRejectsTamperingAndMissingExternalPin',
+              'TestDNSRecoveryJournalRejectsUnknownOrIncompleteOriginals',
+              'TestDNSRecoveryPreviewRejectsExternalDNSAndNeverApplies',
+              'TestDNSRecoveryJournalCancellationFailsClosed',
+              'TestDNSRecoveryJournalRejectsUnpinnedReorderedAndDuplicateRecords',
+              'TestDNSStagedBackupCreateOnlyAndExactReadBack',
+              'TestDNSStagedBackupRejectsUntrustedInputsBeforeWriting',
+              'TestDNSStagedBackupNeverWritesPrivateDataBeforeDirectorySeal',
+              'TestDNSStagedBackupRejectsTamperAndUnexpectedFiles',
+              'TestNativeWindowsDNSOriginalBackupRealNTFSAndCorruptedACL'
+            )){
+              $passes=@($policyRecords | Where-Object {$_.Test -eq $name -and $_.Action -eq 'pass'})
+              $skips=@($policyRecords | Where-Object {$_.Test -eq $name -and $_.Action -eq 'skip'})
+              if($passes.Count -ne 1 -or $skips.Count -ne 0){throw ('Mandatory native browser policy test skipped or missing: '+$name)}
+            }
+            Write-Host 'PASS VOLVE_NATIVE_BROWSER_POLICY_CONTENT_FINGERPRINTS THREE_KEYS NO_VALUE_EXPORT'
+            Write-Host 'PASS VOLVE_NATIVE_PROTECTION_SNAPSHOT HOSTS_BROWSER_CATALOG PARTIAL_BASELINE NO_RAW_VALUES'
+            Write-Host 'PASS VOLVE_DNS_ASSIGNMENT_PROVENANCE_TESTS IPV4_IPV6 STATIC_AUTOMATIC FAIL_CLOSED NO_WRITES'
+            Write-Host 'PASS VOLVE_DNS_RECOVERY_JOURNAL_PINNED_IPV4_IPV6_READ_ONLY_PREVIEW NO_INSTALL'
+            Write-Host 'PASS VOLVE_NATIVE_NTFS_ORIGINAL_DNS_BACKUP_CREATE_ONLY_SEAL_READBACK_TAMPER_REJECT NO_DNS_WRITES'
+            Write-Host 'PASS VOLVE_SIGNED_EXE_PLUS_REAL_WINDOWS_6_INVENTORIES REVIEW_ONLY NO_INSTALL NO_DNS_CHANGE'
+            Write-Host 'PREVIEW CHECKPOINT: produce actual native Windows setup decision JSON'
+            $dnsBefore=Get-DnsClientServerAddress -ErrorAction Stop | Sort-Object InterfaceIndex,AddressFamily | Select-Object InterfaceIndex,AddressFamily,ServerAddresses | ConvertTo-Json -Depth 6 -Compress
+            $tasksBefore=@(Get-ScheduledTask -ErrorAction Stop | Where-Object {$_.TaskName -match '^(?i:VOLVE[-_])'}).Count
+            go test -mod=mod -count=1 -v ./hostroutebridge/cmd/preview
+            if($LASTEXITCODE -ne 0){throw 'Hosted CI-only setup preview fail-closed tests failed'}
+            $raw=(& go run -mod=mod ./hostroutebridge/cmd/preview --review-only | Out-String).Trim()
+            if($LASTEXITCODE -ne 0){throw 'Native signed Windows setup preview execution failed'}
+            $report=$raw | ConvertFrom-Json -ErrorAction Stop
+            if($report.component -ne 'VOLVE-0287-WINDOWS-SETUP-PREVIEW-CI' -or
+               $report.scope -ne 'DISPOSABLE_WINDOWS_CI_ONLY_NOT_USER_PC' -or
+               $report.result -ne 'REVIEW_ONLY' -or
+               $report.target_release -ne '0.28.7' -or
+               $report.windows_inventories_checked -ne 6 -or
+               $report.synthetic_ci_signed_container_verified -ne $true -or
+               $report.status -ne 'NO_INSTALL_OR_DNS_CHANGE_AUTHORIZED' -or
+               $report.can_install -ne $false -or
+               $report.can_upgrade -ne $false -or
+               $report.can_change_dns -ne $false -or
+               $report.can_change_tasks -ne $false -or
+               @($report.unmet_production_prerequisites).Count -lt 7){
+              throw ('Unsafe or incomplete native Windows preinstallation preview: '+$raw)
+            }
+            $dnsAfter=Get-DnsClientServerAddress -ErrorAction Stop | Sort-Object InterfaceIndex,AddressFamily | Select-Object InterfaceIndex,AddressFamily,ServerAddresses | ConvertTo-Json -Depth 6 -Compress
+            $tasksAfter=@(Get-ScheduledTask -ErrorAction Stop | Where-Object {$_.TaskName -match '^(?i:VOLVE[-_])'}).Count
+            if($dnsBefore -cne $dnsAfter -or $tasksBefore -ne $tasksAfter){
+              throw 'Native preinstallation preview changed DNS or VOLVE SYSTEM task count'
+            }
+            Write-Host $raw
+            Write-Host 'PROTECTED PREVIEW CHECKPOINT: repeat full Windows preflight WHILE holding updater/recovery kernel mutex'
+            $protectedRaw=(& go run -mod=mod ./hostroutebridge/cmd/preview --review-under-protected-lock 2>&1 | Out-String).Trim()
+            $protectedExit=$LASTEXITCODE
+            if($protectedExit -ne 0){
+              if($protectedRaw -notmatch 'DNS servers exist on an interface without a unique adapter GUID|DNS interface index maps to conflicting adapter GUIDs|DNS assignment registry key missing|Unknown DNS client address family'){
+                throw 'Protected native Windows preflight failed for an unexpected reason'
+              }
+              Write-Host 'SAFE REFUSAL: native Windows DNS source is ambiguous or unsupported; installation remains prohibited'
+              Write-Host 'PASS VOLVE_NATIVE_PROTECTED_PREFLIGHT_FAIL_CLOSED_UNMAPPED_DNS NO_INSTALL NO_DNS NO_TASKS'
+            }else{
+              if($protectedRaw -match 'ContentSHA256|URLBlocklist|PrivateURL|HostsSHA256|CatalogTaskDefinitionSHA256|DNSAdaptersSHA256|InterfaceGUID|EffectiveServers|NameServer'){
+                throw 'Protected setup report leaked raw policy registry names or fingerprints'
+              }
+              $protected=$protectedRaw | ConvertFrom-Json -ErrorAction Stop
+              if($protected.component -ne 'VOLVE-0287-WINDOWS-SETUP-PREVIEW-CI' -or
+                 $protected.scope -ne 'DISPOSABLE_WINDOWS_CI_ONLY_NOT_USER_PC' -or
+                 $protected.target_release -ne '0.28.7' -or
+                 $protected.windows_inventories_checked -ne 6 -or
+                 $protected.synthetic_ci_signed_container_verified -ne $true -or
+                 $protected.protected_transition_mutex_held_during_review -ne $true -or
+                 $protected.browser_registry_keys_checked -ne 3 -or
+                 $protected.hosts_baseline_checked -ne $true -or
+                 $protected.dns_adapter_assignment_baseline_checked -ne $true -or
+                 $protected.catalog_task_baseline_checked -ne $true -or
+                 $protected.partial_protection_snapshot_stable_under_lock -ne $true -or
+                 $protected.browser_registry_numbered_entries -lt 0 -or
+                 $protected.browser_policy_census_stable_under_lock -ne $true -or
+                 $protected.browser_policy_values_exported -ne $false -or
+                 $protected.browser_enforcement_verified -ne $false -or
+                 $protected.result -ne 'REVIEW_ONLY' -or
+                 $protected.can_install -ne $false -or
+                 $protected.can_upgrade -ne $false -or
+                 $protected.can_change_dns -ne $false -or
+                 $protected.can_change_tasks -ne $false -or
+                 $protected.status -ne 'NO_INSTALL_OR_DNS_CHANGE_AUTHORIZED'){
+                throw 'Protected preflight JSON granted an unauthorized write or omitted a required native check'
+              }
+              Write-Host 'PASS VOLVE_NATIVE_PROTECTED_SIGNED_HOST_PREFLIGHT SIX_INVENTORIES THREE_BROWSER_POLICIES DNS_ASSIGNMENT_BASELINE KERNEL_MUTEX EXCLUSIVE NO_INSTALL NO_DNS NO_TASKS'
+            }
+            $lockDNSAfter=Get-DnsClientServerAddress -ErrorAction Stop | Sort-Object InterfaceIndex,AddressFamily | Select-Object InterfaceIndex,AddressFamily,ServerAddresses | ConvertTo-Json -Depth 6 -Compress
+            $lockTasksAfter=@(Get-ScheduledTask -ErrorAction Stop | Where-Object {$_.TaskName -match '^(?i:VOLVE[-_])'}).Count
+            if($dnsBefore -cne $lockDNSAfter -or $tasksBefore -ne $lockTasksAfter){
+              throw 'Protected preflight touched Windows DNS adapter or VOLVE scheduled tasks'
+            }
+                        Write-Host 'PASS VOLVE_NATIVE_WINDOWS_SETUP_PREVIEW_6_INVENTORIES_SIGNED_PACKAGE NO_INSTALL NO_DNS NO_TASKS'
+            $global:LASTEXITCODE=0
+          } finally {
+            Pop-Location
+          }
+ volve-browser-protection/motorupdate)
+            if($LASTEXITCODE -ne 0){
+              $policyEvents | Select-Object -Last 60 | Write-Host
+              throw 'Native hosts/browser/catalog protection baseline tests failed'
+            }
+            $policyRecords=@($policyEvents | Where-Object {$_ -match '^\s*\{'} | ForEach-Object {$_ | ConvertFrom-Json})
+            foreach($name in @(
+              'TestVOLVEBrowserPolicyReadOnlyCountsDoNotClaimEffectiveProtection',
+              'TestVOLVEBrowserPolicyReadOnlyRejectsInjectedOrAmbiguousResponses',
+              'TestVOLVEBrowserPolicyReadOnlyMissingKeysAreNotFailedBrowserProtection',
+              'TestVOLVEBrowserPolicyReadOnlyRejectsMissingOrMalformedFingerprints',
+              'TestVOLVEBrowserPolicyReadOnlyRejectsCancelOrUnapprovedCommands',
+              'TestVOLVEBrowserPolicyRealWindowsRegistryNativeReadOnly',
+              'TestFreshMotorPreservesHostsBrowserPoliciesAndCatalog',
+              'TestFreshMotorDetectsPartialProtectionRegressions',
+              'TestProtectionSnapshotCannotPassWhenAnySurfaceWasNotCaptured',
+              'TestCountWindowsHostsBlockedRulesDoesNotReturnNames',
+              'TestWindowsHostsFileReadOnlyHashAndNoContentExport',
+              'TestWindowsHostsFileReadOnlyRejectsOversizedFile',
+              'TestWindowsProtectionSnapshotCapturesAllDeclaredSurfaces',
+              'TestWindowsProtectionSnapshotRequiresPinnedExistingCatalogTask',
+              'TestWindowsProtectionSnapshotRejectsUnknownOrContradictoryTaskInventory',
+              'TestWindowsProtectionSnapshotRejectsMissingInspectorsAndCancelledContext',
+              'TestWindowsProtectionSnapshotCannotPassIfHostBaselineIsMalformed',
+              'TestWindowsDNSAssignmentProvenanceSeparatesStaticAndAutomatic',
+              'TestWindowsDNSAssignmentProvenanceRejectsUnknownOrConflictingSource',
+              'TestWindowsDNSAssignmentProvenanceRejectsDuplicateOrIncompleteFamilies',
+              'TestWindowsDNSAssignmentFingerprintIgnoresAutomaticLeaseAddressButPreservesStaticOrder',
+              'TestWindowsDNSAssignmentProvenanceRejectsCancellationAndMutableQueries',
+              'TestWindowsDNSAssignmentProvenanceNativeWindowsReadOnly',
+              'TestDNSRecoveryJournalExactRoundTripAndWriteFreePreview',
+              'TestDNSRecoveryJournalRejectsTamperingAndMissingExternalPin',
+              'TestDNSRecoveryJournalRejectsUnknownOrIncompleteOriginals',
+              'TestDNSRecoveryPreviewRejectsExternalDNSAndNeverApplies',
+              'TestDNSRecoveryJournalCancellationFailsClosed',
+              'TestDNSRecoveryJournalRejectsUnpinnedReorderedAndDuplicateRecords'
+            )){
+              $passes=@($policyRecords | Where-Object {$_.Test -eq $name -and $_.Action -eq 'pass'})
+              $skips=@($policyRecords | Where-Object {$_.Test -eq $name -and $_.Action -eq 'skip'})
+              if($passes.Count -ne 1 -or $skips.Count -ne 0){throw ('Mandatory native browser policy test skipped or missing: '+$name)}
+            }
+            Write-Host 'PASS VOLVE_NATIVE_BROWSER_POLICY_CONTENT_FINGERPRINTS THREE_KEYS NO_VALUE_EXPORT'
+            Write-Host 'PASS VOLVE_NATIVE_PROTECTION_SNAPSHOT HOSTS_BROWSER_CATALOG PARTIAL_BASELINE NO_RAW_VALUES'
+            Write-Host 'PASS VOLVE_DNS_ASSIGNMENT_PROVENANCE_TESTS IPV4_IPV6 STATIC_AUTOMATIC FAIL_CLOSED NO_WRITES'
+            Write-Host 'PASS VOLVE_DNS_RECOVERY_JOURNAL_PINNED_IPV4_IPV6_READ_ONLY_PREVIEW NO_INSTALL'
+            Write-Host 'PASS VOLVE_SIGNED_EXE_PLUS_REAL_WINDOWS_6_INVENTORIES REVIEW_ONLY NO_INSTALL NO_DNS_CHANGE'
+            Write-Host 'PREVIEW CHECKPOINT: produce actual native Windows setup decision JSON'
+            $dnsBefore=Get-DnsClientServerAddress -ErrorAction Stop | Sort-Object InterfaceIndex,AddressFamily | Select-Object InterfaceIndex,AddressFamily,ServerAddresses | ConvertTo-Json -Depth 6 -Compress
+            $tasksBefore=@(Get-ScheduledTask -ErrorAction Stop | Where-Object {$_.TaskName -match '^(?i:VOLVE[-_])'}).Count
+            go test -mod=mod -count=1 -v ./hostroutebridge/cmd/preview
+            if($LASTEXITCODE -ne 0){throw 'Hosted CI-only setup preview fail-closed tests failed'}
+            $raw=(& go run -mod=mod ./hostroutebridge/cmd/preview --review-only | Out-String).Trim()
+            if($LASTEXITCODE -ne 0){throw 'Native signed Windows setup preview execution failed'}
+            $report=$raw | ConvertFrom-Json -ErrorAction Stop
+            if($report.component -ne 'VOLVE-0287-WINDOWS-SETUP-PREVIEW-CI' -or
+               $report.scope -ne 'DISPOSABLE_WINDOWS_CI_ONLY_NOT_USER_PC' -or
+               $report.result -ne 'REVIEW_ONLY' -or
+               $report.target_release -ne '0.28.7' -or
+               $report.windows_inventories_checked -ne 6 -or
+               $report.synthetic_ci_signed_container_verified -ne $true -or
+               $report.status -ne 'NO_INSTALL_OR_DNS_CHANGE_AUTHORIZED' -or
+               $report.can_install -ne $false -or
+               $report.can_upgrade -ne $false -or
+               $report.can_change_dns -ne $false -or
+               $report.can_change_tasks -ne $false -or
+               @($report.unmet_production_prerequisites).Count -lt 7){
+              throw ('Unsafe or incomplete native Windows preinstallation preview: '+$raw)
+            }
+            $dnsAfter=Get-DnsClientServerAddress -ErrorAction Stop | Sort-Object InterfaceIndex,AddressFamily | Select-Object InterfaceIndex,AddressFamily,ServerAddresses | ConvertTo-Json -Depth 6 -Compress
+            $tasksAfter=@(Get-ScheduledTask -ErrorAction Stop | Where-Object {$_.TaskName -match '^(?i:VOLVE[-_])'}).Count
+            if($dnsBefore -cne $dnsAfter -or $tasksBefore -ne $tasksAfter){
+              throw 'Native preinstallation preview changed DNS or VOLVE SYSTEM task count'
+            }
+            Write-Host $raw
+            Write-Host 'PROTECTED PREVIEW CHECKPOINT: repeat full Windows preflight WHILE holding updater/recovery kernel mutex'
+            $protectedRaw=(& go run -mod=mod ./hostroutebridge/cmd/preview --review-under-protected-lock 2>&1 | Out-String).Trim()
+            $protectedExit=$LASTEXITCODE
+            if($protectedExit -ne 0){
+              if($protectedRaw -notmatch 'DNS servers exist on an interface without a unique adapter GUID|DNS interface index maps to conflicting adapter GUIDs|DNS assignment registry key missing|Unknown DNS client address family'){
+                throw 'Protected native Windows preflight failed for an unexpected reason'
+              }
+              Write-Host 'SAFE REFUSAL: native Windows DNS source is ambiguous or unsupported; installation remains prohibited'
+              Write-Host 'PASS VOLVE_NATIVE_PROTECTED_PREFLIGHT_FAIL_CLOSED_UNMAPPED_DNS NO_INSTALL NO_DNS NO_TASKS'
+            }else{
+              if($protectedRaw -match 'ContentSHA256|URLBlocklist|PrivateURL|HostsSHA256|CatalogTaskDefinitionSHA256|DNSAdaptersSHA256|InterfaceGUID|EffectiveServers|NameServer'){
+                throw 'Protected setup report leaked raw policy registry names or fingerprints'
+              }
+              $protected=$protectedRaw | ConvertFrom-Json -ErrorAction Stop
+              if($protected.component -ne 'VOLVE-0287-WINDOWS-SETUP-PREVIEW-CI' -or
+                 $protected.scope -ne 'DISPOSABLE_WINDOWS_CI_ONLY_NOT_USER_PC' -or
+                 $protected.target_release -ne '0.28.7' -or
+                 $protected.windows_inventories_checked -ne 6 -or
+                 $protected.synthetic_ci_signed_container_verified -ne $true -or
+                 $protected.protected_transition_mutex_held_during_review -ne $true -or
+                 $protected.browser_registry_keys_checked -ne 3 -or
+                 $protected.hosts_baseline_checked -ne $true -or
+                 $protected.dns_adapter_assignment_baseline_checked -ne $true -or
+                 $protected.catalog_task_baseline_checked -ne $true -or
+                 $protected.partial_protection_snapshot_stable_under_lock -ne $true -or
+                 $protected.browser_registry_numbered_entries -lt 0 -or
+                 $protected.browser_policy_census_stable_under_lock -ne $true -or
+                 $protected.browser_policy_values_exported -ne $false -or
+                 $protected.browser_enforcement_verified -ne $false -or
+                 $protected.result -ne 'REVIEW_ONLY' -or
+                 $protected.can_install -ne $false -or
+                 $protected.can_upgrade -ne $false -or
+                 $protected.can_change_dns -ne $false -or
+                 $protected.can_change_tasks -ne $false -or
+                 $protected.status -ne 'NO_INSTALL_OR_DNS_CHANGE_AUTHORIZED'){
+                throw 'Protected preflight JSON granted an unauthorized write or omitted a required native check'
+              }
+              Write-Host 'PASS VOLVE_NATIVE_PROTECTED_SIGNED_HOST_PREFLIGHT SIX_INVENTORIES THREE_BROWSER_POLICIES DNS_ASSIGNMENT_BASELINE KERNEL_MUTEX EXCLUSIVE NO_INSTALL NO_DNS NO_TASKS'
+            }
+            $lockDNSAfter=Get-DnsClientServerAddress -ErrorAction Stop | Sort-Object InterfaceIndex,AddressFamily | Select-Object InterfaceIndex,AddressFamily,ServerAddresses | ConvertTo-Json -Depth 6 -Compress
+            $lockTasksAfter=@(Get-ScheduledTask -ErrorAction Stop | Where-Object {$_.TaskName -match '^(?i:VOLVE[-_])'}).Count
+            if($dnsBefore -cne $lockDNSAfter -or $tasksBefore -ne $lockTasksAfter){
+              throw 'Protected preflight touched Windows DNS adapter or VOLVE scheduled tasks'
+            }
+                        Write-Host 'PASS VOLVE_NATIVE_WINDOWS_SETUP_PREVIEW_6_INVENTORIES_SIGNED_PACKAGE NO_INSTALL NO_DNS NO_TASKS'
+            $global:LASTEXITCODE=0
+          } finally {
+            Pop-Location
+          }
+,
+              '^TestProtectionSnapshotCannotPassWhenAnySurfaceWasNotCaptured
+            if($LASTEXITCODE -ne 0){
+              $policyEvents | Select-Object -Last 60 | Write-Host
+              throw 'Native hosts/browser/catalog protection baseline tests failed'
+            }
+            $policyRecords=@($policyEvents | Where-Object {$_ -match '^\s*\{'} | ForEach-Object {$_ | ConvertFrom-Json})
+            foreach($name in @(
+              'TestVOLVEBrowserPolicyReadOnlyCountsDoNotClaimEffectiveProtection',
+              'TestVOLVEBrowserPolicyReadOnlyRejectsInjectedOrAmbiguousResponses',
+              'TestVOLVEBrowserPolicyReadOnlyMissingKeysAreNotFailedBrowserProtection',
+              'TestVOLVEBrowserPolicyReadOnlyRejectsMissingOrMalformedFingerprints',
+              'TestVOLVEBrowserPolicyReadOnlyRejectsCancelOrUnapprovedCommands',
+              'TestVOLVEBrowserPolicyRealWindowsRegistryNativeReadOnly',
+              'TestFreshMotorPreservesHostsBrowserPoliciesAndCatalog',
+              'TestFreshMotorDetectsPartialProtectionRegressions',
+              'TestProtectionSnapshotCannotPassWhenAnySurfaceWasNotCaptured',
+              'TestCountWindowsHostsBlockedRulesDoesNotReturnNames',
+              'TestWindowsHostsFileReadOnlyHashAndNoContentExport',
+              'TestWindowsHostsFileReadOnlyRejectsOversizedFile',
+              'TestWindowsProtectionSnapshotCapturesAllDeclaredSurfaces',
+              'TestWindowsProtectionSnapshotRequiresPinnedExistingCatalogTask',
+              'TestWindowsProtectionSnapshotRejectsUnknownOrContradictoryTaskInventory',
+              'TestWindowsProtectionSnapshotRejectsMissingInspectorsAndCancelledContext',
+              'TestWindowsProtectionSnapshotCannotPassIfHostBaselineIsMalformed',
+              'TestWindowsDNSAssignmentProvenanceSeparatesStaticAndAutomatic',
+              'TestWindowsDNSAssignmentProvenanceRejectsUnknownOrConflictingSource',
+              'TestWindowsDNSAssignmentProvenanceRejectsDuplicateOrIncompleteFamilies',
+              'TestWindowsDNSAssignmentFingerprintIgnoresAutomaticLeaseAddressButPreservesStaticOrder',
+              'TestWindowsDNSAssignmentProvenanceRejectsCancellationAndMutableQueries',
+              'TestWindowsDNSAssignmentProvenanceNativeWindowsReadOnly',
+              'TestDNSRecoveryJournalExactRoundTripAndWriteFreePreview',
+              'TestDNSRecoveryJournalRejectsTamperingAndMissingExternalPin',
+              'TestDNSRecoveryJournalRejectsUnknownOrIncompleteOriginals',
+              'TestDNSRecoveryPreviewRejectsExternalDNSAndNeverApplies',
+              'TestDNSRecoveryJournalCancellationFailsClosed',
+              'TestDNSRecoveryJournalRejectsUnpinnedReorderedAndDuplicateRecords',
+              'TestDNSStagedBackupCreateOnlyAndExactReadBack',
+              'TestDNSStagedBackupRejectsUntrustedInputsBeforeWriting',
+              'TestDNSStagedBackupNeverWritesPrivateDataBeforeDirectorySeal',
+              'TestDNSStagedBackupRejectsTamperAndUnexpectedFiles',
+              'TestNativeWindowsDNSOriginalBackupRealNTFSAndCorruptedACL'
+            )){
+              $passes=@($policyRecords | Where-Object {$_.Test -eq $name -and $_.Action -eq 'pass'})
+              $skips=@($policyRecords | Where-Object {$_.Test -eq $name -and $_.Action -eq 'skip'})
+              if($passes.Count -ne 1 -or $skips.Count -ne 0){throw ('Mandatory native browser policy test skipped or missing: '+$name)}
+            }
+            Write-Host 'PASS VOLVE_NATIVE_BROWSER_POLICY_CONTENT_FINGERPRINTS THREE_KEYS NO_VALUE_EXPORT'
+            Write-Host 'PASS VOLVE_NATIVE_PROTECTION_SNAPSHOT HOSTS_BROWSER_CATALOG PARTIAL_BASELINE NO_RAW_VALUES'
+            Write-Host 'PASS VOLVE_DNS_ASSIGNMENT_PROVENANCE_TESTS IPV4_IPV6 STATIC_AUTOMATIC FAIL_CLOSED NO_WRITES'
+            Write-Host 'PASS VOLVE_DNS_RECOVERY_JOURNAL_PINNED_IPV4_IPV6_READ_ONLY_PREVIEW NO_INSTALL'
+            Write-Host 'PASS VOLVE_NATIVE_NTFS_ORIGINAL_DNS_BACKUP_CREATE_ONLY_SEAL_READBACK_TAMPER_REJECT NO_DNS_WRITES'
+            Write-Host 'PASS VOLVE_SIGNED_EXE_PLUS_REAL_WINDOWS_6_INVENTORIES REVIEW_ONLY NO_INSTALL NO_DNS_CHANGE'
+            Write-Host 'PREVIEW CHECKPOINT: produce actual native Windows setup decision JSON'
+            $dnsBefore=Get-DnsClientServerAddress -ErrorAction Stop | Sort-Object InterfaceIndex,AddressFamily | Select-Object InterfaceIndex,AddressFamily,ServerAddresses | ConvertTo-Json -Depth 6 -Compress
+            $tasksBefore=@(Get-ScheduledTask -ErrorAction Stop | Where-Object {$_.TaskName -match '^(?i:VOLVE[-_])'}).Count
+            go test -mod=mod -count=1 -v ./hostroutebridge/cmd/preview
+            if($LASTEXITCODE -ne 0){throw 'Hosted CI-only setup preview fail-closed tests failed'}
+            $raw=(& go run -mod=mod ./hostroutebridge/cmd/preview --review-only | Out-String).Trim()
+            if($LASTEXITCODE -ne 0){throw 'Native signed Windows setup preview execution failed'}
+            $report=$raw | ConvertFrom-Json -ErrorAction Stop
+            if($report.component -ne 'VOLVE-0287-WINDOWS-SETUP-PREVIEW-CI' -or
+               $report.scope -ne 'DISPOSABLE_WINDOWS_CI_ONLY_NOT_USER_PC' -or
+               $report.result -ne 'REVIEW_ONLY' -or
+               $report.target_release -ne '0.28.7' -or
+               $report.windows_inventories_checked -ne 6 -or
+               $report.synthetic_ci_signed_container_verified -ne $true -or
+               $report.status -ne 'NO_INSTALL_OR_DNS_CHANGE_AUTHORIZED' -or
+               $report.can_install -ne $false -or
+               $report.can_upgrade -ne $false -or
+               $report.can_change_dns -ne $false -or
+               $report.can_change_tasks -ne $false -or
+               @($report.unmet_production_prerequisites).Count -lt 7){
+              throw ('Unsafe or incomplete native Windows preinstallation preview: '+$raw)
+            }
+            $dnsAfter=Get-DnsClientServerAddress -ErrorAction Stop | Sort-Object InterfaceIndex,AddressFamily | Select-Object InterfaceIndex,AddressFamily,ServerAddresses | ConvertTo-Json -Depth 6 -Compress
+            $tasksAfter=@(Get-ScheduledTask -ErrorAction Stop | Where-Object {$_.TaskName -match '^(?i:VOLVE[-_])'}).Count
+            if($dnsBefore -cne $dnsAfter -or $tasksBefore -ne $tasksAfter){
+              throw 'Native preinstallation preview changed DNS or VOLVE SYSTEM task count'
+            }
+            Write-Host $raw
+            Write-Host 'PROTECTED PREVIEW CHECKPOINT: repeat full Windows preflight WHILE holding updater/recovery kernel mutex'
+            $protectedRaw=(& go run -mod=mod ./hostroutebridge/cmd/preview --review-under-protected-lock 2>&1 | Out-String).Trim()
+            $protectedExit=$LASTEXITCODE
+            if($protectedExit -ne 0){
+              if($protectedRaw -notmatch 'DNS servers exist on an interface without a unique adapter GUID|DNS interface index maps to conflicting adapter GUIDs|DNS assignment registry key missing|Unknown DNS client address family'){
+                throw 'Protected native Windows preflight failed for an unexpected reason'
+              }
+              Write-Host 'SAFE REFUSAL: native Windows DNS source is ambiguous or unsupported; installation remains prohibited'
+              Write-Host 'PASS VOLVE_NATIVE_PROTECTED_PREFLIGHT_FAIL_CLOSED_UNMAPPED_DNS NO_INSTALL NO_DNS NO_TASKS'
+            }else{
+              if($protectedRaw -match 'ContentSHA256|URLBlocklist|PrivateURL|HostsSHA256|CatalogTaskDefinitionSHA256|DNSAdaptersSHA256|InterfaceGUID|EffectiveServers|NameServer'){
+                throw 'Protected setup report leaked raw policy registry names or fingerprints'
+              }
+              $protected=$protectedRaw | ConvertFrom-Json -ErrorAction Stop
+              if($protected.component -ne 'VOLVE-0287-WINDOWS-SETUP-PREVIEW-CI' -or
+                 $protected.scope -ne 'DISPOSABLE_WINDOWS_CI_ONLY_NOT_USER_PC' -or
+                 $protected.target_release -ne '0.28.7' -or
+                 $protected.windows_inventories_checked -ne 6 -or
+                 $protected.synthetic_ci_signed_container_verified -ne $true -or
+                 $protected.protected_transition_mutex_held_during_review -ne $true -or
+                 $protected.browser_registry_keys_checked -ne 3 -or
+                 $protected.hosts_baseline_checked -ne $true -or
+                 $protected.dns_adapter_assignment_baseline_checked -ne $true -or
+                 $protected.catalog_task_baseline_checked -ne $true -or
+                 $protected.partial_protection_snapshot_stable_under_lock -ne $true -or
+                 $protected.browser_registry_numbered_entries -lt 0 -or
+                 $protected.browser_policy_census_stable_under_lock -ne $true -or
+                 $protected.browser_policy_values_exported -ne $false -or
+                 $protected.browser_enforcement_verified -ne $false -or
+                 $protected.result -ne 'REVIEW_ONLY' -or
+                 $protected.can_install -ne $false -or
+                 $protected.can_upgrade -ne $false -or
+                 $protected.can_change_dns -ne $false -or
+                 $protected.can_change_tasks -ne $false -or
+                 $protected.status -ne 'NO_INSTALL_OR_DNS_CHANGE_AUTHORIZED'){
+                throw 'Protected preflight JSON granted an unauthorized write or omitted a required native check'
+              }
+              Write-Host 'PASS VOLVE_NATIVE_PROTECTED_SIGNED_HOST_PREFLIGHT SIX_INVENTORIES THREE_BROWSER_POLICIES DNS_ASSIGNMENT_BASELINE KERNEL_MUTEX EXCLUSIVE NO_INSTALL NO_DNS NO_TASKS'
+            }
+            $lockDNSAfter=Get-DnsClientServerAddress -ErrorAction Stop | Sort-Object InterfaceIndex,AddressFamily | Select-Object InterfaceIndex,AddressFamily,ServerAddresses | ConvertTo-Json -Depth 6 -Compress
+            $lockTasksAfter=@(Get-ScheduledTask -ErrorAction Stop | Where-Object {$_.TaskName -match '^(?i:VOLVE[-_])'}).Count
+            if($dnsBefore -cne $lockDNSAfter -or $tasksBefore -ne $lockTasksAfter){
+              throw 'Protected preflight touched Windows DNS adapter or VOLVE scheduled tasks'
+            }
+                        Write-Host 'PASS VOLVE_NATIVE_WINDOWS_SETUP_PREVIEW_6_INVENTORIES_SIGNED_PACKAGE NO_INSTALL NO_DNS NO_TASKS'
+            $global:LASTEXITCODE=0
+          } finally {
+            Pop-Location
+          }
+ volve-browser-protection/motorupdate)
+            if($LASTEXITCODE -ne 0){
+              $policyEvents | Select-Object -Last 60 | Write-Host
+              throw 'Native hosts/browser/catalog protection baseline tests failed'
+            }
+            $policyRecords=@($policyEvents | Where-Object {$_ -match '^\s*\{'} | ForEach-Object {$_ | ConvertFrom-Json})
+            foreach($name in @(
+              'TestVOLVEBrowserPolicyReadOnlyCountsDoNotClaimEffectiveProtection',
+              'TestVOLVEBrowserPolicyReadOnlyRejectsInjectedOrAmbiguousResponses',
+              'TestVOLVEBrowserPolicyReadOnlyMissingKeysAreNotFailedBrowserProtection',
+              'TestVOLVEBrowserPolicyReadOnlyRejectsMissingOrMalformedFingerprints',
+              'TestVOLVEBrowserPolicyReadOnlyRejectsCancelOrUnapprovedCommands',
+              'TestVOLVEBrowserPolicyRealWindowsRegistryNativeReadOnly',
+              'TestFreshMotorPreservesHostsBrowserPoliciesAndCatalog',
+              'TestFreshMotorDetectsPartialProtectionRegressions',
+              'TestProtectionSnapshotCannotPassWhenAnySurfaceWasNotCaptured',
+              'TestCountWindowsHostsBlockedRulesDoesNotReturnNames',
+              'TestWindowsHostsFileReadOnlyHashAndNoContentExport',
+              'TestWindowsHostsFileReadOnlyRejectsOversizedFile',
+              'TestWindowsProtectionSnapshotCapturesAllDeclaredSurfaces',
+              'TestWindowsProtectionSnapshotRequiresPinnedExistingCatalogTask',
+              'TestWindowsProtectionSnapshotRejectsUnknownOrContradictoryTaskInventory',
+              'TestWindowsProtectionSnapshotRejectsMissingInspectorsAndCancelledContext',
+              'TestWindowsProtectionSnapshotCannotPassIfHostBaselineIsMalformed',
+              'TestWindowsDNSAssignmentProvenanceSeparatesStaticAndAutomatic',
+              'TestWindowsDNSAssignmentProvenanceRejectsUnknownOrConflictingSource',
+              'TestWindowsDNSAssignmentProvenanceRejectsDuplicateOrIncompleteFamilies',
+              'TestWindowsDNSAssignmentFingerprintIgnoresAutomaticLeaseAddressButPreservesStaticOrder',
+              'TestWindowsDNSAssignmentProvenanceRejectsCancellationAndMutableQueries',
+              'TestWindowsDNSAssignmentProvenanceNativeWindowsReadOnly',
+              'TestDNSRecoveryJournalExactRoundTripAndWriteFreePreview',
+              'TestDNSRecoveryJournalRejectsTamperingAndMissingExternalPin',
+              'TestDNSRecoveryJournalRejectsUnknownOrIncompleteOriginals',
+              'TestDNSRecoveryPreviewRejectsExternalDNSAndNeverApplies',
+              'TestDNSRecoveryJournalCancellationFailsClosed',
+              'TestDNSRecoveryJournalRejectsUnpinnedReorderedAndDuplicateRecords'
+            )){
+              $passes=@($policyRecords | Where-Object {$_.Test -eq $name -and $_.Action -eq 'pass'})
+              $skips=@($policyRecords | Where-Object {$_.Test -eq $name -and $_.Action -eq 'skip'})
+              if($passes.Count -ne 1 -or $skips.Count -ne 0){throw ('Mandatory native browser policy test skipped or missing: '+$name)}
+            }
+            Write-Host 'PASS VOLVE_NATIVE_BROWSER_POLICY_CONTENT_FINGERPRINTS THREE_KEYS NO_VALUE_EXPORT'
+            Write-Host 'PASS VOLVE_NATIVE_PROTECTION_SNAPSHOT HOSTS_BROWSER_CATALOG PARTIAL_BASELINE NO_RAW_VALUES'
+            Write-Host 'PASS VOLVE_DNS_ASSIGNMENT_PROVENANCE_TESTS IPV4_IPV6 STATIC_AUTOMATIC FAIL_CLOSED NO_WRITES'
+            Write-Host 'PASS VOLVE_DNS_RECOVERY_JOURNAL_PINNED_IPV4_IPV6_READ_ONLY_PREVIEW NO_INSTALL'
+            Write-Host 'PASS VOLVE_SIGNED_EXE_PLUS_REAL_WINDOWS_6_INVENTORIES REVIEW_ONLY NO_INSTALL NO_DNS_CHANGE'
+            Write-Host 'PREVIEW CHECKPOINT: produce actual native Windows setup decision JSON'
+            $dnsBefore=Get-DnsClientServerAddress -ErrorAction Stop | Sort-Object InterfaceIndex,AddressFamily | Select-Object InterfaceIndex,AddressFamily,ServerAddresses | ConvertTo-Json -Depth 6 -Compress
+            $tasksBefore=@(Get-ScheduledTask -ErrorAction Stop | Where-Object {$_.TaskName -match '^(?i:VOLVE[-_])'}).Count
+            go test -mod=mod -count=1 -v ./hostroutebridge/cmd/preview
+            if($LASTEXITCODE -ne 0){throw 'Hosted CI-only setup preview fail-closed tests failed'}
+            $raw=(& go run -mod=mod ./hostroutebridge/cmd/preview --review-only | Out-String).Trim()
+            if($LASTEXITCODE -ne 0){throw 'Native signed Windows setup preview execution failed'}
+            $report=$raw | ConvertFrom-Json -ErrorAction Stop
+            if($report.component -ne 'VOLVE-0287-WINDOWS-SETUP-PREVIEW-CI' -or
+               $report.scope -ne 'DISPOSABLE_WINDOWS_CI_ONLY_NOT_USER_PC' -or
+               $report.result -ne 'REVIEW_ONLY' -or
+               $report.target_release -ne '0.28.7' -or
+               $report.windows_inventories_checked -ne 6 -or
+               $report.synthetic_ci_signed_container_verified -ne $true -or
+               $report.status -ne 'NO_INSTALL_OR_DNS_CHANGE_AUTHORIZED' -or
+               $report.can_install -ne $false -or
+               $report.can_upgrade -ne $false -or
+               $report.can_change_dns -ne $false -or
+               $report.can_change_tasks -ne $false -or
+               @($report.unmet_production_prerequisites).Count -lt 7){
+              throw ('Unsafe or incomplete native Windows preinstallation preview: '+$raw)
+            }
+            $dnsAfter=Get-DnsClientServerAddress -ErrorAction Stop | Sort-Object InterfaceIndex,AddressFamily | Select-Object InterfaceIndex,AddressFamily,ServerAddresses | ConvertTo-Json -Depth 6 -Compress
+            $tasksAfter=@(Get-ScheduledTask -ErrorAction Stop | Where-Object {$_.TaskName -match '^(?i:VOLVE[-_])'}).Count
+            if($dnsBefore -cne $dnsAfter -or $tasksBefore -ne $tasksAfter){
+              throw 'Native preinstallation preview changed DNS or VOLVE SYSTEM task count'
+            }
+            Write-Host $raw
+            Write-Host 'PROTECTED PREVIEW CHECKPOINT: repeat full Windows preflight WHILE holding updater/recovery kernel mutex'
+            $protectedRaw=(& go run -mod=mod ./hostroutebridge/cmd/preview --review-under-protected-lock 2>&1 | Out-String).Trim()
+            $protectedExit=$LASTEXITCODE
+            if($protectedExit -ne 0){
+              if($protectedRaw -notmatch 'DNS servers exist on an interface without a unique adapter GUID|DNS interface index maps to conflicting adapter GUIDs|DNS assignment registry key missing|Unknown DNS client address family'){
+                throw 'Protected native Windows preflight failed for an unexpected reason'
+              }
+              Write-Host 'SAFE REFUSAL: native Windows DNS source is ambiguous or unsupported; installation remains prohibited'
+              Write-Host 'PASS VOLVE_NATIVE_PROTECTED_PREFLIGHT_FAIL_CLOSED_UNMAPPED_DNS NO_INSTALL NO_DNS NO_TASKS'
+            }else{
+              if($protectedRaw -match 'ContentSHA256|URLBlocklist|PrivateURL|HostsSHA256|CatalogTaskDefinitionSHA256|DNSAdaptersSHA256|InterfaceGUID|EffectiveServers|NameServer'){
+                throw 'Protected setup report leaked raw policy registry names or fingerprints'
+              }
+              $protected=$protectedRaw | ConvertFrom-Json -ErrorAction Stop
+              if($protected.component -ne 'VOLVE-0287-WINDOWS-SETUP-PREVIEW-CI' -or
+                 $protected.scope -ne 'DISPOSABLE_WINDOWS_CI_ONLY_NOT_USER_PC' -or
+                 $protected.target_release -ne '0.28.7' -or
+                 $protected.windows_inventories_checked -ne 6 -or
+                 $protected.synthetic_ci_signed_container_verified -ne $true -or
+                 $protected.protected_transition_mutex_held_during_review -ne $true -or
+                 $protected.browser_registry_keys_checked -ne 3 -or
+                 $protected.hosts_baseline_checked -ne $true -or
+                 $protected.dns_adapter_assignment_baseline_checked -ne $true -or
+                 $protected.catalog_task_baseline_checked -ne $true -or
+                 $protected.partial_protection_snapshot_stable_under_lock -ne $true -or
+                 $protected.browser_registry_numbered_entries -lt 0 -or
+                 $protected.browser_policy_census_stable_under_lock -ne $true -or
+                 $protected.browser_policy_values_exported -ne $false -or
+                 $protected.browser_enforcement_verified -ne $false -or
+                 $protected.result -ne 'REVIEW_ONLY' -or
+                 $protected.can_install -ne $false -or
+                 $protected.can_upgrade -ne $false -or
+                 $protected.can_change_dns -ne $false -or
+                 $protected.can_change_tasks -ne $false -or
+                 $protected.status -ne 'NO_INSTALL_OR_DNS_CHANGE_AUTHORIZED'){
+                throw 'Protected preflight JSON granted an unauthorized write or omitted a required native check'
+              }
+              Write-Host 'PASS VOLVE_NATIVE_PROTECTED_SIGNED_HOST_PREFLIGHT SIX_INVENTORIES THREE_BROWSER_POLICIES DNS_ASSIGNMENT_BASELINE KERNEL_MUTEX EXCLUSIVE NO_INSTALL NO_DNS NO_TASKS'
+            }
+            $lockDNSAfter=Get-DnsClientServerAddress -ErrorAction Stop | Sort-Object InterfaceIndex,AddressFamily | Select-Object InterfaceIndex,AddressFamily,ServerAddresses | ConvertTo-Json -Depth 6 -Compress
+            $lockTasksAfter=@(Get-ScheduledTask -ErrorAction Stop | Where-Object {$_.TaskName -match '^(?i:VOLVE[-_])'}).Count
+            if($dnsBefore -cne $lockDNSAfter -or $tasksBefore -ne $lockTasksAfter){
+              throw 'Protected preflight touched Windows DNS adapter or VOLVE scheduled tasks'
+            }
+                        Write-Host 'PASS VOLVE_NATIVE_WINDOWS_SETUP_PREVIEW_6_INVENTORIES_SIGNED_PACKAGE NO_INSTALL NO_DNS NO_TASKS'
+            $global:LASTEXITCODE=0
+          } finally {
+            Pop-Location
+          }
+,
+              '^TestCountWindowsHostsBlockedRulesDoesNotReturnNames
+            if($LASTEXITCODE -ne 0){
+              $policyEvents | Select-Object -Last 60 | Write-Host
+              throw 'Native hosts/browser/catalog protection baseline tests failed'
+            }
+            $policyRecords=@($policyEvents | Where-Object {$_ -match '^\s*\{'} | ForEach-Object {$_ | ConvertFrom-Json})
+            foreach($name in @(
+              'TestVOLVEBrowserPolicyReadOnlyCountsDoNotClaimEffectiveProtection',
+              'TestVOLVEBrowserPolicyReadOnlyRejectsInjectedOrAmbiguousResponses',
+              'TestVOLVEBrowserPolicyReadOnlyMissingKeysAreNotFailedBrowserProtection',
+              'TestVOLVEBrowserPolicyReadOnlyRejectsMissingOrMalformedFingerprints',
+              'TestVOLVEBrowserPolicyReadOnlyRejectsCancelOrUnapprovedCommands',
+              'TestVOLVEBrowserPolicyRealWindowsRegistryNativeReadOnly',
+              'TestFreshMotorPreservesHostsBrowserPoliciesAndCatalog',
+              'TestFreshMotorDetectsPartialProtectionRegressions',
+              'TestProtectionSnapshotCannotPassWhenAnySurfaceWasNotCaptured',
+              'TestCountWindowsHostsBlockedRulesDoesNotReturnNames',
+              'TestWindowsHostsFileReadOnlyHashAndNoContentExport',
+              'TestWindowsHostsFileReadOnlyRejectsOversizedFile',
+              'TestWindowsProtectionSnapshotCapturesAllDeclaredSurfaces',
+              'TestWindowsProtectionSnapshotRequiresPinnedExistingCatalogTask',
+              'TestWindowsProtectionSnapshotRejectsUnknownOrContradictoryTaskInventory',
+              'TestWindowsProtectionSnapshotRejectsMissingInspectorsAndCancelledContext',
+              'TestWindowsProtectionSnapshotCannotPassIfHostBaselineIsMalformed',
+              'TestWindowsDNSAssignmentProvenanceSeparatesStaticAndAutomatic',
+              'TestWindowsDNSAssignmentProvenanceRejectsUnknownOrConflictingSource',
+              'TestWindowsDNSAssignmentProvenanceRejectsDuplicateOrIncompleteFamilies',
+              'TestWindowsDNSAssignmentFingerprintIgnoresAutomaticLeaseAddressButPreservesStaticOrder',
+              'TestWindowsDNSAssignmentProvenanceRejectsCancellationAndMutableQueries',
+              'TestWindowsDNSAssignmentProvenanceNativeWindowsReadOnly',
+              'TestDNSRecoveryJournalExactRoundTripAndWriteFreePreview',
+              'TestDNSRecoveryJournalRejectsTamperingAndMissingExternalPin',
+              'TestDNSRecoveryJournalRejectsUnknownOrIncompleteOriginals',
+              'TestDNSRecoveryPreviewRejectsExternalDNSAndNeverApplies',
+              'TestDNSRecoveryJournalCancellationFailsClosed',
+              'TestDNSRecoveryJournalRejectsUnpinnedReorderedAndDuplicateRecords',
+              'TestDNSStagedBackupCreateOnlyAndExactReadBack',
+              'TestDNSStagedBackupRejectsUntrustedInputsBeforeWriting',
+              'TestDNSStagedBackupNeverWritesPrivateDataBeforeDirectorySeal',
+              'TestDNSStagedBackupRejectsTamperAndUnexpectedFiles',
+              'TestNativeWindowsDNSOriginalBackupRealNTFSAndCorruptedACL'
+            )){
+              $passes=@($policyRecords | Where-Object {$_.Test -eq $name -and $_.Action -eq 'pass'})
+              $skips=@($policyRecords | Where-Object {$_.Test -eq $name -and $_.Action -eq 'skip'})
+              if($passes.Count -ne 1 -or $skips.Count -ne 0){throw ('Mandatory native browser policy test skipped or missing: '+$name)}
+            }
+            Write-Host 'PASS VOLVE_NATIVE_BROWSER_POLICY_CONTENT_FINGERPRINTS THREE_KEYS NO_VALUE_EXPORT'
+            Write-Host 'PASS VOLVE_NATIVE_PROTECTION_SNAPSHOT HOSTS_BROWSER_CATALOG PARTIAL_BASELINE NO_RAW_VALUES'
+            Write-Host 'PASS VOLVE_DNS_ASSIGNMENT_PROVENANCE_TESTS IPV4_IPV6 STATIC_AUTOMATIC FAIL_CLOSED NO_WRITES'
+            Write-Host 'PASS VOLVE_DNS_RECOVERY_JOURNAL_PINNED_IPV4_IPV6_READ_ONLY_PREVIEW NO_INSTALL'
+            Write-Host 'PASS VOLVE_NATIVE_NTFS_ORIGINAL_DNS_BACKUP_CREATE_ONLY_SEAL_READBACK_TAMPER_REJECT NO_DNS_WRITES'
+            Write-Host 'PASS VOLVE_SIGNED_EXE_PLUS_REAL_WINDOWS_6_INVENTORIES REVIEW_ONLY NO_INSTALL NO_DNS_CHANGE'
+            Write-Host 'PREVIEW CHECKPOINT: produce actual native Windows setup decision JSON'
+            $dnsBefore=Get-DnsClientServerAddress -ErrorAction Stop | Sort-Object InterfaceIndex,AddressFamily | Select-Object InterfaceIndex,AddressFamily,ServerAddresses | ConvertTo-Json -Depth 6 -Compress
+            $tasksBefore=@(Get-ScheduledTask -ErrorAction Stop | Where-Object {$_.TaskName -match '^(?i:VOLVE[-_])'}).Count
+            go test -mod=mod -count=1 -v ./hostroutebridge/cmd/preview
+            if($LASTEXITCODE -ne 0){throw 'Hosted CI-only setup preview fail-closed tests failed'}
+            $raw=(& go run -mod=mod ./hostroutebridge/cmd/preview --review-only | Out-String).Trim()
+            if($LASTEXITCODE -ne 0){throw 'Native signed Windows setup preview execution failed'}
+            $report=$raw | ConvertFrom-Json -ErrorAction Stop
+            if($report.component -ne 'VOLVE-0287-WINDOWS-SETUP-PREVIEW-CI' -or
+               $report.scope -ne 'DISPOSABLE_WINDOWS_CI_ONLY_NOT_USER_PC' -or
+               $report.result -ne 'REVIEW_ONLY' -or
+               $report.target_release -ne '0.28.7' -or
+               $report.windows_inventories_checked -ne 6 -or
+               $report.synthetic_ci_signed_container_verified -ne $true -or
+               $report.status -ne 'NO_INSTALL_OR_DNS_CHANGE_AUTHORIZED' -or
+               $report.can_install -ne $false -or
+               $report.can_upgrade -ne $false -or
+               $report.can_change_dns -ne $false -or
+               $report.can_change_tasks -ne $false -or
+               @($report.unmet_production_prerequisites).Count -lt 7){
+              throw ('Unsafe or incomplete native Windows preinstallation preview: '+$raw)
+            }
+            $dnsAfter=Get-DnsClientServerAddress -ErrorAction Stop | Sort-Object InterfaceIndex,AddressFamily | Select-Object InterfaceIndex,AddressFamily,ServerAddresses | ConvertTo-Json -Depth 6 -Compress
+            $tasksAfter=@(Get-ScheduledTask -ErrorAction Stop | Where-Object {$_.TaskName -match '^(?i:VOLVE[-_])'}).Count
+            if($dnsBefore -cne $dnsAfter -or $tasksBefore -ne $tasksAfter){
+              throw 'Native preinstallation preview changed DNS or VOLVE SYSTEM task count'
+            }
+            Write-Host $raw
+            Write-Host 'PROTECTED PREVIEW CHECKPOINT: repeat full Windows preflight WHILE holding updater/recovery kernel mutex'
+            $protectedRaw=(& go run -mod=mod ./hostroutebridge/cmd/preview --review-under-protected-lock 2>&1 | Out-String).Trim()
+            $protectedExit=$LASTEXITCODE
+            if($protectedExit -ne 0){
+              if($protectedRaw -notmatch 'DNS servers exist on an interface without a unique adapter GUID|DNS interface index maps to conflicting adapter GUIDs|DNS assignment registry key missing|Unknown DNS client address family'){
+                throw 'Protected native Windows preflight failed for an unexpected reason'
+              }
+              Write-Host 'SAFE REFUSAL: native Windows DNS source is ambiguous or unsupported; installation remains prohibited'
+              Write-Host 'PASS VOLVE_NATIVE_PROTECTED_PREFLIGHT_FAIL_CLOSED_UNMAPPED_DNS NO_INSTALL NO_DNS NO_TASKS'
+            }else{
+              if($protectedRaw -match 'ContentSHA256|URLBlocklist|PrivateURL|HostsSHA256|CatalogTaskDefinitionSHA256|DNSAdaptersSHA256|InterfaceGUID|EffectiveServers|NameServer'){
+                throw 'Protected setup report leaked raw policy registry names or fingerprints'
+              }
+              $protected=$protectedRaw | ConvertFrom-Json -ErrorAction Stop
+              if($protected.component -ne 'VOLVE-0287-WINDOWS-SETUP-PREVIEW-CI' -or
+                 $protected.scope -ne 'DISPOSABLE_WINDOWS_CI_ONLY_NOT_USER_PC' -or
+                 $protected.target_release -ne '0.28.7' -or
+                 $protected.windows_inventories_checked -ne 6 -or
+                 $protected.synthetic_ci_signed_container_verified -ne $true -or
+                 $protected.protected_transition_mutex_held_during_review -ne $true -or
+                 $protected.browser_registry_keys_checked -ne 3 -or
+                 $protected.hosts_baseline_checked -ne $true -or
+                 $protected.dns_adapter_assignment_baseline_checked -ne $true -or
+                 $protected.catalog_task_baseline_checked -ne $true -or
+                 $protected.partial_protection_snapshot_stable_under_lock -ne $true -or
+                 $protected.browser_registry_numbered_entries -lt 0 -or
+                 $protected.browser_policy_census_stable_under_lock -ne $true -or
+                 $protected.browser_policy_values_exported -ne $false -or
+                 $protected.browser_enforcement_verified -ne $false -or
+                 $protected.result -ne 'REVIEW_ONLY' -or
+                 $protected.can_install -ne $false -or
+                 $protected.can_upgrade -ne $false -or
+                 $protected.can_change_dns -ne $false -or
+                 $protected.can_change_tasks -ne $false -or
+                 $protected.status -ne 'NO_INSTALL_OR_DNS_CHANGE_AUTHORIZED'){
+                throw 'Protected preflight JSON granted an unauthorized write or omitted a required native check'
+              }
+              Write-Host 'PASS VOLVE_NATIVE_PROTECTED_SIGNED_HOST_PREFLIGHT SIX_INVENTORIES THREE_BROWSER_POLICIES DNS_ASSIGNMENT_BASELINE KERNEL_MUTEX EXCLUSIVE NO_INSTALL NO_DNS NO_TASKS'
+            }
+            $lockDNSAfter=Get-DnsClientServerAddress -ErrorAction Stop | Sort-Object InterfaceIndex,AddressFamily | Select-Object InterfaceIndex,AddressFamily,ServerAddresses | ConvertTo-Json -Depth 6 -Compress
+            $lockTasksAfter=@(Get-ScheduledTask -ErrorAction Stop | Where-Object {$_.TaskName -match '^(?i:VOLVE[-_])'}).Count
+            if($dnsBefore -cne $lockDNSAfter -or $tasksBefore -ne $lockTasksAfter){
+              throw 'Protected preflight touched Windows DNS adapter or VOLVE scheduled tasks'
+            }
+                        Write-Host 'PASS VOLVE_NATIVE_WINDOWS_SETUP_PREVIEW_6_INVENTORIES_SIGNED_PACKAGE NO_INSTALL NO_DNS NO_TASKS'
+            $global:LASTEXITCODE=0
+          } finally {
+            Pop-Location
+          }
+ volve-browser-protection/motorupdate)
+            if($LASTEXITCODE -ne 0){
+              $policyEvents | Select-Object -Last 60 | Write-Host
+              throw 'Native hosts/browser/catalog protection baseline tests failed'
+            }
+            $policyRecords=@($policyEvents | Where-Object {$_ -match '^\s*\{'} | ForEach-Object {$_ | ConvertFrom-Json})
+            foreach($name in @(
+              'TestVOLVEBrowserPolicyReadOnlyCountsDoNotClaimEffectiveProtection',
+              'TestVOLVEBrowserPolicyReadOnlyRejectsInjectedOrAmbiguousResponses',
+              'TestVOLVEBrowserPolicyReadOnlyMissingKeysAreNotFailedBrowserProtection',
+              'TestVOLVEBrowserPolicyReadOnlyRejectsMissingOrMalformedFingerprints',
+              'TestVOLVEBrowserPolicyReadOnlyRejectsCancelOrUnapprovedCommands',
+              'TestVOLVEBrowserPolicyRealWindowsRegistryNativeReadOnly',
+              'TestFreshMotorPreservesHostsBrowserPoliciesAndCatalog',
+              'TestFreshMotorDetectsPartialProtectionRegressions',
+              'TestProtectionSnapshotCannotPassWhenAnySurfaceWasNotCaptured',
+              'TestCountWindowsHostsBlockedRulesDoesNotReturnNames',
+              'TestWindowsHostsFileReadOnlyHashAndNoContentExport',
+              'TestWindowsHostsFileReadOnlyRejectsOversizedFile',
+              'TestWindowsProtectionSnapshotCapturesAllDeclaredSurfaces',
+              'TestWindowsProtectionSnapshotRequiresPinnedExistingCatalogTask',
+              'TestWindowsProtectionSnapshotRejectsUnknownOrContradictoryTaskInventory',
+              'TestWindowsProtectionSnapshotRejectsMissingInspectorsAndCancelledContext',
+              'TestWindowsProtectionSnapshotCannotPassIfHostBaselineIsMalformed',
+              'TestWindowsDNSAssignmentProvenanceSeparatesStaticAndAutomatic',
+              'TestWindowsDNSAssignmentProvenanceRejectsUnknownOrConflictingSource',
+              'TestWindowsDNSAssignmentProvenanceRejectsDuplicateOrIncompleteFamilies',
+              'TestWindowsDNSAssignmentFingerprintIgnoresAutomaticLeaseAddressButPreservesStaticOrder',
+              'TestWindowsDNSAssignmentProvenanceRejectsCancellationAndMutableQueries',
+              'TestWindowsDNSAssignmentProvenanceNativeWindowsReadOnly',
+              'TestDNSRecoveryJournalExactRoundTripAndWriteFreePreview',
+              'TestDNSRecoveryJournalRejectsTamperingAndMissingExternalPin',
+              'TestDNSRecoveryJournalRejectsUnknownOrIncompleteOriginals',
+              'TestDNSRecoveryPreviewRejectsExternalDNSAndNeverApplies',
+              'TestDNSRecoveryJournalCancellationFailsClosed',
+              'TestDNSRecoveryJournalRejectsUnpinnedReorderedAndDuplicateRecords'
+            )){
+              $passes=@($policyRecords | Where-Object {$_.Test -eq $name -and $_.Action -eq 'pass'})
+              $skips=@($policyRecords | Where-Object {$_.Test -eq $name -and $_.Action -eq 'skip'})
+              if($passes.Count -ne 1 -or $skips.Count -ne 0){throw ('Mandatory native browser policy test skipped or missing: '+$name)}
+            }
+            Write-Host 'PASS VOLVE_NATIVE_BROWSER_POLICY_CONTENT_FINGERPRINTS THREE_KEYS NO_VALUE_EXPORT'
+            Write-Host 'PASS VOLVE_NATIVE_PROTECTION_SNAPSHOT HOSTS_BROWSER_CATALOG PARTIAL_BASELINE NO_RAW_VALUES'
+            Write-Host 'PASS VOLVE_DNS_ASSIGNMENT_PROVENANCE_TESTS IPV4_IPV6 STATIC_AUTOMATIC FAIL_CLOSED NO_WRITES'
+            Write-Host 'PASS VOLVE_DNS_RECOVERY_JOURNAL_PINNED_IPV4_IPV6_READ_ONLY_PREVIEW NO_INSTALL'
+            Write-Host 'PASS VOLVE_SIGNED_EXE_PLUS_REAL_WINDOWS_6_INVENTORIES REVIEW_ONLY NO_INSTALL NO_DNS_CHANGE'
+            Write-Host 'PREVIEW CHECKPOINT: produce actual native Windows setup decision JSON'
+            $dnsBefore=Get-DnsClientServerAddress -ErrorAction Stop | Sort-Object InterfaceIndex,AddressFamily | Select-Object InterfaceIndex,AddressFamily,ServerAddresses | ConvertTo-Json -Depth 6 -Compress
+            $tasksBefore=@(Get-ScheduledTask -ErrorAction Stop | Where-Object {$_.TaskName -match '^(?i:VOLVE[-_])'}).Count
+            go test -mod=mod -count=1 -v ./hostroutebridge/cmd/preview
+            if($LASTEXITCODE -ne 0){throw 'Hosted CI-only setup preview fail-closed tests failed'}
+            $raw=(& go run -mod=mod ./hostroutebridge/cmd/preview --review-only | Out-String).Trim()
+            if($LASTEXITCODE -ne 0){throw 'Native signed Windows setup preview execution failed'}
+            $report=$raw | ConvertFrom-Json -ErrorAction Stop
+            if($report.component -ne 'VOLVE-0287-WINDOWS-SETUP-PREVIEW-CI' -or
+               $report.scope -ne 'DISPOSABLE_WINDOWS_CI_ONLY_NOT_USER_PC' -or
+               $report.result -ne 'REVIEW_ONLY' -or
+               $report.target_release -ne '0.28.7' -or
+               $report.windows_inventories_checked -ne 6 -or
+               $report.synthetic_ci_signed_container_verified -ne $true -or
+               $report.status -ne 'NO_INSTALL_OR_DNS_CHANGE_AUTHORIZED' -or
+               $report.can_install -ne $false -or
+               $report.can_upgrade -ne $false -or
+               $report.can_change_dns -ne $false -or
+               $report.can_change_tasks -ne $false -or
+               @($report.unmet_production_prerequisites).Count -lt 7){
+              throw ('Unsafe or incomplete native Windows preinstallation preview: '+$raw)
+            }
+            $dnsAfter=Get-DnsClientServerAddress -ErrorAction Stop | Sort-Object InterfaceIndex,AddressFamily | Select-Object InterfaceIndex,AddressFamily,ServerAddresses | ConvertTo-Json -Depth 6 -Compress
+            $tasksAfter=@(Get-ScheduledTask -ErrorAction Stop | Where-Object {$_.TaskName -match '^(?i:VOLVE[-_])'}).Count
+            if($dnsBefore -cne $dnsAfter -or $tasksBefore -ne $tasksAfter){
+              throw 'Native preinstallation preview changed DNS or VOLVE SYSTEM task count'
+            }
+            Write-Host $raw
+            Write-Host 'PROTECTED PREVIEW CHECKPOINT: repeat full Windows preflight WHILE holding updater/recovery kernel mutex'
+            $protectedRaw=(& go run -mod=mod ./hostroutebridge/cmd/preview --review-under-protected-lock 2>&1 | Out-String).Trim()
+            $protectedExit=$LASTEXITCODE
+            if($protectedExit -ne 0){
+              if($protectedRaw -notmatch 'DNS servers exist on an interface without a unique adapter GUID|DNS interface index maps to conflicting adapter GUIDs|DNS assignment registry key missing|Unknown DNS client address family'){
+                throw 'Protected native Windows preflight failed for an unexpected reason'
+              }
+              Write-Host 'SAFE REFUSAL: native Windows DNS source is ambiguous or unsupported; installation remains prohibited'
+              Write-Host 'PASS VOLVE_NATIVE_PROTECTED_PREFLIGHT_FAIL_CLOSED_UNMAPPED_DNS NO_INSTALL NO_DNS NO_TASKS'
+            }else{
+              if($protectedRaw -match 'ContentSHA256|URLBlocklist|PrivateURL|HostsSHA256|CatalogTaskDefinitionSHA256|DNSAdaptersSHA256|InterfaceGUID|EffectiveServers|NameServer'){
+                throw 'Protected setup report leaked raw policy registry names or fingerprints'
+              }
+              $protected=$protectedRaw | ConvertFrom-Json -ErrorAction Stop
+              if($protected.component -ne 'VOLVE-0287-WINDOWS-SETUP-PREVIEW-CI' -or
+                 $protected.scope -ne 'DISPOSABLE_WINDOWS_CI_ONLY_NOT_USER_PC' -or
+                 $protected.target_release -ne '0.28.7' -or
+                 $protected.windows_inventories_checked -ne 6 -or
+                 $protected.synthetic_ci_signed_container_verified -ne $true -or
+                 $protected.protected_transition_mutex_held_during_review -ne $true -or
+                 $protected.browser_registry_keys_checked -ne 3 -or
+                 $protected.hosts_baseline_checked -ne $true -or
+                 $protected.dns_adapter_assignment_baseline_checked -ne $true -or
+                 $protected.catalog_task_baseline_checked -ne $true -or
+                 $protected.partial_protection_snapshot_stable_under_lock -ne $true -or
+                 $protected.browser_registry_numbered_entries -lt 0 -or
+                 $protected.browser_policy_census_stable_under_lock -ne $true -or
+                 $protected.browser_policy_values_exported -ne $false -or
+                 $protected.browser_enforcement_verified -ne $false -or
+                 $protected.result -ne 'REVIEW_ONLY' -or
+                 $protected.can_install -ne $false -or
+                 $protected.can_upgrade -ne $false -or
+                 $protected.can_change_dns -ne $false -or
+                 $protected.can_change_tasks -ne $false -or
+                 $protected.status -ne 'NO_INSTALL_OR_DNS_CHANGE_AUTHORIZED'){
+                throw 'Protected preflight JSON granted an unauthorized write or omitted a required native check'
+              }
+              Write-Host 'PASS VOLVE_NATIVE_PROTECTED_SIGNED_HOST_PREFLIGHT SIX_INVENTORIES THREE_BROWSER_POLICIES DNS_ASSIGNMENT_BASELINE KERNEL_MUTEX EXCLUSIVE NO_INSTALL NO_DNS NO_TASKS'
+            }
+            $lockDNSAfter=Get-DnsClientServerAddress -ErrorAction Stop | Sort-Object InterfaceIndex,AddressFamily | Select-Object InterfaceIndex,AddressFamily,ServerAddresses | ConvertTo-Json -Depth 6 -Compress
+            $lockTasksAfter=@(Get-ScheduledTask -ErrorAction Stop | Where-Object {$_.TaskName -match '^(?i:VOLVE[-_])'}).Count
+            if($dnsBefore -cne $lockDNSAfter -or $tasksBefore -ne $lockTasksAfter){
+              throw 'Protected preflight touched Windows DNS adapter or VOLVE scheduled tasks'
+            }
+                        Write-Host 'PASS VOLVE_NATIVE_WINDOWS_SETUP_PREVIEW_6_INVENTORIES_SIGNED_PACKAGE NO_INSTALL NO_DNS NO_TASKS'
+            $global:LASTEXITCODE=0
+          } finally {
+            Pop-Location
+          }
+,
+              '^TestWindowsHostsFileReadOnlyHashAndNoContentExport
+            if($LASTEXITCODE -ne 0){
+              $policyEvents | Select-Object -Last 60 | Write-Host
+              throw 'Native hosts/browser/catalog protection baseline tests failed'
+            }
+            $policyRecords=@($policyEvents | Where-Object {$_ -match '^\s*\{'} | ForEach-Object {$_ | ConvertFrom-Json})
+            foreach($name in @(
+              'TestVOLVEBrowserPolicyReadOnlyCountsDoNotClaimEffectiveProtection',
+              'TestVOLVEBrowserPolicyReadOnlyRejectsInjectedOrAmbiguousResponses',
+              'TestVOLVEBrowserPolicyReadOnlyMissingKeysAreNotFailedBrowserProtection',
+              'TestVOLVEBrowserPolicyReadOnlyRejectsMissingOrMalformedFingerprints',
+              'TestVOLVEBrowserPolicyReadOnlyRejectsCancelOrUnapprovedCommands',
+              'TestVOLVEBrowserPolicyRealWindowsRegistryNativeReadOnly',
+              'TestFreshMotorPreservesHostsBrowserPoliciesAndCatalog',
+              'TestFreshMotorDetectsPartialProtectionRegressions',
+              'TestProtectionSnapshotCannotPassWhenAnySurfaceWasNotCaptured',
+              'TestCountWindowsHostsBlockedRulesDoesNotReturnNames',
+              'TestWindowsHostsFileReadOnlyHashAndNoContentExport',
+              'TestWindowsHostsFileReadOnlyRejectsOversizedFile',
+              'TestWindowsProtectionSnapshotCapturesAllDeclaredSurfaces',
+              'TestWindowsProtectionSnapshotRequiresPinnedExistingCatalogTask',
+              'TestWindowsProtectionSnapshotRejectsUnknownOrContradictoryTaskInventory',
+              'TestWindowsProtectionSnapshotRejectsMissingInspectorsAndCancelledContext',
+              'TestWindowsProtectionSnapshotCannotPassIfHostBaselineIsMalformed',
+              'TestWindowsDNSAssignmentProvenanceSeparatesStaticAndAutomatic',
+              'TestWindowsDNSAssignmentProvenanceRejectsUnknownOrConflictingSource',
+              'TestWindowsDNSAssignmentProvenanceRejectsDuplicateOrIncompleteFamilies',
+              'TestWindowsDNSAssignmentFingerprintIgnoresAutomaticLeaseAddressButPreservesStaticOrder',
+              'TestWindowsDNSAssignmentProvenanceRejectsCancellationAndMutableQueries',
+              'TestWindowsDNSAssignmentProvenanceNativeWindowsReadOnly',
+              'TestDNSRecoveryJournalExactRoundTripAndWriteFreePreview',
+              'TestDNSRecoveryJournalRejectsTamperingAndMissingExternalPin',
+              'TestDNSRecoveryJournalRejectsUnknownOrIncompleteOriginals',
+              'TestDNSRecoveryPreviewRejectsExternalDNSAndNeverApplies',
+              'TestDNSRecoveryJournalCancellationFailsClosed',
+              'TestDNSRecoveryJournalRejectsUnpinnedReorderedAndDuplicateRecords',
+              'TestDNSStagedBackupCreateOnlyAndExactReadBack',
+              'TestDNSStagedBackupRejectsUntrustedInputsBeforeWriting',
+              'TestDNSStagedBackupNeverWritesPrivateDataBeforeDirectorySeal',
+              'TestDNSStagedBackupRejectsTamperAndUnexpectedFiles',
+              'TestNativeWindowsDNSOriginalBackupRealNTFSAndCorruptedACL'
+            )){
+              $passes=@($policyRecords | Where-Object {$_.Test -eq $name -and $_.Action -eq 'pass'})
+              $skips=@($policyRecords | Where-Object {$_.Test -eq $name -and $_.Action -eq 'skip'})
+              if($passes.Count -ne 1 -or $skips.Count -ne 0){throw ('Mandatory native browser policy test skipped or missing: '+$name)}
+            }
+            Write-Host 'PASS VOLVE_NATIVE_BROWSER_POLICY_CONTENT_FINGERPRINTS THREE_KEYS NO_VALUE_EXPORT'
+            Write-Host 'PASS VOLVE_NATIVE_PROTECTION_SNAPSHOT HOSTS_BROWSER_CATALOG PARTIAL_BASELINE NO_RAW_VALUES'
+            Write-Host 'PASS VOLVE_DNS_ASSIGNMENT_PROVENANCE_TESTS IPV4_IPV6 STATIC_AUTOMATIC FAIL_CLOSED NO_WRITES'
+            Write-Host 'PASS VOLVE_DNS_RECOVERY_JOURNAL_PINNED_IPV4_IPV6_READ_ONLY_PREVIEW NO_INSTALL'
+            Write-Host 'PASS VOLVE_NATIVE_NTFS_ORIGINAL_DNS_BACKUP_CREATE_ONLY_SEAL_READBACK_TAMPER_REJECT NO_DNS_WRITES'
+            Write-Host 'PASS VOLVE_SIGNED_EXE_PLUS_REAL_WINDOWS_6_INVENTORIES REVIEW_ONLY NO_INSTALL NO_DNS_CHANGE'
+            Write-Host 'PREVIEW CHECKPOINT: produce actual native Windows setup decision JSON'
+            $dnsBefore=Get-DnsClientServerAddress -ErrorAction Stop | Sort-Object InterfaceIndex,AddressFamily | Select-Object InterfaceIndex,AddressFamily,ServerAddresses | ConvertTo-Json -Depth 6 -Compress
+            $tasksBefore=@(Get-ScheduledTask -ErrorAction Stop | Where-Object {$_.TaskName -match '^(?i:VOLVE[-_])'}).Count
+            go test -mod=mod -count=1 -v ./hostroutebridge/cmd/preview
+            if($LASTEXITCODE -ne 0){throw 'Hosted CI-only setup preview fail-closed tests failed'}
+            $raw=(& go run -mod=mod ./hostroutebridge/cmd/preview --review-only | Out-String).Trim()
+            if($LASTEXITCODE -ne 0){throw 'Native signed Windows setup preview execution failed'}
+            $report=$raw | ConvertFrom-Json -ErrorAction Stop
+            if($report.component -ne 'VOLVE-0287-WINDOWS-SETUP-PREVIEW-CI' -or
+               $report.scope -ne 'DISPOSABLE_WINDOWS_CI_ONLY_NOT_USER_PC' -or
+               $report.result -ne 'REVIEW_ONLY' -or
+               $report.target_release -ne '0.28.7' -or
+               $report.windows_inventories_checked -ne 6 -or
+               $report.synthetic_ci_signed_container_verified -ne $true -or
+               $report.status -ne 'NO_INSTALL_OR_DNS_CHANGE_AUTHORIZED' -or
+               $report.can_install -ne $false -or
+               $report.can_upgrade -ne $false -or
+               $report.can_change_dns -ne $false -or
+               $report.can_change_tasks -ne $false -or
+               @($report.unmet_production_prerequisites).Count -lt 7){
+              throw ('Unsafe or incomplete native Windows preinstallation preview: '+$raw)
+            }
+            $dnsAfter=Get-DnsClientServerAddress -ErrorAction Stop | Sort-Object InterfaceIndex,AddressFamily | Select-Object InterfaceIndex,AddressFamily,ServerAddresses | ConvertTo-Json -Depth 6 -Compress
+            $tasksAfter=@(Get-ScheduledTask -ErrorAction Stop | Where-Object {$_.TaskName -match '^(?i:VOLVE[-_])'}).Count
+            if($dnsBefore -cne $dnsAfter -or $tasksBefore -ne $tasksAfter){
+              throw 'Native preinstallation preview changed DNS or VOLVE SYSTEM task count'
+            }
+            Write-Host $raw
+            Write-Host 'PROTECTED PREVIEW CHECKPOINT: repeat full Windows preflight WHILE holding updater/recovery kernel mutex'
+            $protectedRaw=(& go run -mod=mod ./hostroutebridge/cmd/preview --review-under-protected-lock 2>&1 | Out-String).Trim()
+            $protectedExit=$LASTEXITCODE
+            if($protectedExit -ne 0){
+              if($protectedRaw -notmatch 'DNS servers exist on an interface without a unique adapter GUID|DNS interface index maps to conflicting adapter GUIDs|DNS assignment registry key missing|Unknown DNS client address family'){
+                throw 'Protected native Windows preflight failed for an unexpected reason'
+              }
+              Write-Host 'SAFE REFUSAL: native Windows DNS source is ambiguous or unsupported; installation remains prohibited'
+              Write-Host 'PASS VOLVE_NATIVE_PROTECTED_PREFLIGHT_FAIL_CLOSED_UNMAPPED_DNS NO_INSTALL NO_DNS NO_TASKS'
+            }else{
+              if($protectedRaw -match 'ContentSHA256|URLBlocklist|PrivateURL|HostsSHA256|CatalogTaskDefinitionSHA256|DNSAdaptersSHA256|InterfaceGUID|EffectiveServers|NameServer'){
+                throw 'Protected setup report leaked raw policy registry names or fingerprints'
+              }
+              $protected=$protectedRaw | ConvertFrom-Json -ErrorAction Stop
+              if($protected.component -ne 'VOLVE-0287-WINDOWS-SETUP-PREVIEW-CI' -or
+                 $protected.scope -ne 'DISPOSABLE_WINDOWS_CI_ONLY_NOT_USER_PC' -or
+                 $protected.target_release -ne '0.28.7' -or
+                 $protected.windows_inventories_checked -ne 6 -or
+                 $protected.synthetic_ci_signed_container_verified -ne $true -or
+                 $protected.protected_transition_mutex_held_during_review -ne $true -or
+                 $protected.browser_registry_keys_checked -ne 3 -or
+                 $protected.hosts_baseline_checked -ne $true -or
+                 $protected.dns_adapter_assignment_baseline_checked -ne $true -or
+                 $protected.catalog_task_baseline_checked -ne $true -or
+                 $protected.partial_protection_snapshot_stable_under_lock -ne $true -or
+                 $protected.browser_registry_numbered_entries -lt 0 -or
+                 $protected.browser_policy_census_stable_under_lock -ne $true -or
+                 $protected.browser_policy_values_exported -ne $false -or
+                 $protected.browser_enforcement_verified -ne $false -or
+                 $protected.result -ne 'REVIEW_ONLY' -or
+                 $protected.can_install -ne $false -or
+                 $protected.can_upgrade -ne $false -or
+                 $protected.can_change_dns -ne $false -or
+                 $protected.can_change_tasks -ne $false -or
+                 $protected.status -ne 'NO_INSTALL_OR_DNS_CHANGE_AUTHORIZED'){
+                throw 'Protected preflight JSON granted an unauthorized write or omitted a required native check'
+              }
+              Write-Host 'PASS VOLVE_NATIVE_PROTECTED_SIGNED_HOST_PREFLIGHT SIX_INVENTORIES THREE_BROWSER_POLICIES DNS_ASSIGNMENT_BASELINE KERNEL_MUTEX EXCLUSIVE NO_INSTALL NO_DNS NO_TASKS'
+            }
+            $lockDNSAfter=Get-DnsClientServerAddress -ErrorAction Stop | Sort-Object InterfaceIndex,AddressFamily | Select-Object InterfaceIndex,AddressFamily,ServerAddresses | ConvertTo-Json -Depth 6 -Compress
+            $lockTasksAfter=@(Get-ScheduledTask -ErrorAction Stop | Where-Object {$_.TaskName -match '^(?i:VOLVE[-_])'}).Count
+            if($dnsBefore -cne $lockDNSAfter -or $tasksBefore -ne $lockTasksAfter){
+              throw 'Protected preflight touched Windows DNS adapter or VOLVE scheduled tasks'
+            }
+                        Write-Host 'PASS VOLVE_NATIVE_WINDOWS_SETUP_PREVIEW_6_INVENTORIES_SIGNED_PACKAGE NO_INSTALL NO_DNS NO_TASKS'
+            $global:LASTEXITCODE=0
+          } finally {
+            Pop-Location
+          }
+ volve-browser-protection/motorupdate)
+            if($LASTEXITCODE -ne 0){
+              $policyEvents | Select-Object -Last 60 | Write-Host
+              throw 'Native hosts/browser/catalog protection baseline tests failed'
+            }
+            $policyRecords=@($policyEvents | Where-Object {$_ -match '^\s*\{'} | ForEach-Object {$_ | ConvertFrom-Json})
+            foreach($name in @(
+              'TestVOLVEBrowserPolicyReadOnlyCountsDoNotClaimEffectiveProtection',
+              'TestVOLVEBrowserPolicyReadOnlyRejectsInjectedOrAmbiguousResponses',
+              'TestVOLVEBrowserPolicyReadOnlyMissingKeysAreNotFailedBrowserProtection',
+              'TestVOLVEBrowserPolicyReadOnlyRejectsMissingOrMalformedFingerprints',
+              'TestVOLVEBrowserPolicyReadOnlyRejectsCancelOrUnapprovedCommands',
+              'TestVOLVEBrowserPolicyRealWindowsRegistryNativeReadOnly',
+              'TestFreshMotorPreservesHostsBrowserPoliciesAndCatalog',
+              'TestFreshMotorDetectsPartialProtectionRegressions',
+              'TestProtectionSnapshotCannotPassWhenAnySurfaceWasNotCaptured',
+              'TestCountWindowsHostsBlockedRulesDoesNotReturnNames',
+              'TestWindowsHostsFileReadOnlyHashAndNoContentExport',
+              'TestWindowsHostsFileReadOnlyRejectsOversizedFile',
+              'TestWindowsProtectionSnapshotCapturesAllDeclaredSurfaces',
+              'TestWindowsProtectionSnapshotRequiresPinnedExistingCatalogTask',
+              'TestWindowsProtectionSnapshotRejectsUnknownOrContradictoryTaskInventory',
+              'TestWindowsProtectionSnapshotRejectsMissingInspectorsAndCancelledContext',
+              'TestWindowsProtectionSnapshotCannotPassIfHostBaselineIsMalformed',
+              'TestWindowsDNSAssignmentProvenanceSeparatesStaticAndAutomatic',
+              'TestWindowsDNSAssignmentProvenanceRejectsUnknownOrConflictingSource',
+              'TestWindowsDNSAssignmentProvenanceRejectsDuplicateOrIncompleteFamilies',
+              'TestWindowsDNSAssignmentFingerprintIgnoresAutomaticLeaseAddressButPreservesStaticOrder',
+              'TestWindowsDNSAssignmentProvenanceRejectsCancellationAndMutableQueries',
+              'TestWindowsDNSAssignmentProvenanceNativeWindowsReadOnly',
+              'TestDNSRecoveryJournalExactRoundTripAndWriteFreePreview',
+              'TestDNSRecoveryJournalRejectsTamperingAndMissingExternalPin',
+              'TestDNSRecoveryJournalRejectsUnknownOrIncompleteOriginals',
+              'TestDNSRecoveryPreviewRejectsExternalDNSAndNeverApplies',
+              'TestDNSRecoveryJournalCancellationFailsClosed',
+              'TestDNSRecoveryJournalRejectsUnpinnedReorderedAndDuplicateRecords'
+            )){
+              $passes=@($policyRecords | Where-Object {$_.Test -eq $name -and $_.Action -eq 'pass'})
+              $skips=@($policyRecords | Where-Object {$_.Test -eq $name -and $_.Action -eq 'skip'})
+              if($passes.Count -ne 1 -or $skips.Count -ne 0){throw ('Mandatory native browser policy test skipped or missing: '+$name)}
+            }
+            Write-Host 'PASS VOLVE_NATIVE_BROWSER_POLICY_CONTENT_FINGERPRINTS THREE_KEYS NO_VALUE_EXPORT'
+            Write-Host 'PASS VOLVE_NATIVE_PROTECTION_SNAPSHOT HOSTS_BROWSER_CATALOG PARTIAL_BASELINE NO_RAW_VALUES'
+            Write-Host 'PASS VOLVE_DNS_ASSIGNMENT_PROVENANCE_TESTS IPV4_IPV6 STATIC_AUTOMATIC FAIL_CLOSED NO_WRITES'
+            Write-Host 'PASS VOLVE_DNS_RECOVERY_JOURNAL_PINNED_IPV4_IPV6_READ_ONLY_PREVIEW NO_INSTALL'
+            Write-Host 'PASS VOLVE_SIGNED_EXE_PLUS_REAL_WINDOWS_6_INVENTORIES REVIEW_ONLY NO_INSTALL NO_DNS_CHANGE'
+            Write-Host 'PREVIEW CHECKPOINT: produce actual native Windows setup decision JSON'
+            $dnsBefore=Get-DnsClientServerAddress -ErrorAction Stop | Sort-Object InterfaceIndex,AddressFamily | Select-Object InterfaceIndex,AddressFamily,ServerAddresses | ConvertTo-Json -Depth 6 -Compress
+            $tasksBefore=@(Get-ScheduledTask -ErrorAction Stop | Where-Object {$_.TaskName -match '^(?i:VOLVE[-_])'}).Count
+            go test -mod=mod -count=1 -v ./hostroutebridge/cmd/preview
+            if($LASTEXITCODE -ne 0){throw 'Hosted CI-only setup preview fail-closed tests failed'}
+            $raw=(& go run -mod=mod ./hostroutebridge/cmd/preview --review-only | Out-String).Trim()
+            if($LASTEXITCODE -ne 0){throw 'Native signed Windows setup preview execution failed'}
+            $report=$raw | ConvertFrom-Json -ErrorAction Stop
+            if($report.component -ne 'VOLVE-0287-WINDOWS-SETUP-PREVIEW-CI' -or
+               $report.scope -ne 'DISPOSABLE_WINDOWS_CI_ONLY_NOT_USER_PC' -or
+               $report.result -ne 'REVIEW_ONLY' -or
+               $report.target_release -ne '0.28.7' -or
+               $report.windows_inventories_checked -ne 6 -or
+               $report.synthetic_ci_signed_container_verified -ne $true -or
+               $report.status -ne 'NO_INSTALL_OR_DNS_CHANGE_AUTHORIZED' -or
+               $report.can_install -ne $false -or
+               $report.can_upgrade -ne $false -or
+               $report.can_change_dns -ne $false -or
+               $report.can_change_tasks -ne $false -or
+               @($report.unmet_production_prerequisites).Count -lt 7){
+              throw ('Unsafe or incomplete native Windows preinstallation preview: '+$raw)
+            }
+            $dnsAfter=Get-DnsClientServerAddress -ErrorAction Stop | Sort-Object InterfaceIndex,AddressFamily | Select-Object InterfaceIndex,AddressFamily,ServerAddresses | ConvertTo-Json -Depth 6 -Compress
+            $tasksAfter=@(Get-ScheduledTask -ErrorAction Stop | Where-Object {$_.TaskName -match '^(?i:VOLVE[-_])'}).Count
+            if($dnsBefore -cne $dnsAfter -or $tasksBefore -ne $tasksAfter){
+              throw 'Native preinstallation preview changed DNS or VOLVE SYSTEM task count'
+            }
+            Write-Host $raw
+            Write-Host 'PROTECTED PREVIEW CHECKPOINT: repeat full Windows preflight WHILE holding updater/recovery kernel mutex'
+            $protectedRaw=(& go run -mod=mod ./hostroutebridge/cmd/preview --review-under-protected-lock 2>&1 | Out-String).Trim()
+            $protectedExit=$LASTEXITCODE
+            if($protectedExit -ne 0){
+              if($protectedRaw -notmatch 'DNS servers exist on an interface without a unique adapter GUID|DNS interface index maps to conflicting adapter GUIDs|DNS assignment registry key missing|Unknown DNS client address family'){
+                throw 'Protected native Windows preflight failed for an unexpected reason'
+              }
+              Write-Host 'SAFE REFUSAL: native Windows DNS source is ambiguous or unsupported; installation remains prohibited'
+              Write-Host 'PASS VOLVE_NATIVE_PROTECTED_PREFLIGHT_FAIL_CLOSED_UNMAPPED_DNS NO_INSTALL NO_DNS NO_TASKS'
+            }else{
+              if($protectedRaw -match 'ContentSHA256|URLBlocklist|PrivateURL|HostsSHA256|CatalogTaskDefinitionSHA256|DNSAdaptersSHA256|InterfaceGUID|EffectiveServers|NameServer'){
+                throw 'Protected setup report leaked raw policy registry names or fingerprints'
+              }
+              $protected=$protectedRaw | ConvertFrom-Json -ErrorAction Stop
+              if($protected.component -ne 'VOLVE-0287-WINDOWS-SETUP-PREVIEW-CI' -or
+                 $protected.scope -ne 'DISPOSABLE_WINDOWS_CI_ONLY_NOT_USER_PC' -or
+                 $protected.target_release -ne '0.28.7' -or
+                 $protected.windows_inventories_checked -ne 6 -or
+                 $protected.synthetic_ci_signed_container_verified -ne $true -or
+                 $protected.protected_transition_mutex_held_during_review -ne $true -or
+                 $protected.browser_registry_keys_checked -ne 3 -or
+                 $protected.hosts_baseline_checked -ne $true -or
+                 $protected.dns_adapter_assignment_baseline_checked -ne $true -or
+                 $protected.catalog_task_baseline_checked -ne $true -or
+                 $protected.partial_protection_snapshot_stable_under_lock -ne $true -or
+                 $protected.browser_registry_numbered_entries -lt 0 -or
+                 $protected.browser_policy_census_stable_under_lock -ne $true -or
+                 $protected.browser_policy_values_exported -ne $false -or
+                 $protected.browser_enforcement_verified -ne $false -or
+                 $protected.result -ne 'REVIEW_ONLY' -or
+                 $protected.can_install -ne $false -or
+                 $protected.can_upgrade -ne $false -or
+                 $protected.can_change_dns -ne $false -or
+                 $protected.can_change_tasks -ne $false -or
+                 $protected.status -ne 'NO_INSTALL_OR_DNS_CHANGE_AUTHORIZED'){
+                throw 'Protected preflight JSON granted an unauthorized write or omitted a required native check'
+              }
+              Write-Host 'PASS VOLVE_NATIVE_PROTECTED_SIGNED_HOST_PREFLIGHT SIX_INVENTORIES THREE_BROWSER_POLICIES DNS_ASSIGNMENT_BASELINE KERNEL_MUTEX EXCLUSIVE NO_INSTALL NO_DNS NO_TASKS'
+            }
+            $lockDNSAfter=Get-DnsClientServerAddress -ErrorAction Stop | Sort-Object InterfaceIndex,AddressFamily | Select-Object InterfaceIndex,AddressFamily,ServerAddresses | ConvertTo-Json -Depth 6 -Compress
+            $lockTasksAfter=@(Get-ScheduledTask -ErrorAction Stop | Where-Object {$_.TaskName -match '^(?i:VOLVE[-_])'}).Count
+            if($dnsBefore -cne $lockDNSAfter -or $tasksBefore -ne $lockTasksAfter){
+              throw 'Protected preflight touched Windows DNS adapter or VOLVE scheduled tasks'
+            }
+                        Write-Host 'PASS VOLVE_NATIVE_WINDOWS_SETUP_PREVIEW_6_INVENTORIES_SIGNED_PACKAGE NO_INSTALL NO_DNS NO_TASKS'
+            $global:LASTEXITCODE=0
+          } finally {
+            Pop-Location
+          }
+,
+              '^TestWindowsHostsFileReadOnlyRejectsOversizedFile
+            if($LASTEXITCODE -ne 0){
+              $policyEvents | Select-Object -Last 60 | Write-Host
+              throw 'Native hosts/browser/catalog protection baseline tests failed'
+            }
+            $policyRecords=@($policyEvents | Where-Object {$_ -match '^\s*\{'} | ForEach-Object {$_ | ConvertFrom-Json})
+            foreach($name in @(
+              'TestVOLVEBrowserPolicyReadOnlyCountsDoNotClaimEffectiveProtection',
+              'TestVOLVEBrowserPolicyReadOnlyRejectsInjectedOrAmbiguousResponses',
+              'TestVOLVEBrowserPolicyReadOnlyMissingKeysAreNotFailedBrowserProtection',
+              'TestVOLVEBrowserPolicyReadOnlyRejectsMissingOrMalformedFingerprints',
+              'TestVOLVEBrowserPolicyReadOnlyRejectsCancelOrUnapprovedCommands',
+              'TestVOLVEBrowserPolicyRealWindowsRegistryNativeReadOnly',
+              'TestFreshMotorPreservesHostsBrowserPoliciesAndCatalog',
+              'TestFreshMotorDetectsPartialProtectionRegressions',
+              'TestProtectionSnapshotCannotPassWhenAnySurfaceWasNotCaptured',
+              'TestCountWindowsHostsBlockedRulesDoesNotReturnNames',
+              'TestWindowsHostsFileReadOnlyHashAndNoContentExport',
+              'TestWindowsHostsFileReadOnlyRejectsOversizedFile',
+              'TestWindowsProtectionSnapshotCapturesAllDeclaredSurfaces',
+              'TestWindowsProtectionSnapshotRequiresPinnedExistingCatalogTask',
+              'TestWindowsProtectionSnapshotRejectsUnknownOrContradictoryTaskInventory',
+              'TestWindowsProtectionSnapshotRejectsMissingInspectorsAndCancelledContext',
+              'TestWindowsProtectionSnapshotCannotPassIfHostBaselineIsMalformed',
+              'TestWindowsDNSAssignmentProvenanceSeparatesStaticAndAutomatic',
+              'TestWindowsDNSAssignmentProvenanceRejectsUnknownOrConflictingSource',
+              'TestWindowsDNSAssignmentProvenanceRejectsDuplicateOrIncompleteFamilies',
+              'TestWindowsDNSAssignmentFingerprintIgnoresAutomaticLeaseAddressButPreservesStaticOrder',
+              'TestWindowsDNSAssignmentProvenanceRejectsCancellationAndMutableQueries',
+              'TestWindowsDNSAssignmentProvenanceNativeWindowsReadOnly',
+              'TestDNSRecoveryJournalExactRoundTripAndWriteFreePreview',
+              'TestDNSRecoveryJournalRejectsTamperingAndMissingExternalPin',
+              'TestDNSRecoveryJournalRejectsUnknownOrIncompleteOriginals',
+              'TestDNSRecoveryPreviewRejectsExternalDNSAndNeverApplies',
+              'TestDNSRecoveryJournalCancellationFailsClosed',
+              'TestDNSRecoveryJournalRejectsUnpinnedReorderedAndDuplicateRecords',
+              'TestDNSStagedBackupCreateOnlyAndExactReadBack',
+              'TestDNSStagedBackupRejectsUntrustedInputsBeforeWriting',
+              'TestDNSStagedBackupNeverWritesPrivateDataBeforeDirectorySeal',
+              'TestDNSStagedBackupRejectsTamperAndUnexpectedFiles',
+              'TestNativeWindowsDNSOriginalBackupRealNTFSAndCorruptedACL'
+            )){
+              $passes=@($policyRecords | Where-Object {$_.Test -eq $name -and $_.Action -eq 'pass'})
+              $skips=@($policyRecords | Where-Object {$_.Test -eq $name -and $_.Action -eq 'skip'})
+              if($passes.Count -ne 1 -or $skips.Count -ne 0){throw ('Mandatory native browser policy test skipped or missing: '+$name)}
+            }
+            Write-Host 'PASS VOLVE_NATIVE_BROWSER_POLICY_CONTENT_FINGERPRINTS THREE_KEYS NO_VALUE_EXPORT'
+            Write-Host 'PASS VOLVE_NATIVE_PROTECTION_SNAPSHOT HOSTS_BROWSER_CATALOG PARTIAL_BASELINE NO_RAW_VALUES'
+            Write-Host 'PASS VOLVE_DNS_ASSIGNMENT_PROVENANCE_TESTS IPV4_IPV6 STATIC_AUTOMATIC FAIL_CLOSED NO_WRITES'
+            Write-Host 'PASS VOLVE_DNS_RECOVERY_JOURNAL_PINNED_IPV4_IPV6_READ_ONLY_PREVIEW NO_INSTALL'
+            Write-Host 'PASS VOLVE_NATIVE_NTFS_ORIGINAL_DNS_BACKUP_CREATE_ONLY_SEAL_READBACK_TAMPER_REJECT NO_DNS_WRITES'
+            Write-Host 'PASS VOLVE_SIGNED_EXE_PLUS_REAL_WINDOWS_6_INVENTORIES REVIEW_ONLY NO_INSTALL NO_DNS_CHANGE'
+            Write-Host 'PREVIEW CHECKPOINT: produce actual native Windows setup decision JSON'
+            $dnsBefore=Get-DnsClientServerAddress -ErrorAction Stop | Sort-Object InterfaceIndex,AddressFamily | Select-Object InterfaceIndex,AddressFamily,ServerAddresses | ConvertTo-Json -Depth 6 -Compress
+            $tasksBefore=@(Get-ScheduledTask -ErrorAction Stop | Where-Object {$_.TaskName -match '^(?i:VOLVE[-_])'}).Count
+            go test -mod=mod -count=1 -v ./hostroutebridge/cmd/preview
+            if($LASTEXITCODE -ne 0){throw 'Hosted CI-only setup preview fail-closed tests failed'}
+            $raw=(& go run -mod=mod ./hostroutebridge/cmd/preview --review-only | Out-String).Trim()
+            if($LASTEXITCODE -ne 0){throw 'Native signed Windows setup preview execution failed'}
+            $report=$raw | ConvertFrom-Json -ErrorAction Stop
+            if($report.component -ne 'VOLVE-0287-WINDOWS-SETUP-PREVIEW-CI' -or
+               $report.scope -ne 'DISPOSABLE_WINDOWS_CI_ONLY_NOT_USER_PC' -or
+               $report.result -ne 'REVIEW_ONLY' -or
+               $report.target_release -ne '0.28.7' -or
+               $report.windows_inventories_checked -ne 6 -or
+               $report.synthetic_ci_signed_container_verified -ne $true -or
+               $report.status -ne 'NO_INSTALL_OR_DNS_CHANGE_AUTHORIZED' -or
+               $report.can_install -ne $false -or
+               $report.can_upgrade -ne $false -or
+               $report.can_change_dns -ne $false -or
+               $report.can_change_tasks -ne $false -or
+               @($report.unmet_production_prerequisites).Count -lt 7){
+              throw ('Unsafe or incomplete native Windows preinstallation preview: '+$raw)
+            }
+            $dnsAfter=Get-DnsClientServerAddress -ErrorAction Stop | Sort-Object InterfaceIndex,AddressFamily | Select-Object InterfaceIndex,AddressFamily,ServerAddresses | ConvertTo-Json -Depth 6 -Compress
+            $tasksAfter=@(Get-ScheduledTask -ErrorAction Stop | Where-Object {$_.TaskName -match '^(?i:VOLVE[-_])'}).Count
+            if($dnsBefore -cne $dnsAfter -or $tasksBefore -ne $tasksAfter){
+              throw 'Native preinstallation preview changed DNS or VOLVE SYSTEM task count'
+            }
+            Write-Host $raw
+            Write-Host 'PROTECTED PREVIEW CHECKPOINT: repeat full Windows preflight WHILE holding updater/recovery kernel mutex'
+            $protectedRaw=(& go run -mod=mod ./hostroutebridge/cmd/preview --review-under-protected-lock 2>&1 | Out-String).Trim()
+            $protectedExit=$LASTEXITCODE
+            if($protectedExit -ne 0){
+              if($protectedRaw -notmatch 'DNS servers exist on an interface without a unique adapter GUID|DNS interface index maps to conflicting adapter GUIDs|DNS assignment registry key missing|Unknown DNS client address family'){
+                throw 'Protected native Windows preflight failed for an unexpected reason'
+              }
+              Write-Host 'SAFE REFUSAL: native Windows DNS source is ambiguous or unsupported; installation remains prohibited'
+              Write-Host 'PASS VOLVE_NATIVE_PROTECTED_PREFLIGHT_FAIL_CLOSED_UNMAPPED_DNS NO_INSTALL NO_DNS NO_TASKS'
+            }else{
+              if($protectedRaw -match 'ContentSHA256|URLBlocklist|PrivateURL|HostsSHA256|CatalogTaskDefinitionSHA256|DNSAdaptersSHA256|InterfaceGUID|EffectiveServers|NameServer'){
+                throw 'Protected setup report leaked raw policy registry names or fingerprints'
+              }
+              $protected=$protectedRaw | ConvertFrom-Json -ErrorAction Stop
+              if($protected.component -ne 'VOLVE-0287-WINDOWS-SETUP-PREVIEW-CI' -or
+                 $protected.scope -ne 'DISPOSABLE_WINDOWS_CI_ONLY_NOT_USER_PC' -or
+                 $protected.target_release -ne '0.28.7' -or
+                 $protected.windows_inventories_checked -ne 6 -or
+                 $protected.synthetic_ci_signed_container_verified -ne $true -or
+                 $protected.protected_transition_mutex_held_during_review -ne $true -or
+                 $protected.browser_registry_keys_checked -ne 3 -or
+                 $protected.hosts_baseline_checked -ne $true -or
+                 $protected.dns_adapter_assignment_baseline_checked -ne $true -or
+                 $protected.catalog_task_baseline_checked -ne $true -or
+                 $protected.partial_protection_snapshot_stable_under_lock -ne $true -or
+                 $protected.browser_registry_numbered_entries -lt 0 -or
+                 $protected.browser_policy_census_stable_under_lock -ne $true -or
+                 $protected.browser_policy_values_exported -ne $false -or
+                 $protected.browser_enforcement_verified -ne $false -or
+                 $protected.result -ne 'REVIEW_ONLY' -or
+                 $protected.can_install -ne $false -or
+                 $protected.can_upgrade -ne $false -or
+                 $protected.can_change_dns -ne $false -or
+                 $protected.can_change_tasks -ne $false -or
+                 $protected.status -ne 'NO_INSTALL_OR_DNS_CHANGE_AUTHORIZED'){
+                throw 'Protected preflight JSON granted an unauthorized write or omitted a required native check'
+              }
+              Write-Host 'PASS VOLVE_NATIVE_PROTECTED_SIGNED_HOST_PREFLIGHT SIX_INVENTORIES THREE_BROWSER_POLICIES DNS_ASSIGNMENT_BASELINE KERNEL_MUTEX EXCLUSIVE NO_INSTALL NO_DNS NO_TASKS'
+            }
+            $lockDNSAfter=Get-DnsClientServerAddress -ErrorAction Stop | Sort-Object InterfaceIndex,AddressFamily | Select-Object InterfaceIndex,AddressFamily,ServerAddresses | ConvertTo-Json -Depth 6 -Compress
+            $lockTasksAfter=@(Get-ScheduledTask -ErrorAction Stop | Where-Object {$_.TaskName -match '^(?i:VOLVE[-_])'}).Count
+            if($dnsBefore -cne $lockDNSAfter -or $tasksBefore -ne $lockTasksAfter){
+              throw 'Protected preflight touched Windows DNS adapter or VOLVE scheduled tasks'
+            }
+                        Write-Host 'PASS VOLVE_NATIVE_WINDOWS_SETUP_PREVIEW_6_INVENTORIES_SIGNED_PACKAGE NO_INSTALL NO_DNS NO_TASKS'
+            $global:LASTEXITCODE=0
+          } finally {
+            Pop-Location
+          }
+ volve-browser-protection/motorupdate)
+            if($LASTEXITCODE -ne 0){
+              $policyEvents | Select-Object -Last 60 | Write-Host
+              throw 'Native hosts/browser/catalog protection baseline tests failed'
+            }
+            $policyRecords=@($policyEvents | Where-Object {$_ -match '^\s*\{'} | ForEach-Object {$_ | ConvertFrom-Json})
+            foreach($name in @(
+              'TestVOLVEBrowserPolicyReadOnlyCountsDoNotClaimEffectiveProtection',
+              'TestVOLVEBrowserPolicyReadOnlyRejectsInjectedOrAmbiguousResponses',
+              'TestVOLVEBrowserPolicyReadOnlyMissingKeysAreNotFailedBrowserProtection',
+              'TestVOLVEBrowserPolicyReadOnlyRejectsMissingOrMalformedFingerprints',
+              'TestVOLVEBrowserPolicyReadOnlyRejectsCancelOrUnapprovedCommands',
+              'TestVOLVEBrowserPolicyRealWindowsRegistryNativeReadOnly',
+              'TestFreshMotorPreservesHostsBrowserPoliciesAndCatalog',
+              'TestFreshMotorDetectsPartialProtectionRegressions',
+              'TestProtectionSnapshotCannotPassWhenAnySurfaceWasNotCaptured',
+              'TestCountWindowsHostsBlockedRulesDoesNotReturnNames',
+              'TestWindowsHostsFileReadOnlyHashAndNoContentExport',
+              'TestWindowsHostsFileReadOnlyRejectsOversizedFile',
+              'TestWindowsProtectionSnapshotCapturesAllDeclaredSurfaces',
+              'TestWindowsProtectionSnapshotRequiresPinnedExistingCatalogTask',
+              'TestWindowsProtectionSnapshotRejectsUnknownOrContradictoryTaskInventory',
+              'TestWindowsProtectionSnapshotRejectsMissingInspectorsAndCancelledContext',
+              'TestWindowsProtectionSnapshotCannotPassIfHostBaselineIsMalformed',
+              'TestWindowsDNSAssignmentProvenanceSeparatesStaticAndAutomatic',
+              'TestWindowsDNSAssignmentProvenanceRejectsUnknownOrConflictingSource',
+              'TestWindowsDNSAssignmentProvenanceRejectsDuplicateOrIncompleteFamilies',
+              'TestWindowsDNSAssignmentFingerprintIgnoresAutomaticLeaseAddressButPreservesStaticOrder',
+              'TestWindowsDNSAssignmentProvenanceRejectsCancellationAndMutableQueries',
+              'TestWindowsDNSAssignmentProvenanceNativeWindowsReadOnly',
+              'TestDNSRecoveryJournalExactRoundTripAndWriteFreePreview',
+              'TestDNSRecoveryJournalRejectsTamperingAndMissingExternalPin',
+              'TestDNSRecoveryJournalRejectsUnknownOrIncompleteOriginals',
+              'TestDNSRecoveryPreviewRejectsExternalDNSAndNeverApplies',
+              'TestDNSRecoveryJournalCancellationFailsClosed',
+              'TestDNSRecoveryJournalRejectsUnpinnedReorderedAndDuplicateRecords'
+            )){
+              $passes=@($policyRecords | Where-Object {$_.Test -eq $name -and $_.Action -eq 'pass'})
+              $skips=@($policyRecords | Where-Object {$_.Test -eq $name -and $_.Action -eq 'skip'})
+              if($passes.Count -ne 1 -or $skips.Count -ne 0){throw ('Mandatory native browser policy test skipped or missing: '+$name)}
+            }
+            Write-Host 'PASS VOLVE_NATIVE_BROWSER_POLICY_CONTENT_FINGERPRINTS THREE_KEYS NO_VALUE_EXPORT'
+            Write-Host 'PASS VOLVE_NATIVE_PROTECTION_SNAPSHOT HOSTS_BROWSER_CATALOG PARTIAL_BASELINE NO_RAW_VALUES'
+            Write-Host 'PASS VOLVE_DNS_ASSIGNMENT_PROVENANCE_TESTS IPV4_IPV6 STATIC_AUTOMATIC FAIL_CLOSED NO_WRITES'
+            Write-Host 'PASS VOLVE_DNS_RECOVERY_JOURNAL_PINNED_IPV4_IPV6_READ_ONLY_PREVIEW NO_INSTALL'
+            Write-Host 'PASS VOLVE_SIGNED_EXE_PLUS_REAL_WINDOWS_6_INVENTORIES REVIEW_ONLY NO_INSTALL NO_DNS_CHANGE'
+            Write-Host 'PREVIEW CHECKPOINT: produce actual native Windows setup decision JSON'
+            $dnsBefore=Get-DnsClientServerAddress -ErrorAction Stop | Sort-Object InterfaceIndex,AddressFamily | Select-Object InterfaceIndex,AddressFamily,ServerAddresses | ConvertTo-Json -Depth 6 -Compress
+            $tasksBefore=@(Get-ScheduledTask -ErrorAction Stop | Where-Object {$_.TaskName -match '^(?i:VOLVE[-_])'}).Count
+            go test -mod=mod -count=1 -v ./hostroutebridge/cmd/preview
+            if($LASTEXITCODE -ne 0){throw 'Hosted CI-only setup preview fail-closed tests failed'}
+            $raw=(& go run -mod=mod ./hostroutebridge/cmd/preview --review-only | Out-String).Trim()
+            if($LASTEXITCODE -ne 0){throw 'Native signed Windows setup preview execution failed'}
+            $report=$raw | ConvertFrom-Json -ErrorAction Stop
+            if($report.component -ne 'VOLVE-0287-WINDOWS-SETUP-PREVIEW-CI' -or
+               $report.scope -ne 'DISPOSABLE_WINDOWS_CI_ONLY_NOT_USER_PC' -or
+               $report.result -ne 'REVIEW_ONLY' -or
+               $report.target_release -ne '0.28.7' -or
+               $report.windows_inventories_checked -ne 6 -or
+               $report.synthetic_ci_signed_container_verified -ne $true -or
+               $report.status -ne 'NO_INSTALL_OR_DNS_CHANGE_AUTHORIZED' -or
+               $report.can_install -ne $false -or
+               $report.can_upgrade -ne $false -or
+               $report.can_change_dns -ne $false -or
+               $report.can_change_tasks -ne $false -or
+               @($report.unmet_production_prerequisites).Count -lt 7){
+              throw ('Unsafe or incomplete native Windows preinstallation preview: '+$raw)
+            }
+            $dnsAfter=Get-DnsClientServerAddress -ErrorAction Stop | Sort-Object InterfaceIndex,AddressFamily | Select-Object InterfaceIndex,AddressFamily,ServerAddresses | ConvertTo-Json -Depth 6 -Compress
+            $tasksAfter=@(Get-ScheduledTask -ErrorAction Stop | Where-Object {$_.TaskName -match '^(?i:VOLVE[-_])'}).Count
+            if($dnsBefore -cne $dnsAfter -or $tasksBefore -ne $tasksAfter){
+              throw 'Native preinstallation preview changed DNS or VOLVE SYSTEM task count'
+            }
+            Write-Host $raw
+            Write-Host 'PROTECTED PREVIEW CHECKPOINT: repeat full Windows preflight WHILE holding updater/recovery kernel mutex'
+            $protectedRaw=(& go run -mod=mod ./hostroutebridge/cmd/preview --review-under-protected-lock 2>&1 | Out-String).Trim()
+            $protectedExit=$LASTEXITCODE
+            if($protectedExit -ne 0){
+              if($protectedRaw -notmatch 'DNS servers exist on an interface without a unique adapter GUID|DNS interface index maps to conflicting adapter GUIDs|DNS assignment registry key missing|Unknown DNS client address family'){
+                throw 'Protected native Windows preflight failed for an unexpected reason'
+              }
+              Write-Host 'SAFE REFUSAL: native Windows DNS source is ambiguous or unsupported; installation remains prohibited'
+              Write-Host 'PASS VOLVE_NATIVE_PROTECTED_PREFLIGHT_FAIL_CLOSED_UNMAPPED_DNS NO_INSTALL NO_DNS NO_TASKS'
+            }else{
+              if($protectedRaw -match 'ContentSHA256|URLBlocklist|PrivateURL|HostsSHA256|CatalogTaskDefinitionSHA256|DNSAdaptersSHA256|InterfaceGUID|EffectiveServers|NameServer'){
+                throw 'Protected setup report leaked raw policy registry names or fingerprints'
+              }
+              $protected=$protectedRaw | ConvertFrom-Json -ErrorAction Stop
+              if($protected.component -ne 'VOLVE-0287-WINDOWS-SETUP-PREVIEW-CI' -or
+                 $protected.scope -ne 'DISPOSABLE_WINDOWS_CI_ONLY_NOT_USER_PC' -or
+                 $protected.target_release -ne '0.28.7' -or
+                 $protected.windows_inventories_checked -ne 6 -or
+                 $protected.synthetic_ci_signed_container_verified -ne $true -or
+                 $protected.protected_transition_mutex_held_during_review -ne $true -or
+                 $protected.browser_registry_keys_checked -ne 3 -or
+                 $protected.hosts_baseline_checked -ne $true -or
+                 $protected.dns_adapter_assignment_baseline_checked -ne $true -or
+                 $protected.catalog_task_baseline_checked -ne $true -or
+                 $protected.partial_protection_snapshot_stable_under_lock -ne $true -or
+                 $protected.browser_registry_numbered_entries -lt 0 -or
+                 $protected.browser_policy_census_stable_under_lock -ne $true -or
+                 $protected.browser_policy_values_exported -ne $false -or
+                 $protected.browser_enforcement_verified -ne $false -or
+                 $protected.result -ne 'REVIEW_ONLY' -or
+                 $protected.can_install -ne $false -or
+                 $protected.can_upgrade -ne $false -or
+                 $protected.can_change_dns -ne $false -or
+                 $protected.can_change_tasks -ne $false -or
+                 $protected.status -ne 'NO_INSTALL_OR_DNS_CHANGE_AUTHORIZED'){
+                throw 'Protected preflight JSON granted an unauthorized write or omitted a required native check'
+              }
+              Write-Host 'PASS VOLVE_NATIVE_PROTECTED_SIGNED_HOST_PREFLIGHT SIX_INVENTORIES THREE_BROWSER_POLICIES DNS_ASSIGNMENT_BASELINE KERNEL_MUTEX EXCLUSIVE NO_INSTALL NO_DNS NO_TASKS'
+            }
+            $lockDNSAfter=Get-DnsClientServerAddress -ErrorAction Stop | Sort-Object InterfaceIndex,AddressFamily | Select-Object InterfaceIndex,AddressFamily,ServerAddresses | ConvertTo-Json -Depth 6 -Compress
+            $lockTasksAfter=@(Get-ScheduledTask -ErrorAction Stop | Where-Object {$_.TaskName -match '^(?i:VOLVE[-_])'}).Count
+            if($dnsBefore -cne $lockDNSAfter -or $tasksBefore -ne $lockTasksAfter){
+              throw 'Protected preflight touched Windows DNS adapter or VOLVE scheduled tasks'
+            }
+                        Write-Host 'PASS VOLVE_NATIVE_WINDOWS_SETUP_PREVIEW_6_INVENTORIES_SIGNED_PACKAGE NO_INSTALL NO_DNS NO_TASKS'
+            $global:LASTEXITCODE=0
+          } finally {
+            Pop-Location
+          }
+,
+              '^TestWindowsProtectionSnapshot',
+              '^TestWindowsDNSAssignment',
+              '^TestDNSRecoveryJournal',
+              '^TestDNSRecoveryPreview',
+              '^TestDNSStagedBackup',
+              '^TestNativeWindowsDNSOriginalBackupRealNTFSAndCorruptedACL
+            if($LASTEXITCODE -ne 0){
+              $policyEvents | Select-Object -Last 60 | Write-Host
+              throw 'Native hosts/browser/catalog protection baseline tests failed'
+            }
+            $policyRecords=@($policyEvents | Where-Object {$_ -match '^\s*\{'} | ForEach-Object {$_ | ConvertFrom-Json})
+            foreach($name in @(
+              'TestVOLVEBrowserPolicyReadOnlyCountsDoNotClaimEffectiveProtection',
+              'TestVOLVEBrowserPolicyReadOnlyRejectsInjectedOrAmbiguousResponses',
+              'TestVOLVEBrowserPolicyReadOnlyMissingKeysAreNotFailedBrowserProtection',
+              'TestVOLVEBrowserPolicyReadOnlyRejectsMissingOrMalformedFingerprints',
+              'TestVOLVEBrowserPolicyReadOnlyRejectsCancelOrUnapprovedCommands',
+              'TestVOLVEBrowserPolicyRealWindowsRegistryNativeReadOnly',
+              'TestFreshMotorPreservesHostsBrowserPoliciesAndCatalog',
+              'TestFreshMotorDetectsPartialProtectionRegressions',
+              'TestProtectionSnapshotCannotPassWhenAnySurfaceWasNotCaptured',
+              'TestCountWindowsHostsBlockedRulesDoesNotReturnNames',
+              'TestWindowsHostsFileReadOnlyHashAndNoContentExport',
+              'TestWindowsHostsFileReadOnlyRejectsOversizedFile',
+              'TestWindowsProtectionSnapshotCapturesAllDeclaredSurfaces',
+              'TestWindowsProtectionSnapshotRequiresPinnedExistingCatalogTask',
+              'TestWindowsProtectionSnapshotRejectsUnknownOrContradictoryTaskInventory',
+              'TestWindowsProtectionSnapshotRejectsMissingInspectorsAndCancelledContext',
+              'TestWindowsProtectionSnapshotCannotPassIfHostBaselineIsMalformed',
+              'TestWindowsDNSAssignmentProvenanceSeparatesStaticAndAutomatic',
+              'TestWindowsDNSAssignmentProvenanceRejectsUnknownOrConflictingSource',
+              'TestWindowsDNSAssignmentProvenanceRejectsDuplicateOrIncompleteFamilies',
+              'TestWindowsDNSAssignmentFingerprintIgnoresAutomaticLeaseAddressButPreservesStaticOrder',
+              'TestWindowsDNSAssignmentProvenanceRejectsCancellationAndMutableQueries',
+              'TestWindowsDNSAssignmentProvenanceNativeWindowsReadOnly',
+              'TestDNSRecoveryJournalExactRoundTripAndWriteFreePreview',
+              'TestDNSRecoveryJournalRejectsTamperingAndMissingExternalPin',
+              'TestDNSRecoveryJournalRejectsUnknownOrIncompleteOriginals',
+              'TestDNSRecoveryPreviewRejectsExternalDNSAndNeverApplies',
+              'TestDNSRecoveryJournalCancellationFailsClosed',
+              'TestDNSRecoveryJournalRejectsUnpinnedReorderedAndDuplicateRecords',
+              'TestDNSStagedBackupCreateOnlyAndExactReadBack',
+              'TestDNSStagedBackupRejectsUntrustedInputsBeforeWriting',
+              'TestDNSStagedBackupNeverWritesPrivateDataBeforeDirectorySeal',
+              'TestDNSStagedBackupRejectsTamperAndUnexpectedFiles',
+              'TestNativeWindowsDNSOriginalBackupRealNTFSAndCorruptedACL'
+            )){
+              $passes=@($policyRecords | Where-Object {$_.Test -eq $name -and $_.Action -eq 'pass'})
+              $skips=@($policyRecords | Where-Object {$_.Test -eq $name -and $_.Action -eq 'skip'})
+              if($passes.Count -ne 1 -or $skips.Count -ne 0){throw ('Mandatory native browser policy test skipped or missing: '+$name)}
+            }
+            Write-Host 'PASS VOLVE_NATIVE_BROWSER_POLICY_CONTENT_FINGERPRINTS THREE_KEYS NO_VALUE_EXPORT'
+            Write-Host 'PASS VOLVE_NATIVE_PROTECTION_SNAPSHOT HOSTS_BROWSER_CATALOG PARTIAL_BASELINE NO_RAW_VALUES'
+            Write-Host 'PASS VOLVE_DNS_ASSIGNMENT_PROVENANCE_TESTS IPV4_IPV6 STATIC_AUTOMATIC FAIL_CLOSED NO_WRITES'
+            Write-Host 'PASS VOLVE_DNS_RECOVERY_JOURNAL_PINNED_IPV4_IPV6_READ_ONLY_PREVIEW NO_INSTALL'
+            Write-Host 'PASS VOLVE_NATIVE_NTFS_ORIGINAL_DNS_BACKUP_CREATE_ONLY_SEAL_READBACK_TAMPER_REJECT NO_DNS_WRITES'
+            Write-Host 'PASS VOLVE_SIGNED_EXE_PLUS_REAL_WINDOWS_6_INVENTORIES REVIEW_ONLY NO_INSTALL NO_DNS_CHANGE'
+            Write-Host 'PREVIEW CHECKPOINT: produce actual native Windows setup decision JSON'
+            $dnsBefore=Get-DnsClientServerAddress -ErrorAction Stop | Sort-Object InterfaceIndex,AddressFamily | Select-Object InterfaceIndex,AddressFamily,ServerAddresses | ConvertTo-Json -Depth 6 -Compress
+            $tasksBefore=@(Get-ScheduledTask -ErrorAction Stop | Where-Object {$_.TaskName -match '^(?i:VOLVE[-_])'}).Count
+            go test -mod=mod -count=1 -v ./hostroutebridge/cmd/preview
+            if($LASTEXITCODE -ne 0){throw 'Hosted CI-only setup preview fail-closed tests failed'}
+            $raw=(& go run -mod=mod ./hostroutebridge/cmd/preview --review-only | Out-String).Trim()
+            if($LASTEXITCODE -ne 0){throw 'Native signed Windows setup preview execution failed'}
+            $report=$raw | ConvertFrom-Json -ErrorAction Stop
+            if($report.component -ne 'VOLVE-0287-WINDOWS-SETUP-PREVIEW-CI' -or
+               $report.scope -ne 'DISPOSABLE_WINDOWS_CI_ONLY_NOT_USER_PC' -or
+               $report.result -ne 'REVIEW_ONLY' -or
+               $report.target_release -ne '0.28.7' -or
+               $report.windows_inventories_checked -ne 6 -or
+               $report.synthetic_ci_signed_container_verified -ne $true -or
+               $report.status -ne 'NO_INSTALL_OR_DNS_CHANGE_AUTHORIZED' -or
+               $report.can_install -ne $false -or
+               $report.can_upgrade -ne $false -or
+               $report.can_change_dns -ne $false -or
+               $report.can_change_tasks -ne $false -or
+               @($report.unmet_production_prerequisites).Count -lt 7){
+              throw ('Unsafe or incomplete native Windows preinstallation preview: '+$raw)
+            }
+            $dnsAfter=Get-DnsClientServerAddress -ErrorAction Stop | Sort-Object InterfaceIndex,AddressFamily | Select-Object InterfaceIndex,AddressFamily,ServerAddresses | ConvertTo-Json -Depth 6 -Compress
+            $tasksAfter=@(Get-ScheduledTask -ErrorAction Stop | Where-Object {$_.TaskName -match '^(?i:VOLVE[-_])'}).Count
+            if($dnsBefore -cne $dnsAfter -or $tasksBefore -ne $tasksAfter){
+              throw 'Native preinstallation preview changed DNS or VOLVE SYSTEM task count'
+            }
+            Write-Host $raw
+            Write-Host 'PROTECTED PREVIEW CHECKPOINT: repeat full Windows preflight WHILE holding updater/recovery kernel mutex'
+            $protectedRaw=(& go run -mod=mod ./hostroutebridge/cmd/preview --review-under-protected-lock 2>&1 | Out-String).Trim()
+            $protectedExit=$LASTEXITCODE
+            if($protectedExit -ne 0){
+              if($protectedRaw -notmatch 'DNS servers exist on an interface without a unique adapter GUID|DNS interface index maps to conflicting adapter GUIDs|DNS assignment registry key missing|Unknown DNS client address family'){
+                throw 'Protected native Windows preflight failed for an unexpected reason'
+              }
+              Write-Host 'SAFE REFUSAL: native Windows DNS source is ambiguous or unsupported; installation remains prohibited'
+              Write-Host 'PASS VOLVE_NATIVE_PROTECTED_PREFLIGHT_FAIL_CLOSED_UNMAPPED_DNS NO_INSTALL NO_DNS NO_TASKS'
+            }else{
+              if($protectedRaw -match 'ContentSHA256|URLBlocklist|PrivateURL|HostsSHA256|CatalogTaskDefinitionSHA256|DNSAdaptersSHA256|InterfaceGUID|EffectiveServers|NameServer'){
+                throw 'Protected setup report leaked raw policy registry names or fingerprints'
+              }
+              $protected=$protectedRaw | ConvertFrom-Json -ErrorAction Stop
+              if($protected.component -ne 'VOLVE-0287-WINDOWS-SETUP-PREVIEW-CI' -or
+                 $protected.scope -ne 'DISPOSABLE_WINDOWS_CI_ONLY_NOT_USER_PC' -or
+                 $protected.target_release -ne '0.28.7' -or
+                 $protected.windows_inventories_checked -ne 6 -or
+                 $protected.synthetic_ci_signed_container_verified -ne $true -or
+                 $protected.protected_transition_mutex_held_during_review -ne $true -or
+                 $protected.browser_registry_keys_checked -ne 3 -or
+                 $protected.hosts_baseline_checked -ne $true -or
+                 $protected.dns_adapter_assignment_baseline_checked -ne $true -or
+                 $protected.catalog_task_baseline_checked -ne $true -or
+                 $protected.partial_protection_snapshot_stable_under_lock -ne $true -or
+                 $protected.browser_registry_numbered_entries -lt 0 -or
+                 $protected.browser_policy_census_stable_under_lock -ne $true -or
+                 $protected.browser_policy_values_exported -ne $false -or
+                 $protected.browser_enforcement_verified -ne $false -or
+                 $protected.result -ne 'REVIEW_ONLY' -or
+                 $protected.can_install -ne $false -or
+                 $protected.can_upgrade -ne $false -or
+                 $protected.can_change_dns -ne $false -or
+                 $protected.can_change_tasks -ne $false -or
+                 $protected.status -ne 'NO_INSTALL_OR_DNS_CHANGE_AUTHORIZED'){
+                throw 'Protected preflight JSON granted an unauthorized write or omitted a required native check'
+              }
+              Write-Host 'PASS VOLVE_NATIVE_PROTECTED_SIGNED_HOST_PREFLIGHT SIX_INVENTORIES THREE_BROWSER_POLICIES DNS_ASSIGNMENT_BASELINE KERNEL_MUTEX EXCLUSIVE NO_INSTALL NO_DNS NO_TASKS'
+            }
+            $lockDNSAfter=Get-DnsClientServerAddress -ErrorAction Stop | Sort-Object InterfaceIndex,AddressFamily | Select-Object InterfaceIndex,AddressFamily,ServerAddresses | ConvertTo-Json -Depth 6 -Compress
+            $lockTasksAfter=@(Get-ScheduledTask -ErrorAction Stop | Where-Object {$_.TaskName -match '^(?i:VOLVE[-_])'}).Count
+            if($dnsBefore -cne $lockDNSAfter -or $tasksBefore -ne $lockTasksAfter){
+              throw 'Protected preflight touched Windows DNS adapter or VOLVE scheduled tasks'
+            }
+                        Write-Host 'PASS VOLVE_NATIVE_WINDOWS_SETUP_PREVIEW_6_INVENTORIES_SIGNED_PACKAGE NO_INSTALL NO_DNS NO_TASKS'
+            $global:LASTEXITCODE=0
+          } finally {
+            Pop-Location
+          }
+ volve-browser-protection/motorupdate)
+            if($LASTEXITCODE -ne 0){
+              $policyEvents | Select-Object -Last 60 | Write-Host
+              throw 'Native hosts/browser/catalog protection baseline tests failed'
+            }
+            $policyRecords=@($policyEvents | Where-Object {$_ -match '^\s*\{'} | ForEach-Object {$_ | ConvertFrom-Json})
+            foreach($name in @(
+              'TestVOLVEBrowserPolicyReadOnlyCountsDoNotClaimEffectiveProtection',
+              'TestVOLVEBrowserPolicyReadOnlyRejectsInjectedOrAmbiguousResponses',
+              'TestVOLVEBrowserPolicyReadOnlyMissingKeysAreNotFailedBrowserProtection',
+              'TestVOLVEBrowserPolicyReadOnlyRejectsMissingOrMalformedFingerprints',
+              'TestVOLVEBrowserPolicyReadOnlyRejectsCancelOrUnapprovedCommands',
+              'TestVOLVEBrowserPolicyRealWindowsRegistryNativeReadOnly',
+              'TestFreshMotorPreservesHostsBrowserPoliciesAndCatalog',
+              'TestFreshMotorDetectsPartialProtectionRegressions',
+              'TestProtectionSnapshotCannotPassWhenAnySurfaceWasNotCaptured',
+              'TestCountWindowsHostsBlockedRulesDoesNotReturnNames',
+              'TestWindowsHostsFileReadOnlyHashAndNoContentExport',
+              'TestWindowsHostsFileReadOnlyRejectsOversizedFile',
+              'TestWindowsProtectionSnapshotCapturesAllDeclaredSurfaces',
+              'TestWindowsProtectionSnapshotRequiresPinnedExistingCatalogTask',
+              'TestWindowsProtectionSnapshotRejectsUnknownOrContradictoryTaskInventory',
+              'TestWindowsProtectionSnapshotRejectsMissingInspectorsAndCancelledContext',
+              'TestWindowsProtectionSnapshotCannotPassIfHostBaselineIsMalformed',
+              'TestWindowsDNSAssignmentProvenanceSeparatesStaticAndAutomatic',
+              'TestWindowsDNSAssignmentProvenanceRejectsUnknownOrConflictingSource',
+              'TestWindowsDNSAssignmentProvenanceRejectsDuplicateOrIncompleteFamilies',
+              'TestWindowsDNSAssignmentFingerprintIgnoresAutomaticLeaseAddressButPreservesStaticOrder',
+              'TestWindowsDNSAssignmentProvenanceRejectsCancellationAndMutableQueries',
+              'TestWindowsDNSAssignmentProvenanceNativeWindowsReadOnly',
+              'TestDNSRecoveryJournalExactRoundTripAndWriteFreePreview',
+              'TestDNSRecoveryJournalRejectsTamperingAndMissingExternalPin',
+              'TestDNSRecoveryJournalRejectsUnknownOrIncompleteOriginals',
+              'TestDNSRecoveryPreviewRejectsExternalDNSAndNeverApplies',
+              'TestDNSRecoveryJournalCancellationFailsClosed',
+              'TestDNSRecoveryJournalRejectsUnpinnedReorderedAndDuplicateRecords'
+            )){
+              $passes=@($policyRecords | Where-Object {$_.Test -eq $name -and $_.Action -eq 'pass'})
+              $skips=@($policyRecords | Where-Object {$_.Test -eq $name -and $_.Action -eq 'skip'})
+              if($passes.Count -ne 1 -or $skips.Count -ne 0){throw ('Mandatory native browser policy test skipped or missing: '+$name)}
+            }
+            Write-Host 'PASS VOLVE_NATIVE_BROWSER_POLICY_CONTENT_FINGERPRINTS THREE_KEYS NO_VALUE_EXPORT'
+            Write-Host 'PASS VOLVE_NATIVE_PROTECTION_SNAPSHOT HOSTS_BROWSER_CATALOG PARTIAL_BASELINE NO_RAW_VALUES'
+            Write-Host 'PASS VOLVE_DNS_ASSIGNMENT_PROVENANCE_TESTS IPV4_IPV6 STATIC_AUTOMATIC FAIL_CLOSED NO_WRITES'
+            Write-Host 'PASS VOLVE_DNS_RECOVERY_JOURNAL_PINNED_IPV4_IPV6_READ_ONLY_PREVIEW NO_INSTALL'
+            Write-Host 'PASS VOLVE_SIGNED_EXE_PLUS_REAL_WINDOWS_6_INVENTORIES REVIEW_ONLY NO_INSTALL NO_DNS_CHANGE'
+            Write-Host 'PREVIEW CHECKPOINT: produce actual native Windows setup decision JSON'
+            $dnsBefore=Get-DnsClientServerAddress -ErrorAction Stop | Sort-Object InterfaceIndex,AddressFamily | Select-Object InterfaceIndex,AddressFamily,ServerAddresses | ConvertTo-Json -Depth 6 -Compress
+            $tasksBefore=@(Get-ScheduledTask -ErrorAction Stop | Where-Object {$_.TaskName -match '^(?i:VOLVE[-_])'}).Count
+            go test -mod=mod -count=1 -v ./hostroutebridge/cmd/preview
+            if($LASTEXITCODE -ne 0){throw 'Hosted CI-only setup preview fail-closed tests failed'}
+            $raw=(& go run -mod=mod ./hostroutebridge/cmd/preview --review-only | Out-String).Trim()
+            if($LASTEXITCODE -ne 0){throw 'Native signed Windows setup preview execution failed'}
+            $report=$raw | ConvertFrom-Json -ErrorAction Stop
+            if($report.component -ne 'VOLVE-0287-WINDOWS-SETUP-PREVIEW-CI' -or
+               $report.scope -ne 'DISPOSABLE_WINDOWS_CI_ONLY_NOT_USER_PC' -or
+               $report.result -ne 'REVIEW_ONLY' -or
+               $report.target_release -ne '0.28.7' -or
+               $report.windows_inventories_checked -ne 6 -or
+               $report.synthetic_ci_signed_container_verified -ne $true -or
+               $report.status -ne 'NO_INSTALL_OR_DNS_CHANGE_AUTHORIZED' -or
+               $report.can_install -ne $false -or
+               $report.can_upgrade -ne $false -or
+               $report.can_change_dns -ne $false -or
+               $report.can_change_tasks -ne $false -or
+               @($report.unmet_production_prerequisites).Count -lt 7){
+              throw ('Unsafe or incomplete native Windows preinstallation preview: '+$raw)
+            }
+            $dnsAfter=Get-DnsClientServerAddress -ErrorAction Stop | Sort-Object InterfaceIndex,AddressFamily | Select-Object InterfaceIndex,AddressFamily,ServerAddresses | ConvertTo-Json -Depth 6 -Compress
+            $tasksAfter=@(Get-ScheduledTask -ErrorAction Stop | Where-Object {$_.TaskName -match '^(?i:VOLVE[-_])'}).Count
+            if($dnsBefore -cne $dnsAfter -or $tasksBefore -ne $tasksAfter){
+              throw 'Native preinstallation preview changed DNS or VOLVE SYSTEM task count'
+            }
+            Write-Host $raw
+            Write-Host 'PROTECTED PREVIEW CHECKPOINT: repeat full Windows preflight WHILE holding updater/recovery kernel mutex'
+            $protectedRaw=(& go run -mod=mod ./hostroutebridge/cmd/preview --review-under-protected-lock 2>&1 | Out-String).Trim()
+            $protectedExit=$LASTEXITCODE
+            if($protectedExit -ne 0){
+              if($protectedRaw -notmatch 'DNS servers exist on an interface without a unique adapter GUID|DNS interface index maps to conflicting adapter GUIDs|DNS assignment registry key missing|Unknown DNS client address family'){
+                throw 'Protected native Windows preflight failed for an unexpected reason'
+              }
+              Write-Host 'SAFE REFUSAL: native Windows DNS source is ambiguous or unsupported; installation remains prohibited'
+              Write-Host 'PASS VOLVE_NATIVE_PROTECTED_PREFLIGHT_FAIL_CLOSED_UNMAPPED_DNS NO_INSTALL NO_DNS NO_TASKS'
+            }else{
+              if($protectedRaw -match 'ContentSHA256|URLBlocklist|PrivateURL|HostsSHA256|CatalogTaskDefinitionSHA256|DNSAdaptersSHA256|InterfaceGUID|EffectiveServers|NameServer'){
+                throw 'Protected setup report leaked raw policy registry names or fingerprints'
+              }
+              $protected=$protectedRaw | ConvertFrom-Json -ErrorAction Stop
+              if($protected.component -ne 'VOLVE-0287-WINDOWS-SETUP-PREVIEW-CI' -or
+                 $protected.scope -ne 'DISPOSABLE_WINDOWS_CI_ONLY_NOT_USER_PC' -or
+                 $protected.target_release -ne '0.28.7' -or
+                 $protected.windows_inventories_checked -ne 6 -or
+                 $protected.synthetic_ci_signed_container_verified -ne $true -or
+                 $protected.protected_transition_mutex_held_during_review -ne $true -or
+                 $protected.browser_registry_keys_checked -ne 3 -or
+                 $protected.hosts_baseline_checked -ne $true -or
+                 $protected.dns_adapter_assignment_baseline_checked -ne $true -or
+                 $protected.catalog_task_baseline_checked -ne $true -or
+                 $protected.partial_protection_snapshot_stable_under_lock -ne $true -or
+                 $protected.browser_registry_numbered_entries -lt 0 -or
+                 $protected.browser_policy_census_stable_under_lock -ne $true -or
+                 $protected.browser_policy_values_exported -ne $false -or
+                 $protected.browser_enforcement_verified -ne $false -or
+                 $protected.result -ne 'REVIEW_ONLY' -or
+                 $protected.can_install -ne $false -or
+                 $protected.can_upgrade -ne $false -or
+                 $protected.can_change_dns -ne $false -or
+                 $protected.can_change_tasks -ne $false -or
+                 $protected.status -ne 'NO_INSTALL_OR_DNS_CHANGE_AUTHORIZED'){
+                throw 'Protected preflight JSON granted an unauthorized write or omitted a required native check'
+              }
+              Write-Host 'PASS VOLVE_NATIVE_PROTECTED_SIGNED_HOST_PREFLIGHT SIX_INVENTORIES THREE_BROWSER_POLICIES DNS_ASSIGNMENT_BASELINE KERNEL_MUTEX EXCLUSIVE NO_INSTALL NO_DNS NO_TASKS'
+            }
+            $lockDNSAfter=Get-DnsClientServerAddress -ErrorAction Stop | Sort-Object InterfaceIndex,AddressFamily | Select-Object InterfaceIndex,AddressFamily,ServerAddresses | ConvertTo-Json -Depth 6 -Compress
+            $lockTasksAfter=@(Get-ScheduledTask -ErrorAction Stop | Where-Object {$_.TaskName -match '^(?i:VOLVE[-_])'}).Count
+            if($dnsBefore -cne $lockDNSAfter -or $tasksBefore -ne $lockTasksAfter){
+              throw 'Protected preflight touched Windows DNS adapter or VOLVE scheduled tasks'
+            }
+                        Write-Host 'PASS VOLVE_NATIVE_WINDOWS_SETUP_PREVIEW_6_INVENTORIES_SIGNED_PACKAGE NO_INSTALL NO_DNS NO_TASKS'
+            $global:LASTEXITCODE=0
+          } finally {
+            Pop-Location
+          }
+
+            )
+            $policyPattern=$requiredTestFamilies -join '|'
+            $policyEvents=@(go test -mod=mod -count=1 -timeout 3m -json -run $policyPattern volve-browser-protection/motorupdate)
             if($LASTEXITCODE -ne 0){
               $policyEvents | Select-Object -Last 60 | Write-Host
               throw 'Native hosts/browser/catalog protection baseline tests failed'
