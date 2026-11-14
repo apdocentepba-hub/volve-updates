@@ -112,6 +112,10 @@ jobs:
             if($aclDenied.status -eq 0){throw 'Verifier accepted an Everyone-writable protected backup'}
             Write-Host 'PASS VOLVE_INDEPENDENT_BACKUP_VERIFIER_NATIVE_NTFS_ACL_TAMPER_DENIAL'
             Write-Host 'PASS VOLVE_REAL_WINDOWS_LOCAL_NTFS_BACKUP_DNS_HOSTS_SCHEDULER_XML_NO_CLEANUP'
+            # Two deliberate negative checks launch PowerShell 5.1 with exit 1.
+            # Only after every fail-closed assertion passed, clear their process
+            # exit status so the GitHub wrapper does not misclassify success.
+            $global:LASTEXITCODE=0
           }finally{
             if($fixtureCreated) {
               Unregister-ScheduledTask -TaskName $fixtureName -Confirm:$false -ErrorAction Stop
