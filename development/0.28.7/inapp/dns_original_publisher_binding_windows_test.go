@@ -41,7 +41,7 @@ func signedDNSBindingFixture(t *testing.T,f signedRecoveryFixture,pin string)([]
 
 func TestSignedDNSBindingRejectsReplayedNonceMotorTaskPermitAndBackup(t *testing.T){
  f:=makeSignedRecoveryFixture(t,false)
- _,pin:=newDNSBackupLabPayload(t)
+ _,_,pin:=makeStagedDNSFixture(t)
  raw,sig:=signedDNSBindingFixture(t,f,pin)
  state,err:=InspectResidentRecoveryJournal(context.Background(),f.journal,func(string)error{return nil})
  if err!=nil{t.Fatal(err)}
@@ -77,7 +77,7 @@ func TestSignedDNSBindingRejectsReplayedNonceMotorTaskPermitAndBackup(t *testing
 
 func TestSignedDNSBindingDeniesForgeryAndNonCanonicalPayload(t *testing.T){
  f:=makeSignedRecoveryFixture(t,false)
- _,pin:=newDNSBackupLabPayload(t)
+ _,_,pin:=makeStagedDNSFixture(t)
  raw,sig:=signedDNSBindingFixture(t,f,pin)
  state,err:=InspectResidentRecoveryJournal(context.Background(),f.journal,func(string)error{return nil})
  if err!=nil{t.Fatal(err)}
@@ -109,7 +109,7 @@ func TestSignedDNSBindingDeniesForgeryAndNonCanonicalPayload(t *testing.T){
 
 func TestSignedDNSBindingRejectsCancelledAndUnrelatedPermit(t *testing.T){
  f:=makeSignedRecoveryFixture(t,false)
- _,pin:=newDNSBackupLabPayload(t)
+ _,_,pin:=makeStagedDNSFixture(t)
  raw,sig:=signedDNSBindingFixture(t,f,pin)
  state,err:=InspectResidentRecoveryJournal(context.Background(),f.journal,func(string)error{return nil})
  if err!=nil{t.Fatal(err)}
