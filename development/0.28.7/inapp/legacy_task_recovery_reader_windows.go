@@ -18,6 +18,7 @@ func ReadLegacyTaskRecoverySnapshotWindows(
 	ctx context.Context,
 	initialBackupPath string,
 	threeTaskBackupPath string,
+	expectedManifestSHA256 string,
 ) (LegacyTaskRecoverySnapshot, error) {
 	var empty LegacyTaskRecoverySnapshot
 	if err := ctx.Err(); err != nil {
@@ -54,6 +55,7 @@ func ReadLegacyTaskRecoverySnapshotWindows(
 	}
 	return ReadLegacyTaskRecoverySnapshot(ctx, LegacyTaskRecoveryReadOptions{
 		ProgramDataRoot:       programData,
+		ExpectedManifestSHA256: expectedManifestSHA256,
 		InitialBackupPath:     initialBackupPath,
 		ThreeTaskBackupPath:   threeTaskBackupPath,
 		WindowsPowerShellPath: powershell,
