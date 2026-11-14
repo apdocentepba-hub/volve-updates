@@ -431,8 +431,17 @@ jobs:
             $policyPattern=$requiredTestFamilies -join '|'
             $policyEvents=@(go test -mod=mod -count=1 -timeout 3m -json -run $policyPattern volve-browser-protection/motorupdate)
             if($LASTEXITCODE -ne 0){
-              $policyEvents | Select-Object -Last 60 | Write-Host
-              throw 'Native hosts/browser/catalog protection baseline tests failed'
+              $diagnosticRecords=@($policyEvents | Where-Object {$_ -match '^\s*\{'} | ForEach-Object {try {$_ | ConvertFrom-Json -ErrorAction Stop} catch {}})
+              $failureEvidence=@($diagnosticRecords | Where-Object {
+                $_.Action -eq 'fail' -or
+                ($_.Action -eq 'output' -and $_.Output -match '(?i)(--- FAIL|panic:|fatal error|timed out|deadline exceeded|^FAIL)')
+              })
+              if($failureEvidence.Count -gt 0){
+                $failureEvidence | ConvertTo-Json -Depth 8 | Write-Host
+              }else{
+                $policyEvents | Select-Object -Last 100 | Write-Host
+              }
+              throw 'Native hosts/browser/catalog protection baseline tests failed; see exact Go test failure above'
             }
             $policyRecords=@($policyEvents | Where-Object {$_ -match '^\s*\{'} | ForEach-Object {$_ | ConvertFrom-Json})
             foreach($name in @(
