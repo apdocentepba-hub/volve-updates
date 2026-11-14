@@ -64,5 +64,5 @@ jobs:
         run: |
           test -f motorupdate/legacy_managed_transaction.go
           test -f motorupdate/legacy_managed_transaction_test.go
-          go test ./motorupdate -run '^(TestSignedLegacyTransaction|TestReadLegacyTaskRecoverySnapshot)' -count=1 -timeout 4m -v
+          go test ./motorupdate -run '^(TestSignedLegacyTransaction|TestReadLegacyTaskRecoverySnapshot|TestProtectedSignedDriverUsesRecoveryReaderOnlyUnderNativeMutex)' -count=1 -timeout 4m -v
           echo "PASS: protected legacy transaction and read-only three-task recovery reader verified; no install, DNS or task writes."
