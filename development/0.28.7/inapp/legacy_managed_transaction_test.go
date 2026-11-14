@@ -33,6 +33,7 @@ type signedLegacyDriverLab struct {
     coverageCount int
     failCoverageAt int
     coverageSnapshot *LegacyTaskRecoverySnapshot
+    coverageSnapshots []LegacyTaskRecoverySnapshot
 }
 func newSignedLegacyDriverLab()*signedLegacyDriverLab {
     return &signedLegacyDriverLab{managedDriverTest:&managedDriverTest{}}
@@ -92,6 +93,7 @@ func (d *signedLegacyDriverLab) VerifyLegacyTaskRecoveryCoverage(_ context.Conte
     d.coverageCount++
     if err:=d.tick("task-coverage");err!=nil{return LegacyTaskRecoverySnapshot{},err}
     if d.failCoverageAt==d.coverageCount{return LegacyTaskRecoverySnapshot{},errors.New("legacy task backup changed at locked boundary")}
+    if d.coverageCount<=len(d.coverageSnapshots){return d.coverageSnapshots[d.coverageCount-1],nil}
     if d.coverageSnapshot!=nil{return *d.coverageSnapshot,nil}
     return completeLegacyTaskRecoverySnapshot(),nil
 }
@@ -488,6 +490,51 @@ func TestSignedLegacyTransactionStopsAtEachTaskCoverageBoundary(t *testing.T) {
             }
             if d.lockHeld || d.lockAcquires != 1 || d.lockReleases != 1 {
                 t.Fatalf("transaction lease leaked after coverage failure: acquires=%d releases=%d active=%t", d.lockAcquires, d.lockReleases, d.lockHeld)
+            }
+        })
+    }
+}
+
+
+func TestSignedLegacyTransactionRejectsIncompleteTaskEvidenceAtLaterBoundaries(t *testing.T) {
+    for _, failAt := range []int{2, 3} {
+        t.Run(fmt.Sprintf("coverage-check-%d", failAt), func(t *testing.T) {
+            f := newSignedBridge(t)
+            d := newSignedLegacyDriverLab()
+            incomplete := completeLegacyTaskRecoverySnapshot()
+            incomplete.Tasks[1].BackupReadbackVerified = false
+            for i := 1; i < failAt; i++ {
+                d.coverageSnapshots = append(d.coverageSnapshots, completeLegacyTaskRecoverySnapshot())
+            }
+            d.coverageSnapshots = append(d.coverageSnapshots, incomplete)
+
+            err := runSignedLegacyLab(context.Background(), f, d, testSecureLabFolderBridge, func() error { return nil })
+            if err == nil || d.coverageCount != failAt {
+                t.Fatalf("incomplete task evidence was accepted at check %d: count=%d err=%v", failAt, d.coverageCount, err)
+            }
+            has := func(name string) bool {
+                for _, call := range d.calls {
+                    if call == name { return true }
+                }
+                return false
+            }
+            if has("switch") || has("commit") || has("restore") != (failAt == 3) {
+                t.Fatalf("task evidence crossed an unsafe transaction boundary: %v", d.calls)
+            }
+            if failAt == 2 {
+                if has("install") {
+                    t.Fatalf("incomplete post-snapshot evidence allowed candidate preparation: %v", d.calls)
+                }
+            } else {
+                if !has("install") || !strings.Contains(err.Error(), "revertida") {
+                    t.Fatalf("prepared candidate was not independently restored: %v; %v", err, d.calls)
+                }
+                if len(d.calls) < 3 || !reflect.DeepEqual(d.calls[len(d.calls)-3:], []string{"restore", "probe", "connectivity"}) {
+                    t.Fatalf("rollback health checks missing: %v", d.calls)
+                }
+            }
+            if d.lockHeld || d.lockAcquires != 1 || d.lockReleases != 1 {
+                t.Fatalf("exclusive transaction lease not released: acquires=%d releases=%d active=%t", d.lockAcquires, d.lockReleases, d.lockHeld)
             }
         })
     }
