@@ -209,6 +209,14 @@ foreach($s in $scheduled){
 Check-Original
 Verify-DACL $folder
 foreach($r in $records){Verify-DACL (Join-Path $folder $r.artifact)}
+$independent=Join-Path $PSScriptRoot 'Verificar_Cobertura_Legacy_3_Tareas_SoloLectura.ps1'
+if(-not (Test-Path -LiteralPath $independent -PathType Leaf)){Refuse 'Falta revisor independiente de tres tareas'}
+$check=@(& $ps -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $independent -BackupPath $original -ThreeTasksBackupPath $folder)
+if($LASTEXITCODE -ne 0 -or
+ @($check|Where-Object{$_ -match '^VOLVE_THREE_TASKS_DIRECT_ACTIONS_VERIFIED_READ_ONLY;'}).Count -ne 1){
+ Refuse 'La copia de las tres acciones no paso verificacion independiente'
+}
+Write-Host 'VOLVE_THREE_TASKS_INDEPENDENT_REVIEW=PASS; CLEANUP=NO'
 Write-Host 'VOLVE_LEGACY_THREE_TASKS_DIRECT_ACTIONS_BACKUP_OK; TASKS=3; COPIES=3'
 Write-Host ('RECEIPT_SHA256='+$receiptHash)
 Write-Host 'CLEANUP_AUTHORIZED=NO; INSTALL_AUTHORIZED=NO; TRANSITIVE_DEPENDENCIES_VERIFIED=NO'
