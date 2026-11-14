@@ -95,9 +95,9 @@ for($i=0;$i -lt 3;$i++){
  $candidate=''
  if($i -eq 1){
   $args=([string]$action[0].Arguments).Trim()
-  if(-not ($args -match '(?i)(?:^|\s)-File\s+(?:"([^"]+)"|''([^'']+)''|(\S+))\s*
+  if(-not ($args -match '(?i)(?:^|\s)-File\s+(?:"([^"]+)"|(\S+))\s*\z')){
    Fail 'Argumentos de recuperacion no coinciden con respaldo'}
-  $candidate=@($Matches[1],$Matches[2],$Matches[3] | Where-Object{$_})|Select-Object -First 1
+  $candidate=@($Matches[1],$Matches[2] | Where-Object{$_})|Select-Object -First 1
  }else{
   $candidate=[string]$action[0].Execute
  }
