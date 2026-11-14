@@ -150,7 +150,10 @@ func ReadLegacyTaskRecoverySnapshot(ctx context.Context, o LegacyTaskRecoveryRea
 	if len(o.TaskInventoryJSON) < 2 || len(o.TaskInventoryJSON) > 1<<20 {
 		return empty, errors.New("fresh Task Scheduler inventory absent or oversized")
 	}
-	if err := verifyLegacyProtectedNode(o.ProgramDataRoot, true, o.VerifyProtectedACL); err != nil { return empty, err }
+	programDataInfo, err := os.Lstat(o.ProgramDataRoot)
+	if err != nil || !programDataInfo.IsDir() || programDataInfo.Mode()&os.ModeSymlink != 0 {
+		return empty, errors.New("ProgramData root is not a local directory")
+	}
 	if err := verifyLegacyProtectedNode(o.InitialBackupPath, true, o.VerifyProtectedACL); err != nil { return empty, err }
 	if err := verifyLegacyProtectedNode(o.ThreeTaskBackupPath, true, o.VerifyProtectedACL); err != nil { return empty, err }
 
