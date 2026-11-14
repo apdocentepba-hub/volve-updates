@@ -432,9 +432,13 @@ jobs:
             $policyEvents=@(go test -mod=mod -count=1 -timeout 3m -json -run $policyPattern volve-browser-protection/motorupdate)
             if($LASTEXITCODE -ne 0){
               $diagnosticRecords=@($policyEvents | Where-Object {$_ -match '^\s*\{'} | ForEach-Object {try {$_ | ConvertFrom-Json -ErrorAction Stop} catch {}})
+              $failedTestNames=@($diagnosticRecords | Where-Object {$_.Action -eq 'fail' -and $_.Test} | Select-Object -ExpandProperty Test -Unique)
               $failureEvidence=@($diagnosticRecords | Where-Object {
                 $_.Action -eq 'fail' -or
-                ($_.Action -eq 'output' -and $_.Output -match '(?i)(--- FAIL|panic:|fatal error|timed out|deadline exceeded|^FAIL)')
+                ($_.Action -eq 'output' -and (
+                  $_.Output -match '(?i)(--- FAIL|panic:|fatal error|timed out|deadline exceeded|^FAIL)' -or
+                  ($_.Test -and $failedTestNames -contains $_.Test)
+                ))
               })
               if($failureEvidence.Count -gt 0){
                 $failureEvidence | ConvertTo-Json -Depth 8 | Write-Host
