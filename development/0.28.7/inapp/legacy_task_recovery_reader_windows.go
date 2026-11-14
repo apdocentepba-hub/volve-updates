@@ -10,6 +10,35 @@ import (
 	"strings"
 )
 
+// NewProtectedSignedLegacySwitchDriverWithWindowsRecoveryReader installs
+// the native reader as the protected wrapper's evidence source. The signed
+// transaction calls it at each coverage boundary while holding the same
+// cross-process migration mutex. The external manifest pin must come from an
+// independently trusted grant/input, never from either backup directory.
+func NewProtectedSignedLegacySwitchDriverWithWindowsRecoveryReader(
+	operations SignedLegacySwitchDriver,
+	initialBackupPath string,
+	threeTaskBackupPath string,
+	expectedManifestSHA256 string,
+) (SignedLegacySwitchDriver, error) {
+	reader := ProtectedLegacyTaskRecoveryReader(func(
+		ctx context.Context,
+		proof VerifiedLegacyMigrationProof,
+	) (LegacyTaskRecoverySnapshot, error) {
+		snapshot, err := ReadLegacyTaskRecoverySnapshotWindows(
+			ctx, initialBackupPath, threeTaskBackupPath, expectedManifestSHA256,
+		)
+		if err != nil {
+			return LegacyTaskRecoverySnapshot{}, err
+		}
+		if err := bindLegacyRecoverySnapshotToMigrationProof(snapshot, proof); err != nil {
+			return LegacyTaskRecoverySnapshot{}, err
+		}
+		return snapshot, nil
+	})
+	return NewProtectedSignedLegacySwitchDriverWithRecoveryReader(operations, reader)
+}
+
 // ReadLegacyTaskRecoverySnapshotWindows collects a fresh read-only Windows
 // Task Scheduler inventory and validates the private backup with real NTFS
 // DACL inspection. The caller must hold the migration's named OS mutex while
