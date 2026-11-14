@@ -7,6 +7,8 @@ on:
       - 'development/0.28.7/inapp/legacy_managed_transaction_test.go'
       - 'development/0.28.7/inapp/legacy_task_recovery_coverage.go'
       - 'development/0.28.7/inapp/legacy_task_recovery_coverage_test.go'
+      - 'development/0.28.7/inapp/resident_protected_signed_switch_windows.go'
+      - 'development/0.28.7/inapp/resident_protected_signed_transaction_windows_test.go'
       - 'development/0.28.7/inapp/apply_overlay.go'
       - '.github/workflows/volve-0287-legacy-backup-boundary.yml'
   pull_request:
