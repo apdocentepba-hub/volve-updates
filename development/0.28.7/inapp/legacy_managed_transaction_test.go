@@ -88,15 +88,18 @@ func (d *signedLegacyDriverLab) IndependentRecoveryReady(_ context.Context, _ Ve
     if d.failWatchdogAt==d.watchdogCount{return errors.New("independent recovery agent unavailable")}
     return nil
 }
-func (d *signedLegacyDriverLab) VerifyLegacyTaskRecoveryCoverage(_ context.Context, _ VerifiedLegacyMigrationProof)(LegacyTaskRecoverySnapshot,error){
+func (d *signedLegacyDriverLab) VerifyLegacyTaskRecoveryCoverage(_ context.Context, proof VerifiedLegacyMigrationProof)(LegacyTaskRecoverySnapshot,error){
     if err:=d.requireLock();err!=nil{return LegacyTaskRecoverySnapshot{},err}
     d.coverageCount++
     if err:=d.tick("task-coverage");err!=nil{return LegacyTaskRecoverySnapshot{},err}
     if d.failCoverageAt==d.coverageCount{return LegacyTaskRecoverySnapshot{},errors.New("legacy task backup changed at locked boundary")}
-    if d.coverageCount<=len(d.coverageSnapshots){return d.coverageSnapshots[d.coverageCount-1],nil}
-    if d.coverageSnapshot!=nil{return *d.coverageSnapshot,nil}
-    return completeLegacyTaskRecoverySnapshot(),nil
+    var snapshot LegacyTaskRecoverySnapshot
+    if d.coverageCount<=len(d.coverageSnapshots){snapshot=d.coverageSnapshots[d.coverageCount-1]
+    } else if d.coverageSnapshot!=nil {snapshot=*d.coverageSnapshot
+    } else {snapshot=completeLegacyTaskRecoverySnapshot()}
+    return testLegacyTaskRecoverySnapshotForProof(snapshot,proof),nil
 }
+
 func (d *signedLegacyDriverLab) VerifyPreparedTarget(_ context.Context, m Manifest) error {
     if err:=d.requireLock();err!=nil{return err}
     d.preparedCount++
