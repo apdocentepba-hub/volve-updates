@@ -414,7 +414,8 @@ jobs:
               '^TestDNSRecoveryJournal',
               '^TestDNSRecoveryPreview',
               '^TestDNSStagedBackup',
-              '^TestNativeWindowsDNSOriginalBackupRealNTFSAndCorruptedACL$'
+              '^TestNativeWindowsDNSOriginalBackupRealNTFSAndCorruptedACL$',
+              '^TestNativeDNSBackup'
             )
             $policyPattern=$requiredTestFamilies -join '|'
             $policyEvents=@(go test -mod=mod -count=1 -timeout 3m -json -run $policyPattern volve-browser-protection/motorupdate)
@@ -457,7 +458,10 @@ jobs:
               'TestDNSStagedBackupRejectsUntrustedInputsBeforeWriting',
               'TestDNSStagedBackupNeverWritesPrivateDataBeforeDirectorySeal',
               'TestDNSStagedBackupRejectsTamperAndUnexpectedFiles',
-              'TestNativeWindowsDNSOriginalBackupRealNTFSAndCorruptedACL'
+              'TestNativeWindowsDNSOriginalBackupRealNTFSAndCorruptedACL',
+              'TestNativeDNSBackupUsesRealNTFSAndSurvivesIndependentReopen',
+              'TestNativeDNSBackupRejectsUnsealedParentBeforeWritingPrivateData',
+              'TestNativeDNSBackupRejectsBadPinAndUnrelatedSealTargets'
             )){
               $passes=@($policyRecords | Where-Object {$_.Test -eq $name -and $_.Action -eq 'pass'})
               $skips=@($policyRecords | Where-Object {$_.Test -eq $name -and $_.Action -eq 'skip'})
@@ -468,6 +472,7 @@ jobs:
             Write-Host 'PASS VOLVE_DNS_ASSIGNMENT_PROVENANCE_TESTS IPV4_IPV6 STATIC_AUTOMATIC FAIL_CLOSED NO_WRITES'
             Write-Host 'PASS VOLVE_DNS_RECOVERY_JOURNAL_PINNED_IPV4_IPV6_READ_ONLY_PREVIEW NO_INSTALL'
             Write-Host 'PASS VOLVE_NATIVE_NTFS_ORIGINAL_DNS_BACKUP_CREATE_ONLY_SEAL_READBACK_TAMPER_REJECT NO_DNS_WRITES'
+            Write-Host 'PASS VOLVE_NATIVE_BACKUP_NO_MOCK_ACL_REAL_NTFS_SEAL_REOPEN_REJECT_UNTRUSTED NO_DNS_TASK_WRITES'
             Write-Host 'PASS VOLVE_SIGNED_EXE_PLUS_REAL_WINDOWS_6_INVENTORIES REVIEW_ONLY NO_INSTALL NO_DNS_CHANGE'
             Write-Host 'PREVIEW CHECKPOINT: produce actual native Windows setup decision JSON'
             $dnsBefore=Get-DnsClientServerAddress -ErrorAction Stop | Sort-Object InterfaceIndex,AddressFamily | Select-Object InterfaceIndex,AddressFamily,ServerAddresses | ConvertTo-Json -Depth 6 -Compress
