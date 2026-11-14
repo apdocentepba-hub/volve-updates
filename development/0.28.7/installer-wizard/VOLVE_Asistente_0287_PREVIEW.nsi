@@ -1,4 +1,4 @@
-; VOLVE 0.28.7 — wizard visual de consentimiento, prototipo NO OPERATIVO.
+﻿; VOLVE 0.28.7 — wizard visual de consentimiento, prototipo NO OPERATIVO.
 ; Nunca cambiar a un nombre de instalador productivo sin un backend firmado,
 ; restauracion certificada y pruebas de Windows despues de reiniciar.
 Unicode true
@@ -7,9 +7,10 @@ Unicode true
 !include "LogicLib.nsh"
 !include "WinMessages.nsh"
 
-Name "VOLVÉ — Asistente (VISTA PREVIA SIN PROTECCIÓN)"
+Name "VOLVÉ - Asistente (DEMO SIN PROTECCIÓN)"
 OutFile "VOLVE_Asistente_VistaPrevia_0287.exe"
 RequestExecutionLevel user
+SetBrandingText "VOLVÉ 0.28.7 | Vista previa sin protección"
 InstallDir "$LOCALAPPDATA\VOLVE-Preview"
 ShowInstDetails show
 SetCompressor /SOLID lzma
@@ -44,25 +45,24 @@ Page custom SummaryPage SummaryLeave
 !insertmacro MUI_LANGUAGE "Spanish"
 
 Function PermissionsPage
+ !insertmacro MUI_HEADER_TEXT "Permisos de VOLVÉ" "Revisá cada autorización antes de continuar."
  nsDialogs::Create 1018
  Pop $ConsentDlg
  ${If} $ConsentDlg == error
   Abort
  ${EndIf}
- ${NSD_CreateLabel} 0 0u 100% 35u "Permisos requeridos por la futura versión (ningún permiso se concede en esta vista previa)."
+ ${NSD_CreateLabel} 0 0u 100% 22u "Marcá las cinco casillas. En esta demostración no se aplica ningún cambio."
  Pop $0
- ${NSD_CreateCheckbox} 0 40u 100% 20u "Permitir configurar el DNS de IPv4 e IPv6 (con respaldo y reversión)."
+ ${NSD_CreateCheckbox} 0 24u 100% 17u "Configurar DNS IPv4 e IPv6 (con respaldo y recuperación)."
  Pop $ConsentDNS
- ${NSD_CreateCheckbox} 0 63u 100% 20u "Permitir tareas de arranque y recuperación bajo SYSTEM."
+ ${NSD_CreateCheckbox} 0 42u 100% 17u "Crear tareas de arranque y recuperación SYSTEM."
  Pop $ConsentSYSTEM
- ${NSD_CreateCheckbox} 0 86u 100% 20u "Permitir políticas de bloqueo en navegadores compatibles."
+ ${NSD_CreateCheckbox} 0 60u 100% 17u "Aplicar políticas de bloqueo en navegadores compatibles."
  Pop $ConsentBrowser
- ${NSD_CreateCheckbox} 0 109u 100% 20u "Permitir descargas automáticas de reglas y paquetes firmados."
+ ${NSD_CreateCheckbox} 0 78u 100% 17u "Actualizar automáticamente catálogos y paquetes firmados."
  Pop $ConsentUpdates
- ${NSD_CreateCheckbox} 0 132u 100% 35u "Comprendo que el compromiso elegido limita la desactivación habitual; habrá una vía de recuperación y retiro autorizado."
+ ${NSD_CreateCheckbox} 0 98u 100% 32u "Entiendo el plazo del compromiso, las restricciones habituales de desactivación y el retiro o reparación autorizado."
  Pop $ConsentRestrictions
- ${NSD_CreateLabel} 0 183u 100% 35u "La aprobación puede cancelarse antes de activar la instalación. Ninguna autorización equivale a perder el control administrativo del equipo para siempre."
- Pop $0
  nsDialogs::Show
 FunctionEnd
 
@@ -95,18 +95,19 @@ Function PermissionsLeave
 FunctionEnd
 
 Function CommitmentPage
+ !insertmacro MUI_HEADER_TEXT "Duración del compromiso" "Elegí cuánto tiempo querés mantener las restricciones."
  nsDialogs::Create 1018
  Pop $PeriodDlg
  ${If} $PeriodDlg == error
   Abort
  ${EndIf}
- ${NSD_CreateLabel} 0 0u 100% 35u "Elegí la duración del compromiso de protección. En el futuro este valor será una política firmada, no un bloqueo imposible de revertir."
+ ${NSD_CreateLabel} 0 0u 100% 28u "Esta elección no se guarda en la demo. La versión final exigirá una política firmada."
  Pop $0
- ${NSD_CreateRadioButton} 0 50u 100% 19u "7 días de protección"
+ ${NSD_CreateRadioButton} 0 30u 100% 17u "7 días de protección"
  Pop $Period7
- ${NSD_CreateRadioButton} 0 77u 100% 19u "30 días de protección"
+ ${NSD_CreateRadioButton} 0 49u 100% 17u "30 días de protección"
  Pop $Period30
- ${NSD_CreateRadioButton} 0 104u 100% 19u "90 días de protección"
+ ${NSD_CreateRadioButton} 0 68u 100% 17u "90 días de protección"
  Pop $Period90
  ${If} $PeriodValue == "30"
   ${NSD_Check} $Period30
@@ -115,7 +116,7 @@ Function CommitmentPage
  ${Else}
   ${NSD_Check} $Period7
  ${EndIf}
- ${NSD_CreateLabel} 0 151u 100% 65u "Durante el compromiso, la desactivación ordinaria estará restringida. El soporte podrá emitir una autorización de retiro limitada y verificable. También existirá recuperación de emergencia en caso de fallas de conectividad o seguridad."
+ ${NSD_CreateLabel} 0 96u 100% 38u "El retiro ordinario puede requerir autorización de soporte; siempre debe existir recuperación de emergencia por fallas de conectividad."
  Pop $0
  nsDialogs::Show
 FunctionEnd
@@ -141,16 +142,17 @@ Function CommitmentLeave
 FunctionEnd
 
 Function SummaryPage
+ !insertmacro MUI_HEADER_TEXT "Confirmación final" "Revisá la duración y los límites de la demostración."
  nsDialogs::Create 1018
  Pop $SummaryDlg
  ${If} $SummaryDlg == error
   Abort
  ${EndIf}
- ${NSD_CreateLabel} 0 0u 100% 50u "Resumen: permisos de DNS, tareas SYSTEM, navegadores y reglas firmadas, todos aceptados en esta simulación. Duración elegida: $PeriodValue días."
+ ${NSD_CreateLabel} 0 0u 100% 30u "Se simularon permisos de DNS, SYSTEM, navegadores y actualizaciones. Duración: $PeriodValue días."
  Pop $0
- ${NSD_CreateLabel} 0 60u 100% 56u "En la versión final, antes de activar cualquier bloqueo se verificará el respaldo, la conectividad y la recuperación. El instalador rechazará instalaciones previas no migrables."
+ ${NSD_CreateLabel} 0 36u 100% 41u "La versión final exigirá respaldo, prueba de recuperación y revisión de instalaciones anteriores antes de aplicar cambios."
  Pop $0
- ${NSD_CreateCheckbox} 0 135u 100% 55u "Confirmo que esta es una VISTA PREVIA: no instalará ni activará protección, no creará una exclusión y no habrá cambios en mi equipo."
+ ${NSD_CreateCheckbox} 0 83u 100% 42u "Confirmo que esto es una VISTA PREVIA: no instala nada, no activa el bloqueo y no crea un compromiso real."
  Pop $SummaryAgree
  nsDialogs::Show
 FunctionEnd
