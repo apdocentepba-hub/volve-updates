@@ -23,6 +23,15 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: '1.23.x'
+      - name: Gate single-EXE lab build on three-task migration tests (not bundled)
+        shell: pwsh
+        working-directory: development/0.28.7/taskrecoverygate
+        run: |
+          $ErrorActionPreference='Stop'
+          go test -count=1 ./...
+          if($LASTEXITCODE -ne 0){throw 'Three-task migration recovery gate tests failed; stop signed-bundle lab build'}
+          go vet ./...
+          if($LASTEXITCODE -ne 0){throw 'Three-task migration recovery gate vet failed; stop signed-bundle lab build'}
       - name: Validate exact Go source archive
         shell: pwsh
         run: |
