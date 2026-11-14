@@ -96,6 +96,24 @@ jobs:
             $recheck=Invoke-ReadOnlyVerifier $root
             if($recheck.status -ne 0){throw ('Verifier refused intact restored CI snapshot: '+$recheck.output)}
             Write-Host 'PASS VOLVE_INDEPENDENT_BACKUP_VERIFIER_CURRENT_STATE_AND_TAMPER_DENIAL'
+            # A new VOLVE-named SYSTEM task after backup must block migration.
+            $driftTask='VOLVE-CI-SNAPSHOT-DRIFT'
+            $driftRegistered=$false
+            try{
+              Register-ScheduledTask -TaskName $driftTask -Action $action -Trigger $trigger -Principal $principal -ErrorAction Stop | Out-Null
+              $driftRegistered=$true
+              $changed=Invoke-ReadOnlyVerifier $root
+              if($changed.status -eq 0){throw 'Independent verifier accepted a newly added SYSTEM task'}
+            }finally{
+              if($driftRegistered){
+                Unregister-ScheduledTask -TaskName $driftTask -Confirm:$false -ErrorAction Stop
+              }
+            }
+            $afterDrift=Invoke-ReadOnlyVerifier $root
+            if($afterDrift.status -ne 0){
+              throw ('Original snapshot not valid after disposable task drift test: '+$afterDrift.output)
+            }
+            Write-Host 'PASS VOLVE_INDEPENDENT_BACKUP_VERIFIER_LIVE_SYSTEM_TASK_DRIFT_DENIAL'
             $originalXml=Get-Content -Raw -Encoding UTF8 (Join-Path $root $manifest.current_tasks[0].xml_backup)
             if($originalXml -cne $xmlBefore){throw 'Actual Windows SYSTEM task XML backup differs from source'}
             $dnsAfter=Get-DnsClientServerAddress -ErrorAction Stop | Sort-Object InterfaceIndex,AddressFamily | Select-Object InterfaceIndex,AddressFamily,ServerAddresses | ConvertTo-Json -Depth 5 -Compress
