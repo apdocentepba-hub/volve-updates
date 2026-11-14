@@ -25,34 +25,7 @@ var (
 	legacyInitialBackupPattern = regexp.MustCompile(`(?i)^VOLVE-Migration-Backup-[0-9a-f]{32}$`)
 	legacyThreeTaskDirPattern  = regexp.MustCompile(`(?i)^VOLVE-Legacy-Three-Recovery-[0-9a-f]{32}$`)
 	legacySHA256Pattern        = regexp.MustCompile(`(?i)^[0-9a-f]{64}$`)
-	legacyRescueFileArgPattern = regexp.MustCompile(`(?i)(?:^|\s)-File\s+(?:"([^"]+)"|(\S+))\s*package motorupdate
-
-import (
-	"bytes"
-	"context"
-	"crypto/sha256"
-	"encoding/hex"
-	"encoding/json"
-	"errors"
-	"fmt"
-	"io"
-	"os"
-	"path/filepath"
-	"regexp"
-	"strings"
-)
-
-const (
-	legacyThreeTaskReceiptName = "recibo-tres-tareas.json"
-	legacyThreeTaskComponent   = "VOLVE-THREE-LEGACY-TASKS-DIRECT-ACTIONS-BACKUP-V1"
-	legacyThreeTaskState       = "PRIVATE_BACKUP_ONLY_NO_CLEANUP_NO_INSTALL"
-)
-
-var (
-	legacyInitialBackupPattern = regexp.MustCompile(`(?i)^VOLVE-Migration-Backup-[0-9a-f]{32}$`)
-	legacyThreeTaskDirPattern  = regexp.MustCompile(`(?i)^VOLVE-Legacy-Three-Recovery-[0-9a-f]{32}$`)
-	legacySHA256Pattern        = regexp.MustCompile(`(?i)^[0-9a-f]{64}$`)
-)
+	legacyRescueFileArgPattern = regexp.MustCompile(`(?i)(?:^|\s)-File\s+(?:"([^"]+)"|(\S+))\s*$`)
 	legacyEnvVarPattern        = regexp.MustCompile(`%([^%]+)%`)
 )
 
