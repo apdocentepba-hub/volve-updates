@@ -1,12 +1,15 @@
 name: VOLVE 0.28.7 legacy protected rollback boundary tests (NO RELEASE)
 on:
   push:
-    branches: [feature/motor-updater-0287-pilot]
+    branches: [feature/motor-updater-0287-pilot, work/0287-native-setup-preview-20261113]
     paths:
       - 'development/0.28.7/inapp/legacy_managed_transaction.go'
       - 'development/0.28.7/inapp/legacy_managed_transaction_test.go'
+      - 'development/0.28.7/inapp/legacy_task_recovery_coverage.go'
+      - 'development/0.28.7/inapp/legacy_task_recovery_coverage_test.go'
       - 'development/0.28.7/inapp/apply_overlay.go'
       - '.github/workflows/volve-0287-legacy-backup-boundary.yml'
+  pull_request:
   workflow_dispatch:
 permissions:
   contents: read

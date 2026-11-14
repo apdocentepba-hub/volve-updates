@@ -30,6 +30,9 @@ type signedLegacyDriverLab struct {
     replaceOldMotor string
     afterSnapshot func()error
     afterInstall func()error
+    coverageCount int
+    failCoverageAt int
+    coverageSnapshot *LegacyTaskRecoverySnapshot
 }
 func newSignedLegacyDriverLab()*signedLegacyDriverLab {
     return &signedLegacyDriverLab{managedDriverTest:&managedDriverTest{}}
@@ -84,6 +87,14 @@ func (d *signedLegacyDriverLab) IndependentRecoveryReady(_ context.Context, _ Ve
     if d.failWatchdogAt==d.watchdogCount{return errors.New("independent recovery agent unavailable")}
     return nil
 }
+func (d *signedLegacyDriverLab) VerifyLegacyTaskRecoveryCoverage(_ context.Context, _ VerifiedLegacyMigrationProof)(LegacyTaskRecoverySnapshot,error){
+    if err:=d.requireLock();err!=nil{return LegacyTaskRecoverySnapshot{},err}
+    d.coverageCount++
+    if err:=d.tick("task-coverage");err!=nil{return LegacyTaskRecoverySnapshot{},err}
+    if d.failCoverageAt==d.coverageCount{return LegacyTaskRecoverySnapshot{},errors.New("legacy task backup changed at locked boundary")}
+    if d.coverageSnapshot!=nil{return *d.coverageSnapshot,nil}
+    return completeLegacyTaskRecoverySnapshot(),nil
+}
 func (d *signedLegacyDriverLab) VerifyPreparedTarget(_ context.Context, m Manifest) error {
     if err:=d.requireLock();err!=nil{return err}
     d.preparedCount++
@@ -122,12 +133,12 @@ func TestSignedLegacyTransactionRequiresRevalidationAndIndependentWatchdog(t *te
     err:=runSignedLegacyLab(context.Background(),f,d,testSecureLabFolderBridge,
         func()error{checks++;return nil})
     if err!=nil {t.Fatal(err)}
-    want:=[]string{"preflight","watchdog","snapshot","install","prepared","watchdog","switch","probe","connectivity","prepared","watchdog","commit"}
+    want:=[]string{"task-coverage","preflight","watchdog","snapshot","task-coverage","install","prepared","watchdog","task-coverage","switch","probe","connectivity","prepared","watchdog","commit"}
     if !reflect.DeepEqual(d.calls,want){t.Fatalf("unexpected signed migration order: %v",d.calls)}
     // Each of the TWO signed-proof boundaries now verifies SYSTEM/DNS twice:
     // initial and final immutable-host checks (4 total). The external
     // watchdog itself is independently checked before and after Snapshot.
-    if checks!=4 || d.watchdogCount!=3||d.preparedCount!=2||
+    if checks!=4 || d.watchdogCount!=3||d.preparedCount!=2||d.coverageCount!=3||
         d.lockHeld||d.lockAcquires!=1||d.lockReleases!=1 {
         t.Fatalf("expected 4 OS probes, 3 watchdogs, 2 target checks and ONE released exclusive lease; got %d/%d/%d locks=%d/%d active=%t",checks,d.watchdogCount,d.preparedCount,d.lockAcquires,d.lockReleases,d.lockHeld)
     }
@@ -251,7 +262,7 @@ func TestSignedLegacyTransactionRejectsBackupModifiedImmediatelyAfterSnapshot(t 
     !strings.Contains(err.Error(),"respaldo alterado tras Snapshot"){
     t.Fatalf("corrupted backup after snapshot was not marked critical: %v",err)
    }
-   want:=[]string{"preflight","watchdog","snapshot"}
+   want:=[]string{"task-coverage","preflight","watchdog","snapshot","task-coverage"}
    if !reflect.DeepEqual(d.calls,want){
     t.Fatalf("modified fallback allowed installation or attempted unsafe restore: %v",d.calls)
    }
@@ -270,7 +281,7 @@ func TestSignedLegacyTransactionRejectsSealedBackupTamperedAfterTargetPreparatio
   !strings.Contains(err.Error(),"autorización cambió"){
   t.Fatalf("corrupted rollback after installing target not critical: %v",err)
  }
- want:=[]string{"preflight","watchdog","snapshot","install","prepared"}
+ want:=[]string{"task-coverage","preflight","watchdog","snapshot","task-coverage","install","prepared"}
  if !reflect.DeepEqual(d.calls,want){
   t.Fatalf("corrupted backup allowed unsafe restore, switch or commit: %v",d.calls)
  }
