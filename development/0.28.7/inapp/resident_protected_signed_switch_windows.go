@@ -92,6 +92,15 @@ func(d *protectedSignedLegacyDriver)Preflight(ctx context.Context,manifest Manif
 func(d *protectedSignedLegacyDriver)IndependentRecoveryReady(ctx context.Context,proof VerifiedLegacyMigrationProof)error{
  return d.withProtectedLease(ctx,func()error{return d.operations.IndependentRecoveryReady(ctx,proof)})
 }
+func(d *protectedSignedLegacyDriver)VerifyLegacyTaskRecoveryCoverage(ctx context.Context,proof VerifiedLegacyMigrationProof)(LegacyTaskRecoverySnapshot,error){
+ var snapshot LegacyTaskRecoverySnapshot
+ err:=d.withProtectedLease(ctx,func()error{
+  var err error
+  snapshot,err=d.operations.VerifyLegacyTaskRecoveryCoverage(ctx,proof)
+  return err
+ })
+ return snapshot,err
+}
 func(d *protectedSignedLegacyDriver)Snapshot(ctx context.Context)error{
  return d.withProtectedLease(ctx,func()error{return d.operations.Snapshot(ctx)})
 }

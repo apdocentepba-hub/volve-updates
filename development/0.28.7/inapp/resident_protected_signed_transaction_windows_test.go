@@ -19,6 +19,7 @@ type protectedSignedFullTransactionLab struct {
  readyChecks int
  protectedHandoffs int
  preparedChecks int
+ coverageChecks int
 }
 
 func(d *protectedSignedFullTransactionLab)AcquireExclusiveMigration(context.Context)(func(),error){
@@ -42,6 +43,17 @@ func(d *protectedSignedFullTransactionLab)VerifyPreparedTarget(_ context.Context
  d.preparedChecks++
  if m.Version!="0.28.7"{return errors.New("unexpected signed motor candidate")}
  return nil
+}
+func(d *protectedSignedFullTransactionLab)VerifyLegacyTaskRecoveryCoverage(ctx context.Context,_ VerifiedLegacyMigrationProof)(LegacyTaskRecoverySnapshot,error){
+ d.coverageChecks++
+ probeCtx,cancel:=context.WithTimeout(ctx,125*time.Millisecond)
+ defer cancel()
+ unlock,err:=AcquireProtectedResidentTransitionLease(probeCtx)
+ if unlock!=nil{unlock()}
+ if !errors.Is(err,context.DeadlineExceeded){
+  return LegacyTaskRecoverySnapshot{},errors.New("task recovery coverage review ran without the protected SYSTEM mutex")
+ }
+ return completeLegacyTaskRecoverySnapshot(),nil
 }
 func(d *protectedSignedFullTransactionLab)RestoreAfterProtectedHandoff(ctx context.Context)error{
  d.protectedHandoffs++
@@ -79,7 +91,7 @@ func TestProtectedSignedFullTransactionCommitAndRecoveryUnderNativeMutex(t *test
    }
    if mode=="commit"{
     if err!=nil{t.Fatalf("signed transaction cannot commit under real kernel mutex: %v",err)}
-    if driver.readyChecks!=3||driver.preparedChecks!=2||driver.protectedHandoffs!=0{
+    if driver.readyChecks!=3||driver.preparedChecks!=2||driver.coverageChecks!=3||driver.protectedHandoffs!=0{
      t.Fatalf("incomplete signed fences/unsafe restore: ready=%d prepared=%d recovery=%d",
       driver.readyChecks,driver.preparedChecks,driver.protectedHandoffs)
     }
