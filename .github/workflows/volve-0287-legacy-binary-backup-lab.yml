@@ -82,6 +82,26 @@ jobs:
             if((Get-FileHash -LiteralPath $copy -Algorithm SHA256).Hash.ToLowerInvariant() -cne $source){
               throw 'Legacy motor original bytes not preserved'
             }
+            $verifier=Join-Path $root 'Verificar_Motor_Legacy_Rescate_Sin_Limpieza.ps1'
+            function Verify-Legacy([string]$folder) {
+              $output=@(& $ps51 -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $verifier -OriginalBackupPath $original -MotorBackupPath $folder 2>&1)
+              return [pscustomobject]@{status=$LASTEXITCODE;detail=($output -join '|')}
+            }
+            $verified=Verify-Legacy $safe
+            if($verified.status -ne 0 -or -not $verified.detail.Contains('VOLVE_LEGACY_RECOVERY_VERIFIED_READ_ONLY;')){
+              throw ('Independent legacy binary verifier rejected intact Windows snapshot: '+$verified.detail)
+            }
+            $unchanged=[IO.File]::ReadAllBytes($copy)
+            try {
+              [IO.File]::WriteAllBytes($copy,([byte[]]($unchanged+@(0x42))))
+              $invalid=Verify-Legacy $safe
+              if($invalid.status -eq 0){throw 'Independent verifier accepted modified legacy binary'}
+            }finally{
+              [IO.File]::WriteAllBytes($copy,$unchanged)
+            }
+            $restored=Verify-Legacy $safe
+            if($restored.status -ne 0){throw ('Restored old binary no longer validated: '+$restored.detail)}
+            Write-Host 'PASS VOLVE_WINDOWS_INDEPENDENT_LEGACY_MOTOR_BINARY_TAMPER_REJECTED'
             $actualXML=Get-Content -LiteralPath $xml -Raw -Encoding UTF8
             if($actualXML -cne $beforeXML){throw 'SYSTEM task XML was not backed up exactly'}
             foreach($f in @($safe,$copy,$xml,$receipt)){
@@ -100,6 +120,12 @@ jobs:
               (Export-ScheduledTask -TaskName $name) -cne $beforeXML){
               throw 'Critical: backup altered DNS, HOSTS or SYSTEM task'
             }
+            & icacls.exe $copy '/grant' '*S-1-1-0:W' | Out-Null
+            if($LASTEXITCODE -ne 0){throw 'Cannot weaken disposable NTFS ACL'}
+            $aclReject=Verify-Legacy $safe
+            if($aclReject.status -eq 0){throw 'Verifier accepted Everyone-writable legacy recovery'}
+            $global:LASTEXITCODE=0
+            Write-Host 'PASS VOLVE_WINDOWS_INDEPENDENT_LEGACY_MOTOR_NTFS_ACL_TAMPER_REJECTED'
             # Reject missing task rather than granting cleanup; the snapshot
             # remains stored only on this disposable runner.
             Unregister-ScheduledTask -TaskName $name -Confirm:$false -ErrorAction Stop
