@@ -1,0 +1,99 @@
+name: "VOLVE 0.28.7 - Windows wizard preview ONLY (no protection)"
+
+on:
+  push:
+    branches:
+      - work/0287-native-setup-preview-20261113
+    paths:
+      - development/0.28.7/installer-wizard/**
+      - .github/workflows/volve-0287-wizard-preview-pr.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  nsis-preview-no-install:
+    runs-on: windows-2022
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Confirm UI prototype cannot install or change Windows
+        run: |
+          $ErrorActionPreference='Stop'
+          $root=Join-Path $env:GITHUB_WORKSPACE 'development/0.28.7/installer-wizard'
+          $path=Join-Path $root 'VOLVE_Asistente_0287_PREVIEW.nsi'
+          $terms=Join-Path $root 'TERMINOS_PREVIEW_0287.txt'
+          $script=[IO.File]::ReadAllText($path)
+          if (-not (Test-Path -LiteralPath $terms -PathType Leaf)) { throw 'Required consent text absent' }
+          if ($script -notmatch '(?im)^RequestExecutionLevel user\s*$') { throw 'Wizard prototype must not request Windows administrator elevation' }
+          if ($script -notmatch 'OutFile "VOLVE_Asistente_VistaPrevia_0287.exe"') { throw 'Output must identify inactive preview' }
+          if ($script -notmatch '(?i)NO instala' -or $script -notmatch '(?i)NO modifica' -or $script -notmatch '(?i)NO INSTALADO') {
+            throw 'Preview disclaimers missing'
+          }
+          $required=@(
+            'MUI_PAGE_WELCOME','MUI_PAGE_LICENSE','Page custom PermissionsPage PermissionsLeave',
+            'Page custom CommitmentPage CommitmentLeave','Page custom SummaryPage SummaryLeave',
+            'MUI_PAGE_INSTFILES','MUI_PAGE_FINISH',
+            'Function PermissionsLeave','Function CommitmentLeave','Function SummaryLeave'
+          )
+          foreach ($item in $required) {
+            if (-not $script.Contains($item)) { throw ('Wizard page/guard missing: '+$item) }
+          }
+          $forbidden='(?im)^\s*(?:File|FileOpen|FileWrite|Exec|ExecWait|nsExec::Exec|WriteReg\w*|CreateShortCut|CreateDirectory|SetOutPath|Delete|RMDir|Rename|CopyFiles|RegDLL|CallInstDLL|WriteUninstaller|SetShellVarContext)\b'
+          if ([regex]::IsMatch($script,$forbidden)) { throw 'Unsafe NSIS mutation directive in inactive UI preview' }
+          $sections=[regex]::Matches($script,'(?im)^Section\s+')
+          if($sections.Count -ne 1){throw 'Only the single no-install preview section is permitted'}
+          Write-Host 'PASS VOLVE_WIZARD_PREVIEW_WELCOME_LICENSE_CONSENT_TERM_SUMMARY_INACTIVE_ONLY'
+
+      - name: Obtain NSIS compiler on disposable Windows runner
+        run: |
+          $ErrorActionPreference='Stop'
+          $choices=@(
+            'C:\Program Files (x86)\NSIS\makensis.exe',
+            'C:\Program Files\NSIS\makensis.exe'
+          )
+          $compiler=$choices | Where-Object {Test-Path -LiteralPath $_ -PathType Leaf} | Select-Object -First 1
+          if(-not $compiler) {
+            choco install nsis --yes --no-progress --limit-output
+            if($LASTEXITCODE -ne 0){throw 'Windows CI could not install open-source NSIS compiler'}
+            $compiler=$choices | Where-Object {Test-Path -LiteralPath $_ -PathType Leaf} | Select-Object -First 1
+          }
+          if(-not $compiler){throw 'NSIS compiler not installed'}
+          "VOLVE_CI_NSIS_COMPILER=$compiler" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          Write-Host 'PASS VOLVE_WINDOWS_NSIS_COMPILER_AVAILABLE'
+
+      - name: Compile actual seven-page single EXE preview
+        run: |
+          $ErrorActionPreference='Stop'
+          Push-Location 'development/0.28.7/installer-wizard'
+          try {
+            & $env:VOLVE_CI_NSIS_COMPILER '/V3' 'VOLVE_Asistente_0287_PREVIEW.nsi'
+            if($LASTEXITCODE -ne 0){throw 'NSIS wizard failed compilation'}
+            $binary=Join-Path (Get-Location) 'VOLVE_Asistente_VistaPrevia_0287.exe'
+            if(-not (Test-Path -LiteralPath $binary -PathType Leaf)){throw 'NSIS wizard EXE missing'}
+            $info=Get-Item -LiteralPath $binary
+            if($info.Length -lt 10000 -or $info.Length -gt 20000000){throw 'Wizard EXE invalid size'}
+            $handle=[IO.File]::OpenRead($binary)
+            try{
+              if($handle.ReadByte() -ne 77 -or $handle.ReadByte() -ne 90){throw 'Wizard output not a Windows PE executable'}
+            }finally{$handle.Dispose()}
+            $hash=(Get-FileHash -Algorithm SHA256 -LiteralPath $binary).Hash.ToLowerInvariant()
+            "VOLVE_CI_WIZARD_SHA256=$hash" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+            Write-Host ('NSIS PREVIEW SHA256: '+$hash)
+            Write-Host 'PASS VOLVE_WINDOWS_SINGLE_EXE_WIZARD_COMPILED_NO_DNS_NO_TASKS'
+          }finally{Pop-Location}
+
+      - name: Artifact explicitly labeled as NON-PROTECTIVE PREVIEW
+        uses: actions/upload-artifact@v4
+        with:
+          name: VOLVE_0287_WIZARD_PREVIEW_NO_INSTALL_NO_PROTECTION
+          path: |
+            development/0.28.7/installer-wizard/VOLVE_Asistente_VistaPrevia_0287.exe
+            development/0.28.7/installer-wizard/README.md
+          retention-days: 3
+          if-no-files-found: error
