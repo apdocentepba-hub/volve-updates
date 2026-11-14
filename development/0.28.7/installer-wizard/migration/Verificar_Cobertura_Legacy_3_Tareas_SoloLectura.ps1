@@ -95,7 +95,27 @@ for($i=0;$i -lt 3;$i++){
  $candidate=''
  if($i -eq 1){
   $args=([string]$action[0].Arguments).Trim()
-  if($args -notmatch '(?i)(?:^|\s)-File\s+(?:"([^"]+)"|''([^'']+)''|(\S+))\s*$'){
+  if(-not ($args -match '(?i)(?:^|\s)-File\s+(?:"([^"]+)"|''([^'']+)''|(\S+))\s*
+   Fail 'Argumentos de recuperacion no coinciden con respaldo'}
+  $candidate=@($Matches[1],$Matches[2],$Matches[3] | Where-Object{$_})|Select-Object -First 1
+ }else{
+  $candidate=[string]$action[0].Execute
+ }
+ $live=[IO.Path]::GetFullPath([Environment]::ExpandEnvironmentVariables(([string]$candidate).Trim().Trim('"')))
+ if(-not $live.Equals([string]$row.source_path,[StringComparison]::OrdinalIgnoreCase)){
+  Fail 'Ruta de accion difiere de archivo original'}
+ if((Get-FileHash -LiteralPath $live -Algorithm SHA256).Hash.ToLowerInvariant() -cne $currentHash){
+  Fail 'Ejecutable o script vivo difiere de respaldo'}
+ $origManifest=Get-Content -LiteralPath $initial -Raw -Encoding UTF8 | ConvertFrom-Json
+ $origRow=@($origManifest.current_tasks|Where-Object{$_.task_name -ceq $tasks[$i]})
+ if($origRow.Count -ne 1 -or $origRow[0].xml_sha256 -cne $row.task_xml_sha256){
+  Fail 'Tarea origen no coincide con XML inicial'}
+}
+Check-ACL $snapshot
+foreach($name in $names){Check-ACL (Join-Path $snapshot $name)}
+Write-Host 'VOLVE_THREE_TASKS_DIRECT_ACTIONS_VERIFIED_READ_ONLY; TASKS=3; FILES=3'
+Write-Host 'CLEANUP_AUTHORIZED=NO; INSTALL_AUTHORIZED=NO; TRANSITIVE_DEPENDENCIES_VERIFIED=NO'
+)){
    Fail 'Argumentos de recuperacion no coinciden con respaldo'}
   $candidate=@($Matches[1],$Matches[2],$Matches[3] | Where-Object{$_})|Select-Object -First 1
  }else{
