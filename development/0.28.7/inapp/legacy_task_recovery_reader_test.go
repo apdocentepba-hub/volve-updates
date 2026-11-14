@@ -160,7 +160,7 @@ func newLegacyTaskRecoveryReaderFixture(t *testing.T) (LegacyTaskRecoveryReadOpt
 	inventoryBytes, err := json.Marshal(inventory)
 	if err != nil { t.Fatal(err) }
 	opts := LegacyTaskRecoveryReadOptions{
-		ProgramDataRoot: root, InitialBackupPath: initial, ThreeTaskBackupPath: three,
+		ProgramDataRoot: root, ExpectedManifestSHA256: legacyReaderHash(manifestBytes), InitialBackupPath: initial, ThreeTaskBackupPath: three,
 		WindowsPowerShellPath: ps, AllowedSourceRoots: []string{root}, TaskInventoryJSON: inventoryBytes,
 		VerifyProtectedACL: func(path string) error {
 			info, err := os.Lstat(path)
@@ -225,6 +225,11 @@ func TestReadLegacyTaskRecoverySnapshotRejectsUnpinnedManifestExtrasAndCancellat
 		changed := strings.Replace(string(raw), `"original_manifest_sha256":"`, `"original_manifest_sha256":"0`, 1)
 		if err := os.WriteFile(path, []byte(changed), 0600); err != nil { t.Fatal(err) }
 		if _, err := ReadLegacyTaskRecoverySnapshot(context.Background(), opts); err == nil { t.Fatal("receipt for another initial manifest accepted") }
+	})
+	t.Run("external manifest pin mismatch", func(t *testing.T) {
+		opts, _, _ := newLegacyTaskRecoveryReaderFixture(t)
+		opts.ExpectedManifestSHA256 = strings.Repeat("0", 64)
+		if _, err := ReadLegacyTaskRecoverySnapshot(context.Background(), opts); err == nil { t.Fatal("manifest differing from external pin accepted") }
 	})
 	t.Run("unexpected private file", func(t *testing.T) {
 		opts, _, _ := newLegacyTaskRecoveryReaderFixture(t)
