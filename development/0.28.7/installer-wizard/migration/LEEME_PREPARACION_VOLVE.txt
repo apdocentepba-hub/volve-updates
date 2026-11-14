@@ -31,6 +31,22 @@ CÓMO EJECUTAR, SI QUERÉS PREPARAR TU PC:
 5. Si falla, dejá intactos los componentes anteriores.
 
 El respaldo queda guardado en la propia PC y no se envía al chat.
+El paquete ahora incluye Verificar_Respaldo_VOLVE_SoloLectura.ps1.
+Es una comprobación INDEPENDIENTE para el futuro instalador: vuelve a
+leer las ACL, archivos, huellas, tareas SYSTEM, HOSTS y DNS actuales.
+Si alguien cambia las tareas o el contenido/permisos del respaldo,
+la herramienta rechaza el paso de migración. No autoriza limpieza.
+
+El respaldo NO está firmado por un editor de producción: su SHA-256
+se usa para detectar alteraciones, no para demostrar por sí solo que
+el archivo procede de una fuente auténtica. Un atacante con control
+administrativo podría modificar respaldos y manifiestos; por eso
+siguen siendo obligatorios el recibo firmado, la verificación del motor
+anterior y el watchdog de recuperación antes de eliminar componentes.
+
+El verificador no lo necesitás ejecutar manualmente en esta etapa.
+El futuro instalador debe invocarlo inmediatamente antes de cualquier
+transición, sin mostrar datos privados de la PC.
 Al ser una utilidad de desarrollo sin firma Authenticode comercial,
 Windows podría mostrar advertencias; no ignores avisos si no confiás
 en su procedencia. El código fuente es inspeccionable en GitHub
