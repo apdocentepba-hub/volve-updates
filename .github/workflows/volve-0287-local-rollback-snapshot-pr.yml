@@ -71,6 +71,31 @@ jobs:
                 }
               }
             }
+            # Independent verifier rereads ALL private files, DACL, actual
+            # Task Scheduler definitions, DNS and HOSTS before any migration.
+            $reviewer=Join-Path $env:GITHUB_WORKSPACE 'development/0.28.7/installer-wizard/migration/Verificar_Respaldo_VOLVE_SoloLectura.ps1'
+            $ps51=Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+            function Invoke-ReadOnlyVerifier([string]$folder) {
+              $output=@(& $ps51 -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $reviewer -BackupPath $folder 2>&1)
+              $code=$LASTEXITCODE
+              return [pscustomobject]@{status=$code;output=($output -join "`n")}
+            }
+            $check=Invoke-ReadOnlyVerifier $root
+            if($check.status -ne 0 -or -not $check.output.Contains('VOLVE_BACKUP_VALIDATED_READ_ONLY;')) {
+              throw ('Protected backup refused independent current-state review: '+$check.output)
+            }
+            $privateHosts=Join-Path $root 'original-hosts.bin'
+            $storedHosts=[IO.File]::ReadAllBytes($privateHosts)
+            try{
+              [IO.File]::WriteAllBytes($privateHosts,([byte[]]($storedHosts+@(0x23))))
+              $bad=Invoke-ReadOnlyVerifier $root
+              if($bad.status -eq 0){throw 'Verifier accepted modified protected HOSTS backup'}
+            }finally{
+              [IO.File]::WriteAllBytes($privateHosts,$storedHosts)
+            }
+            $recheck=Invoke-ReadOnlyVerifier $root
+            if($recheck.status -ne 0){throw ('Verifier refused intact restored CI snapshot: '+$recheck.output)}
+            Write-Host 'PASS VOLVE_INDEPENDENT_BACKUP_VERIFIER_CURRENT_STATE_AND_TAMPER_DENIAL'
             $originalXml=Get-Content -Raw -Encoding UTF8 (Join-Path $root $manifest.current_tasks[0].xml_backup)
             if($originalXml -cne $xmlBefore){throw 'Actual Windows SYSTEM task XML backup differs from source'}
             $dnsAfter=Get-DnsClientServerAddress -ErrorAction Stop | Sort-Object InterfaceIndex,AddressFamily | Select-Object InterfaceIndex,AddressFamily,ServerAddresses | ConvertTo-Json -Depth 5 -Compress
@@ -79,6 +104,13 @@ jobs:
             if($originalDns -cne $dnsAfter -or $originalHosts -cne $hostsAfter -or $xmlBefore -cne $xmlAfter){
               throw 'CRITICAL: Snapshot backup unexpectedly modified the real Windows host'
             }
+            # An untrusted principal added to one saved file must invalidate
+            # the entire snapshot even with all original hashes unchanged.
+            & icacls.exe $privateHosts '/grant' '*S-1-1-0:W' | Out-Null
+            if($LASTEXITCODE -ne 0){throw 'Cannot create unsafe ACL test fixture'}
+            $aclDenied=Invoke-ReadOnlyVerifier $root
+            if($aclDenied.status -eq 0){throw 'Verifier accepted an Everyone-writable protected backup'}
+            Write-Host 'PASS VOLVE_INDEPENDENT_BACKUP_VERIFIER_NATIVE_NTFS_ACL_TAMPER_DENIAL'
             Write-Host 'PASS VOLVE_REAL_WINDOWS_LOCAL_NTFS_BACKUP_DNS_HOSTS_SCHEDULER_XML_NO_CLEANUP'
           }finally{
             if($fixtureCreated) {
@@ -94,5 +126,6 @@ jobs:
             development/0.28.7/installer-wizard/migration/Preparar_Respaldo_VOLVE_SoloLectura.ps1
             development/0.28.7/installer-wizard/migration/EJECUTAR_RESPALDO_PREVIO_VOLVE.cmd
             development/0.28.7/installer-wizard/migration/LEEME_PREPARACION_VOLVE.txt
+            development/0.28.7/installer-wizard/migration/Verificar_Respaldo_VOLVE_SoloLectura.ps1
           retention-days: 7
           if-no-files-found: error
