@@ -27,6 +27,18 @@ func completeLegacyTaskRecoverySnapshot() LegacyTaskRecoverySnapshot {
 	return snapshot
 }
 
+func testLegacyTaskRecoverySnapshotForProof(snapshot LegacyTaskRecoverySnapshot, proof VerifiedLegacyMigrationProof) LegacyTaskRecoverySnapshot {
+	for i := range snapshot.Tasks {
+		if snapshot.Tasks[i].Name == "VOLVE-DNS-SERVER-0270" {
+			snapshot.Tasks[i].SourceXMLSHA256 = proof.LegacyTaskXMLSHA256
+			snapshot.Tasks[i].BackupXMLSHA256 = proof.LegacyTaskXMLSHA256
+			snapshot.Tasks[i].SourceActionSHA256 = proof.LegacySHA256
+			snapshot.Tasks[i].BackupActionSHA256 = proof.LegacySHA256
+		}
+	}
+	return snapshot
+}
+
 func TestBindLegacyRecoverySnapshotToMigrationProof(t *testing.T) {
 	snapshot := completeLegacyTaskRecoverySnapshot()
 	proof := VerifiedLegacyMigrationProof{
