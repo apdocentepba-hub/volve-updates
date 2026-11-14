@@ -11,7 +11,6 @@ package motorupdate
 // The parent must be an existing NTFS recovery directory whose ACL is
 // verified BEFORE even a transient original DNS payload is created.
 import (
- "bytes"
  "context"
  "crypto/sha256"
  "crypto/subtle"
@@ -175,6 +174,3 @@ func ReadStagedDNSOriginalBackupUnarmed(
  return records,nil
 }
 
-// compile-time reference to bytes: avoid accidental inclusion of noncanonical
-// payloads (already checked by VerifyDNSOriginalJournal).
-var _ = bytes.Equal
