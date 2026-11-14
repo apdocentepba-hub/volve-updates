@@ -134,10 +134,10 @@ if($networkInfo.Length -gt 1048576){Fail 'Snapshot DNS fuera de límite'}
 try{$network=$strict.GetString([IO.File]::ReadAllBytes($networkFile))|ConvertFrom-Json -ErrorAction Stop}
 catch{Fail 'Snapshot DNS corrupto'}
 $dnsBefore=@($network.dns | ForEach-Object {
- [ordered]@{index=[int]$_.interface_index;family=[string]$_.family;servers=@($_.servers)}
+ [pscustomobject][ordered]@{index=[int]$_.interface_index;family=[string]$_.family;servers=@($_.servers)}
 } | Sort-Object index,family)
 $dnsNow=@(Get-DnsClientServerAddress -ErrorAction Stop | ForEach-Object {
- [ordered]@{index=[int]$_.InterfaceIndex;family=[string]$_.AddressFamily;servers=@($_.ServerAddresses|Where-Object {$_})}
+ [pscustomobject][ordered]@{index=[int]$_.InterfaceIndex;family=[string]$_.AddressFamily;servers=@($_.ServerAddresses|Where-Object {$_})}
 } | Sort-Object index,family)
 if($dnsBefore.Count -ne $dnsNow.Count){Fail 'La cantidad de interfaces DNS cambió'}
 for($i=0;$i -lt $dnsBefore.Count;$i++){
