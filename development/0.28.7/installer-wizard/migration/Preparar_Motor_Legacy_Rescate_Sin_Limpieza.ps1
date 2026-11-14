@@ -159,6 +159,16 @@ try{
   Check-PrivateACL (Join-Path $dir $n)
  }
  Check-PrivateACL $dir
+ $independent=Join-Path $PSScriptRoot 'Verificar_Motor_Legacy_Rescate_Sin_Limpieza.ps1'
+ if(-not (Test-Path -LiteralPath $independent -PathType Leaf)){
+  Reject 'No se encuentra verificador independiente de motor y tarea SYSTEM'
+ }
+ $check=@(& $ps -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $independent -OriginalBackupPath $backup -MotorBackupPath $dir)
+ if($LASTEXITCODE -ne 0 -or
+  @($check|Where-Object{$_ -match '^VOLVE_LEGACY_RECOVERY_VERIFIED_READ_ONLY;'}).Count -ne 1){
+  Reject 'Copia de motor no superó la verificación independiente'
+ }
+ Write-Host 'VOLVE_MOTOR_VERIFICACION_INDEPENDIENTE=PASS; BORRADO_AUTORIZADO=NO'
  Write-Host 'VOLVE_LEGACY_MOTOR_BACKUP_OK; COPIA_VERIFICADA=SI; LIMPIEZA_AUTORIZADA=NO'
  Write-Host ('RECIBO_SHA256='+$receiptHash)
  Write-Host 'SISTEMA_INTACTO=SI; MOTOR_NO_MODIFICADO; TAREAS_INTACTAS; DNS_INTACTO'
