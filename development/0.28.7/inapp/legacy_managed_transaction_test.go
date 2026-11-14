@@ -34,6 +34,7 @@ type signedLegacyDriverLab struct {
     failCoverageAt int
     coverageSnapshot *LegacyTaskRecoverySnapshot
     coverageSnapshots []LegacyTaskRecoverySnapshot
+    coverageAlterServerAction bool
 }
 func newSignedLegacyDriverLab()*signedLegacyDriverLab {
     return &signedLegacyDriverLab{managedDriverTest:&managedDriverTest{}}
@@ -97,7 +98,16 @@ func (d *signedLegacyDriverLab) VerifyLegacyTaskRecoveryCoverage(_ context.Conte
     if d.coverageCount<=len(d.coverageSnapshots){snapshot=d.coverageSnapshots[d.coverageCount-1]
     } else if d.coverageSnapshot!=nil {snapshot=*d.coverageSnapshot
     } else {snapshot=completeLegacyTaskRecoverySnapshot()}
-    return testLegacyTaskRecoverySnapshotForProof(snapshot,proof),nil
+    snapshot = testLegacyTaskRecoverySnapshotForProof(snapshot,proof)
+    if d.coverageAlterServerAction {
+        for i := range snapshot.Tasks {
+            if snapshot.Tasks[i].Name == "VOLVE-DNS-SERVER-0270" {
+                snapshot.Tasks[i].SourceActionSHA256 = testLegacyManifestSHA256
+                snapshot.Tasks[i].BackupActionSHA256 = testLegacyManifestSHA256
+            }
+        }
+    }
+    return snapshot,nil
 }
 
 func (d *signedLegacyDriverLab) VerifyPreparedTarget(_ context.Context, m Manifest) error {
@@ -148,6 +158,24 @@ func TestSignedLegacyTransactionRequiresRevalidationAndIndependentWatchdog(t *te
         t.Fatalf("expected 4 OS probes, 3 watchdogs, 2 target checks and ONE released exclusive lease; got %d/%d/%d locks=%d/%d active=%t",checks,d.watchdogCount,d.preparedCount,d.lockAcquires,d.lockReleases,d.lockHeld)
     }
 }
+func TestSignedLegacyTransactionRejectsThreeTaskBackupForDifferentSignedMotor(t *testing.T) {
+    f := newSignedBridge(t)
+    d := newSignedLegacyDriverLab()
+    d.coverageAlterServerAction = true
+    err := runSignedLegacyLab(context.Background(), f, d, testSecureLabFolderBridge, func() error { return nil })
+    if err == nil || !strings.Contains(err.Error(), "not bound to the signed migration proof") {
+        t.Fatalf("recovery for a different DNS server motor accepted: %v", err)
+    }
+    for _, call := range d.calls {
+        if call == "snapshot" || call == "install" || call == "switch" || call == "commit" {
+            t.Fatalf("transaction advanced with unrelated recovery bytes: %v", d.calls)
+        }
+    }
+    if d.coverageCount != 1 || d.lockHeld || d.lockAcquires != 1 || d.lockReleases != 1 {
+        t.Fatalf("mismatched proof should fail at first locked coverage check: %+v", d)
+    }
+}
+
 func TestSignedLegacyTransactionBlocksBeforeSnapshotWithoutPermissionOrWatchdog(t *testing.T){
     for _,kind:=range []string{"wrong-publisher","unsafe-parent","no-live-dns","missing-watchdog","no-driver"}{
         t.Run(kind,func(t *testing.T){
