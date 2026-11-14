@@ -28,7 +28,15 @@ jobs:
           $root=Join-Path $env:GITHUB_WORKSPACE 'development/0.28.7/installer-wizard'
           $path=Join-Path $root 'VOLVE_Asistente_0287_PREVIEW.nsi'
           $terms=Join-Path $root 'TERMINOS_PREVIEW_0287.txt'
-          $script=[IO.File]::ReadAllText($path)
+          $raw=[IO.File]::ReadAllBytes($path)
+          if ($raw.Length -lt 3 -or $raw[0] -ne 239 -or $raw[1] -ne 187 -or $raw[2] -ne 191) {
+            throw 'NSIS source must use UTF-8 with BOM so accents do not turn into mojibake'
+          }
+          $strictUtf8=New-Object System.Text.UTF8Encoding($false,$true)
+          $script=$strictUtf8.GetString($raw,3,$raw.Length-3)
+          if (-not $script.Contains('VOLVÉ') -or -not $script.Contains('recuperación')) {
+            throw 'Spanish accented strings were corrupted'
+          }
           if (-not (Test-Path -LiteralPath $terms -PathType Leaf)) { throw 'Required consent text absent' }
           if ($script -notmatch '(?im)^RequestExecutionLevel user\s*$') { throw 'Wizard prototype must not request Windows administrator elevation' }
           if ($script -notmatch 'OutFile "VOLVE_Asistente_VistaPrevia_0287.exe"') { throw 'Output must identify inactive preview' }
@@ -44,6 +52,37 @@ jobs:
           foreach ($item in $required) {
             if (-not $script.Contains($item)) { throw ('Wizard page/guard missing: '+$item) }
           }
+          $permissions=[regex]::Match($script,'(?s)Function PermissionsPage(.+?)FunctionEnd').Groups[1].Value
+          $commitment=[regex]::Match($script,'(?s)Function CommitmentPage(.+?)FunctionEnd').Groups[1].Value
+          $summary=[regex]::Match($script,'(?s)Function SummaryPage(.+?)FunctionEnd').Groups[1].Value
+          foreach($item in @(
+            @{page=$permissions;title='Permisos de VOLVÉ'},
+            @{page=$commitment;title='Duración del compromiso'},
+            @{page=$summary;title='Confirmación final'}
+          )){
+            if(-not $item.page.Contains('MUI_HEADER_TEXT') -or -not $item.page.Contains($item.title)) {
+              throw ('Incorrect or stale custom page title: '+$item.title)
+            }
+          }
+          $checks=[regex]::Matches($permissions,'(?m)^\s*\$\{NSD_CreateCheckbox\}\s+0\s+(\d+)u\s+100%\s+(\d+)u')
+          if($checks.Count -ne 5){throw 'All five separate consent checkboxes must exist'}
+          foreach($c in $checks){
+            $endY=[int]$c.Groups[1].Value+[int]$c.Groups[2].Value
+            if($endY -gt 135){throw ('Consent checkbox clipped below dialog: y+h='+$endY)}
+          }
+          if(-not $permissions.Contains('Pop $ConsentRestrictions') -or
+            -not $script.Contains('${NSD_GetState} $ConsentRestrictions $0')){
+            throw 'The fifth restriction checkbox must be both visible and checked by the page guard'
+          }
+          $allPages=@($permissions,$commitment,$summary)
+          foreach($page in $allPages){
+            foreach($control in [regex]::Matches($page,'(?m)^\s*\$\{NSD_Create(?:Label|Checkbox|RadioButton)\}\s+0\s+(\d+)u\s+100%\s+(\d+)u')){
+              if(([int]$control.Groups[1].Value+[int]$control.Groups[2].Value) -gt 138){
+                throw 'A custom-page control extends beyond the permitted vertical bounds'
+              }
+            }
+          }
+          Write-Host 'PASS VOLVE_UI_UTF8_SPANISH_HEADERS_FIVE_VISIBLE_CONSENTS_COMPACT_PAGES'
           $forbidden='(?im)^\s*(?:File|FileOpen|FileWrite|Exec|ExecWait|nsExec::Exec|WriteReg\w*|CreateShortCut|CreateDirectory|SetOutPath|Delete|RMDir|Rename|CopyFiles|RegDLL|CallInstDLL|WriteUninstaller|SetShellVarContext)\b'
           if ([regex]::IsMatch($script,$forbidden)) { throw 'Unsafe NSIS mutation directive in inactive UI preview' }
           $sections=[regex]::Matches($script,'(?im)^Section\s+')
