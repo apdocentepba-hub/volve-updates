@@ -7,6 +7,9 @@ on:
       - 'development/0.28.7/inapp/legacy_managed_transaction_test.go'
       - 'development/0.28.7/inapp/legacy_task_recovery_coverage.go'
       - 'development/0.28.7/inapp/legacy_task_recovery_coverage_test.go'
+      - 'development/0.28.7/inapp/legacy_task_recovery_reader.go'
+      - 'development/0.28.7/inapp/legacy_task_recovery_reader_windows.go'
+      - 'development/0.28.7/inapp/legacy_task_recovery_reader_test.go'
       - 'development/0.28.7/inapp/resident_protected_signed_switch_windows.go'
       - 'development/0.28.7/inapp/resident_protected_signed_transaction_windows_test.go'
       - 'development/0.28.7/inapp/apply_overlay.go'
@@ -61,5 +64,5 @@ jobs:
         run: |
           test -f motorupdate/legacy_managed_transaction.go
           test -f motorupdate/legacy_managed_transaction_test.go
-          go test ./motorupdate -run '^TestSignedLegacyTransaction' -count=1 -timeout 4m -v
-          echo "PASS: protected original reverified after Snapshot; corrupt or revoked recovery cannot be used or switched."
+          go test ./motorupdate -run '^(TestSignedLegacyTransaction|TestReadLegacyTaskRecoverySnapshot)' -count=1 -timeout 4m -v
+          echo "PASS: protected legacy transaction and read-only three-task recovery reader verified; no install, DNS or task writes."
