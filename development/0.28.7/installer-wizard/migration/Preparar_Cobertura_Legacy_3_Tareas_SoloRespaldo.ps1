@@ -141,7 +141,86 @@ foreach($name in $names){
     Refuse 'El motor de rescate no usa powershell.exe de Windows confiable'
    }
    if($params -match '(?i)-(?:command|encodedcommand|enc)\b'){Refuse 'Comandos embebidos no permitidos'}
-   if($params -notmatch '(?i)(?:^|\s)-File\s+(?:"([^"]+)"|''([^'']+)''|(\S+))\s*$'){
+   if(-not ($params -match '(?i)(?:^|\s)-File\s+(?:"([^"]+)"|''([^'']+)''|(\S+))\s*
+    Refuse 'No se pudo identificar el script de rescate -File'
+   }
+   $candidate=@($Matches[1],$Matches[2],$Matches[3]|Where-Object{$_})|Select-Object -First 1
+   $base=[IO.Path]::GetFileName([string]$candidate)
+   if($base -notmatch '(?i)^VOLVE[_-].+\.ps1$'){Refuse 'Script de rescate ajeno a VOLVE'}
+   $source=Expand-SafeSource ([string]$candidate) $base
+   $type='rescue-powershell-script'
+  }
+ }
+ $scheduled+= [pscustomobject]@{task=$name;kind=$type;source=$source;source_sha=(Get-FileHash -LiteralPath $source -Algorithm SHA256).Hash.ToLowerInvariant();xml_sha=$xmlHash}
+}
+# Ninguna escritura privada comienza hasta validar las 3 tareas y archivos.
+$folder=Join-Path $pd ('VOLVE-Legacy-Three-Recovery-'+[guid]::NewGuid().ToString('N'))
+[void][IO.Directory]::CreateDirectory($folder,$dirACL)
+Verify-DACL $folder
+function Save-Sealed([string]$filename,[byte[]]$data){
+ $target=Join-Path $script:folder $filename
+ $stream=[IO.FileStream]::new($target,[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,
+  [IO.FileShare]::None,4096,[IO.FileOptions]::WriteThrough)
+ try{$stream.Write($data,0,$data.Length);$stream.Flush($true)}finally{$stream.Dispose()}
+ $acl=[Security.AccessControl.FileSecurity]::new()
+ $acl.SetAccessRuleProtection($true,$false);$acl.SetOwner($script:admins)
+ foreach($sid in @($script:system,$script:admins)){
+  $acl.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new($sid,
+   [Security.AccessControl.FileSystemRights]::FullControl,
+   [Security.AccessControl.AccessControlType]::Allow))
+ }
+ [IO.File]::SetAccessControl($target,$acl)
+ Verify-DACL $target
+ $hash=(Get-FileHash -LiteralPath $target -Algorithm SHA256).Hash.ToLowerInvariant()
+ if($hash -cne (SHA-Bytes $data)){Refuse 'Copia de archivo no coincide con memoria'}
+ return $hash
+}
+$records=@()
+for($i=0;$i -lt $scheduled.Count;$i++){
+ $s=$scheduled[$i]
+ $data=[IO.File]::ReadAllBytes($s.source)
+ if($data.Length -lt 1 -or $data.Length -gt 80MB -or
+  (SHA-Bytes $data) -cne $s.source_sha){Refuse 'Dependencia modificada durante copia'}
+ $target='accion-'+$i.ToString('000')+[IO.Path]::GetExtension($s.source)
+ $copyHash=Save-Sealed $target $data
+ $records+= [ordered]@{
+  task=$s.task;kind=$s.kind;artifact=$target
+  source_path=$s.source;original_sha256=$copyHash
+  original_size=$data.Length;task_xml_sha256=$s.xml_sha
+ }
+}
+$receipt=[ordered]@{
+ schema=1;component='VOLVE-THREE-LEGACY-TASKS-DIRECT-ACTIONS-BACKUP-V1'
+ state='PRIVATE_BACKUP_ONLY_NO_CLEANUP_NO_INSTALL'
+ original_manifest_sha256=(Get-FileHash -LiteralPath (Join-Path $original 'manifest.json') -Algorithm SHA256).Hash.ToLowerInvariant()
+ records=$records
+ direct_actions_only=$true
+ transitive_dependencies_certified=$false
+ recovery_after_reboot_verified=$false
+ publisher_authorization_verified=$false
+ cleanup_authorized=$false
+ install_authorized=$false
+}
+$receiptHash=Save-Sealed 'recibo-tres-tareas.json' ($utf8.GetBytes((ConvertTo-Json -InputObject $receipt -Depth 9 -Compress)))
+foreach($s in $scheduled){
+ if((Get-FileHash -LiteralPath $s.source -Algorithm SHA256).Hash.ToLowerInvariant() -cne $s.source_sha){
+  Refuse 'Archivo fuente cambio desde la lectura'}
+}
+Check-Original
+Verify-DACL $folder
+foreach($r in $records){Verify-DACL (Join-Path $folder $r.artifact)}
+$independent=Join-Path $PSScriptRoot 'Verificar_Cobertura_Legacy_3_Tareas_SoloLectura.ps1'
+if(-not (Test-Path -LiteralPath $independent -PathType Leaf)){Refuse 'Falta revisor independiente de tres tareas'}
+$check=@(& $ps -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $independent -BackupPath $original -ThreeTasksBackupPath $folder)
+if($LASTEXITCODE -ne 0 -or
+ @($check|Where-Object{$_ -match '^VOLVE_THREE_TASKS_DIRECT_ACTIONS_VERIFIED_READ_ONLY;'}).Count -ne 1){
+ Refuse 'La copia de las tres acciones no paso verificacion independiente'
+}
+Write-Host 'VOLVE_THREE_TASKS_INDEPENDENT_REVIEW=PASS; CLEANUP=NO'
+Write-Host 'VOLVE_LEGACY_THREE_TASKS_DIRECT_ACTIONS_BACKUP_OK; TASKS=3; COPIES=3'
+Write-Host ('RECEIPT_SHA256='+$receiptHash)
+Write-Host 'CLEANUP_AUTHORIZED=NO; INSTALL_AUTHORIZED=NO; TRANSITIVE_DEPENDENCIES_VERIFIED=NO'
+)){
     Refuse 'No se pudo identificar el script de rescate -File'
    }
    $candidate=@($Matches[1],$Matches[2],$Matches[3]|Where-Object{$_})|Select-Object -First 1
