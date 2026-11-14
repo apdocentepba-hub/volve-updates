@@ -32,7 +32,7 @@ jobs:
           if (-not (Test-Path -LiteralPath $terms -PathType Leaf)) { throw 'Required consent text absent' }
           if ($script -notmatch '(?im)^RequestExecutionLevel user\s*$') { throw 'Wizard prototype must not request Windows administrator elevation' }
           if ($script -notmatch 'OutFile "VOLVE_Asistente_VistaPrevia_0287.exe"') { throw 'Output must identify inactive preview' }
-          if ($script -notmatch '(?i)NO instala' -or $script -notmatch '(?i)NO modifica' -or $script -notmatch '(?i)NO INSTALADO') {
+          if ($script -notmatch '(?i)NO instala' -or $script -notmatch '(?i)No se modifican' -or $script -notmatch '(?i)NO INSTALADO') {
             throw 'Preview disclaimers missing'
           }
           $required=@(
