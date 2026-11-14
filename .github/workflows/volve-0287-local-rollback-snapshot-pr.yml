@@ -85,3 +85,14 @@ jobs:
               Unregister-ScheduledTask -TaskName $fixtureName -Confirm:$false -ErrorAction Stop
             }
           }
+
+      - name: Share only source-backed migration preparation kit (NO PRIVATE CI BACKUP)
+        uses: actions/upload-artifact@v4
+        with:
+          name: VOLVE_MIGRACION_BACKUP_LOCAL_NO_LIMPIA_NO_INSTALA
+          path: |
+            development/0.28.7/installer-wizard/migration/Preparar_Respaldo_VOLVE_SoloLectura.ps1
+            development/0.28.7/installer-wizard/migration/EJECUTAR_RESPALDO_PREVIO_VOLVE.cmd
+            development/0.28.7/installer-wizard/migration/LEEME_PREPARACION_VOLVE.txt
+          retention-days: 7
+          if-no-files-found: error
