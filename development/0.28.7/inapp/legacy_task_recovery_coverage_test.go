@@ -27,6 +27,34 @@ func completeLegacyTaskRecoverySnapshot() LegacyTaskRecoverySnapshot {
 	return snapshot
 }
 
+func TestBindLegacyRecoverySnapshotToMigrationProof(t *testing.T) {
+	snapshot := completeLegacyTaskRecoverySnapshot()
+	proof := VerifiedLegacyMigrationProof{
+		LegacySHA256: testLegacyActionSHA256,
+		LegacyTaskXMLSHA256: testLegacyTaskXMLSHA256,
+	}
+	if err := bindLegacyRecoverySnapshotToMigrationProof(snapshot, proof); err != nil {
+		t.Fatalf("matching signed legacy server task rejected: %v", err)
+	}
+	for _, field := range []string{"source xml", "backup xml", "source action", "backup action"} {
+		t.Run(field, func(t *testing.T) {
+			candidate := completeLegacyTaskRecoverySnapshot()
+			for i := range candidate.Tasks {
+				if candidate.Tasks[i].Name != "VOLVE-DNS-SERVER-0270" { continue }
+				switch field {
+				case "source xml": candidate.Tasks[i].SourceXMLSHA256 = testLegacyManifestSHA256
+				case "backup xml": candidate.Tasks[i].BackupXMLSHA256 = testLegacyManifestSHA256
+				case "source action": candidate.Tasks[i].SourceActionSHA256 = testLegacyManifestSHA256
+				case "backup action": candidate.Tasks[i].BackupActionSHA256 = testLegacyManifestSHA256
+				}
+			}
+			if err := bindLegacyRecoverySnapshotToMigrationProof(candidate, proof); err == nil {
+				t.Fatal("unrelated DNS server task identity accepted")
+			}
+		})
+	}
+}
+
 func TestReviewLegacyTaskRecoveryCoverageRequiresAllThreeExactTasks(t *testing.T) {
 	got := ReviewLegacyTaskRecoveryCoverage(completeLegacyTaskRecoverySnapshot())
 	if !got.RecoverySetComplete || !got.InitialSnapshotManifestVerified ||
