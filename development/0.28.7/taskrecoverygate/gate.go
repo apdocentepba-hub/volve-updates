@@ -18,39 +18,53 @@ var requiredTasks = []string{
 	"VOLVE-DNS-SERVER-0270",
 }
 
+// InitialSnapshotEvidence must come from the separate read-only snapshot
+// verifier. Matching hash strings alone are not considered verified evidence.
+type InitialSnapshotEvidence struct {
+	ExpectedManifestSHA256    string
+	ObservedManifestSHA256    string
+	IndependentVerifierPassed bool
+}
+
 // TaskEvidence describes independently verified facts about one task and its
 // protected backup. Hashes must be SHA-256 hex digests of the exact XML and
 // direct action bytes, not of a normalized or reconstructed representation.
 type TaskEvidence struct {
-	Name                   string
-	PrincipalSID           string
-	SourceXMLSHA256        string
-	BackupXMLSHA256        string
-	SourceActionSHA256     string
-	BackupActionSHA256     string
-	SourceStillUnchanged   bool
-	BackupACLVerified      bool
-	BackupReadbackVerified bool
+	Name                    string
+	PrincipalSID            string
+	SourceXMLSHA256         string
+	BackupXMLSHA256         string
+	SourceActionSHA256      string
+	BackupActionSHA256      string
+	SourceStillUnchanged    bool
+	BackupACLVerified       bool
+	BackupReadbackVerified  bool
 	DirectActionAllowlisted bool
 }
 
-// Review reports coverage only. The two authorization fields are deliberately
-// always false; a separate signed transaction and production driver are still
-// required before any mutation can be considered.
+// Review reports direct-action backup coverage only. The transitive
+// dependencies and post-reboot recovery are not certified by this gate.
+// Authorization fields are deliberately always false.
 type Review struct {
-	RecoverySetComplete bool     `json:"recovery_set_complete"`
-	InstallAuthorized   bool     `json:"install_authorized"`
-	CleanupAuthorized   bool     `json:"cleanup_authorized"`
-	Blockers            []string `json:"blockers"`
+	RecoverySetComplete               bool     `json:"recovery_set_complete"`
+	InitialSnapshotManifestVerified   bool     `json:"initial_snapshot_manifest_verified"`
+	TransitiveDependenciesCertified    bool     `json:"transitive_dependencies_certified"`
+	RecoveryAfterRebootVerified        bool     `json:"recovery_after_reboot_verified"`
+	InstallAuthorized                  bool     `json:"install_authorized"`
+	CleanupAuthorized                  bool     `json:"cleanup_authorized"`
+	Blockers                           []string `json:"blockers"`
 }
 
-// Inspect validates the initial snapshot manifest binding and exact coverage
-// of all three known legacy SYSTEM tasks. Unknown or duplicate tasks fail
-// closed. This does not certify transitive dependencies of the actions.
-func Inspect(expectedManifestSHA256, observedManifestSHA256 string, items []TaskEvidence) Review {
+// Inspect validates independently verified manifest evidence and exact
+// coverage of all three known legacy SYSTEM tasks. Unknown or duplicate tasks
+// fail closed. This does not certify transitive dependencies of the actions.
+func Inspect(snapshot InitialSnapshotEvidence, items []TaskEvidence) Review {
 	blockers := make(map[string]struct{})
-	if !validSHA256(expectedManifestSHA256) || !validSHA256(observedManifestSHA256) ||
-		!strings.EqualFold(expectedManifestSHA256, observedManifestSHA256) {
+	manifestVerified := snapshot.IndependentVerifierPassed &&
+		validSHA256(snapshot.ExpectedManifestSHA256) &&
+		validSHA256(snapshot.ObservedManifestSHA256) &&
+		strings.EqualFold(snapshot.ExpectedManifestSHA256, snapshot.ObservedManifestSHA256)
+	if !manifestVerified {
 		blockers["initial_snapshot_manifest_unverified"] = struct{}{}
 	}
 
@@ -97,9 +111,12 @@ func Inspect(expectedManifestSHA256, observedManifestSHA256 string, items []Task
 	}
 
 	result := Review{
-		InstallAuthorized: false,
-		CleanupAuthorized: false,
-		Blockers:         make([]string, 0, len(blockers)),
+		InitialSnapshotManifestVerified: manifestVerified,
+		TransitiveDependenciesCertified: false,
+		RecoveryAfterRebootVerified:     false,
+		InstallAuthorized:               false,
+		CleanupAuthorized:               false,
+		Blockers:                        make([]string, 0, len(blockers)),
 	}
 	for blocker := range blockers {
 		result.Blockers = append(result.Blockers, blocker)
