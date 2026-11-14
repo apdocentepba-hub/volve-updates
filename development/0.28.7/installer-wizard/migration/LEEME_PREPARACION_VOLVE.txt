@@ -1,0 +1,42 @@
+VOLVÉ 0.28.7 — PREPARACIÓN DE MIGRACIÓN (NO INSTALA / NO LIMPIA)
+14 de noviembre de 2026
+
+Este paquete es una etapa real previa a la futura migración de VOLVÉ.
+NO ES el instalador final y NO sustituye el respaldo de la conexión.
+
+HACE:
+- Copia localmente a C:\ProgramData\VOLVE-Migration-Backup-<id> las
+  definiciones XML de las tareas VOLVE existentes, incluyendo las SYSTEM.
+- Conserva la configuración DNS IPv4/IPv6 de las interfaces actuales
+  y pistas de su origen manual / automático registradas en Windows.
+- Copia el archivo HOSTS vigente y guarda SHA-256 de cada componente.
+- Crea una carpeta NTFS nueva cuyo propietario y permisos se limitan a
+  SYSTEM y Administradores. Reabre y verifica los archivos guardados.
+- Muestra BACKUP_OK y MANIFEST_SHA256 para confirmar el resultado.
+
+NO HACE:
+- No elimina, cambia ni deshabilita tareas SYSTEM.
+- No modifica adaptadores, DNS, HOSTS, registro ni navegadores.
+- No instala ni actualiza motor, watchdog o catálogo.
+- No autoriza limpieza ni garantiza recuperación después de reiniciar.
+
+CÓMO EJECUTAR, SI QUERÉS PREPARAR TU PC:
+1. Extraé el ZIP completo a una carpeta nueva.
+2. Hacé clic derecho en EJECUTAR_RESPALDO_PREVIO_VOLVE.cmd y seleccioná
+   "Ejecutar como administrador".
+3. Verificá que el resultado final sea BACKUP_OK.
+4. Enviá solamente el mensaje BACKUP_OK y, si querés, MANIFEST_SHA256.
+   NO compartas ni subas a internet el contenido de C:\ProgramData;
+   allí se guardan DNS reales, GUID de adaptadores y XML SYSTEM.
+5. Si falla, dejá intactos los componentes anteriores.
+
+El respaldo queda guardado en la propia PC y no se envía al chat.
+Al ser una utilidad de desarrollo sin firma Authenticode comercial,
+Windows podría mostrar advertencias; no ignores avisos si no confiás
+en su procedencia. El código fuente es inspeccionable en GitHub
+y la prueba de integración se ejecutó en Windows GitHub Actions.
+
+IMPORTANTE: Este respaldo por sí solo NO habilita retirar los
+componentes de VOLVÉ 0.10.2 ni las tareas 0270. El instalador final
+deberá autenticar el respaldo, validar el watchdog y restaurar
+las configuraciones ante cualquier falla.
