@@ -1,0 +1,87 @@
+name: "VOLVE 0.28.7 - Protected original-state backup on Windows (NO CLEANUP)"
+
+on:
+  push:
+    branches: [work/0287-native-setup-preview-20261113]
+    paths:
+      - 'development/0.28.7/installer-wizard/migration/**'
+      - '.github/workflows/volve-0287-local-rollback-snapshot-pr.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  backup-without-removal:
+    runs-on: windows-2022
+    timeout-minutes: 15
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+      - name: Snapshot actual Windows state under SYSTEM/Admin-only NTFS
+        run: |
+          $ErrorActionPreference='Stop'
+          if($env:GITHUB_ACTIONS -ne 'true' -or $env:RUNNER_ENVIRONMENT -ne 'github-hosted') {
+            throw 'Only ephemeral GitHub-hosted Windows CI may execute the snapshot integration test'
+          }
+          $script=Join-Path $env:GITHUB_WORKSPACE 'development/0.28.7/installer-wizard/migration/Preparar_Respaldo_VOLVE_SoloLectura.ps1'
+          $originalDns=Get-DnsClientServerAddress -ErrorAction Stop | Sort-Object InterfaceIndex,AddressFamily | Select-Object InterfaceIndex,AddressFamily,ServerAddresses | ConvertTo-Json -Depth 5 -Compress
+          $originalHosts=(Get-FileHash -Algorithm SHA256 -LiteralPath "$env:SystemRoot\System32\drivers\etc\hosts").Hash
+          $originalNames=@(Get-ScheduledTask | Where-Object {$_.TaskName -match '^(?i:VOLVE[-_])'} | Sort-Object TaskName | ForEach-Object {$_.TaskName})
+          if($originalNames.Count -ne 0){throw 'Disposable CI runner unexpectedly has a VOLVE task; refuse to modify it'}
+          $fixtureName='VOLVE-CI-BACKUP-FIXTURE'
+          $fixtureCreated=$false
+          try{
+            $action=New-ScheduledTaskAction -Execute "$env:SystemRoot\System32\cmd.exe" -Argument '/c exit 0'
+            $trigger=New-ScheduledTaskTrigger -Once -At (Get-Date).AddDays(2)
+            $principal=New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest
+            Register-ScheduledTask -TaskName $fixtureName -Action $action -Trigger $trigger -Principal $principal -ErrorAction Stop | Out-Null
+            $fixtureCreated=$true
+            $xmlBefore=Export-ScheduledTask -TaskName $fixtureName -ErrorAction Stop
+            $result=@(& "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $script)
+            if($LASTEXITCODE -ne 0){throw 'Snapshot tool returned a failure'}
+            $status=@($result | Where-Object {$_ -match '^BACKUP_OK;'})
+            if($status.Count -ne 1 -or $status[0] -notmatch 'TAREAS_VOLVE=1') {
+              throw 'Backup snapshot incomplete or did not include the SYSTEM fixture task'
+            }
+            $pathLine=@($result | Where-Object {$_ -match '^CARPETA_LOCAL_PROTEGIDA='})
+            if($pathLine.Count -ne 1){throw 'Snapshot path missing'}
+            $root=$pathLine[0].Substring('CARPETA_LOCAL_PROTEGIDA='.Length)
+            if(-not $root.StartsWith($env:ProgramData,[StringComparison]::OrdinalIgnoreCase)){
+              throw 'Snapshot escaped protected ProgramData'
+            }
+            $manifest=Get-Content -LiteralPath (Join-Path $root 'manifest.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+            if($manifest.state -ne 'PREPARED_ONLY_NO_CLEANUP_NO_INSTALL' -or
+              $manifest.safeguard.install_authorized -ne $false -or
+              $manifest.safeguard.cleanup_authorized -ne $false -or
+              $manifest.current_tasks.Count -ne 1) {
+              throw 'Snapshot manifest claimed an unapproved cleanup or omitted the task'
+            }
+            foreach($file in @($manifest.files)) {
+              $actual=(Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $root $file.name)).Hash.ToLowerInvariant()
+              if($actual -cne $file.sha256){throw 'Private recovery snapshot digest mismatch'}
+              $acl=Get-Acl -LiteralPath (Join-Path $root $file.name)
+              if(-not $acl.AreAccessRulesProtected){throw 'Private snapshot file inherited unsafe ACL'}
+              $rules=@($acl.GetAccessRules($true,$true,[Security.Principal.SecurityIdentifier]))
+              foreach($rule in $rules) {
+                if($rule.IsInherited -or $rule.IdentityReference.Value -notin @('S-1-5-18','S-1-5-32-544')) {
+                  throw 'Unexpected principal can access saved recovery bytes'
+                }
+              }
+            }
+            $originalXml=Get-Content -Raw -Encoding UTF8 (Join-Path $root $manifest.current_tasks[0].xml_backup)
+            if($originalXml -cne $xmlBefore){throw 'Actual Windows SYSTEM task XML backup differs from source'}
+            $dnsAfter=Get-DnsClientServerAddress -ErrorAction Stop | Sort-Object InterfaceIndex,AddressFamily | Select-Object InterfaceIndex,AddressFamily,ServerAddresses | ConvertTo-Json -Depth 5 -Compress
+            $hostsAfter=(Get-FileHash -Algorithm SHA256 -LiteralPath "$env:SystemRoot\System32\drivers\etc\hosts").Hash
+            $xmlAfter=Export-ScheduledTask -TaskName $fixtureName -ErrorAction Stop
+            if($originalDns -cne $dnsAfter -or $originalHosts -cne $hostsAfter -or $xmlBefore -cne $xmlAfter){
+              throw 'CRITICAL: Snapshot backup unexpectedly modified the real Windows host'
+            }
+            Write-Host 'PASS VOLVE_REAL_WINDOWS_LOCAL_NTFS_BACKUP_DNS_HOSTS_SCHEDULER_XML_NO_CLEANUP'
+          }finally{
+            if($fixtureCreated) {
+              Unregister-ScheduledTask -TaskName $fixtureName -Confirm:$false -ErrorAction Stop
+            }
+          }
