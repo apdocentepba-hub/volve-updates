@@ -162,11 +162,8 @@ func requireLegacyTaskRecoveryCoverage(
 	if err := bindLegacyRecoverySnapshotToMigrationProof(snapshot, proof); err != nil {
 		return fmt.Errorf("three-task recovery is not bound to the signed migration proof: %w", err)
 	}
-	if !review.TransitiveDependenciesCertified {
-		return errors.New("transitive legacy dependencies are not certified; migration remains blocked")
-	}
-	if !review.RecoveryAfterRebootVerified {
-		return errors.New("legacy recovery after reboot is not verified; migration remains blocked")
+	if len(review.MigrationBlockers) != 0 {
+		return fmt.Errorf("legacy migration readiness blocked: %s", strings.Join(review.MigrationBlockers, ","))
 	}
 	if review.InstallAuthorized || review.CleanupAuthorized {
 		return errors.New("coverage review attempted to authorize installation or cleanup")
