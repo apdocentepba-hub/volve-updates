@@ -375,10 +375,11 @@ func consumeLegacyJSONValue(decoder *json.Decoder, depth int) error {
 			if !ok {
 				return errors.New("JSON object key is not a string")
 			}
-			if _, exists := seen[key]; exists {
+			foldedKey := strings.ToLower(key)
+			if _, exists := seen[foldedKey]; exists {
 				return fmt.Errorf("duplicate JSON object key %q", key)
 			}
-			seen[key] = struct{}{}
+			seen[foldedKey] = struct{}{}
 			if err := consumeLegacyJSONValue(decoder, depth+1); err != nil {
 				return err
 			}
