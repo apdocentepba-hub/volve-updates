@@ -5,6 +5,7 @@ on:
     paths:
       - '.github/workflows/volve-0287-pr-system-watchdog-e2e.yml'
       - 'development/0.28.7/inapp/signed_legacy_windows_task_lab_test.go'
+      - 'development/0.28.7/inapp/apply_overlay.go'
   workflow_dispatch:
 permissions:
   contents: read
