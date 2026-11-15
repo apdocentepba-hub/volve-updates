@@ -119,6 +119,56 @@ func (d *signedLegacyWindowsTaskLab) ProbeConnectivity(ctx context.Context)error
 // VerifyPreparedTarget is a separate check of the VERSIONED INSTALLED COPY.
 // It rejects a bad or substituted candidate even if its earlier staged
 // download and the signed migration authorization were valid.
+// VerifyLegacyTaskRecoveryCoverage supplies a SYNTHETIC fixture solely to
+// exercise the disposable SYSTEM switch/watchdog mechanics below. It does not
+// inspect the real three legacy tasks, certify dependencies or prove reboot
+// recovery; these claims are never accepted by the production Windows reader.
+func (d *signedLegacyWindowsTaskLab) VerifyLegacyTaskRecoveryCoverage(
+    ctx context.Context,
+    proof motorupdate.VerifiedLegacyMigrationProof,
+) (motorupdate.LegacyTaskRecoverySnapshot, error) {
+    if err := ctx.Err(); err != nil {
+        return motorupdate.LegacyTaskRecoverySnapshot{}, err
+    }
+    if !managedLabName.MatchString(d.name) || len(proof.LegacySHA256) != 64 || len(proof.LegacyTaskXMLSHA256) != 64 {
+        return motorupdate.LegacyTaskRecoverySnapshot{}, errors.New("synthetic recovery fixture requires a disposable task and pinned proof")
+    }
+    snapshot := motorupdate.LegacyTaskRecoverySnapshot{
+        ExpectedManifestSHA256: strings.Repeat("a", 64),
+        ObservedManifestSHA256: strings.Repeat("a", 64),
+        IndependentVerifierPassed: true,
+        // Test fixture only: deliberately synthetic and not migration evidence.
+        TransitiveDependenciesCertified: true,
+        RecoveryAfterRebootVerified: true,
+        Tasks: make([]motorupdate.LegacyTaskRecoveryEvidence, 0, 3),
+    }
+    for _, name := range []string{
+        "VOLVE-CATALOGO-0230",
+        "VOLVE-DNS-RESCUE-0270",
+        "VOLVE-DNS-SERVER-0270",
+    } {
+        xmlHash := strings.Repeat("b", 64)
+        actionHash := strings.Repeat("c", 64)
+        if name == "VOLVE-DNS-SERVER-0270" {
+            xmlHash = proof.LegacyTaskXMLSHA256
+            actionHash = proof.LegacySHA256
+        }
+        snapshot.Tasks = append(snapshot.Tasks, motorupdate.LegacyTaskRecoveryEvidence{
+            Name: name,
+            PrincipalSID: "S-1-5-18",
+            SourceXMLSHA256: xmlHash,
+            BackupXMLSHA256: xmlHash,
+            SourceActionSHA256: actionHash,
+            BackupActionSHA256: actionHash,
+            SourceStillUnchanged: true,
+            BackupACLVerified: true,
+            BackupReadbackVerified: true,
+            DirectActionAllowlisted: true,
+        })
+    }
+    return snapshot, nil
+}
+
 func (d *signedLegacyWindowsTaskLab) VerifyPreparedTarget(ctx context.Context, manifest motorupdate.Manifest) error {
     if err:=ctx.Err();err!=nil{return err}
     if d.installedExe=="" || !filepath.IsAbs(d.installedExe) {
