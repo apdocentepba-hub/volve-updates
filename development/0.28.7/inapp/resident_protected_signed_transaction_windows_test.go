@@ -115,8 +115,8 @@ func TestProtectedSignedTransactionBlocksWhenDedicatedReaderLacksDependencyOrReb
 		clear func(*LegacyTaskRecoverySnapshot)
 		want string
 	}{
-		{"transitive dependencies", func(s *LegacyTaskRecoverySnapshot) { s.TransitiveDependenciesCertified = false }, "transitive legacy dependencies are not certified"},
-		{"recovery after reboot", func(s *LegacyTaskRecoverySnapshot) { s.RecoveryAfterRebootVerified = false }, "recovery after reboot is not verified"},
+		{"transitive dependencies", func(s *LegacyTaskRecoverySnapshot) { s.TransitiveDependenciesCertified = false }, "transitive_dependencies_uncertified"},
+		{"recovery after reboot", func(s *LegacyTaskRecoverySnapshot) { s.RecoveryAfterRebootVerified = false }, "recovery_after_reboot_unverified"},
 	} {
 		t.Run(missing.name, func(t *testing.T) {
 			fixture := newSignedBridge(t)
