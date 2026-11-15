@@ -41,6 +41,7 @@ type setupPreviewReport struct {
  BrowserPolicyValuesExported bool `json:"browser_policy_values_exported"`
  BrowserEnforcementVerified bool `json:"browser_enforcement_verified"`
  Preconditions []string `json:"unmet_production_prerequisites"`
+ MigrationBlockers []string `json:"migration_blockers,omitempty"`
  CanInstall bool `json:"can_install"`
  CanUpgrade bool `json:"can_upgrade"`
  CanChangeDNS bool `json:"can_change_dns"`
@@ -144,6 +145,7 @@ func inspectCIHostWithProtectedOption(ctx context.Context, holdProtectedMutex bo
   BrowserPolicyValuesExported:false,
   BrowserEnforcementVerified:false,
   Preconditions:append([]string(nil),plan.Prerequisites...),
+  MigrationBlockers:append([]string(nil),plan.MigrationBlockers...),
   CanInstall:false,CanUpgrade:false,CanChangeDNS:false,CanChangeTasks:false,
   Status:"NO_INSTALL_OR_DNS_CHANGE_AUTHORIZED",
  },nil
