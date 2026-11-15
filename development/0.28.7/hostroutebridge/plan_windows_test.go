@@ -127,6 +127,19 @@ func TestRoutePlanNeverConfusesLegacyWithFresh(t *testing.T) {
             t.Fatalf("legacy plan omitted required recovery blocker %q: %v",required,plan.Prerequisites)
         }
     }
+    wantBlockers:=[]string{
+        "legacy_three_task_backup_unverified",
+        "legacy_transitive_dependencies_uncertified",
+        "legacy_reboot_recovery_unverified",
+    }
+    if len(plan.MigrationBlockers)!=len(wantBlockers) {
+        t.Fatalf("legacy migration blockers missing or unexpected: %v",plan.MigrationBlockers)
+    }
+    for i,want:=range wantBlockers {
+        if plan.MigrationBlockers[i]!=want {
+            t.Fatalf("legacy blocker %d = %q, want %q",i,plan.MigrationBlockers[i],want)
+        }
+    }
     if plan.CanInstall||plan.CanUpgrade||plan.CanChangeDNS||plan.CanChangeTasks {
         t.Fatal("legacy recovery prerequisites authorized a mutation")
     }
