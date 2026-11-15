@@ -47,9 +47,9 @@ type LegacyTaskRecoverySnapshot struct {
 	Tasks                        []LegacyTaskRecoveryEvidence
 }
 
-// LegacyTaskRecoveryReview reports direct task coverage and whether the
-// driver supplied separate dependency/reboot evidence. It does not validate
-// that evidence's provenance and cannot authorize installation or cleanup.
+// LegacyTaskRecoveryReview reports direct task coverage separately from
+// migration readiness. MigrationBlockers identifies missing dependency/reboot
+// evidence; neither list validates provenance or authorizes installation.
 type LegacyTaskRecoveryReview struct {
 	RecoverySetComplete             bool     `json:"recovery_set_complete"`
 	InitialSnapshotManifestVerified bool     `json:"initial_snapshot_manifest_verified"`
@@ -58,6 +58,7 @@ type LegacyTaskRecoveryReview struct {
 	InstallAuthorized               bool     `json:"install_authorized"`
 	CleanupAuthorized               bool     `json:"cleanup_authorized"`
 	Blockers                        []string `json:"blockers"`
+	MigrationBlockers               []string `json:"migration_blockers"`
 }
 
 // ReviewLegacyTaskRecoveryCoverage is pure validation. All booleans and hashes
@@ -114,6 +115,14 @@ func ReviewLegacyTaskRecoveryCoverage(snapshot LegacyTaskRecoverySnapshot) Legac
 			blockers["direct_action_not_allowlisted"] = struct{}{}
 		}
 	}
+	migrationBlockers := make([]string, 0, 2)
+	if !snapshot.TransitiveDependenciesCertified {
+		migrationBlockers = append(migrationBlockers, "transitive_dependencies_uncertified")
+	}
+	if !snapshot.RecoveryAfterRebootVerified {
+		migrationBlockers = append(migrationBlockers, "recovery_after_reboot_unverified")
+	}
+	sort.Strings(migrationBlockers)
 	result := LegacyTaskRecoveryReview{
 		InitialSnapshotManifestVerified: manifestVerified,
 		TransitiveDependenciesCertified: snapshot.TransitiveDependenciesCertified,
@@ -121,6 +130,7 @@ func ReviewLegacyTaskRecoveryCoverage(snapshot LegacyTaskRecoverySnapshot) Legac
 		InstallAuthorized:               false,
 		CleanupAuthorized:               false,
 		Blockers:                        make([]string, 0, len(blockers)),
+		MigrationBlockers:               migrationBlockers,
 	}
 	for blocker := range blockers {
 		result.Blockers = append(result.Blockers, blocker)
