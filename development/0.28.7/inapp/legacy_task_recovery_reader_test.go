@@ -256,6 +256,7 @@ func TestReadLegacyTaskRecoverySnapshotRejectsDuplicateJSONKeysAndExcessiveNesti
 	}
 	for _, raw := range []string{
 		`{"schema":1,"schema":1,"meta":{"state":"safe"}}`,
+		`{"schema":1,"Schema":2,"meta":{"state":"safe"}}`,
 		`{"schema":1,"meta":{"state":"safe","state":"other"}}`,
 		`{"schema":1,"meta":{"state":"safe"}} {"schema":1}`,
 	} {
@@ -272,5 +273,46 @@ func TestReadLegacyTaskRecoverySnapshotRejectsDuplicateJSONKeysAndExcessiveNesti
 	deep := strings.Repeat("[", 66) + "0" + strings.Repeat("]", 66)
 	if err := rejectLegacyDuplicateJSONKeys([]byte(deep)); err == nil {
 		t.Fatal("excessively nested JSON accepted")
+	}
+}
+
+
+func TestReadLegacyTaskRecoverySnapshotRejectsDuplicateManifestFieldsWithUpdatedPin(t *testing.T) {
+	opts, _, _ := newLegacyTaskRecoveryReaderFixture(t)
+	manifestPath := filepath.Join(opts.InitialBackupPath, "manifest.json")
+	manifestBytes, err := os.ReadFile(manifestPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ambiguous := strings.Replace(string(manifestBytes), `"schema":1`, `"schema":1,"schema":1`, 1)
+	if ambiguous == string(manifestBytes) {
+		t.Fatal("could not introduce duplicate manifest field")
+	}
+	manifestBytes = []byte(ambiguous)
+	if err := os.WriteFile(manifestPath, manifestBytes, 0600); err != nil {
+		t.Fatal(err)
+	}
+	opts.ExpectedManifestSHA256 = legacyReaderHash(manifestBytes)
+
+	receiptPath := filepath.Join(opts.ThreeTaskBackupPath, legacyThreeTaskReceiptName)
+	var receipt legacyReaderFixtureReceipt
+	receiptBytes, err := os.ReadFile(receiptPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(receiptBytes, &receipt); err != nil {
+		t.Fatal(err)
+	}
+	receipt.OriginalManifestSHA256 = opts.ExpectedManifestSHA256
+	receiptBytes, err = json.Marshal(receipt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(receiptPath, receiptBytes, 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := ReadLegacyTaskRecoverySnapshot(context.Background(), opts); err == nil {
+		t.Fatal("duplicate field in externally pinned manifest was accepted")
 	}
 }
