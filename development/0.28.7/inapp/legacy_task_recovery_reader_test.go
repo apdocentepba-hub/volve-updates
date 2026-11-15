@@ -187,8 +187,11 @@ func TestReadLegacyTaskRecoverySnapshotAcceptsCompleteReadOnlyEvidence(t *testin
 	review := ReviewLegacyTaskRecoveryCoverage(got)
 	if !review.RecoverySetComplete || !review.InitialSnapshotManifestVerified ||
 		review.TransitiveDependenciesCertified || review.RecoveryAfterRebootVerified ||
-		review.InstallAuthorized || review.CleanupAuthorized {
-		t.Fatalf("unexpected recovery review: %+v", review)
+		review.InstallAuthorized || review.CleanupAuthorized ||
+		len(review.MigrationBlockers) != 2 ||
+		review.MigrationBlockers[0] != "recovery_after_reboot_unverified" ||
+		review.MigrationBlockers[1] != "transitive_dependencies_uncertified" {
+		t.Fatalf("direct backup review did not expose migration blockers: %+v", review)
 	}
 	for path, want := range before {
 		actual, err := os.ReadFile(path)
