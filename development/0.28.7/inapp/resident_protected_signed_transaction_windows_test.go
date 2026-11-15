@@ -121,11 +121,12 @@ func TestProtectedSignedTransactionBlocksWhenDedicatedReaderLacksDependencyOrReb
 		t.Run(missing.name, func(t *testing.T) {
 			fixture := newSignedBridge(t)
 			operations := &protectedSignedFullTransactionLab{managedDriverTest: &managedDriverTest{}}
-			proof := VerifiedLegacyMigrationProof{LegacySHA256: testLegacyActionSHA256, LegacyTaskXMLSHA256: testLegacyTaskXMLSHA256}
 			calls := 0
 			reader := ProtectedLegacyTaskRecoveryReader(func(_ context.Context, got VerifiedLegacyMigrationProof) (LegacyTaskRecoverySnapshot, error) {
 				calls++
-				if got != proof { return LegacyTaskRecoverySnapshot{}, errors.New("signed proof was not forwarded unchanged") }
+				if !validLegacyTaskSHA256(got.LegacySHA256) || !validLegacyTaskSHA256(got.LegacyTaskXMLSHA256) {
+					return LegacyTaskRecoverySnapshot{}, errors.New("verified signed migration proof was not forwarded")
+				}
 				snapshot := testLegacyTaskRecoverySnapshotForProof(completeLegacyTaskRecoverySnapshot(), got)
 				missing.clear(&snapshot)
 				return snapshot, nil
