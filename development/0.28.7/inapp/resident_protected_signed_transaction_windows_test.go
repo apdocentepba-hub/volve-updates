@@ -108,6 +108,42 @@ func TestProtectedSignedDriverUsesRecoveryReaderOnlyUnderNativeMutex(t *testing.
  }
 }
 
+func TestProtectedSignedTransactionBlocksWhenDedicatedReaderLacksDependencyOrRebootEvidence(t *testing.T) {
+	residentProtectedCITest(t)
+	for _, missing := range []struct {
+		name string
+		clear func(*LegacyTaskRecoverySnapshot)
+		want string
+	}{
+		{"transitive dependencies", func(s *LegacyTaskRecoverySnapshot) { s.TransitiveDependenciesCertified = false }, "transitive legacy dependencies are not certified"},
+		{"recovery after reboot", func(s *LegacyTaskRecoverySnapshot) { s.RecoveryAfterRebootVerified = false }, "recovery after reboot is not verified"},
+	} {
+		t.Run(missing.name, func(t *testing.T) {
+			fixture := newSignedBridge(t)
+			operations := &protectedSignedFullTransactionLab{managedDriverTest: &managedDriverTest{}}
+			proof := VerifiedLegacyMigrationProof{LegacySHA256: testLegacyActionSHA256, LegacyTaskXMLSHA256: testLegacyTaskXMLSHA256}
+			calls := 0
+			reader := ProtectedLegacyTaskRecoveryReader(func(_ context.Context, got VerifiedLegacyMigrationProof) (LegacyTaskRecoverySnapshot, error) {
+				calls++
+				if got != proof { return LegacyTaskRecoverySnapshot{}, errors.New("signed proof was not forwarded unchanged") }
+				snapshot := testLegacyTaskRecoverySnapshotForProof(completeLegacyTaskRecoverySnapshot(), got)
+				missing.clear(&snapshot)
+				return snapshot, nil
+			})
+			wrapped, err := NewProtectedSignedLegacySwitchDriverWithRecoveryReader(operations, reader)
+			if err != nil { t.Fatal(err) }
+			err = runSignedLegacyLab(context.Background(), fixture, wrapped, testSecureLabFolderBridge, func() error { return nil })
+			if err == nil || !strings.Contains(err.Error(), missing.want) {
+				t.Fatalf("protected transaction accepted missing %s evidence: %v", missing.name, err)
+			}
+			if calls != 1 || operations.coverageChecks != 0 || operations.readyChecks != 0 ||
+				operations.snapshotCalls != 0 || operations.installCalls != 0 || operations.switchCalls != 0 {
+				t.Fatalf("dedicated reader's negative evidence did not stop before any mutation: reader=%d delegated=%d ready=%d calls=%v", calls, operations.coverageChecks, operations.readyChecks, operations.calls)
+			}
+		})
+	}
+}
+
 func TestProtectedSignedFullTransactionCommitAndRecoveryUnderNativeMutex(t *testing.T){
  residentProtectedCITest(t)
  for _,mode:=range []string{"commit","switch-failure","cancel-after-switch"}{
