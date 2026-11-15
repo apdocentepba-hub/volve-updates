@@ -14,6 +14,8 @@ func completeLegacyTaskRecoverySnapshot() LegacyTaskRecoverySnapshot {
 		ExpectedManifestSHA256: testLegacyManifestSHA256,
 		ObservedManifestSHA256: testLegacyManifestSHA256,
 		IndependentVerifierPassed: true,
+		TransitiveDependenciesCertified: true,
+		RecoveryAfterRebootVerified: true,
 	}
 	for _, name := range requiredLegacyRecoveryTasks {
 		snapshot.Tasks = append(snapshot.Tasks, LegacyTaskRecoveryEvidence{
@@ -70,9 +72,19 @@ func TestBindLegacyRecoverySnapshotToMigrationProof(t *testing.T) {
 func TestReviewLegacyTaskRecoveryCoverageRequiresAllThreeExactTasks(t *testing.T) {
 	got := ReviewLegacyTaskRecoveryCoverage(completeLegacyTaskRecoverySnapshot())
 	if !got.RecoverySetComplete || !got.InitialSnapshotManifestVerified ||
-		got.TransitiveDependenciesCertified || got.RecoveryAfterRebootVerified ||
+		!got.TransitiveDependenciesCertified || !got.RecoveryAfterRebootVerified ||
 		got.InstallAuthorized || got.CleanupAuthorized || len(got.Blockers) != 0 {
 		t.Fatalf("unexpected review: %+v", got)
+	}
+}
+
+func TestReviewLegacyTaskRecoveryCoverageReportsMissingMigrationEvidence(t *testing.T) {
+	snapshot := completeLegacyTaskRecoverySnapshot()
+	snapshot.TransitiveDependenciesCertified = false
+	snapshot.RecoveryAfterRebootVerified = false
+	got := ReviewLegacyTaskRecoveryCoverage(snapshot)
+	if !got.RecoverySetComplete || got.TransitiveDependenciesCertified || got.RecoveryAfterRebootVerified {
+		t.Fatalf("direct task evidence and migration evidence were conflated: %+v", got)
 	}
 }
 
