@@ -533,8 +533,8 @@ func TestSignedLegacyTransactionRequiresDependencyAndRebootEvidenceAtEveryBounda
 		clear func(*LegacyTaskRecoverySnapshot)
 		want string
 	}{
-		{"transitive dependencies", func(s *LegacyTaskRecoverySnapshot) { s.TransitiveDependenciesCertified = false }, "transitive legacy dependencies are not certified"},
-		{"recovery after reboot", func(s *LegacyTaskRecoverySnapshot) { s.RecoveryAfterRebootVerified = false }, "recovery after reboot is not verified"},
+		{"transitive dependencies", func(s *LegacyTaskRecoverySnapshot) { s.TransitiveDependenciesCertified = false }, "transitive_dependencies_uncertified"},
+		{"recovery after reboot", func(s *LegacyTaskRecoverySnapshot) { s.RecoveryAfterRebootVerified = false }, "recovery_after_reboot_unverified"},
 	} {
 		for _, failAt := range []int{1, 2} {
 			t.Run(fmt.Sprintf("%s/check-%d", evidence.name, failAt), func(t *testing.T) {
