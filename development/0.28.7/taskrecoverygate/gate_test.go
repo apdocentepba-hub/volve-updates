@@ -34,7 +34,8 @@ func TestInspectAcceptsOnlyCompleteThreeTaskBackupCoverage(t *testing.T) {
 	got := Inspect(verifiedSnapshot(), completeEvidence())
 	if !got.RecoverySetComplete || !got.InitialSnapshotManifestVerified ||
 		got.TransitiveDependenciesCertified || got.RecoveryAfterRebootVerified ||
-		got.InstallAuthorized || got.CleanupAuthorized || len(got.Blockers) != 0 {
+		got.InstallAuthorized || got.CleanupAuthorized || len(got.Blockers) != 0 ||
+		!reflect.DeepEqual(got.MigrationBlockers, []string{"recovery_after_reboot_unverified", "transitive_dependencies_uncertified"}) {
 		t.Fatalf("unexpected review: %+v", got)
 	}
 }
