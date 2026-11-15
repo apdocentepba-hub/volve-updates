@@ -140,7 +140,7 @@ func ReadLegacyTaskRecoverySnapshot(ctx context.Context, o LegacyTaskRecoveryRea
 		return empty, errors.New("initial recovery manifest does not match the external pin")
 	}
 	var manifest legacyInitialManifest
-	if err := json.Unmarshal(manifestBytes, &manifest); err != nil { return empty, errors.New("initial recovery manifest is not valid JSON") }
+	if err := decodeLegacyStrictJSON(manifestBytes, &manifest); err != nil { return empty, errors.New("initial recovery manifest is not strict JSON") }
 	if manifest.Schema != 1 || manifest.Component != "VOLVE-LOCAL-PRE-MIGRATION-BACKUP" ||
 		manifest.State != "PREPARED_ONLY_NO_CLEANUP_NO_INSTALL" ||
 		manifest.Safeguard.DNSModified || manifest.Safeguard.TasksModified ||
@@ -321,11 +321,91 @@ func sameSystemPrincipal(value string) bool {
 }
 
 func decodeLegacyStrictJSON(raw []byte, target any) error {
+	if err := rejectLegacyDuplicateJSONKeys(raw); err != nil {
+		return err
+	}
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(target); err != nil { return err }
 	var extra any
 	if err := decoder.Decode(&extra); err != io.EOF { return errors.New("trailing JSON data") }
+	return nil
+}
+
+// rejectLegacyDuplicateJSONKeys rejects ambiguous JSON objects before typed
+// decoding. encoding/json otherwise accepts repeated keys and keeps the last
+// value, which can make a pinned recovery record mean different things to
+// independent readers.
+func rejectLegacyDuplicateJSONKeys(raw []byte) error {
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+	if err := consumeLegacyJSONValue(decoder, 0); err != nil {
+		return err
+	}
+	if _, err := decoder.Token(); err != io.EOF {
+		if err == nil {
+			return errors.New("trailing JSON data")
+		}
+		return err
+	}
+	return nil
+}
+
+func consumeLegacyJSONValue(decoder *json.Decoder, depth int) error {
+	if depth > 64 {
+		return errors.New("JSON nesting limit exceeded")
+	}
+	token, err := decoder.Token()
+	if err != nil {
+		return err
+	}
+	delimiter, isDelimiter := token.(json.Delim)
+	if !isDelimiter {
+		return nil
+	}
+	switch delimiter {
+	case '{':
+		seen := make(map[string]struct{})
+		for decoder.More() {
+			keyToken, err := decoder.Token()
+			if err != nil {
+				return err
+			}
+			key, ok := keyToken.(string)
+			if !ok {
+				return errors.New("JSON object key is not a string")
+			}
+			if _, exists := seen[key]; exists {
+				return fmt.Errorf("duplicate JSON object key %q", key)
+			}
+			seen[key] = struct{}{}
+			if err := consumeLegacyJSONValue(decoder, depth+1); err != nil {
+				return err
+			}
+		}
+		end, err := decoder.Token()
+		if err != nil {
+			return err
+		}
+		if end != json.Delim('}') {
+			return errors.New("malformed JSON object")
+		}
+	case '[':
+		for decoder.More() {
+			if err := consumeLegacyJSONValue(decoder, depth+1); err != nil {
+				return err
+			}
+		}
+		end, err := decoder.Token()
+		if err != nil {
+			return err
+		}
+		if end != json.Delim(']') {
+			return errors.New("malformed JSON array")
+		}
+	default:
+		return errors.New("unexpected JSON delimiter")
+	}
 	return nil
 }
 
