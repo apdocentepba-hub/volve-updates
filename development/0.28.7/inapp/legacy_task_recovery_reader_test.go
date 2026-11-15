@@ -245,3 +245,32 @@ func TestReadLegacyTaskRecoverySnapshotRejectsUnpinnedManifestExtrasAndCancellat
 		if _, err := ReadLegacyTaskRecoverySnapshot(ctx, opts); !errors.Is(err, context.Canceled) { t.Fatalf("cancelled reader did not stop: %v", err) }
 	})
 }
+
+
+func TestDecodeLegacyStrictJSONRejectsDuplicateKeysAndExcessiveNesting(t *testing.T) {
+	type strictRecord struct {
+		Schema int `json:"schema"`
+		Meta struct {
+			State string `json:"state"`
+		} `json:"meta"`
+	}
+	for _, raw := range []string{
+		`{"schema":1,"schema":1,"meta":{"state":"safe"}}`,
+		`{"schema":1,"meta":{"state":"safe","state":"other"}}`,
+		`{"schema":1,"meta":{"state":"safe"}} {"schema":1}`,
+	} {
+		var got strictRecord
+		if err := decodeLegacyStrictJSON([]byte(raw), &got); err == nil {
+			t.Fatalf("ambiguous or trailing JSON accepted: %s", raw)
+		}
+	}
+	var valid strictRecord
+	if err := decodeLegacyStrictJSON([]byte(`{"schema":1,"meta":{"state":"safe"}}`), &valid); err != nil {
+		t.Fatalf("valid strict JSON rejected: %v", err)
+	}
+
+	deep := strings.Repeat("[", 66) + "0" + strings.Repeat("]", 66)
+	if err := rejectLegacyDuplicateJSONKeys([]byte(deep)); err == nil {
+		t.Fatal("excessively nested JSON accepted")
+	}
+}
