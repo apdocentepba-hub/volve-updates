@@ -73,7 +73,7 @@ func TestReviewLegacyTaskRecoveryCoverageRequiresAllThreeExactTasks(t *testing.T
 	got := ReviewLegacyTaskRecoveryCoverage(completeLegacyTaskRecoverySnapshot())
 	if !got.RecoverySetComplete || !got.InitialSnapshotManifestVerified ||
 		!got.TransitiveDependenciesCertified || !got.RecoveryAfterRebootVerified ||
-		got.InstallAuthorized || got.CleanupAuthorized || len(got.Blockers) != 0 {
+		got.InstallAuthorized || got.CleanupAuthorized || len(got.Blockers) != 0 || len(got.MigrationBlockers) != 0 {
 		t.Fatalf("unexpected review: %+v", got)
 	}
 }
@@ -83,8 +83,9 @@ func TestReviewLegacyTaskRecoveryCoverageReportsMissingMigrationEvidence(t *test
 	snapshot.TransitiveDependenciesCertified = false
 	snapshot.RecoveryAfterRebootVerified = false
 	got := ReviewLegacyTaskRecoveryCoverage(snapshot)
-	if !got.RecoverySetComplete || got.TransitiveDependenciesCertified || got.RecoveryAfterRebootVerified {
-		t.Fatalf("direct task evidence and migration evidence were conflated: %+v", got)
+	if !got.RecoverySetComplete || got.TransitiveDependenciesCertified || got.RecoveryAfterRebootVerified ||
+		!reflect.DeepEqual(got.MigrationBlockers, []string{"recovery_after_reboot_unverified", "transitive_dependencies_uncertified"}) {
+		t.Fatalf("direct task coverage did not report separate migration blockers: %+v", got)
 	}
 }
 
