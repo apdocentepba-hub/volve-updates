@@ -116,7 +116,18 @@ func TestRoutePlanNeverConfusesLegacyWithFresh(t *testing.T) {
     if err!=nil{t.Fatal(err)}
     if plan.Mode==PlanFresh||plan.Mode==PlanCatalog||plan.CanInstall{t.Fatal("legacy route treated as clean")}
     requirements:=strings.Join(plan.Prerequisites," ")
-    if !strings.Contains(requirements,"exact-origin-SHA256")||!strings.Contains(requirements,"signed-original-and-recovery-snapshot"){
-        t.Fatal("legacy migration missing strong original identity and rollback requirements")
+    for _,required:=range []string{
+        "exact-origin-SHA256",
+        "signed-original-and-recovery-snapshot",
+        "verify-protected-backup-of-all-three-legacy-SYSTEM-task-actions",
+        "certify-transitive-dependencies-of-all-legacy-task-actions",
+        "verify-legacy-motor-and-three-task-restoration-after-real-VM-reboot",
+    } {
+        if !strings.Contains(requirements,required) {
+            t.Fatalf("legacy plan omitted required recovery blocker %q: %v",required,plan.Prerequisites)
+        }
+    }
+    if plan.CanInstall||plan.CanUpgrade||plan.CanChangeDNS||plan.CanChangeTasks {
+        t.Fatal("legacy recovery prerequisites authorized a mutation")
     }
 }
