@@ -36,11 +36,15 @@ type LegacyTaskRecoveryEvidence struct {
 // LegacyTaskRecoverySnapshot binds those three task records to the initial
 // private snapshot. IndependentVerifierPassed must reflect a separate
 // read-only verifier of the NTFS files, not merely matching hash strings.
+// The two migration gates below must come from independent, auditable evidence;
+// the direct-action reader deliberately leaves them false.
 type LegacyTaskRecoverySnapshot struct {
-	ExpectedManifestSHA256    string
-	ObservedManifestSHA256    string
-	IndependentVerifierPassed bool
-	Tasks                     []LegacyTaskRecoveryEvidence
+	ExpectedManifestSHA256       string
+	ObservedManifestSHA256       string
+	IndependentVerifierPassed    bool
+	TransitiveDependenciesCertified bool
+	RecoveryAfterRebootVerified  bool
+	Tasks                        []LegacyTaskRecoveryEvidence
 }
 
 // LegacyTaskRecoveryReview describes coverage of direct task actions only.
@@ -112,8 +116,8 @@ func ReviewLegacyTaskRecoveryCoverage(snapshot LegacyTaskRecoverySnapshot) Legac
 	}
 	result := LegacyTaskRecoveryReview{
 		InitialSnapshotManifestVerified: manifestVerified,
-		TransitiveDependenciesCertified: false,
-		RecoveryAfterRebootVerified:     false,
+		TransitiveDependenciesCertified: snapshot.TransitiveDependenciesCertified,
+		RecoveryAfterRebootVerified:     snapshot.RecoveryAfterRebootVerified,
 		InstallAuthorized:               false,
 		CleanupAuthorized:               false,
 		Blockers:                        make([]string, 0, len(blockers)),
@@ -148,9 +152,14 @@ func requireLegacyTaskRecoveryCoverage(
 	if err := bindLegacyRecoverySnapshotToMigrationProof(snapshot, proof); err != nil {
 		return fmt.Errorf("three-task recovery is not bound to the signed migration proof: %w", err)
 	}
-	if review.InstallAuthorized || review.CleanupAuthorized ||
-		review.TransitiveDependenciesCertified || review.RecoveryAfterRebootVerified {
-		return errors.New("coverage review attempted to claim a capability it cannot certify")
+	if !review.TransitiveDependenciesCertified {
+		return errors.New("transitive legacy dependencies are not certified; migration remains blocked")
+	}
+	if !review.RecoveryAfterRebootVerified {
+		return errors.New("legacy recovery after reboot is not verified; migration remains blocked")
+	}
+	if review.InstallAuthorized || review.CleanupAuthorized {
+		return errors.New("coverage review attempted to authorize installation or cleanup")
 	}
 	return nil
 }
