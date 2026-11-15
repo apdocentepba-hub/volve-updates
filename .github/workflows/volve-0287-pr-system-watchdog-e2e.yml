@@ -1,7 +1,7 @@
 name: VOLVE 0.28.7 PR signed migration + actual SYSTEM watchdog E2E (NO RELEASE)
 on:
   pull_request:
-    branches: [feature/motor-updater-0287-pilot]
+    branches: [feature/motor-updater-0287-pilot, work/0287-dns-cname-chain-guard-20261113]
     paths:
       - '.github/workflows/volve-0287-pr-system-watchdog-e2e.yml'
       - 'development/0.28.7/inapp/signed_legacy_windows_task_lab_test.go'
