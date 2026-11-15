@@ -47,9 +47,9 @@ type LegacyTaskRecoverySnapshot struct {
 	Tasks                        []LegacyTaskRecoveryEvidence
 }
 
-// LegacyTaskRecoveryReview describes coverage of direct task actions only.
-// It cannot authorize installation or cleanup, and it does not certify
-// transitive dependencies or recovery after reboot.
+// LegacyTaskRecoveryReview reports direct task coverage and whether the
+// driver supplied separate dependency/reboot evidence. It does not validate
+// that evidence's provenance and cannot authorize installation or cleanup.
 type LegacyTaskRecoveryReview struct {
 	RecoverySetComplete             bool     `json:"recovery_set_complete"`
 	InitialSnapshotManifestVerified bool     `json:"initial_snapshot_manifest_verified"`
