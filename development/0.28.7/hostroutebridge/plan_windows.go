@@ -41,6 +41,7 @@ type InstallerPlanReadOnly struct {
     CanUpgrade bool `json:"can_upgrade"`
     CanChangeDNS bool `json:"can_change_dns"`
     CanChangeTasks bool `json:"can_change_tasks"`
+    MigrationBlockers []string `json:"migration_blockers,omitempty"`
     Disposition string `json:"disposition"`
 }
 
@@ -77,6 +78,7 @@ func PlanFromVerifiedReview(ctx context.Context, review Review) (InstallerPlanRe
     var mode PlanMode
     var steps []string
     var notes string
+    var migrationBlockers []string
     switch review.Route {
     case motorupdate.MotorRouteFreshCandidate:
         mode=PlanFresh
@@ -88,6 +90,11 @@ func PlanFromVerifiedReview(ctx context.Context, review Review) (InstallerPlanRe
         notes="Catalog-only means preserve the independently verified scheduled catalog task."
     case motorupdate.MotorRouteLegacyReview:
         mode=PlanLegacy
+        migrationBlockers=[]string{
+            "legacy_three_task_backup_unverified",
+            "legacy_transitive_dependencies_uncertified",
+            "legacy_reboot_recovery_unverified",
+        }
         steps=[]string{
             "attest-exact-legacy-exe-task-SYSTEM-and-port53",
             "require-one-time-signed-legacy-to-0287-migration-permit-with-exact-origin-SHA256",
@@ -126,6 +133,7 @@ func PlanFromVerifiedReview(ctx context.Context, review Review) (InstallerPlanRe
         Prerequisites:requirements,Notes:notes,
         CompleteHostInventories:6,SignedPackageVerified:true,
         CanInstall:false,CanUpgrade:false,CanChangeDNS:false,CanChangeTasks:false,
+        MigrationBlockers:migrationBlockers,
         Disposition:"READ_ONLY_PLAN_NOT_AN_INSTALLATION_PERMIT",
     },nil
 }
