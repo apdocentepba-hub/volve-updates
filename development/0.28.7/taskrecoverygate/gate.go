@@ -42,9 +42,9 @@ type TaskEvidence struct {
 	DirectActionAllowlisted bool
 }
 
-// Review reports direct-action backup coverage only. The transitive
-// dependencies and post-reboot recovery are not certified by this gate.
-// Authorization fields are deliberately always false.
+// Review reports direct-action coverage separately from migration readiness.
+// This gate never certifies dependency closure or post-reboot recovery, so its
+// migration blockers always include both items. Authorization is always false.
 type Review struct {
 	RecoverySetComplete               bool     `json:"recovery_set_complete"`
 	InitialSnapshotManifestVerified   bool     `json:"initial_snapshot_manifest_verified"`
@@ -53,6 +53,7 @@ type Review struct {
 	InstallAuthorized                  bool     `json:"install_authorized"`
 	CleanupAuthorized                  bool     `json:"cleanup_authorized"`
 	Blockers                           []string `json:"blockers"`
+	MigrationBlockers                  []string `json:"migration_blockers"`
 }
 
 // Inspect validates independently verified manifest evidence and exact
@@ -117,6 +118,10 @@ func Inspect(snapshot InitialSnapshotEvidence, items []TaskEvidence) Review {
 		InstallAuthorized:               false,
 		CleanupAuthorized:               false,
 		Blockers:                        make([]string, 0, len(blockers)),
+		MigrationBlockers: []string{
+			"recovery_after_reboot_unverified",
+			"transitive_dependencies_uncertified",
+		},
 	}
 	for blocker := range blockers {
 		result.Blockers = append(result.Blockers, blocker)
