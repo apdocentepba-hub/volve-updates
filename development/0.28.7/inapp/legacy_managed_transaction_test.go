@@ -527,6 +527,45 @@ func TestSignedLegacyTransactionStopsAtEachTaskCoverageBoundary(t *testing.T) {
 }
 
 
+func TestSignedLegacyTransactionRequiresDependencyAndRebootEvidenceAtEveryBoundary(t *testing.T) {
+	for _, evidence := range []struct {
+		name string
+		clear func(*LegacyTaskRecoverySnapshot)
+		want string
+	}{
+		{"transitive dependencies", func(s *LegacyTaskRecoverySnapshot) { s.TransitiveDependenciesCertified = false }, "transitive legacy dependencies are not certified"},
+		{"recovery after reboot", func(s *LegacyTaskRecoverySnapshot) { s.RecoveryAfterRebootVerified = false }, "recovery after reboot is not verified"},
+	} {
+		for _, failAt := range []int{1, 2} {
+			t.Run(fmt.Sprintf("%s/check-%d", evidence.name, failAt), func(t *testing.T) {
+				f := newSignedBridge(t)
+				d := newSignedLegacyDriverLab()
+				for i := 1; i < failAt; i++ {
+					d.coverageSnapshots = append(d.coverageSnapshots, completeLegacyTaskRecoverySnapshot())
+				}
+				incomplete := completeLegacyTaskRecoverySnapshot()
+				evidence.clear(&incomplete)
+				d.coverageSnapshots = append(d.coverageSnapshots, incomplete)
+
+				err := runSignedLegacyLab(context.Background(), f, d, testSecureLabFolderBridge, func() error { return nil })
+				if err == nil || !strings.Contains(err.Error(), evidence.want) || d.coverageCount != failAt {
+					t.Fatalf("missing %s evidence passed transaction boundary %d: count=%d err=%v", evidence.name, failAt, d.coverageCount, err)
+				}
+				has := func(name string) bool {
+					for _, call := range d.calls { if call == name { return true } }
+					return false
+				}
+				if has("install") || has("switch") || has("commit") || has("restore") || has("snapshot") != (failAt == 2) {
+					t.Fatalf("transaction crossed boundary with missing %s evidence: %v", evidence.name, d.calls)
+				}
+				if d.lockHeld || d.lockAcquires != 1 || d.lockReleases != 1 {
+					t.Fatalf("transaction lease leaked after missing %s evidence: acquires=%d releases=%d active=%t", evidence.name, d.lockAcquires, d.lockReleases, d.lockHeld)
+				}
+			})
+		}
+	}
+}
+
 func TestSignedLegacyTransactionRejectsIncompleteTaskEvidenceAtLaterBoundaries(t *testing.T) {
     for _, failAt := range []int{2, 3} {
         t.Run(fmt.Sprintf("coverage-check-%d", failAt), func(t *testing.T) {
