@@ -136,8 +136,7 @@ func TestProtectedSignedTransactionBlocksWhenDedicatedReaderLacksDependencyOrReb
 			if err == nil || !strings.Contains(err.Error(), missing.want) {
 				t.Fatalf("protected transaction accepted missing %s evidence: %v", missing.name, err)
 			}
-			if calls != 1 || operations.coverageChecks != 0 || operations.readyChecks != 0 ||
-				operations.snapshotCalls != 0 || operations.installCalls != 0 || operations.switchCalls != 0 {
+			if calls != 1 || operations.coverageChecks != 0 || operations.readyChecks != 0 || len(operations.calls) != 0 {
 				t.Fatalf("dedicated reader's negative evidence did not stop before any mutation: reader=%d delegated=%d ready=%d calls=%v", calls, operations.coverageChecks, operations.readyChecks, operations.calls)
 			}
 		})
