@@ -514,6 +514,20 @@ jobs:
             $raw=(& go run -mod=mod ./hostroutebridge/cmd/preview --review-only | Out-String).Trim()
             if($LASTEXITCODE -ne 0){throw 'Native signed Windows setup preview execution failed'}
             $report=$raw | ConvertFrom-Json -ErrorAction Stop
+            $reportBlockers=@()
+            if($null -ne $report.migration_blockers){$reportBlockers=@($report.migration_blockers)}
+            if($report.next_review_mode -eq 'REVIEW_LEGACY_SIGNED_MIGRATION'){
+              $expectedLegacyBlockers=@(
+                'legacy_three_task_backup_unverified',
+                'legacy_transitive_dependencies_uncertified',
+                'legacy_reboot_recovery_unverified'
+              )
+              if(($reportBlockers -join ',') -cne ($expectedLegacyBlockers -join ',')){
+                throw 'Legacy route JSON omitted or changed its stable migration blocker codes'
+              }
+            }elseif($reportBlockers.Count -ne 0){
+              throw 'Non-legacy route JSON was mislabeled with legacy migration blockers'
+            }
             if($report.component -ne 'VOLVE-0287-WINDOWS-SETUP-PREVIEW-CI' -or
                $report.scope -ne 'DISPOSABLE_WINDOWS_CI_ONLY_NOT_USER_PC' -or
                $report.result -ne 'REVIEW_ONLY' -or
