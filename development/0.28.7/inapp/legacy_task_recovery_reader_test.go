@@ -247,7 +247,7 @@ func TestReadLegacyTaskRecoverySnapshotRejectsUnpinnedManifestExtrasAndCancellat
 }
 
 
-func TestDecodeLegacyStrictJSONRejectsDuplicateKeysAndExcessiveNesting(t *testing.T) {
+func TestReadLegacyTaskRecoverySnapshotRejectsDuplicateJSONKeysAndExcessiveNesting(t *testing.T) {
 	type strictRecord struct {
 		Schema int `json:"schema"`
 		Meta struct {
