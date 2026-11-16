@@ -1,7 +1,7 @@
 name: VOLVE 0.28.7 integrated real Full DNS recovery VM kit (NO RELEASE)
 on:
   push:
-    branches: [feature/motor-updater-0287-pilot, work/0287-native-setup-preview-20261113]
+    branches: [feature/motor-updater-0287-pilot]
     paths:
       - '.github/workflows/volve-0287-vm-integrated-full-dns-rollback.yml'
       - 'development/0.28.7/lab/vm_integrated_real_dns_rollback.ps1'
