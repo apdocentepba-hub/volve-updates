@@ -152,3 +152,80 @@ func TestAuditLegacyPEStaticImportClosureRejectsResolverTraversal(t *testing.T) 
 	}
 }
 
+func TestAuditLegacyPEStaticImportClosureUsesAllowlistedResolver(t *testing.T) {
+	root := t.TempDir()
+	deps := filepath.Join(root, "approved")
+	if err := os.Mkdir(deps, 0700); err != nil {
+		t.Fatal(err)
+	}
+	entry := filepath.Join(root, "entry.exe")
+	helper := filepath.Join(deps, "helper.dll")
+	if err := os.WriteFile(entry, makeLegacyPEImportFixture("helper.dll"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(helper, makeLegacyPEImportFixture(), 0600); err != nil {
+		t.Fatal(err)
+	}
+	resolve, err := NewLegacyPEAllowlistedResolver([]string{deps})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := AuditLegacyPEStaticImportClosure(context.Background(), entry, resolve)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.StaticImportClosureComplete || got.RuntimeDependenciesCertified ||
+		len(got.Files) != 2 || len(got.Unresolved) != 0 {
+		t.Fatalf("allowlisted closure result = %+v", got)
+	}
+}
+
+func TestAuditLegacyPEStaticImportClosureRejectsAmbiguousAllowlistedDLL(t *testing.T) {
+	root := t.TempDir()
+	first := filepath.Join(root, "first")
+	second := filepath.Join(root, "second")
+	for _, dir := range []string{first, second} {
+		if err := os.Mkdir(dir, 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	entry := filepath.Join(root, "entry.exe")
+	if err := os.WriteFile(entry, makeLegacyPEImportFixture("helper.dll"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	for path, contents := range map[string][]byte{
+		filepath.Join(first, "helper.dll"): makeLegacyPEImportFixture(),
+		filepath.Join(second, "HELPER.DLL"): makeLegacyPEImportFixture(),
+	} {
+		if err := os.WriteFile(path, contents, 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	resolve, err := NewLegacyPEAllowlistedResolver([]string{first, second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := AuditLegacyPEStaticImportClosure(context.Background(), entry, resolve)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.StaticImportClosureComplete || len(got.Unresolved) != 1 ||
+		got.Unresolved[0].DLL != "helper.dll" {
+		t.Fatalf("ambiguous DLL match did not block closure: %+v", got)
+	}
+}
+
+func TestNewLegacyPEAllowlistedResolverRejectsLinkedRoot(t *testing.T) {
+	root := t.TempDir()
+	realRoot := filepath.Join(root, "real")
+	if err := os.Mkdir(realRoot, 0700); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(root, "linked")
+	if err := os.Symlink(realRoot, link); err != nil {
+		t.Skipf("symlink creation unavailable in this environment: %v", err)
+	}
+	if _, err := NewLegacyPEAllowlistedResolver([]string{link}); err == nil {
+		t.Fatal("linked dependency root was accepted")
+	}
+}
