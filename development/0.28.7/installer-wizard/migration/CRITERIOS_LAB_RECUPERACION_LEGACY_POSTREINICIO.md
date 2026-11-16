@@ -19,7 +19,7 @@
 
 | ID | Escenario | Entorno requerido | Resultado esperado | Estado actual |
 |---|---|---|---|---|
-| L1 | Dependencia transitiva faltante, modificada o no resoluble | VM desechable con binarios legacy exactos | Rechazo antes de armar sustitución | No probado con los binarios legacy exactos |
+| L1 | Dependencia transitiva faltante, modificada o no resoluble | VM desechable con binarios legacy exactos | Rechazo antes de armar sustitución | Auditor PE/imports y resolver allowlisted pasan fixtures en CI; binarios legacy exactos y dependencias dinámicas aún no auditados |
 | L2 | Watchdog ausente, DACL no protegida o mutex ocupado | VM Windows | Rechazo sin cambiar motor ni tareas | Parcial: gates unitarios y E2E SYSTEM con tarea temporal aprobados; no prueba rechazo de todas las condiciones ni es controlador productivo |
 | L3 | Interrupción tras preparar candidato y antes de commit | VM Windows | Journal pendiente y watchdog previamente armado | No aprobado: el E2E actual prueba rollback por fallo de conectividad después del switch, no una interrupción forzada entre preparación y commit |
 | L4 | Recuperación automática después de reinicio real | VM Windows con reinicio real | Restauración exacta de tres tareas/acciones y journal `restored` | Pendiente |
@@ -30,6 +30,16 @@
 En el HEAD `09fdaa91107b019239af7613dc7bf96a8bacf7a0`, el workflow [43781873796](https://github.com/apdocentepba-hub/volve-updates/actions/runs/43781873796) pasó dos casos en Windows hospedado: commit de una tarea temporal y rollback por fallo de conectividad mediante un watchdog independiente registrado como SYSTEM. Los logs identifican los casos `signed-commit` y `SYSTEM-watchdog-rollback-on-connectivity-failure`.
 
 La tarea y el driver son fixtures descartables; el fixture del test declara cobertura sintética para aislar la mecánica transaccional. El workflow no usa las tareas VOLVE instaladas, no cambia el DNS del host, no ejecuta el motor legacy real ni reinicia Windows. Esta repetición confirma solamente evidencia parcial del mecanismo de watchdog SYSTEM en L2; L1, L3, L4 y L5 siguen sin aprobarse.
+
+
+## Avance de auditoría estática de imports PE — 16/11/2026
+
+La PR #18 incorpora lectura directa de la tabla PE, recorrido recursivo con SHA-256 por archivo y un resolvedor que busca únicamente en raíces explícitamente autorizadas. Rechaza DLLs sin coincidencia única, candidatos enlazados y raíces enlazadas. El resultado certifica solamente la clausura de imports estáticos; nunca marca dependencias de ejecución como certificadas.
+
+En el HEAD `ab2f3be3c9e28d093729c14735dbfbcc827e4dc2), CI pasó en Windows y Ubuntu [la matriz de límites](https://github.com/apdocentepba-hub/volve-updates/actions/runs/43840330103), incluidos fixtures de resolución válida, coincidencia ambigua y rechazo de raíz enlazada. El [gate de cobertura](https://github.com/apdocentepba-hub/volve-updates/actions/runs/43840330131) también pasó.
+
+Estas son pruebas sintéticas de parser/resolvedor. No se leyeron los binarios exactos del respaldo privado, no se resolvieron DLLs reales del motor, y no se inspeccionaron cargas dinámicas, COM, scripts ni resolución Side-by-Side/API-set. Por eso L1 sigue pendiente y el gate conserva `TransitiveDependenciesCertified=false`.
+
 
 ## Evidencia previa que no alcanza
 
