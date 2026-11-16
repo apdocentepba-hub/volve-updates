@@ -405,4 +405,5 @@ func TestWindowsSignedUnversionedMigrationWithActualSYSTEMRecovery(t *testing.T)
             t.Logf("CI ONLY: signed legacy grant, actual disposable SYSTEM task and independent watchdog; final=%s",expected)
         })
     }
+    t.Log("LIMIT: boot-trigger metadata is inspected; this CI test does not reboot Windows or prove post-reboot recovery")
 }
