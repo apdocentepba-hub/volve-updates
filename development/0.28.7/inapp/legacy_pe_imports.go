@@ -40,7 +40,7 @@ func ReadLegacyPEStaticImports(input io.ReaderAt, size int64) ([]string, error) 
 	case *pe.OptionalHeader32:
 		directories = header.DataDirectory[:]
 	case *pe.OptionalHeader64:
-		directories = header.DataDirectory
+		directories = header.DataDirectory[:]
 	default:
 		return nil, errors.New("unsupported PE optional header")
 	}
