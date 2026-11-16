@@ -9,7 +9,7 @@ Este paquete NO instala ni actualiza el motor real. Simula una interrupción en 
 2. Apagar la VM `VOLVE-LAB-0287` y crear en Hyper-V un punto de control llamado `ANTES-PRUEBA-ROLLBACK-0287`. Volver a encender la VM para la nueva prueba.
 3. Descargar **únicamente dentro de la VM** el artifact del workflow `VOLVE-0287-VM-RECOVERY-BOOT-LAB-NO-INSTALL`, extraer completo en `C:\Lab\Rollback`. Conservar el manifiesto de hashes.
 
-**Verificación de integridad antes de ejecutar el kit:** obtené el SHA-256 del ZIP descargado con `Get-FileHash -Algorithm SHA256 .\\nombre-del-artefacto.zip` y cotejalo con el digest publicado en los metadatos del artefacto del run de GitHub Actions que lo generó. Si falta el digest o no coincide, no extraigas ni ejecutes el paquete.
+**Verificación de integridad antes de ejecutar el kit:** obtené el SHA-256 del ZIP descargado con `Get-FileHash -Algorithm SHA256 -LiteralPath <ruta-al-ZIP>` y compará los 64 dígitos hexadecimales (sin distinguir mayúsculas y minúsculas ni el prefijo `sha256:`) con el digest publicado en los metadatos del artefacto del run de GitHub Actions que lo generó. Si falta el digest o no coincide, no extraigas ni ejecutes el paquete.
 
 Después de extraerlo en `C:\Lab\Rollback`, desde PowerShell verificá que el manifiesto corresponda exactamente a los cinco archivos del kit y que no haya archivos adicionales. Si la comprobación falla, detené el ensayo y conservá el ZIP sin ejecutar:
 
