@@ -135,6 +135,146 @@ func ReadLegacyPEStaticImports(input io.ReaderAt, size int64) ([]string, error) 
 	return result, nil
 }
 
+// ReadLegacyPEDelayImports lists DLLs from IMAGE_DIRECTORY_ENTRY_DELAY_IMPORT
+// (data directory 13). It accepts both modern RVA descriptors (Attributes=1)
+// and the legacy VA form (Attributes=0), using the image base for conversion.
+// This inventories DLL names only: it does not validate thunks, function
+// exports, API-set/SxS forwarding, or runtime LoadLibrary/GetProcAddress.
+// A malformed or unsupported directory fails closed.
+func ReadLegacyPEDelayImports(input io.ReaderAt, size int64) ([]string, error) {
+	if input == nil {
+		return nil, errors.New("PE reader is missing")
+	}
+	if size < 64 || size > maxLegacyPEAuditBytes {
+		return nil, fmt.Errorf("PE size outside audit bounds: %d", size)
+	}
+	image, err := pe.NewFile(io.NewSectionReader(input, 0, size))
+	if err != nil {
+		return nil, fmt.Errorf("invalid PE image: %w", err)
+	}
+	defer image.Close()
+
+	var directory pe.DataDirectory
+	var imageBase uint64
+	var declaredDirs uint32
+	switch header := image.OptionalHeader.(type) {
+	case *pe.OptionalHeader32:
+		directory = header.DataDirectory[13]
+		imageBase = uint64(header.ImageBase)
+		declaredDirs = header.NumberOfRvaAndSizes
+	case *pe.OptionalHeader64:
+		directory = header.DataDirectory[13]
+		imageBase = header.ImageBase
+		declaredDirs = header.NumberOfRvaAndSizes
+	default:
+		return nil, errors.New("unsupported PE optional header")
+	}
+	if declaredDirs <= 13 {
+		if directory.VirtualAddress != 0 || directory.Size != 0 {
+			return nil, errors.New("delay-import directory is not declared by PE header")
+		}
+		return []string{}, nil
+	}
+	if directory.VirtualAddress == 0 && directory.Size == 0 {
+		return []string{}, nil
+	}
+	const descriptorBytes = 32
+	const maxDescriptors = 4096
+	if directory.VirtualAddress == 0 || directory.Size == 0 ||
+		directory.Size%descriptorBytes != 0 ||
+		directory.Size > (maxDescriptors+1)*descriptorBytes {
+		return nil, errors.New("malformed PE delay-import directory bounds")
+	}
+	offset, _, ok := legacyPERVAToFileRange(image.Sections, directory.VirtualAddress, directory.Size)
+	if !ok || uint64(offset)+uint64(directory.Size) > uint64(size) {
+		return nil, errors.New("PE delay-import directory is outside section raw data")
+	}
+
+	unique := make(map[string]struct{})
+	terminated := false
+	for pos := uint32(0); pos < directory.Size; pos += descriptorBytes {
+		var entry [descriptorBytes]byte
+		n, readErr := input.ReadAt(entry[:], int64(offset)+int64(pos))
+		if n != len(entry) || readErr != nil {
+			return nil, fmt.Errorf("read PE delay-import descriptor: %v", readErr)
+		}
+		zero := true
+		for _, b := range entry {
+			if b != 0 {
+				zero = false
+				break
+			}
+		}
+		if zero {
+			terminated = true
+			continue
+		}
+		if terminated {
+			return nil, errors.New("PE delay-import directory has data after terminator")
+		}
+		attributes := binary.LittleEndian.Uint32(entry[0:4])
+		if attributes &^ uint32(1) != 0 {
+			return nil, errors.New("PE delay-import descriptor has reserved attribute bits")
+		}
+		nameAddress := uint64(binary.LittleEndian.Uint32(entry[4:8]))
+		if nameAddress == 0 {
+			return nil, errors.New("PE delay-import descriptor has no DLL name")
+		}
+		if attributes == 0 {
+			if nameAddress < imageBase {
+				return nil, errors.New("PE delay-import VA is below image base")
+			}
+			nameAddress -= imageBase
+		}
+		if nameAddress == 0 || nameAddress > uint64(^uint32(0)) {
+			return nil, errors.New("PE delay-import DLL name RVA overflow")
+		}
+		nameOffset, available, ok := legacyPERVAToFileRange(image.Sections, uint32(nameAddress), 1)
+		if !ok || int64(nameOffset) >= size {
+			return nil, errors.New("PE delay-import DLL name is outside section raw data")
+		}
+		if available > 256 {
+			available = 256
+		}
+		if int64(nameOffset)+int64(available) > size {
+			available = uint32(size - int64(nameOffset))
+		}
+		rawName := make([]byte, available)
+		n, readErr = input.ReadAt(rawName, int64(nameOffset))
+		if n != len(rawName) || readErr != nil {
+			return nil, fmt.Errorf("read PE delay-import DLL name: %v", readErr)
+		}
+		end := -1
+		for i, b := range rawName {
+			if b == 0 {
+				end = i
+				break
+			}
+			if b < 0x20 || b > 0x7e {
+				return nil, errors.New("PE delay-import DLL name is not printable ASCII")
+			}
+		}
+		if end < 1 {
+			return nil, errors.New("PE delay-import DLL name is empty or unterminated")
+		}
+		name := string(rawName[:end])
+		if strings.ContainsAny(name, "/\\") || filepath.Base(name) != name ||
+			!strings.EqualFold(filepath.Ext(name), ".dll") {
+			return nil, fmt.Errorf("unsafe or unsupported PE delay-import DLL name %q", name)
+		}
+		unique[strings.ToLower(name)] = struct{}{}
+	}
+	if !terminated {
+		return nil, errors.New("PE delay-import directory lacks a null descriptor")
+	}
+	result := make([]string, 0, len(unique))
+	for name := range unique {
+		result = append(result, name)
+	}
+	sort.Strings(result)
+	return result, nil
+}
+
 // legacyPERVAToFileRange maps an RVA range wholly contained in one section's
 // raw bytes to a file offset. Virtual-only bytes are never treated as file data.
 func legacyPERVAToFileRange(sections []*pe.Section, rva, length uint32) (uint32, uint32, bool) {
@@ -266,6 +406,7 @@ type LegacyPEStaticImportFile struct {
 	Size    int64
 	SHA256  string
 	Imports []string
+	DelayImports []string
 }
 
 type LegacyPEUnresolvedImport struct {
@@ -286,12 +427,11 @@ type LegacyPEStaticImportClosure struct {
 // The scanner rechecks the resolved path as a regular local file before reading.
 type LegacyPEImportResolver func(importerPath, dllName string) (string, error)
 
-// AuditLegacyPEStaticImportClosure walks regular imports from directory 1
-// in each PE file; delay-load imports from directory 13 are currently outside
-// this audit. A complete result means only that every regular import resolved
-// through the supplied resolver. RuntimeDependenciesCertified is always false:
-// delay-load, dynamic loading, API-set/SxS resolution, and non-PE references
-// require separate analysis.
+// AuditLegacyPEStaticImportClosure walks both regular imports (directory 1)
+// and delay-load imports (directory 13) from each PE file. A complete result
+// covers only these two declared DLL tables through the supplied resolver.
+// RuntimeDependenciesCertified is always false: dynamic loading, API-set/SxS
+// resolution, imports by function and non-PE references remain unverified.
 func AuditLegacyPEStaticImportClosure(
 	ctx context.Context,
 	entryPath string,
@@ -372,6 +512,10 @@ func AuditLegacyPEStaticImportClosure(
 			return LegacyPEStaticImportClosure{}, statErr
 		}
 		imports, parseErr := ReadLegacyPEStaticImports(file, info.Size())
+		var delayed []string
+		if parseErr == nil {
+			delayed, parseErr = ReadLegacyPEDelayImports(file, info.Size())
+		}
 		if parseErr != nil {
 			file.Close()
 			if current.entry {
@@ -380,7 +524,7 @@ func AuditLegacyPEStaticImportClosure(
 			result.Unresolved = append(result.Unresolved, LegacyPEUnresolvedImport{
 				Importer: filepath.Dir(current.path),
 				DLL:      filepath.Base(current.path),
-				Reason:   "resolved file is not a valid PE image",
+				Reason:   "resolved file contains malformed or unsupported PE imports",
 			})
 			continue
 		}
@@ -402,9 +546,16 @@ func AuditLegacyPEStaticImportClosure(
 			continue
 		}
 		result.Files = append(result.Files, LegacyPEStaticImportFile{
-			Path: current.path, Size: n, SHA256: hex.EncodeToString(hash.Sum(nil)), Imports: imports,
+			Path: current.path, Size: n, SHA256: hex.EncodeToString(hash.Sum(nil)), Imports: imports, DelayImports: delayed,
 		})
-		for _, dll := range imports {
+		// Both directory types participate in the dependency closure. Duplicates
+		// within an image are resolved once, regardless of loading mode.
+		declared := make(map[string]struct{}, len(imports)+len(delayed))
+		for _, dll := range append(append([]string{}, imports...), delayed...) {
+			if _, exists := declared[dll]; exists {
+				continue
+			}
+			declared[dll] = struct{}{}
 			if err := ctx.Err(); err != nil {
 				return LegacyPEStaticImportClosure{}, err
 			}
