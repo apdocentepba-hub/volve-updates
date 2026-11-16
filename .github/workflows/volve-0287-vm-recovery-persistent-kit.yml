@@ -11,6 +11,17 @@ on:
       - 'development/0.28.7/lab/VM_ROLLBACK_BOOT_PACK_README.md'
       - 'development/0.28.7/complete-source-parts/**'
       - 'development/0.28.7/inapp/apply_overlay.go'
+  pull_request:
+    branches: [work/0287-dns-cname-chain-guard-20261113]
+    paths:
+      - '.github/workflows/volve-0287-vm-recovery-persistent-kit.yml'
+      - 'development/0.28.7/lab/vm_reboot_proof.ps1'
+      - 'development/0.28.7/lab/boot_recovery_lab.ps1'
+      - 'development/0.28.7/lab/reboot_event_chain.ps1'
+      - 'development/0.28.7/lab/test_reboot_event_chain.ps1'
+      - 'development/0.28.7/lab/VM_ROLLBACK_BOOT_PACK_README.md'
+      - 'development/0.28.7/complete-source-parts/**'
+      - 'development/0.28.7/inapp/apply_overlay.go'
   workflow_dispatch:
 permissions:
   contents: read
