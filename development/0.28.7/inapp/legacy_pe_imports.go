@@ -176,7 +176,7 @@ func NewLegacyPEAllowlistedResolver(roots []string) (LegacyPEImportResolver, err
 			return nil, fmt.Errorf("dependency root is not a trusted directory: %q", root)
 		}
 		resolved, err := filepath.EvalSymlinks(root)
-		if err != nil || !legacyPEPathEqual(root, resolved) {
+		if err != nil || !legacyPEPathEqual(root, resolved, info) {
 			return nil, fmt.Errorf("dependency root traverses a link or alias: %q", root)
 		}
 		key := root
@@ -202,7 +202,7 @@ func NewLegacyPEAllowlistedResolver(roots []string) (LegacyPEImportResolver, err
 				return "", fmt.Errorf("approved dependency root changed: %q", root)
 			}
 			resolvedRoot, err := filepath.EvalSymlinks(root)
-			if err != nil || !legacyPEPathEqual(root, resolvedRoot) {
+			if err != nil || !legacyPEPathEqual(root, resolvedRoot, rootInfo) {
 				return "", fmt.Errorf("approved dependency root now traverses a link: %q", root)
 			}
 			entries, err := os.ReadDir(root)
@@ -219,7 +219,7 @@ func NewLegacyPEAllowlistedResolver(roots []string) (LegacyPEImportResolver, err
 					return "", fmt.Errorf("DLL candidate is not a regular file: %q", candidate)
 				}
 				resolved, err := filepath.EvalSymlinks(candidate)
-				if err != nil || !legacyPEPathEqual(candidate, resolved) {
+				if err != nil || !legacyPEPathEqual(candidate, resolved, info) {
 					return "", fmt.Errorf("DLL candidate traverses a link or alias: %q", candidate)
 				}
 				matches = append(matches, candidate)
@@ -232,11 +232,28 @@ func NewLegacyPEAllowlistedResolver(roots []string) (LegacyPEImportResolver, err
 	}, nil
 }
 
-func legacyPEPathEqual(a, b string) bool {
-	if runtime.GOOS == "windows" {
-		return strings.EqualFold(filepath.Clean(a), filepath.Clean(b))
+func legacyPEPathEqual(path, resolved string, info os.FileInfo) bool {
+	// EvalSymlinks on Windows may expand a harmless 8.3 path (for example
+	// RUNNER~1) to its long spelling. Compare filesystem identity there while
+	// independently rejecting symlinks/reparse-like path components.
+	for current := filepath.Clean(path); ; current = filepath.Dir(current) {
+		part, err := os.Lstat(current)
+		if err != nil || part.Mode()&os.ModeSymlink != 0 {
+			return false
+		}
+		parent := filepath.Dir(current)
+		if parent == current {
+			break
+		}
 	}
-	return filepath.Clean(a) == filepath.Clean(b)
+	resolvedInfo, err := os.Stat(resolved)
+	if err != nil || !os.SameFile(info, resolvedInfo) {
+		return false
+	}
+	if runtime.GOOS == "windows" {
+		return true
+	}
+	return filepath.Clean(path) == filepath.Clean(resolved)
 }
 
 const maxLegacyPEClosureFiles = 256
