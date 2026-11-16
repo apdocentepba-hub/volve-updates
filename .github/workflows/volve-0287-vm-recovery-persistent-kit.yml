@@ -144,6 +144,17 @@ jobs:
             $path=Join-Path $out $entry.name
             if((Get-FileHash -Algorithm SHA256 -LiteralPath $path).Hash.ToLowerInvariant() -cne $entry.sha256){throw 'SHA256 mismatch'}
           }
+          $readmePath=Join-Path $out 'VM_ROLLBACK_BOOT_PACK_README.md'
+          $readme=Get-Content -LiteralPath $readmePath -Raw -ErrorAction Stop
+          $snippetMatch=[regex]::Match($readme,'(?s)\*\*Verificación de integridad antes de ejecutar el kit:\*\*.*?\x60\x60\x60powershell\r?\n(.*?)\r?\n\x60\x60\x60')
+          if(-not $snippetMatch.Success){throw 'README integrity PowerShell example is missing or malformed'}
+          $snippet=$snippetMatch.Groups[1].Value
+          $originalRootLine=[string]::Concat('$root = ',[char]39,'C:\\Lab\\Rollback',[char]39)
+          $ciRootLine=[string]::Concat('$root = ',[char]39,$out,[char]39)
+          if(-not $snippet.Contains($originalRootLine)){throw 'README verification example no longer has the expected lab root'}
+          $ciSnippet=$snippet.Replace($originalRootLine,$ciRootLine)
+          & ([scriptblock]::Create($ciSnippet))
+          Write-Host 'PASS: executed the README integrity-verification example against the packaged kit'
           Write-Host 'PASS: VM-only recovery kit manifest: 5 exact files; no release, no reboot'
       - uses: actions/upload-artifact@v4
         with:
