@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"runtime"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -153,6 +154,89 @@ func legacyPERVAToFileRange(sections []*pe.Section, rva, length uint32) (uint32,
 		return uint32(offset64), header.Size - delta, true
 	}
 	return 0, 0, false
+}
+
+// NewLegacyPEAllowlistedResolver resolves each DLL only by a direct child
+// lookup in caller-approved roots. It rejects ambiguous matches, symlinked
+// roots/candidates, and roots whose resolved path differs from the supplied
+// path. It deliberately does not emulate Windows search order or API-set
+// forwarding; unresolved imports remain blockers for certification.
+func NewLegacyPEAllowlistedResolver(roots []string) (LegacyPEImportResolver, error) {
+	if len(roots) == 0 {
+		return nil, errors.New("at least one approved PE dependency root is required")
+	}
+	approved := make([]string, 0, len(roots))
+	seen := make(map[string]struct{}, len(roots))
+	for _, root := range roots {
+		if !filepath.IsAbs(root) || filepath.Clean(root) != root {
+			return nil, fmt.Errorf("dependency root must be canonical and absolute: %q", root)
+		}
+		info, err := os.Lstat(root)
+		if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+			return nil, fmt.Errorf("dependency root is not a trusted directory: %q", root)
+		}
+		resolved, err := filepath.EvalSymlinks(root)
+		if err != nil || !legacyPEPathEqual(root, resolved) {
+			return nil, fmt.Errorf("dependency root traverses a link or alias: %q", root)
+		}
+		key := root
+		if runtime.GOOS == "windows" {
+			key = strings.ToLower(key)
+		}
+		if _, exists := seen[key]; exists {
+			return nil, fmt.Errorf("duplicate dependency root: %q", root)
+		}
+		seen[key] = struct{}{}
+		approved = append(approved, root)
+	}
+	return func(importerPath, dllName string) (string, error) {
+		if dllName == "" || strings.ContainsAny(dllName, "/\\") ||
+			filepath.Base(dllName) != dllName ||
+			!strings.EqualFold(filepath.Ext(dllName), ".dll") {
+			return "", errors.New("invalid DLL name")
+		}
+		var matches []string
+		for _, root := range approved {
+			rootInfo, err := os.Lstat(root)
+			if err != nil || !rootInfo.IsDir() || rootInfo.Mode()&os.ModeSymlink != 0 {
+				return "", fmt.Errorf("approved dependency root changed: %q", root)
+			}
+			resolvedRoot, err := filepath.EvalSymlinks(root)
+			if err != nil || !legacyPEPathEqual(root, resolvedRoot) {
+				return "", fmt.Errorf("approved dependency root now traverses a link: %q", root)
+			}
+			entries, err := os.ReadDir(root)
+			if err != nil {
+				return "", fmt.Errorf("read approved dependency root: %w", err)
+			}
+			for _, entry := range entries {
+				if !strings.EqualFold(entry.Name(), dllName) {
+					continue
+				}
+				candidate := filepath.Join(root, entry.Name())
+				info, err := os.Lstat(candidate)
+				if err != nil || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
+					return "", fmt.Errorf("DLL candidate is not a regular file: %q", candidate)
+				}
+				resolved, err := filepath.EvalSymlinks(candidate)
+				if err != nil || !legacyPEPathEqual(candidate, resolved) {
+					return "", fmt.Errorf("DLL candidate traverses a link or alias: %q", candidate)
+				}
+				matches = append(matches, candidate)
+			}
+		}
+		if len(matches) != 1 {
+			return "", fmt.Errorf("expected one approved match for %q, found %d", dllName, len(matches))
+		}
+		return matches[0], nil
+	}, nil
+}
+
+func legacyPEPathEqual(a, b string) bool {
+	if runtime.GOOS == "windows" {
+		return strings.EqualFold(filepath.Clean(a), filepath.Clean(b))
+	}
+	return filepath.Clean(a) == filepath.Clean(b)
 }
 
 const maxLegacyPEClosureFiles = 256
