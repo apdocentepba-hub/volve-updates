@@ -38,7 +38,7 @@ func ReadLegacyPEStaticImports(input io.ReaderAt, size int64) ([]string, error) 
 	var directories []pe.DataDirectory
 	switch header := image.OptionalHeader.(type) {
 	case *pe.OptionalHeader32:
-		directories = header.DataDirectory
+		directories = header.DataDirectory[:]
 	case *pe.OptionalHeader64:
 		directories = header.DataDirectory
 	default:
