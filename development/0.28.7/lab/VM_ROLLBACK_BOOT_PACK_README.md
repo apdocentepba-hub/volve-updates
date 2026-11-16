@@ -8,6 +8,27 @@ Este paquete NO instala ni actualiza el motor real. Simula una interrupción en 
 1. Terminar el ensayo anterior del motor Full DNS53 y ejecutar su `Cleanup` con resultado `LIMPIEZA OK`.
 2. Apagar la VM `VOLVE-LAB-0287` y crear en Hyper-V un punto de control llamado `ANTES-PRUEBA-ROLLBACK-0287`. Volver a encender la VM para la nueva prueba.
 3. Descargar **únicamente dentro de la VM** el artifact del workflow `VOLVE-0287-VM-RECOVERY-BOOT-LAB-NO-INSTALL`, extraer completo en `C:\Lab\Rollback`. Conservar el manifiesto de hashes.
+**Verificación de integridad antes de ejecutar el kit:** cotejá el SHA-256 del ZIP descargado con el digest publicado en los metadatos del artefacto del run de GitHub Actions que lo generó. Si falta el digest o no coincide, no extraigas ni ejecutes el paquete.
+
+Después de extraerlo en `C:\\Lab\\Rollback`, desde PowerShell verificá que el manifiesto corresponda exactamente a los cinco archivos del kit y que no haya archivos adicionales. Si la comprobación falla, detené el ensayo y conservá el ZIP sin ejecutar:
+
+```powershell
+$root = 'C:\\Lab\\Rollback'
+$manifest = Get-Content -LiteralPath (Join-Path $root 'SHA256_MANIFEST.json') -Raw | ConvertFrom-Json
+if ($manifest.schema -ne 1 -or $manifest.vm_only -ne $true -or $manifest.product_release -ne $false -or @($manifest.files).Count -ne 5) { throw 'Manifiesto inválido; no ejecutar el kit' }
+$expected = @('boot_recovery_lab.ps1','reboot_event_chain.ps1','vm_reboot_proof.ps1','VM_ROLLBACK_BOOT_PACK_README.md','volve-journal-lab.exe','SHA256_MANIFEST.json') | Sort-Object
+$actual = @(Get-ChildItem -LiteralPath $root -File | Select-Object -ExpandProperty Name | Sort-Object)
+if (($actual -join \"`n\") -cne ($expected -join \"`n\")) { throw 'Archivos ausentes o inesperados; no ejecutar el kit' }
+foreach ($entry in $manifest.files) {
+  if ($entry.name -notin $expected -or $entry.name -eq 'SHA256_MANIFEST.json') { throw 'Entrada de manifiesto inesperada' }
+  $path = Join-Path $root $entry.name
+  $file = Get-Item -LiteralPath $path -ErrorAction Stop
+  $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $path).Hash.ToLowerInvariant()
+  if ($file.Length -ne [int64]$entry.bytes -or $hash -cne [string]$entry.sha256) { throw ('Integridad incorrecta: '+$entry.name) }
+}
+Write-Host 'PASS: seis archivos esperados y cinco hashes del kit verificados.'
+```
+
 4. Ejecutar en PowerShell **administrador dentro de la VM**:
    ```powershell
    wevtutil sl Microsoft-Windows-TaskScheduler/Operational /e:true
