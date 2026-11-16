@@ -60,10 +60,6 @@ func ReadLegacyPEStaticImports(input io.ReaderAt, size int64) ([]string, error) 
 }
 
 
-import "context"
-import "crypto/sha256"
-import "encoding/hex"
-import "os"
 
 const maxLegacyPEClosureFiles = 256
 
