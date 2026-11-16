@@ -149,7 +149,7 @@ jobs:
           $snippetMatch=[regex]::Match($readme,'(?s)\*\*Verificación de integridad antes de ejecutar el kit:\*\*.*?\x60\x60\x60powershell\r?\n(.*?)\r?\n\x60\x60\x60')
           if(-not $snippetMatch.Success){throw 'README integrity PowerShell example is missing or malformed'}
           $snippet=$snippetMatch.Groups[1].Value
-          $originalRootLine=[string]::Concat('$root = ',[char]39,'C:\\Lab\\Rollback',[char]39)
+          $originalRootLine=[string]::Concat('$root = ',[char]39,'C:',[char]92,'Lab',[char]92,'Rollback',[char]39)
           $ciRootLine=[string]::Concat('$root = ',[char]39,$out,[char]39)
           if(-not $snippet.Contains($originalRootLine)){throw 'README verification example no longer has the expected lab root'}
           $ciSnippet=$snippet.Replace($originalRootLine,$ciRootLine)
