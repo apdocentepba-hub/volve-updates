@@ -66,5 +66,5 @@ jobs:
         run: |
           test -f motorupdate/legacy_managed_transaction.go
           test -f motorupdate/legacy_managed_transaction_test.go
-          go test ./motorupdate -run '^(TestReadLegacyPEStaticImports|TestAuditLegacyPEStaticImportClosure|TestSignedLegacyTransaction|TestReadLegacyTaskRecoverySnapshot|TestProtectedSignedDriverUsesRecoveryReaderOnlyUnderNativeMutex|TestProtectedSignedTransactionBlocksWhenDedicatedReaderLacksDependencyOrRebootEvidence)' -count=1 -timeout 4m -v
+          go test ./motorupdate -run '^(TestReadLegacyPEStaticImports|TestAuditLegacyPEStaticImportClosure|TestNewLegacyPEAllowlistedResolver|TestSignedLegacyTransaction|TestReadLegacyTaskRecoverySnapshot|TestProtectedSignedDriverUsesRecoveryReaderOnlyUnderNativeMutex|TestProtectedSignedTransactionBlocksWhenDedicatedReaderLacksDependencyOrRebootEvidence)' -count=1 -timeout 4m -v
           echo "PASS: protected legacy transaction, fail-closed dependency/reboot evidence, and read-only recovery reader verified; no install, DNS or task writes."
