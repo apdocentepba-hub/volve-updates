@@ -19,7 +19,7 @@
 
 | ID | Escenario | Entorno requerido | Resultado esperado | Estado actual |
 |---|---|---|---|---|
-| L1 | Dependencia transitiva faltante, modificada o no resoluble | VM desechable con binarios legacy exactos | Rechazo antes de armar sustitución | Auditor PE/imports y resolver allowlisted pasan fixtures en CI; binarios legacy exactos y dependencias dinámicas aún no auditados |
+| L1 | Dependencia transitiva faltante, modificada o no resoluble | VM desechable con binarios legacy exactos | Rechazo antes de armar sustitución | Parcial: parser/resolver de imports regulares (directorio PE 1) pasa fixtures en CI; no procesa imports delay-load (directorio 13), no se auditaron binarios legacy exactos ni dependencias dinámicas. No acredita clausura completa. |
 | L2 | Watchdog ausente, DACL no protegida o mutex ocupado | VM Windows | Rechazo sin cambiar motor ni tareas | Parcial: gates unitarios y E2E SYSTEM con tarea temporal aprobados; no prueba rechazo de todas las condiciones ni es controlador productivo |
 | L3 | Interrupción tras preparar candidato y antes de commit | VM Windows | Journal pendiente y watchdog previamente armado | No aprobado: el E2E actual prueba rollback por fallo de conectividad después del switch, no una interrupción forzada entre preparación y commit |
 | L4 | Recuperación automática después de reinicio real | VM Windows con reinicio real | Restauración exacta de tres tareas/acciones y journal `restored` | Pendiente |
@@ -34,11 +34,11 @@ La tarea y el driver son fixtures descartables; el fixture del test declara cobe
 
 ## Avance de auditoría estática de imports PE — 16/11/2026
 
-La PR #18 incorpora lectura directa de la tabla PE, recorrido recursivo con SHA-256 por archivo y un resolvedor que busca únicamente en raíces explícitamente autorizadas. Rechaza DLLs sin coincidencia única, candidatos enlazados y raíces enlazadas. El resultado certifica solamente la clausura de imports estáticos; nunca marca dependencias de ejecución como certificadas.
+La PR #18 incorpora lectura directa de la tabla PE de imports regulares (directorio 1), recorrido recursivo con SHA-256 por archivo y un resolvedor que busca únicamente en raíces explícitamente autorizadas. Rechaza DLLs sin coincidencia única, candidatos enlazados y raíces enlazadas. **El parser no procesa el directorio 13 de delay-load imports.** Por eso `StaticImportClosureComplete` significa solamente que se resolvieron los imports regulares que el parser ve; no equivale a que estén inventariadas todas las dependencias estáticas declaradas en PE. El resultado nunca marca dependencias de ejecución como certificadas.
 
 En el HEAD `ab2f3be3c9e28d093729c14735dbfbcc827e4dc2), CI pasó en Windows y Ubuntu [la matriz de límites](https://github.com/apdocentepba-hub/volve-updates/actions/runs/43840330103), incluidos fixtures de resolución válida, coincidencia ambigua y rechazo de raíz enlazada. El [gate de cobertura](https://github.com/apdocentepba-hub/volve-updates/actions/runs/43840330131) también pasó.
 
-Estas son pruebas sintéticas de parser/resolvedor. No se leyeron los binarios exactos del respaldo privado, no se resolvieron DLLs reales del motor, y no se inspeccionaron cargas dinámicas, COM, scripts ni resolución Side-by-Side/API-set. Por eso L1 sigue pendiente y el gate conserva `TransitiveDependenciesCertified=false`.
+Estas son pruebas sintéticas de parser/resolvedor. No se leyeron los binarios exactos del respaldo privado, no se resolvieron DLLs reales del motor, no se parseó el directorio PE 13 de imports delay-load, y no se inspeccionaron cargas dinámicas, COM, scripts ni resolución Side-by-Side/API-set. Por eso L1 sigue pendiente y el gate conserva `TransitiveDependenciesCertified=false`.
 
 
 ## Evidencia previa que no alcanza
