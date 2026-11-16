@@ -2,6 +2,9 @@ package motorupdate
 
 import (
 	"bytes"
+	"context"
+	"os"
+	"path/filepath"
 	"encoding/binary"
 	"reflect"
 	"testing"
@@ -81,3 +84,71 @@ func TestReadLegacyPEStaticImportsBoundsReaderToDeclaredImageSize(t *testing.T) 
 		t.Fatal("image data beyond declared size was read")
 	}
 }
+
+
+func TestAuditLegacyPEStaticImportClosureRecursesAndHashes(t *testing.T) {
+	root := t.TempDir()
+	entry := filepath.Join(root, "entry.exe")
+	helper := filepath.Join(root, "helper.dll")
+	base := filepath.Join(root, "base.dll")
+	for path, imports := range map[string][]string{
+		entry:  {"helper.dll"},
+		helper: {"base.dll"},
+		base:   {},
+	} {
+		if err := os.WriteFile(path, makeLegacyPEImportFixture(imports...), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	resolve := func(importer, dll string) (string, error) {
+		return filepath.Join(filepath.Dir(importer), dll), nil
+	}
+	got, err := AuditLegacyPEStaticImportClosure(context.Background(), entry, resolve)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.StaticImportClosureComplete || got.RuntimeDependenciesCertified || len(got.Files) != 3 || len(got.Unresolved) != 0 {
+		t.Fatalf("unexpected static closure result: %+v", got)
+	}
+	for _, file := range got.Files {
+		if file.Size == 0 || len(file.SHA256) != 64 {
+			t.Fatalf("missing exact file identity: %+v", file)
+		}
+	}
+}
+
+func TestAuditLegacyPEStaticImportClosureFailsClosedOnUnresolvedDLL(t *testing.T) {
+	root := t.TempDir()
+	entry := filepath.Join(root, "entry.exe")
+	if err := os.WriteFile(entry, makeLegacyPEImportFixture("missing.dll"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := AuditLegacyPEStaticImportClosure(context.Background(), entry, func(string, string) (string, error) {
+		return "", os.ErrNotExist
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.StaticImportClosureComplete || got.RuntimeDependenciesCertified || len(got.Unresolved) != 1 ||
+		got.Unresolved[0].DLL != "missing.dll" {
+		t.Fatalf("unresolved import did not block static closure: %+v", got)
+	}
+}
+
+func TestAuditLegacyPEStaticImportClosureRejectsResolverTraversal(t *testing.T) {
+	root := t.TempDir()
+	entry := filepath.Join(root, "entry.exe")
+	if err := os.WriteFile(entry, makeLegacyPEImportFixture("helper.dll"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := AuditLegacyPEStaticImportClosure(context.Background(), entry, func(string, string) (string, error) {
+		return "relative/helper.dll", nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.StaticImportClosureComplete || len(got.Unresolved) != 1 {
+		t.Fatalf("unsafe resolver output accepted: %+v", got)
+	}
+}
+
