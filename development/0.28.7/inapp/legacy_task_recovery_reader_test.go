@@ -199,6 +199,35 @@ func TestReadLegacyTaskRecoverySnapshotAcceptsCompleteReadOnlyEvidence(t *testin
 	}
 }
 
+func TestReadLegacyTaskRecoverySnapshotRejectsCapabilityClaimsInReceipt(t *testing.T) {
+ cases := []struct {
+  name string
+  mutate func(*legacyReaderFixtureReceipt)
+ }{
+  {"transitive dependencies",func(r *legacyReaderFixtureReceipt){r.TransitiveDependenciesCertified=true}},
+  {"recovery after reboot",func(r *legacyReaderFixtureReceipt){r.RecoveryAfterRebootVerified=true}},
+  {"publisher authorization",func(r *legacyReaderFixtureReceipt){r.PublisherAuthorizationVerified=true}},
+  {"cleanup authorization",func(r *legacyReaderFixtureReceipt){r.CleanupAuthorized=true}},
+  {"install authorization",func(r *legacyReaderFixtureReceipt){r.InstallAuthorized=true}},
+  {"direct actions only marker",func(r *legacyReaderFixtureReceipt){r.DirectActionsOnly=false}},
+ }
+ for _,tc:=range cases {
+  t.Run(tc.name,func(t *testing.T){
+   opts,_,_:=newLegacyTaskRecoveryReaderFixture(t)
+   path:=filepath.Join(opts.ThreeTaskBackupPath,legacyThreeTaskReceiptName)
+   raw,err:=os.ReadFile(path);if err!=nil{t.Fatal(err)}
+   var receipt legacyReaderFixtureReceipt
+   if err:=json.Unmarshal(raw,&receipt);err!=nil{t.Fatal(err)}
+   tc.mutate(&receipt)
+   forged,err:=json.Marshal(receipt);if err!=nil{t.Fatal(err)}
+   if err:=os.WriteFile(path,forged,0600);err!=nil{t.Fatal(err)}
+   if _,err:=ReadLegacyTaskRecoverySnapshot(context.Background(),opts);err==nil{
+    t.Fatal("direct-action receipt with an unsupported capability claim was accepted")
+   }
+  })
+ }
+}
+
 func TestReadLegacyTaskRecoverySnapshotRejectsChangedCopyLiveActionAndACL(t *testing.T) {
 	t.Run("changed backup bytes", func(t *testing.T) {
 		opts, _, _ := newLegacyTaskRecoveryReaderFixture(t)
