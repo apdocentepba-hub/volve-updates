@@ -4,6 +4,7 @@ on:
     branches: [feature/motor-updater-0287-pilot, work/0287-native-setup-preview-20261113]
     paths:
       - '.github/workflows/volve-0287-dns-watchdog-crash-e2e.yml'
+      - 'development/0.28.7/inapp/dns_*.go'
   workflow_dispatch:
 permissions:
   contents: read
