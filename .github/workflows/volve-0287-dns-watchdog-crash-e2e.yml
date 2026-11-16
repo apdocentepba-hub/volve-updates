@@ -1,7 +1,7 @@
 name: VOLVE 0.28.7 CRASH watchdog restores REAL isolated DNS (NO RELEASE)
 on:
   push:
-    branches: [feature/motor-updater-0287-pilot]
+    branches: [feature/motor-updater-0287-pilot, work/0287-native-setup-preview-20261113]
     paths:
       - '.github/workflows/volve-0287-dns-watchdog-crash-e2e.yml'
   workflow_dispatch:
