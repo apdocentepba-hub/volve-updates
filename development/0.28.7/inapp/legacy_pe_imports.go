@@ -1,19 +1,15 @@
 package motorupdate
 
 import (
-	"debug/pe"
 	"context"
 	"crypto/sha256"
+	"debug/pe"
 	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
 	"os"
-	"errors"
-	"fmt"
-	"io"
 	"path/filepath"
-	"sort"
 	"sort"
 	"strings"
 )
@@ -197,7 +193,7 @@ func AuditLegacyPEStaticImportClosure(
 		after, afterErr := file.Stat()
 		closeErr := file.Close()
 		if copyErr != nil || afterErr != nil || closeErr != nil ||
-			n != info.Size() || n > maxLegacyPEAuditBytes ||
+			n != info.Size() || before.Size() != info.Size() || n > maxLegacyPEAuditBytes ||
 			before.Size() != after.Size() || !before.ModTime().Equal(after.ModTime()) {
 			if current.entry {
 				return LegacyPEStaticImportClosure{}, errors.New("PE entry changed during dependency audit")
