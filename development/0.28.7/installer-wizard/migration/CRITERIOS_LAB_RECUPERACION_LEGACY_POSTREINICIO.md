@@ -19,17 +19,17 @@
 
 | ID | Escenario | Entorno requerido | Resultado esperado | Estado actual |
 |---|---|---|---|---|
-| L1 | Dependencia transitiva faltante, modificada o no resoluble | VM desechable | Rechazo antes de armar sustitución | No probado con los binarios legacy exactos |
-| L2 | Watchdog ausente, DACL no protegida o mutex ocupado | VM Windows | Rechazo sin cambiar motor ni tareas | Parcial: gates unitarios; E2E SYSTEM con watchdog temporal aprobado (run 43776221578). Driver y respaldo sintéticos; no prueba rechazo de todas las condiciones ni es controlador productivo |
-| L3 | Interrupción tras preparar candidato y antes de commit | VM Windows | Journal pendiente y watchdog previamente armado | No aprobado: el E2E 43776221578 ejercitó rollback por fallo de conectividad después del switch, no una interrupción forzada entre preparación y commit |
+| L1 | Dependencia transitiva faltante, modificada o no resoluble | VM desechable con binarios legacy exactos | Rechazo antes de armar sustitución | No probado con los binarios legacy exactos |
+| L2 | Watchdog ausente, DACL no protegida o mutex ocupado | VM Windows | Rechazo sin cambiar motor ni tareas | Parcial: gates unitarios y E2E SYSTEM con tarea temporal aprobados; no prueba rechazo de todas las condiciones ni es controlador productivo |
+| L3 | Interrupción tras preparar candidato y antes de commit | VM Windows | Journal pendiente y watchdog previamente armado | No aprobado: el E2E actual prueba rollback por fallo de conectividad después del switch, no una interrupción forzada entre preparación y commit |
 | L4 | Recuperación automática después de reinicio real | VM Windows con reinicio real | Restauración exacta de tres tareas/acciones y journal `restored` | Pendiente |
 | L5 | Preservación de DNS/HOSTS y tareas ajenas | VM Windows | Hashes/estado antes y después idénticos | No probado en este flujo |
 
 ## Evidencia parcial adicional — watchdog SYSTEM sin reboot
 
-En el commit `f0009222dd4767125c474cfdbf9d8a1fba8ba046`, el workflow [43776221578](https://github.com/apdocentepba-hub/volve-updates/actions/runs/43776221578) pasó dos casos en Windows hospedado: commit de una tarea temporal y rollback por fallo de conectividad mediante un watchdog independiente registrado como SYSTEM. La tarea y el driver son fixtures descartables; el workflow evita las tareas VOLVE instaladas y no modifica el DNS del host.
+En el HEAD `09fdaa91107b019239af7613dc7bf96a8bacf7a0`, el workflow [43781873796](https://github.com/apdocentepba-hub/volve-updates/actions/runs/43781873796) pasó dos casos en Windows hospedado: commit de una tarea temporal y rollback por fallo de conectividad mediante un watchdog independiente registrado como SYSTEM. Los logs identifican los casos `signed-commit` y `SYSTEM-watchdog-rollback-on-connectivity-failure`.
 
-Esto **no** ejecuta los binarios ni las tres tareas legacy reales, no interrumpe el proceso en el límite L3 y no reinicia Windows. Solo suma evidencia parcial del mecanismo de watchdog SYSTEM en L2; L1, L3, L4 y L5 continúan sin aprobar.
+La tarea y el driver son fixtures descartables; el fixture del test declara cobertura sintética para aislar la mecánica transaccional. El workflow no usa las tareas VOLVE instaladas, no cambia el DNS del host, no ejecuta el motor legacy real ni reinicia Windows. Esta repetición confirma solamente evidencia parcial del mecanismo de watchdog SYSTEM en L2; L1, L3, L4 y L5 siguen sin aprobarse.
 
 ## Evidencia previa que no alcanza
 
