@@ -18,9 +18,12 @@ import (
 
 const maxLegacyPEAuditBytes = 80 << 20
 
-// ReadLegacyPEStaticImports lists DLL names recorded in a PE import table.
-// It does not resolve DLL search paths, inspect LoadLibrary/GetProcAddress,
-// COM activation, script references, or certify a dependency closure.
+// ReadLegacyPEStaticImports lists DLL names recorded in the standard PE
+// IMAGE_DIRECTORY_ENTRY_IMPORT table only. It does not parse the separate
+// delay-load import directory (IMAGE_DIRECTORY_ENTRY_DELAY_IMPORT), resolve
+// DLL search paths, inspect LoadLibrary/GetProcAddress, COM activation, script
+// references, or certify a runtime dependency closure. A successful result
+// therefore covers only regular imports, not every static PE dependency.
 func ReadLegacyPEStaticImports(input io.ReaderAt, size int64) ([]string, error) {
 	if input == nil {
 		return nil, errors.New("PE reader is missing")
@@ -283,10 +286,12 @@ type LegacyPEStaticImportClosure struct {
 // The scanner rechecks the resolved path as a regular local file before reading.
 type LegacyPEImportResolver func(importerPath, dllName string) (string, error)
 
-// AuditLegacyPEStaticImportClosure walks the imports recorded in each PE file.
-// A complete result means only that every statically declared import resolved
+// AuditLegacyPEStaticImportClosure walks regular imports from directory 1
+// in each PE file; delay-load imports from directory 13 are currently outside
+// this audit. A complete result means only that every regular import resolved
 // through the supplied resolver. RuntimeDependenciesCertified is always false:
-// dynamic loading and non-PE references require separate analysis.
+// delay-load, dynamic loading, API-set/SxS resolution, and non-PE references
+// require separate analysis.
 func AuditLegacyPEStaticImportClosure(
 	ctx context.Context,
 	entryPath string,
