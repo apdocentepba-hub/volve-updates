@@ -204,7 +204,12 @@ func windowsCrashLabProvenanceInspector(alias,guid string,base WindowsReadOnlyPo
   return nil,errors.New("could not construct exact-GUID disposable provenance query")
  }
  return func(ctx context.Context,query string)([]byte,error){
-  if query==windowsDNSAssignmentSourceQuery{query=scoped}
+  if query==windowsDNSAssignmentSourceQuery{
+   cmd:=exec.CommandContext(ctx,"powershell.exe","-NoProfile","-NonInteractive","-Command",scoped)
+   output,err:=cmd.CombinedOutput()
+   if err!=nil{return nil,fmt.Errorf("pinned disposable DNS provenance query failed: %w: %s",err,strings.TrimSpace(string(output)))}
+   return output,nil
+  }
   return base(ctx,query)
  },nil
 }
