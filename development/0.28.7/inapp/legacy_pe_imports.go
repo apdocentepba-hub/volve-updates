@@ -2,6 +2,7 @@ package motorupdate
 
 import (
 	"context"
+	"encoding/binary"
 	"crypto/sha256"
 	"debug/pe"
 	"encoding/hex"
@@ -34,22 +35,93 @@ func ReadLegacyPEStaticImports(input io.ReaderAt, size int64) ([]string, error) 
 	}
 	defer image.Close()
 
-	imports, err := image.ImportedLibraries()
-	if err != nil {
-		return nil, fmt.Errorf("PE import table is invalid: %w", err)
+	var directories []pe.DataDirectory
+	switch header := image.OptionalHeader.(type) {
+	case *pe.OptionalHeader32:
+		directories = header.DataDirectory
+	case *pe.OptionalHeader64:
+		directories = header.DataDirectory
+	default:
+		return nil, errors.New("unsupported PE optional header")
 	}
-	unique := make(map[string]struct{}, len(imports))
-	for _, name := range imports {
-		if name == "" || strings.ContainsAny(name, "/\\") ||
-			filepath.Base(name) != name || !strings.EqualFold(filepath.Ext(name), ".dll") {
-			return nil, fmt.Errorf("unsafe or unsupported PE import name %q", name)
+	if len(directories) <= 1 {
+		return []string{}, nil
+	}
+	dir := directories[1]
+	if dir.VirtualAddress == 0 && dir.Size == 0 {
+		return []string{}, nil
+	}
+	if dir.VirtualAddress == 0 || dir.Size == 0 || dir.Size%20 != 0 {
+		return nil, errors.New("malformed PE import directory bounds")
+	}
+	dirOffset, _, ok := legacyPERVAToFileRange(image.Sections, dir.VirtualAddress, dir.Size)
+	if !ok || int64(dirOffset)+int64(dir.Size) > size {
+		return nil, errors.New("PE import directory is outside section raw data")
+	}
+
+	unique := make(map[string]struct{})
+	terminated := false
+	for off := uint32(0); off < dir.Size; off += 20 {
+		var descriptor [20]byte
+		if _, err := input.ReadAt(descriptor[:], int64(dirOffset)+int64(off)); err != nil {
+			return nil, fmt.Errorf("read PE import descriptor: %w", err)
 		}
-		for _, r := range name {
-			if r < 0x20 || r == 0x7f {
-				return nil, fmt.Errorf("control character in PE import name")
+		zero := true
+		for _, b := range descriptor {
+			if b != 0 {
+				zero = false
+				break
 			}
 		}
+		if zero {
+			terminated = true
+			break
+		}
+		nameRVA := binary.LittleEndian.Uint32(descriptor[12:16])
+		if nameRVA == 0 {
+			return nil, errors.New("PE import descriptor has no DLL name")
+		}
+		fileOffset, available, ok := legacyPERVAToFileRange(image.Sections, nameRVA, 1)
+		if !ok || int64(fileOffset) >= size {
+			return nil, errors.New("PE import DLL name is outside section raw data")
+		}
+		if available > 256 {
+			available = 256
+		}
+		if int64(fileOffset)+int64(available) > size {
+			available = uint32(size - int64(fileOffset))
+		}
+		nameBytes := make([]byte, available)
+		n, readErr := input.ReadAt(nameBytes, int64(fileOffset))
+		if readErr != nil && readErr != io.EOF {
+			return nil, fmt.Errorf("read PE import DLL name: %w", readErr)
+		}
+		if n == 0 {
+			return nil, errors.New("empty PE import DLL name")
+		}
+		nameBytes = nameBytes[:n]
+		end := -1
+		for i, b := range nameBytes {
+			if b == 0 {
+				end = i
+				break
+			}
+			if b > 0x7e || b < 0x20 {
+				return nil, errors.New("PE import DLL name is not printable ASCII")
+			}
+		}
+		if end < 1 {
+			return nil, errors.New("PE import DLL name is empty or unterminated")
+		}
+		name := string(nameBytes[:end])
+		if strings.ContainsAny(name, "/\\") || filepath.Base(name) != name ||
+			!strings.EqualFold(filepath.Ext(name), ".dll") {
+			return nil, fmt.Errorf("unsafe or unsupported PE import name %q", name)
+		}
 		unique[strings.ToLower(name)] = struct{}{}
+	}
+	if !terminated {
+		return nil, errors.New("PE import directory lacks a null descriptor")
 	}
 	result := make([]string, 0, len(unique))
 	for name := range unique {
@@ -59,7 +131,29 @@ func ReadLegacyPEStaticImports(input io.ReaderAt, size int64) ([]string, error) 
 	return result, nil
 }
 
-
+// legacyPERVAToFileRange maps an RVA range wholly contained in one section's
+// raw bytes to a file offset. Virtual-only bytes are never treated as file data.
+func legacyPERVAToFileRange(sections []*pe.Section, rva, length uint32) (uint32, uint32, bool) {
+	if length == 0 {
+		return 0, 0, false
+	}
+	for _, section := range sections {
+		header := section.SectionHeader
+		if rva < header.VirtualAddress {
+			continue
+		}
+		delta := rva - header.VirtualAddress
+		if delta >= header.Size || length > header.Size-delta {
+			continue
+		}
+		offset64 := uint64(header.Offset) + uint64(delta)
+		if offset64 > uint64(^uint32(0)) {
+			return 0, 0, false
+		}
+		return uint32(offset64), header.Size - delta, true
+	}
+	return 0, 0, false
+}
 
 const maxLegacyPEClosureFiles = 256
 
