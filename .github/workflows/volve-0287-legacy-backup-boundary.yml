@@ -13,6 +13,8 @@ on:
       - 'development/0.28.7/inapp/resident_protected_signed_switch_windows.go'
       - 'development/0.28.7/inapp/resident_protected_signed_transaction_windows_test.go'
       - 'development/0.28.7/inapp/apply_overlay.go'
+      - 'development/0.28.7/inapp/legacy_pe_imports.go'
+      - 'development/0.28.7/inapp/legacy_pe_imports_test.go'
       - '.github/workflows/volve-0287-legacy-backup-boundary.yml'
   pull_request:
   workflow_dispatch:
