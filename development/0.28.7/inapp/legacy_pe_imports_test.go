@@ -3,9 +3,9 @@ package motorupdate
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"os"
 	"path/filepath"
-	"encoding/binary"
 	"reflect"
 	"testing"
 )
