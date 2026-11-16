@@ -1,7 +1,7 @@
 name: VOLVE 0.28.7 persistent VM SYSTEM watchdog recovery kit (NO RELEASE)
 on:
   push:
-    branches: [feature/motor-updater-0287-pilot]
+    branches: [feature/motor-updater-0287-pilot, work/0287-native-setup-preview-20261113]
     paths:
       - '.github/workflows/volve-0287-vm-recovery-persistent-kit.yml'
       - 'development/0.28.7/lab/vm_reboot_proof.ps1'
