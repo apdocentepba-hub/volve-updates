@@ -5,7 +5,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory=$true)]
-    [ValidateSet('Probe','Prepare','Verify','Cleanup')]
+    [ValidateSet('Probe','Prepare','AuditPrepared','Verify','Cleanup')]
     [string]$Mode,
     [ValidatePattern('^[0-9]{14,18}$')]
     [string]$RunId,
@@ -181,7 +181,7 @@ if($Mode -eq 'Probe') {
     return
 }
 if([string]::IsNullOrWhiteSpace($RunId)) {
-    if($Mode -ne 'Prepare') {throw '-RunId is mandatory for Verify and Cleanup'}
+    if($Mode -ne 'Prepare') {throw '-RunId is mandatory for AuditPrepared, Verify and Cleanup'}
     $RunId=(Get-Date).ToUniversalTime().ToString('yyyyMMddHHmmss') + (Get-Random -Minimum 100 -Maximum 999).ToString()
 }
 $kit=Get-KitPath $RunId
@@ -269,6 +269,33 @@ if($Mode -eq 'Prepare') {
 if(-not (Test-Path -LiteralPath $kit -PathType Container)){throw 'Trial folder not found'}
 $meta=Read-Metadata $kit
 Assert-LabIdentity $kit $meta
+
+if($Mode -eq 'AuditPrepared') {
+    # Pure read-only pre-boot evidence gate. This must never be confused with
+    # the real reboot proof, which requires a fresh OS boot and Scheduler
+    # instance correlation. Useful for VM operator preflight and CI tampering.
+    . (Join-Path $kit 'reboot_event_chain.ps1')
+    $watch=Get-ScheduledTask -TaskName $bootTask -TaskPath '\' -ErrorAction Stop
+    if($watch.Principal.UserId -notin @('SYSTEM','S-1-5-18') -or
+       @($watch.Triggers).Count -ne 1 -or
+       $watch.Triggers[0].CimClass.CimClassName -ne 'MSFT_TaskBootTrigger'){
+        throw 'NOT VERIFIED: startup watchdog identity or trigger changed'
+    }
+    if(-not (Assert-VolvRestoredTaskXML -SavedXML ([IO.File]::ReadAllText((Join-Path $kit 'watchdog-task.xml'))) -RestoredXML (Export-ScheduledTask -TaskName $bootTask -TaskPath '\' -ErrorAction Stop))){
+        throw 'NOT VERIFIED: startup watchdog definition changed'
+    }
+    $current=Assert-LabTask $labTask (Join-Path $env:WINDIR 'System32\notepad.exe')
+    if([string]$current.Actions[0].Arguments -ne ''){
+        throw 'NOT VERIFIED: disposable candidate arguments changed'
+    }
+    Assert-ProtectedEvidenceFile (Join-Path $root 'recovery.json')
+    $journalState=& (Join-Path $kit 'volve-journal-lab.exe') status (Join-Path $root 'recovery.json')
+    if($LASTEXITCODE -ne 0 -or $journalState -ne 'ROLLBACK_REQUIRED'){
+        throw 'NOT VERIFIED: pre-boot rollback journal no longer pending'
+    }
+    Write-Host 'PASS: protected VM pre-boot snapshots, original watchdog XML, candidate and pending journal; NO REBOOT PROOF'
+    return
+}
 
 if($Mode -eq 'Verify') {
     $before=$meta.bootBeforeUtc
