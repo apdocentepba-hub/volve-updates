@@ -139,6 +139,32 @@ function Get-VolvRealBootChain {
 }
 
 
+# Indentation is ignorable only between XML child ELEMENTS. In particular,
+# an <Arguments> element containing whitespace is not the same as an empty
+# <Arguments> element: that leaf text must remain part of the comparison.
+function Remove-VolvTaskXMLIndentation {
+    param([Parameter(Mandatory=$true)][System.Xml.XmlNode]$Node)
+    foreach($child in @($Node.ChildNodes)){
+        if($child.NodeType -eq [System.Xml.XmlNodeType]::Element){
+            Remove-VolvTaskXMLIndentation -Node $child
+        }
+    }
+    $hasChildElements=$false
+    foreach($child in @($Node.ChildNodes)){
+        if($child.NodeType -eq [System.Xml.XmlNodeType]::Element){
+            $hasChildElements=$true
+            break
+        }
+    }
+    if($hasChildElements){
+        foreach($child in @($Node.ChildNodes)){
+            if($child.NodeType -eq [System.Xml.XmlNodeType]::Whitespace){
+                $null=$Node.RemoveChild($child)
+            }
+        }
+    }
+}
+
 # Strict read-only comparison of the entire restored Task Scheduler definition.
 # This is stronger than checking only the executable/arguments of the first
 # action. Whitespace-only formatting between XML elements is ignored, but
@@ -157,8 +183,11 @@ function ConvertTo-VolvTaskXMLFingerprint {
         $reader=[System.Xml.XmlReader]::Create($readerText,$settings)
         $xml=[System.Xml.XmlDocument]::new()
         $xml.XmlResolver=$null
-        $xml.PreserveWhitespace=$false
+        $xml.PreserveWhitespace=$true
         $xml.Load($reader)
+        # Preserve all leaf text, even whitespace-only command arguments;
+        # discard only harmless indentation between nested elements.
+        Remove-VolvTaskXMLIndentation -Node $xml.DocumentElement
         if($null -eq $xml.DocumentElement -or
            $xml.DocumentElement.LocalName -cne 'Task' -or
            $xml.DocumentElement.NamespaceURI -cne 'http://schemas.microsoft.com/windows/2004/02/mit/task'){
