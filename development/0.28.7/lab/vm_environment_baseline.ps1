@@ -15,8 +15,9 @@ function Get-VolvVMBaselineState {
     # interface. Interface index changes across reboot are a failure,
     # rather than silently comparing settings on a different adapter.
     $dns=@(Get-DnsClientServerAddress -ErrorAction Stop | ForEach-Object {
-        $servers=@($_.ServerAddresses | ForEach-Object {[string]$_})
-        '{0}|{1}|{2}' -f ([int]$_.InterfaceIndex),([string]$_.AddressFamily),([string]::Join(',',[string[]]$servers))
+        $adapter=$_
+        $servers=@($adapter.ServerAddresses | ForEach-Object {[string]$_})
+        '{0}|{1}|{2}' -f ([int]$adapter.InterfaceIndex),([string]$adapter.AddressFamily),([string]::Join(',',[string[]]$servers))
     } | Sort-Object -CaseSensitive)
     if($dns.Count -eq 0){throw 'NOT VERIFIED: no DNS adapter configuration returned by VM'}
 
