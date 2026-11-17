@@ -117,7 +117,7 @@ function Read-Metadata([string]$dir) {
     Assert-ProtectedEvidenceFile $path
     $data = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json
     if($data.schema -ne 1 -or $data.runId -ne $RunId -or $data.computer -ne $env:COMPUTERNAME) {throw 'VM trial metadata mismatch'}
-    foreach($member in @('bootBeforeUtc','labSha256','journalSha256','evidenceLibSha256','taskSnapshotSha256','originalFixtureSha256','watchdogTaskSnapshotSha256','cleanupContractSha256')) {
+    foreach($member in @('bootBeforeUtc','labSha256','journalSha256','evidenceLibSha256','taskSnapshotSha256','originalFixtureSha256','watchdogTaskSnapshotSha256','cleanupContractSha256','environmentScriptSha256','environmentBaselineSha256')) {
         if($null -eq $data.$member -or [string]::IsNullOrWhiteSpace([string]$data.$member)){throw ('Missing '+$member)}
     }
     return $data
@@ -134,6 +134,14 @@ function Assert-LabIdentity([string]$dir,[object]$meta) {
     Assert-ProtectedEvidenceFile $cleanupContract
     if((Get-FileHash -Algorithm SHA256 -LiteralPath $cleanupContract).Hash -cne [string]$meta.cleanupContractSha256){
         throw 'VM cleanup contract was changed after preparing the VM trial'
+    }
+    $environmentModule=Join-Path $dir 'vm_environment_baseline.ps1'
+    $environmentSnapshot=Join-Path $dir 'vm-environment-baseline.json'
+    Assert-ProtectedEvidenceFile $environmentModule
+    Assert-ProtectedEvidenceFile $environmentSnapshot
+    if((Get-FileHash -Algorithm SHA256 -LiteralPath $environmentModule).Hash -cne [string]$meta.environmentScriptSha256 -or
+       (Get-FileHash -Algorithm SHA256 -LiteralPath $environmentSnapshot).Hash -cne [string]$meta.environmentBaselineSha256){
+        throw 'Protected HOSTS/DNS/unrelated-task baseline changed after VM Prepare'
     }
     $evidenceLib=Join-Path $dir 'reboot_event_chain.ps1'
     Assert-ProtectedEvidenceFile $evidenceLib
@@ -172,6 +180,18 @@ function Assert-LabIdentity([string]$dir,[object]$meta) {
     if((Get-FileHash -Algorithm SHA256 -LiteralPath $oldFixture).Hash -cne [string]$meta.originalFixtureSha256){
         throw 'Original motor fixture hash mismatch since VM Prepare'
     }
+}
+function Assert-VMEnvironmentIntegrity([string]$dir) {
+    # Fail-closed, purely read-only. The module is hash-pinned in VM metadata
+    # and the snapshot was captured BEFORE registering any disposable task.
+    . (Join-Path $dir 'reboot_event_chain.ps1')
+    . (Join-Path $dir 'vm_environment_baseline.ps1')
+    $snapshot=Get-Content -LiteralPath (Join-Path $dir 'vm-environment-baseline.json') -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+    $current=Get-VolvVMBaselineState
+    if(-not (Assert-VolvVMBaselineState -Expected $snapshot -Actual $current)){
+        throw 'NOT VERIFIED: VM environment integrity check failed'
+    }
+    return $true
 }
 function Assert-LabTask([string]$name,[string]$expectedPath) {
     $task=Get-ScheduledTask -TaskName $name -ErrorAction Stop
@@ -221,6 +241,18 @@ if($Mode -eq 'Prepare') {
         throw 'Missing VM cleanup contract before staging; refusing trial'
     }
     Copy-Item -LiteralPath $sourceCleanupContract -Destination $copiedCleanupContract -ErrorAction Stop
+    $sourceEnvironmentModule=Join-Path $PSScriptRoot 'vm_environment_baseline.ps1'
+    if(-not (Test-Path -LiteralPath $sourceEnvironmentModule -PathType Leaf)){
+        throw 'Missing read-only VM environment audit module; refusing to stage'
+    }
+    $copiedEnvironmentModule=Join-Path $kit 'vm_environment_baseline.ps1'
+    Copy-Item -LiteralPath $sourceEnvironmentModule -Destination $copiedEnvironmentModule -ErrorAction Stop
+    . $copiedEvidenceLib
+    . $copiedEnvironmentModule
+    $environmentSnapshotPath=Join-Path $kit 'vm-environment-baseline.json'
+    $environmentSnapshot=Get-VolvVMBaselineState
+    $environmentSnapshot | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $environmentSnapshotPath -Encoding UTF8 -ErrorAction Stop
+    Assert-ProtectedEvidenceFile $environmentSnapshotPath
     $before=BootTimeUTC
     & $copiedLab -Mode stage -TaskName $labTask -WatchdogName $bootTask -Workspace $root -JournalExe $copiedJournal
     if($LASTEXITCODE -ne 0){throw 'Failed to stage isolated VM recovery trial'}
@@ -246,6 +278,8 @@ if($Mode -eq 'Prepare') {
         originalFixtureSha256=(Get-FileHash -Algorithm SHA256 -LiteralPath $oldFixture).Hash;
         watchdogTaskSnapshotSha256=(Get-FileHash -Algorithm SHA256 -LiteralPath $startupXMLPath).Hash;
         cleanupContractSha256=(Get-FileHash -Algorithm SHA256 -LiteralPath $copiedCleanupContract).Hash;
+        environmentScriptSha256=(Get-FileHash -Algorithm SHA256 -LiteralPath $copiedEnvironmentModule).Hash;
+        environmentBaselineSha256=(Get-FileHash -Algorithm SHA256 -LiteralPath $environmentSnapshotPath).Hash;
     }
     $metadata | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $kit 'vm-trial.json') -Encoding UTF8
     $watch=Get-ScheduledTask -TaskName $bootTask
@@ -255,6 +289,7 @@ if($Mode -eq 'Prepare') {
     # must stop here, not leave a potentially unrecoverable reboot rehearsal.
     $preparedMeta=Read-Metadata $kit
     Assert-LabIdentity $kit $preparedMeta
+    $null=Assert-VMEnvironmentIntegrity $kit
     . $copiedEvidenceLib
     if(-not (Assert-VolvRestoredTaskXML -SavedXML ([IO.File]::ReadAllText($startupXMLPath)) -RestoredXML (Export-ScheduledTask -TaskName $bootTask -TaskPath '\' -ErrorAction Stop))){
         throw 'Protected startup watchdog definition diverged during VM preparation'
@@ -281,6 +316,7 @@ if($Mode -eq 'Prepare') {
 if(-not (Test-Path -LiteralPath $kit -PathType Container)){throw 'Trial folder not found'}
 $meta=Read-Metadata $kit
 Assert-LabIdentity $kit $meta
+$null=Assert-VMEnvironmentIntegrity $kit
 
 if($Mode -eq 'AuditPrepared') {
     # Pure read-only pre-boot evidence gate. This must never be confused with
