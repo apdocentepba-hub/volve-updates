@@ -51,3 +51,17 @@ function Assert-VolvVMCleanupReceipt {
     }
     return $true
 }
+
+function Assert-VolvVMCleanupReceiptPhase {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory=$true)][ValidateSet('READY','RESUME_MOTOR','COMPLETE')][string]$Phase,
+        [Parameter(Mandatory=$true)][bool]$HasExistingReceipt
+    )
+    # Receipt records final task absence, not permission to start or resume.
+    # Any existing receipt with tasks still present requires manual audit.
+    if($HasExistingReceipt -and $Phase -cne 'COMPLETE'){
+        throw 'REFUSED: existing cleanup receipt claims completion but CI tasks remain registered'
+    }
+    return $true
+}
