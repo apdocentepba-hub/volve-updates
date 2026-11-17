@@ -124,6 +124,25 @@ jobs:
           try{
             & $script -Mode Probe
             & $script -Mode Prepare -RunId $id -LabScript $lab -JournalExe $journal
+            # Ground the whole-folder task inventory in Windows itself.
+            # The original snapshot predates the two disposable task writes.
+            $readOnlySnapshot=Join-Path (Join-Path $env:ProgramData ('VOLVE-VM-RebootLab-'+$id)) 'vm-environment-baseline.json'
+            $recorded=Get-Content -LiteralPath $readOnlySnapshot -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+            $currentAll=@(Get-ScheduledTask -ErrorAction Stop)
+            $unrelated=@($currentAll | Where-Object {
+              -not ($_.TaskPath -ceq '\' -and $_.TaskName -cin $taskNames)
+            })
+            if(@($recorded.taskRecords).Count -ne $unrelated.Count){
+              throw ('VM task inventory incomplete: snapshot='+@($recorded.taskRecords).Count+' currentlyUnrelated='+$unrelated.Count)
+            }
+            $outsideRoot=@($unrelated | Where-Object {$_.TaskPath -cne '\'})
+            foreach($task in $outsideRoot){
+              $fullPrefix=([string]$task.TaskPath+[string]$task.TaskName+'|')
+              if(@($recorded.taskRecords | Where-Object {$_.StartsWith($fullPrefix,[StringComparison]::Ordinal)}).Count -ne 1){
+                throw ('VM task inventory omitted subfolder task: '+$fullPrefix)
+              }
+            }
+            Write-Host ('PASS: baseline includes '+$unrelated.Count+' unrelated Scheduler tasks in ALL folders, including '+$outsideRoot.Count+' subfolder tasks')
             & $script -Mode AuditPrepared -RunId $id
             # The boot trigger and SYSTEM identity can remain unchanged
             # while the watchdog ACTION is maliciously replaced. A pre-boot
