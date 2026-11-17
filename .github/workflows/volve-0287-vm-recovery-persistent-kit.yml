@@ -8,6 +8,9 @@ on:
       - 'development/0.28.7/lab/boot_recovery_lab.ps1'
       - 'development/0.28.7/lab/reboot_event_chain.ps1'
       - 'development/0.28.7/lab/test_reboot_event_chain.ps1'
+      - 'development/0.28.7/lab/vm_cleanup_state_contract.ps1'
+      - 'development/0.28.7/lab/test_vm_cleanup_state_contract.ps1'
+      - 'development/0.28.7/lab/test_vm_cleanup_scheduler_roundtrip.ps1'
       - 'development/0.28.7/lab/VM_ROLLBACK_BOOT_PACK_README.md'
       - 'development/0.28.7/complete-source-parts/**'
       - 'development/0.28.7/inapp/apply_overlay.go'
@@ -19,6 +22,9 @@ on:
       - 'development/0.28.7/lab/boot_recovery_lab.ps1'
       - 'development/0.28.7/lab/reboot_event_chain.ps1'
       - 'development/0.28.7/lab/test_reboot_event_chain.ps1'
+      - 'development/0.28.7/lab/vm_cleanup_state_contract.ps1'
+      - 'development/0.28.7/lab/test_vm_cleanup_state_contract.ps1'
+      - 'development/0.28.7/lab/test_vm_cleanup_scheduler_roundtrip.ps1'
       - 'development/0.28.7/lab/VM_ROLLBACK_BOOT_PACK_README.md'
       - 'development/0.28.7/complete-source-parts/**'
       - 'development/0.28.7/inapp/apply_overlay.go'
@@ -556,6 +562,14 @@ jobs:
             }
           }
           Write-Host 'PASS: all 10 expected VOLVE-CI tasks absent after 5 lab scenarios; no production task names touched'
+      - name: Exercise interrupted cleanup against actual disposable Windows SYSTEM tasks (NO REBOOT)
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          & 'development/0.28.7/lab/test_vm_cleanup_scheduler_roundtrip.ps1'
+          if($LASTEXITCODE -and $LASTEXITCODE -ne 0){
+            throw 'Interrupted cleanup Scheduler integration test failed'
+          }
       - name: Package VM-only recovery kit with SHA256 manifest
         shell: powershell
         run: |
