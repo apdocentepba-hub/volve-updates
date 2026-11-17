@@ -51,11 +51,10 @@ if($Mode -eq 'stage'){
  [IO.File]::WriteAllText($xmlPath,(Export-ScheduledTask -TaskName $TaskName),[Text.UTF8Encoding]::new($false))
  Journal -Arguments @('prepare',$journal,$old,$new,$xmlPath,'0.29.0') | Out-Null
  Journal -Arguments @('advance',$journal,'switching') | Out-Null
- Set-ScheduledTask -TaskName $TaskName -Action (New-ScheduledTaskAction -Execute $notepad) | Out-Null
- TaskAction $TaskName $notepad ''
- Journal -Arguments @('advance',$journal,'proving') | Out-Null
- # This recovery task *would* run on a boot; for CI it is manually started.
- # It cannot be published/installed; only exact CI disposable task names accepted.
+ # CRITICAL ORDER: arm and positively verify the independent SYSTEM watchdog
+ # BEFORE changing even the disposable candidate task. A crash after arming,
+ # but before switching, must be recoverable as "original already intact".
+ # Neither the fixture nor its successor is a production installer.
  $script=$PSCommandPath
  $pwsh=Join-Path $env:WINDIR 'System32\WindowsPowerShell\v1.0\powershell.exe'
  $args='-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "'+$script+'" -Mode recover -TaskName "'+$TaskName+'" -WatchdogName "'+$WatchdogName+'" -Workspace "'+$Workspace+'" -JournalExe "'+$JournalExe+'"'
@@ -63,7 +62,19 @@ if($Mode -eq 'stage'){
  Register-ScheduledTask -TaskName $WatchdogName -Action (New-ScheduledTaskAction -Execute $pwsh -Argument $args) -Trigger $wdTrigger -User SYSTEM -RunLevel Highest | Out-Null
  $wd=Get-ScheduledTask -TaskName $WatchdogName
  if($wd.Principal.UserId -notin @('SYSTEM','S-1-5-18') -or @($wd.Triggers).Count -ne 1 -or $wd.Triggers[0].CimClass.CimClassName -ne 'MSFT_TaskBootTrigger'){throw 'Boot watchdog not configured to run as SYSTEM on boot'}
- Write-Host 'STAGED: disposable motor task switched; SYSTEM startup watchdog installed (not triggered yet).'
+ if($env:VOLVE_CI_ABORT_BEFORE_CANDIDATE -eq '1'){
+  # Disposable CI-only fault injection. Do not touch the candidate; leave the
+  # pending journal and boot-triggered watchdog to exercise pre-switch rescue.
+  if($env:GITHUB_ACTIONS -ne 'true' -or $env:RUNNER_ENVIRONMENT -ne 'github-hosted'){
+   throw 'Pre-switch fault injection only allowed on GitHub-hosted isolated CI VM'
+  }
+  Write-Host 'FAULT INJECTION: watchdog armed before candidate switch; original task intact.'
+  exit 0
+ }
+ Set-ScheduledTask -TaskName $TaskName -Action (New-ScheduledTaskAction -Execute $notepad) | Out-Null
+ TaskAction $TaskName $notepad ''
+ Journal -Arguments @('advance',$journal,'proving') | Out-Null
+ Write-Host 'STAGED: independent SYSTEM watchdog verified BEFORE disposable candidate switch (not boot-triggered yet).'
  exit 0
 }
 if($Mode -eq 'recover'){
@@ -74,11 +85,22 @@ if($Mode -eq 'recover'){
   if($state -ne 'ROLLBACK_REQUIRED'){throw 'Recovery is not required'}
   Journal -Arguments @('verify-snapshot',$journal,$xmlPath) | Out-Null
   Journal -Arguments @('verify-previous',$journal,$old) | Out-Null
-  TaskAction $TaskName $notepad ''
+  # Fail closed on all unexpected actions, including an unrelated task that
+  # took over our disposable name. Pre-switch crash: leave original untouched.
+  $current=Get-ScheduledTask -TaskName $TaskName -ErrorAction Stop
+  if($current.TaskPath -ne '\' -or $current.Principal.UserId -notin @('SYSTEM','S-1-5-18') -or @($current.Actions).Count -ne 1){
+   throw 'Unexpected disposable motor identity during recovery'
+  }
+  $action=@($current.Actions)[0]
+  $alreadyOriginal=($action.Execute -eq $cmd -and [string]$action.Arguments -eq '/C exit 0')
+  $switched=($action.Execute -eq $notepad -and [string]::IsNullOrWhiteSpace([string]$action.Arguments))
+  if(-not $alreadyOriginal -and -not $switched){throw 'Unrecognized disposable motor action; refusing restore'}
   Journal -Arguments @('advance',$journal,'restoring') | Out-Null
   $saved=[IO.File]::ReadAllText($xmlPath)
   if($saved -notmatch 'cmd\.exe'){throw 'Unexpected original task executable'}
-  Register-ScheduledTask -TaskName $TaskName -Xml $saved -Force | Out-Null
+  if($switched) {
+   Register-ScheduledTask -TaskName $TaskName -Xml $saved -Force | Out-Null
+  }
   TaskAction $TaskName $cmd '/C exit 0'
   Journal -Arguments @('advance',$journal,'restored') | Out-Null
   [IO.File]::WriteAllText($success,'RESTORED_BY_SYSTEM_STARTUP_TASK',[Text.Encoding]::ASCII)
