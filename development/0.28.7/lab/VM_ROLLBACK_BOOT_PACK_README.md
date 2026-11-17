@@ -46,9 +46,11 @@ Write-Host 'PASS: seis archivos esperados y cinco hashes del kit verificados.'
    powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\Lab\Rollback\vm_reboot_proof.ps1" -Mode Verify -RunId 20261102000201
    ```
 6. En caso de éxito debe existir `C:\ProgramData\VOLVE-VM-RebootLab-20261102000201\vm-proof-evidence.json`; enviar ese archivo para auditoría. Si falla, **no limpiar**; conservar journal y eventos.
-7. Solo tras aprobación, retirar las dos tareas descartables con:
+7. **Solo después de `Verify` exitoso, de conservar el archivo `vm-proof-evidence.json` y de aprobar el ensayo**, retirar las dos tareas descartables con:
    ```powershell
    powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\Lab\Rollback\vm_reboot_proof.ps1" -Mode Cleanup -RunId 20261102000201
    ```
+
+**Cierre seguro:** `Cleanup` rechaza el intento si no existe evidencia de reinicio auténtico, si el comprobante no coincide con el registro protegido, si la cadena de eventos de arranque no corresponde a la misma instancia o si el journal sigue pendiente. Revalida íntegramente ambas definiciones XML de Task Scheduler **antes de eliminar cualquiera**. Ante un fallo, no usar `Cleanup` para forzar el cierre: conservar los archivos y restaurar el checkpoint de la VM según el protocolo del laboratorio. Este control no modifica ni recupera el sistema VOLVÉ instalado en una PC real.
 
 **Alcance limitado**: restaura una **tarea ficticia y journal** después de reinicio real, no el EXE DNS anterior ni una actualización de 0.28.6 a 0.28.7, y no valida la firma editorial productiva. Es un hito intermedio, no la liberación del actualizador. El punto de control evita arriesgar el sistema principal, pero no debe restaurarse antes de preservar evidencias.
