@@ -377,6 +377,81 @@ jobs:
               Unregister-ScheduledTask -TaskName $name -TaskPath '\' -Confirm:$false -ErrorAction Stop
             }
           }
+      - name: Reject changed verifier before SYSTEM task rollback; retain pending journal (NO REBOOT)
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          if($env:GITHUB_ACTIONS -ne 'true' -or $env:RUNNER_ENVIRONMENT -ne 'github-hosted'){
+            throw 'This integrity attack test requires an isolated hosted Windows VM'
+          }
+          $id=$env:GITHUB_RUN_ID+'654'
+          if($id -cnotmatch '^[0-9]{14,18}$'){throw 'Invalid disposable CI trial ID'}
+          $sourceDir=Join-Path $env:RUNNER_TEMP ('VOLVE-CI-CodeSource-'+$id)
+          $workspace=Join-Path $env:RUNNER_TEMP ('VOLVE-CI-BOOT-'+$id)
+          $motor='VOLVE-CI-StartupMotor-'+$id
+          $watch='VOLVE-CI-BootRecovery-'+$id
+          $journal=Join-Path $env:RUNNER_TEMP 'volve-journal-lab.exe'
+          $stateFile=Join-Path $workspace 'recovery.json'
+          $failureMarker=Join-Path $workspace 'boot-recovery-failed.marker'
+          $successMarker=Join-Path $workspace 'boot-recovery-success.marker'
+          New-Item -ItemType Directory -Path $sourceDir -ErrorAction Stop|Out-Null
+          $lab=Join-Path $sourceDir 'boot_recovery_lab.ps1'
+          $verifier=Join-Path $sourceDir 'reboot_event_chain.ps1'
+          Copy-Item -LiteralPath 'development/0.28.7/lab/boot_recovery_lab.ps1' -Destination $lab -ErrorAction Stop
+          Copy-Item -LiteralPath 'development/0.28.7/lab/reboot_event_chain.ps1' -Destination $verifier -ErrorAction Stop
+          try {
+            & $lab -Mode stage -TaskName $motor -WatchdogName $watch -Workspace $workspace -JournalExe $journal
+            if($LASTEXITCODE -ne 0){throw 'Cannot prepare disposable integrity-attack fixture'}
+            $sealPath=Join-Path $workspace 'recovery-code-seal.json'
+            $seal=Get-Content -LiteralPath $sealPath -Raw -ErrorAction Stop|ConvertFrom-Json
+            if($seal.verificationLibSha256 -cne (Get-FileHash -Algorithm SHA256 -LiteralPath $verifier).Hash){
+              throw 'Recovery source seal was not written before watchdog registration'
+            }
+            [IO.File]::AppendAllText($verifier,"# DISPOSABLE-CI-VERIFIER-TAMPER")
+            if((Get-FileHash -Algorithm SHA256 -LiteralPath $verifier).Hash -ceq $seal.verificationLibSha256){
+              throw 'Integrity attack did not change verifier bytes'
+            }
+            # Manually trigger SYSTEM: absence of a reboot is intentional.
+            Start-ScheduledTask -TaskName $watch -TaskPath '\' -ErrorAction Stop
+            $failed=$false
+            for($i=0;$i -lt 100;$i++){
+              Start-Sleep -Milliseconds 250
+              if(Test-Path -LiteralPath $successMarker){
+                throw 'FALSE SUCCESS: mutated verifier permitted completed rollback'
+              }
+              if(Test-Path -LiteralPath $failureMarker){
+                $reason=[IO.File]::ReadAllText($failureMarker)
+                if($reason -notlike '*Recovery seal hash mismatch: verification library*'){
+                  throw ('Unexpected integrity rejection: '+$reason)
+                }
+                $failed=$true
+                break
+              }
+            }
+            if(-not $failed){throw 'SYSTEM watchdog did not reject modified recovery code'}
+            $state=& $journal status $stateFile
+            if($LASTEXITCODE -ne 0 -or $state -ne 'ROLLBACK_REQUIRED'){
+              throw ('Journal incorrectly finalized despite changed verifier: '+$state)
+            }
+            $task=Get-ScheduledTask -TaskName $motor -TaskPath '\' -ErrorAction Stop
+            if($task.Principal.UserId -notin @('SYSTEM','S-1-5-18') -or
+               @($task.Actions).Count -ne 1 -or
+               $task.Actions[0].Execute -ne (Join-Path $env:WINDIR 'System32\notepad.exe')){
+              throw 'Verifier integrity failure occurred after an unauthorized task change'
+            }
+            Write-Host 'PASS: SYSTEM watchdog rejected changed recovery verifier BEFORE altering the disposable task; journal still pending'
+            Write-Host 'NO REAL REBOOT; original VOLVE installation never accessed.'
+          } finally {
+            foreach($name in @($watch,$motor)){
+              $task=Get-ScheduledTask -TaskName $name -TaskPath '\' -ErrorAction SilentlyContinue
+              if($null -eq $task){continue}
+              if($task.TaskPath -ne '\' -or $task.Principal.UserId -notin @('SYSTEM','S-1-5-18')){
+                throw 'Refusing to delete a task outside isolated CI ownership'
+              }
+              if($task.State -eq 'Running'){Stop-ScheduledTask -TaskName $name -TaskPath '\' -ErrorAction Stop}
+              Unregister-ScheduledTask -TaskName $name -TaskPath '\' -Confirm:$false -ErrorAction Stop
+            }
+          }
       - name: Package VM-only recovery kit with SHA256 manifest
         shell: powershell
         run: |
