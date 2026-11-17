@@ -77,7 +77,12 @@ jobs:
           foreach($name in @('vm_reboot_proof.ps1','boot_recovery_lab.ps1','reboot_event_chain.ps1','test_reboot_event_chain.ps1')){
             $tokens=$null;$errors=$null
             [Management.Automation.Language.Parser]::ParseFile((Resolve-Path (Join-Path $root $name)).Path,[ref]$tokens,[ref]$errors)|Out-Null
-            if($errors.Count -ne 0){throw "Invalid PowerShell syntax in $name"}
+            if($errors.Count -ne 0){
+              foreach($parseError in $errors){
+                Write-Host ("PARSE ERROR {0} at {1}:{2}: {3}" -f $name,$parseError.Extent.StartLineNumber,$parseError.Extent.StartColumnNumber,$parseError.Message)
+              }
+              throw "Invalid PowerShell syntax in $name"
+            }
           }
           & (Join-Path $root 'test_reboot_event_chain.ps1')
           if($LASTEXITCODE -and $LASTEXITCODE -ne 0){throw 'Boot event chain tests failed'}
