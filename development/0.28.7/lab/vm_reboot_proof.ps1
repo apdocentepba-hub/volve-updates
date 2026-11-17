@@ -187,7 +187,7 @@ function Assert-VMEnvironmentIntegrity([string]$dir) {
     . (Join-Path $dir 'reboot_event_chain.ps1')
     . (Join-Path $dir 'vm_environment_baseline.ps1')
     $snapshot=Get-Content -LiteralPath (Join-Path $dir 'vm-environment-baseline.json') -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
-    $current=Get-VolvVMBaselineState
+    $current=Get-VolvVMBaselineState -RunId $RunId
     if(-not (Assert-VolvVMBaselineState -Expected $snapshot -Actual $current)){
         throw 'NOT VERIFIED: VM environment integrity check failed'
     }
@@ -250,7 +250,7 @@ if($Mode -eq 'Prepare') {
     . $copiedEvidenceLib
     . $copiedEnvironmentModule
     $environmentSnapshotPath=Join-Path $kit 'vm-environment-baseline.json'
-    $environmentSnapshot=Get-VolvVMBaselineState
+    $environmentSnapshot=Get-VolvVMBaselineState -RunId $RunId
     $environmentSnapshot | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $environmentSnapshotPath -Encoding UTF8 -ErrorAction Stop
     Assert-ProtectedEvidenceFile $environmentSnapshotPath
     $before=BootTimeUTC
