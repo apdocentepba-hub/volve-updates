@@ -11,13 +11,13 @@ Este paquete NO instala ni actualiza el motor real. Simula una interrupción en 
 
 **Verificación de integridad antes de ejecutar el kit:** obtené el SHA-256 del ZIP descargado con `Get-FileHash -Algorithm SHA256 -LiteralPath <ruta-al-ZIP>` y compará los 64 dígitos hexadecimales (sin distinguir mayúsculas y minúsculas ni el prefijo `sha256:`) con el digest publicado en los metadatos del artefacto del run de GitHub Actions que lo generó. Si falta el digest o no coincide, no extraigas ni ejecutes el paquete.
 
-Después de extraerlo en `C:\Lab\Rollback`, desde PowerShell verificá que el manifiesto corresponda exactamente a los cinco archivos del kit y que no haya archivos adicionales. Si la comprobación falla, detené el ensayo y conservá el ZIP sin ejecutar:
+Después de extraerlo en `C:\Lab\Rollback`, desde PowerShell verificá que el manifiesto corresponda exactamente a los seis archivos del kit y que no haya archivos adicionales. Si la comprobación falla, detené el ensayo y conservá el ZIP sin ejecutar:
 
 ```powershell
 $root = 'C:\Lab\Rollback'
 $manifest = Get-Content -LiteralPath (Join-Path $root 'SHA256_MANIFEST.json') -Raw | ConvertFrom-Json
-if ($manifest.schema -ne 1 -or $manifest.vm_only -ne $true -or $manifest.product_release -ne $false -or @($manifest.files).Count -ne 5) { throw 'Manifiesto inválido; no ejecutar el kit' }
-$expected = @('boot_recovery_lab.ps1','reboot_event_chain.ps1','vm_reboot_proof.ps1','VM_ROLLBACK_BOOT_PACK_README.md','volve-journal-lab.exe','SHA256_MANIFEST.json') | Sort-Object
+if ($manifest.schema -ne 1 -or $manifest.vm_only -ne $true -or $manifest.product_release -ne $false -or @($manifest.files).Count -ne 6) { throw 'Manifiesto inválido; no ejecutar el kit' }
+$expected = @('boot_recovery_lab.ps1','reboot_event_chain.ps1','vm_cleanup_state_contract.ps1','vm_reboot_proof.ps1','VM_ROLLBACK_BOOT_PACK_README.md','volve-journal-lab.exe','SHA256_MANIFEST.json') | Sort-Object
 $expectedFiles = @($expected | Where-Object { $_ -ne 'SHA256_MANIFEST.json' })
 $listedFiles = @($manifest.files | ForEach-Object { [string]$_.name } | Sort-Object)
 if ($listedFiles.Count -ne $expectedFiles.Count) { throw 'Manifiesto incompleto o duplicado' }
@@ -31,7 +31,7 @@ foreach ($entry in $manifest.files) {
   $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $path).Hash.ToLowerInvariant()
   if ($file.Length -ne [int64]$entry.bytes -or $hash -cne [string]$entry.sha256) { throw ('Integridad incorrecta: '+$entry.name) }
 }
-Write-Host 'PASS: seis archivos esperados y cinco hashes del kit verificados.'
+Write-Host 'PASS: siete archivos esperados y seis hashes del kit verificados.'
 ```
 
 4. Ejecutar en PowerShell **administrador dentro de la VM**:
@@ -51,6 +51,6 @@ Write-Host 'PASS: seis archivos esperados y cinco hashes del kit verificados.'
    powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\Lab\Rollback\vm_reboot_proof.ps1" -Mode Cleanup -RunId 20261102000201
    ```
 
-**Cierre seguro:** `Cleanup` rechaza el intento si no existe evidencia de reinicio auténtico, si el comprobante no coincide con el registro protegido, si la cadena de eventos de arranque no corresponde a la misma instancia o si el journal sigue pendiente. Revalida íntegramente ambas definiciones XML de Task Scheduler **antes de eliminar cualquiera**. Ante un fallo, no usar `Cleanup` para forzar el cierre: conservar los archivos y restaurar el checkpoint de la VM según el protocolo del laboratorio. Este control no modifica ni recupera el sistema VOLVÉ instalado en una PC real.
+**Cierre seguro:** `Cleanup` rechaza el intento si no existe evidencia de reinicio auténtico, si el comprobante no coincide con el registro protegido, si la cadena de eventos de arranque no corresponde a la misma instancia o si el journal sigue pendiente. Revalida íntegramente ambas definiciones XML de Task Scheduler **antes de eliminar cualquiera**. Después de validar las dos tareas guarda `vm-cleanup-intent.json` bajo ACL protegida. Si se interrumpe tras retirar el watchdog, puede retomar la eliminación del motor ficticio **únicamente** con el mismo reinicio demostrado, el journal restaurado y el intent íntegro. Al finalizar verifica que ambas tareas desaparecieron y deja `vm-cleanup-evidence.json`. Un intent ausente o inconsistente impide interpretar como segura una eliminación parcial. Ante un fallo, no usar `Cleanup` para forzar el cierre: conservar las evidencias e inspeccionar la VM antes de restaurar el checkpoint. Este control no modifica ni recupera VOLVÉ instalado en una PC real.
 
 **Alcance limitado**: restaura una **tarea ficticia y journal** después de reinicio real, no el EXE DNS anterior ni una actualización de 0.28.6 a 0.28.7, y no valida la firma editorial productiva. Es un hito intermedio, no la liberación del actualizador. El punto de control evita arriesgar el sistema principal, pero no debe restaurarse antes de preservar evidencias.
