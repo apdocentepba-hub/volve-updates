@@ -114,3 +114,35 @@ if($withMissing102.EventIds -ne '118,100,201,102'){
 }
 if($script:rejections -ne 18){throw ('Expected 18 rejection cases, got '+$script:rejections)}
 Write-Host ('PASS: same-instance boot proof, plausible clock ordering, no future/late events and '+$script:rejections+' adversarial rejection cases')
+
+# Entire Task Scheduler XML must match, beyond a plausible action name.
+# These tests are pure, synthetic and do not register/change any host task.
+$taskNS='http://schemas.microsoft.com/windows/2004/02/mit/task'
+$taskXml='<Task xmlns="'+$taskNS+'"><RegistrationInfo><Author>CI</Author></RegistrationInfo><Triggers><BootTrigger><Enabled>true</Enabled></BootTrigger></Triggers><Principals><Principal id="Author"><UserId>S-1-5-18</UserId><RunLevel>HighestAvailable</RunLevel></Principal></Principals><Actions Context="Author"><Exec><Command>cmd.exe</Command><Arguments>/C exit 0</Arguments></Exec></Actions></Task>'
+$prettyTaskXml=$taskXml.Replace('><',('>'+[char]10+'<'))
+if(-not (Assert-VolvRestoredTaskXML -SavedXML $taskXml -RestoredXML $prettyTaskXml)) {
+    throw 'Semantically same task XML differing only by indentation was rejected'
+}
+$script:xmlRejections=0
+function RejectChangedTaskXML([string]$label,[string]$altered) {
+    try {
+        $null=Assert-VolvRestoredTaskXML -SavedXML $taskXml -RestoredXML $altered
+        throw ('UNSAFE: modified task XML accepted: '+$label)
+    } catch {
+        if($_.Exception.Message -notmatch '^NOT VERIFIED:'){throw}
+        $script:xmlRejections++
+        Write-Host ('REJECTED TASK XML: '+$label)
+    }
+}
+RejectChangedTaskXML 'action executable' ($taskXml.Replace('<Command>cmd.exe</Command>','<Command>notepad.exe</Command>'))
+RejectChangedTaskXML 'action arguments' ($taskXml.Replace('<Arguments>/C exit 0</Arguments>','<Arguments>/C echo hi</Arguments>'))
+RejectChangedTaskXML 'SYSTEM principal' ($taskXml.Replace('S-1-5-18','S-1-5-32-544'))
+RejectChangedTaskXML 'missing startup trigger' ($taskXml.Replace('<BootTrigger><Enabled>true</Enabled></BootTrigger>',''))
+RejectChangedTaskXML 'extra execution action' ($taskXml.Replace('</Actions>','<Exec><Command>evil.exe</Command></Exec></Actions>'))
+RejectChangedTaskXML 'changed run level' ($taskXml.Replace('HighestAvailable','LeastPrivilege'))
+RejectChangedTaskXML 'wrong namespace' ($taskXml.Replace($taskNS,'urn:foreign-task'))
+RejectChangedTaskXML 'DOCTYPE entity declaration' ('<!DOCTYPE Task [<!ENTITY x "bad">]>'+$taskXml)
+RejectChangedTaskXML 'malformed XML' ($taskXml.Substring(0,$taskXml.Length-8))
+RejectChangedTaskXML 'oversized task XML' ($taskXml+('x'*1048576))
+if($script:xmlRejections -ne 10){throw ('Expected 10 task XML rejections, got '+$script:xmlRejections)}
+Write-Host 'PASS: complete Task Scheduler XML normalized comparison and 10 adversarial rejections'
