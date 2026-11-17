@@ -2,9 +2,26 @@
 # Takes no locks, edits no DNS/HOSTS and does not register/modify tasks.
 Set-StrictMode -Version Latest
 
+# Exact allowlist: exclude ONLY the two owned fixtures of THIS trial,
+# never another trial's tasks or any identically named task in a subfolder.
+function Test-VolvVMBaselineExcludedTask {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory=$true)][ValidatePattern('^[0-9]{14,18}$')][string]$RunId,
+        [Parameter(Mandatory=$true)][AllowEmptyString()][string]$TaskPath,
+        [Parameter(Mandatory=$true)][AllowEmptyString()][string]$TaskName
+    )
+    return ($TaskPath -ceq '\' -and $TaskName -cin @(
+        ('VOLVE-CI-StartupMotor-'+$RunId),
+        ('VOLVE-CI-BootRecovery-'+$RunId)
+    ))
+}
+
 function Get-VolvVMBaselineState {
     [CmdletBinding()]
-    param()
+    param(
+        [Parameter(Mandatory=$true)][ValidatePattern('^[0-9]{14,18}$')][string]$RunId
+    )
     $hosts=Join-Path $env:WINDIR 'System32\drivers\etc\hosts'
     if(-not (Test-Path -LiteralPath $hosts -PathType Leaf)){
         throw 'NOT VERIFIED: Windows HOSTS file missing; cannot establish VM baseline'
@@ -21,14 +38,20 @@ function Get-VolvVMBaselineState {
     } | Sort-Object -CaseSensitive)
     if($dns.Count -eq 0){throw 'NOT VERIFIED: no DNS adapter configuration returned by VM'}
 
-    # Scope includes every non-test task in Scheduler ROOT. It therefore
-    # protects the production-like VOLVE task namespace without treating
-    # temporary VOLVE-CI-* fixtures as unrelated OS tasks.
-    $rootTasks=@(Get-ScheduledTask -ErrorAction Stop | Where-Object {
-        $_.TaskPath -ceq '\' -and
-        $_.TaskName -cnotmatch '^VOLVE-CI-(StartupMotor|BootRecovery)-[0-9]{14,18}$'
+    # Read EVERY Scheduler folder, not just the root. Include full TaskPath
+    # so identical task names in different subfolders cannot cancel each other.
+    # Fail closed if even a single task cannot be exported or canonicalized.
+    # Exclude only the two exact root task names owned by this RunId.
+    $allTasks=@(Get-ScheduledTask -ErrorAction Stop)
+    $taskRecords=@($allTasks | Where-Object {
+        -not (Test-VolvVMBaselineExcludedTask -RunId $RunId -TaskPath ([string]$_.TaskPath) -TaskName ([string]$_.TaskName))
     } | ForEach-Object {
-        $xml=Export-ScheduledTask -TaskName $_.TaskName -TaskPath '\' -ErrorAction Stop
+        $task=$_
+        if([string]::IsNullOrWhiteSpace([string]$task.TaskName) -or
+           [string]::IsNullOrWhiteSpace([string]$task.TaskPath)){
+            throw 'NOT VERIFIED: Scheduler returned a task without a full path or name'
+        }
+        $xml=Export-ScheduledTask -TaskName $task.TaskName -TaskPath $task.TaskPath -ErrorAction Stop
         $canonical=ConvertTo-VolvTaskXMLFingerprint -XMLText ([string]$xml)
         $sha=[Security.Cryptography.SHA256]::Create()
         try {
@@ -36,15 +59,19 @@ function Get-VolvVMBaselineState {
         } finally {
             $sha.Dispose()
         }
-        [string]$_.TaskName+'|'+$digest
+        [string]$task.TaskPath+[string]$task.TaskName+'|'+$digest
     } | Sort-Object -CaseSensitive)
+    if($taskRecords.Count -gt 20000){throw 'NOT VERIFIED: excessive Scheduler task inventory'}
+    if(@($taskRecords | Select-Object -Unique).Count -ne $taskRecords.Count){
+        throw 'NOT VERIFIED: duplicate Scheduler task entries in VM inventory'
+    }
 
     return [pscustomobject][ordered]@{
         schema=1
         kind='VOLVE_VM_READ_ONLY_ENVIRONMENT'
         hostsSha256=$hostsSHA
         dnsRecords=[string[]]$dns
-        rootTaskRecords=[string[]]$rootTasks
+        taskRecords=[string[]]$taskRecords
     }
 }
 
@@ -55,7 +82,7 @@ function Assert-VolvVMBaselineState {
         [Parameter(Mandatory=$true)][object]$Actual
     )
     foreach($record in @($Expected,$Actual)){
-        foreach($name in @('schema','kind','hostsSha256','dnsRecords','rootTaskRecords')){
+        foreach($name in @('schema','kind','hostsSha256','dnsRecords','taskRecords')){
             if($record.PSObject.Properties.Name -cnotcontains $name){
                 throw ('NOT VERIFIED: VM environment baseline missing '+$name)
             }
@@ -69,7 +96,7 @@ function Assert-VolvVMBaselineState {
     if([string]$Expected.hostsSha256 -cne [string]$Actual.hostsSha256){
         throw 'NOT VERIFIED: Windows HOSTS contents changed since VM Prepare'
     }
-    foreach($field in @('dnsRecords','rootTaskRecords')){
+    foreach($field in @('dnsRecords','taskRecords')){
         $before=@($Expected.$field)
         $after=@($Actual.$field)
         if($before.Count -ne $after.Count){
