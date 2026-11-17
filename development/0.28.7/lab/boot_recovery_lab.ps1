@@ -117,7 +117,16 @@ if($Mode -eq 'recover'){
    @{label='original task XML';path=$xmlPath;digest=$seal.originalTaskXMLSha256},
    @{label='previous fixture';path=$old;digest=$seal.previousFixtureSha256}
   )){
-   if([string]$check.digest -cnotmatch '^[a-fA-F0-9]{64}
+   if([string]::IsNullOrWhiteSpace([string]$check.digest) -or
+      ([string]$check.digest).Length -ne 64 -or
+      -not (Test-Path -LiteralPath $check.path -PathType Leaf)){
+    throw ('Recovery seal missing or malformed: '+$check.label)
+   }
+   if((Get-FileHash -Algorithm SHA256 -LiteralPath $check.path).Hash -cne [string]$check.digest){
+    throw ('Recovery seal hash mismatch: '+$check.label+'; journal remains pending')
+   }
+  }
+  $state=Journal -Arguments @('status',$journal)
   if($state -ne 'ROLLBACK_REQUIRED'){throw 'Recovery is not required'}
   Journal -Arguments @('verify-snapshot',$journal,$xmlPath) | Out-Null
   Journal -Arguments @('verify-previous',$journal,$old) | Out-Null
