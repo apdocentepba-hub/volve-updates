@@ -23,7 +23,7 @@
 | L2 | Watchdog ausente, DACL no protegida o mutex ocupado | VM Windows | Rechazo sin cambiar motor ni tareas | Parcial: gates unitarios y E2E SYSTEM con tarea temporal aprobados; no prueba rechazo de todas las condiciones ni es controlador productivo |
 | L3 | Interrupción tras preparar candidato y antes de commit | VM Windows | Journal pendiente y watchdog previamente armado | No aprobado: el E2E actual prueba rollback por fallo de conectividad después del switch, no una interrupción forzada entre preparación y commit |
 | L4 | Recuperación automática después de reinicio real | VM Windows con reinicio real | Restauración exacta de tres tareas/acciones y journal `restored` | Pendiente |
-| L5 | Preservación de DNS/HOSTS y tareas ajenas | VM Windows | Hashes/estado antes y después idénticos | No probado en este flujo |
+| L5 | Preservación de DNS/HOSTS y tareas ajenas | VM Windows | Hashes/estado antes y después idénticos | Parcial: captura y comparación de HOSTS, DNS y tareas raíz ajenas en Windows CI, con rechazos por deriva sintética; falta reinicio real, subcarpetas y binarios originales |
 
 ## Evidencia parcial adicional — watchdog SYSTEM sin reboot
 
