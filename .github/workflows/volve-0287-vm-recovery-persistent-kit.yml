@@ -114,6 +114,126 @@ jobs:
               Unregister-ScheduledTask -TaskName $name -TaskPath '\' -Confirm:$false -ErrorAction Stop
             }
           }
+      - name: Exercise pre-switch crash boundary under SYSTEM (NO REAL REBOOT)
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          if($env:GITHUB_ACTIONS -ne 'true' -or $env:RUNNER_ENVIRONMENT -ne 'github-hosted'){throw 'Not disposable hosted CI'}
+          $id=$env:GITHUB_RUN_ID+'456'
+          if($id -cnotmatch '^[0-9]{14,18}
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $out=Join-Path $env:RUNNER_TEMP 'VOLVE_VM_RECOVERY_BOOT_LAB'
+          New-Item -ItemType Directory -Path $out -ErrorAction Stop|Out-Null
+          $source='development/0.28.7/lab'
+          $names=@('vm_reboot_proof.ps1','boot_recovery_lab.ps1','reboot_event_chain.ps1','VM_ROLLBACK_BOOT_PACK_README.md')
+          foreach($name in $names){
+            Copy-Item -LiteralPath (Join-Path $source $name) -Destination (Join-Path $out $name) -ErrorAction Stop
+          }
+          Copy-Item -LiteralPath (Join-Path $env:RUNNER_TEMP 'volve-journal-lab.exe') -Destination (Join-Path $out 'volve-journal-lab.exe') -ErrorAction Stop
+          $manifest=[ordered]@{
+            schema=1;kind='VOLVE_CI_REAL_VM_TASK_ROLLBACK_KIT';source_revision=$env:GITHUB_SHA;
+            run_id=$env:GITHUB_RUN_ID;vm_only=$true;product_release=$false;
+            real_motor_upgrade_proven=$false;real_reboot_performed_by_ci=$false;
+            publisher_authorized=$false;files=@()
+          }
+          foreach($file in @('volve-journal-lab.exe')+$names){
+            $item=Get-Item -LiteralPath (Join-Path $out $file) -ErrorAction Stop
+            $manifest.files+=([ordered]@{name=$file;bytes=[int64]$item.Length;sha256=(Get-FileHash -Algorithm SHA256 -LiteralPath $item.FullName).Hash.ToLowerInvariant()})
+          }
+          $manifestPath=Join-Path $out 'SHA256_MANIFEST.json'
+          $manifest|ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $manifestPath -Encoding UTF8
+          $check=Get-Content -LiteralPath $manifestPath -Raw|ConvertFrom-Json
+          if($check.files.Count -ne 5 -or $check.vm_only -ne $true -or $check.product_release -ne $false){throw 'Invalid manifest'}
+          foreach($entry in $check.files){
+            $path=Join-Path $out $entry.name
+            if((Get-FileHash -Algorithm SHA256 -LiteralPath $path).Hash.ToLowerInvariant() -cne $entry.sha256){throw 'SHA256 mismatch'}
+          }
+          $readmePath=Join-Path $out 'VM_ROLLBACK_BOOT_PACK_README.md'
+          $readme=Get-Content -LiteralPath $readmePath -Raw -ErrorAction Stop
+          $snippetMatch=[regex]::Match($readme,'(?s)\*\*Verificación de integridad antes de ejecutar el kit:\*\*.*?\x60\x60\x60powershell\r?\n(.*?)\r?\n\x60\x60\x60')
+          if(-not $snippetMatch.Success){throw 'README integrity PowerShell example is missing or malformed'}
+          $snippet=$snippetMatch.Groups[1].Value
+          $originalRootLine=[string]::Concat('$root = ',[char]39,'C:',[char]92,'Lab',[char]92,'Rollback',[char]39)
+          $ciRootLine=[string]::Concat('$root = ',[char]39,$out,[char]39)
+          if(-not $snippet.Contains($originalRootLine)){throw 'README verification example no longer has the expected lab root'}
+          $ciSnippet=$snippet.Replace($originalRootLine,$ciRootLine)
+          & ([scriptblock]::Create($ciSnippet))
+          Write-Host 'PASS: executed the README integrity-verification example against the packaged kit'
+          Write-Host 'PASS: VM-only recovery kit manifest: 5 exact files; no release, no reboot'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: VOLVE-0287-VM-RECOVERY-BOOT-LAB-NO-INSTALL
+          path: ${{ runner.temp }}/VOLVE_VM_RECOVERY_BOOT_LAB/
+          if-no-files-found: error
+          retention-days: 7
+){throw 'Invalid disposable CI identifier'}
+          $source='development/0.28.7/lab/boot_recovery_lab.ps1'
+          $journal=Join-Path $env:RUNNER_TEMP 'volve-journal-lab.exe'
+          $workspace=Join-Path $env:RUNNER_TEMP ('VOLVE-CI-BOOT-'+$id)
+          $motor='VOLVE-CI-StartupMotor-'+$id
+          $watch='VOLVE-CI-BootRecovery-'+$id
+          $stateFile=Join-Path $workspace 'recovery.json'
+          try {
+            $env:VOLVE_CI_ABORT_BEFORE_CANDIDATE='1'
+            & $source -Mode stage -TaskName $motor -WatchdogName $watch -Workspace $workspace -JournalExe $journal
+            if($LASTEXITCODE -ne 0){throw 'Pre-switch interruption fixture failed'}
+            Remove-Item Env:\VOLVE_CI_ABORT_BEFORE_CANDIDATE -ErrorAction SilentlyContinue
+            $watchTask=Get-ScheduledTask -TaskName $watch -ErrorAction Stop
+            if($watchTask.Principal.UserId -notin @('SYSTEM','S-1-5-18') -or
+               @($watchTask.Triggers).Count -ne 1 -or
+               $watchTask.Triggers[0].CimClass.CimClassName -ne 'MSFT_TaskBootTrigger'){
+              throw 'Independent SYSTEM watchdog not armed at pre-switch boundary'
+            }
+            $old=Get-ScheduledTask -TaskName $motor -ErrorAction Stop
+            if(@($old.Actions).Count -ne 1 -or
+               $old.Actions[0].Execute -ne (Join-Path $env:WINDIR 'System32\cmd.exe') -or
+               [string]$old.Actions[0].Arguments -ne '/C exit 0'){
+              throw 'Pre-switch fault unexpectedly changed the original task'
+            }
+            if((& $journal status $stateFile) -ne 'ROLLBACK_REQUIRED'){
+              throw 'Pre-switch pending journal not armed'
+            }
+            # Deliberate direct invocation isolates SYSTEM pre-switch recovery;
+            # it is NOT evidence that Windows restarted or a boot trigger fired.
+            Start-ScheduledTask -TaskName $watch -ErrorAction Stop
+            $restored=$false
+            for($i=0;$i -lt 100;$i++){
+              Start-Sleep -Milliseconds 250
+              $state=& $journal status $stateFile
+              if($LASTEXITCODE -eq 0 -and $state -eq 'NO_ROLLBACK:restored'){
+                $restored=$true
+                break
+              }
+              if(Test-Path -LiteralPath (Join-Path $workspace 'boot-recovery-failed.marker')){
+                throw 'SYSTEM recovery reported failure'
+              }
+            }
+            if(-not $restored){throw 'SYSTEM watchdog did not close pre-switch journal'}
+            $final=Get-ScheduledTask -TaskName $motor -ErrorAction Stop
+            if(@($final.Actions).Count -ne 1 -or
+               $final.Actions[0].Execute -ne (Join-Path $env:WINDIR 'System32\cmd.exe') -or
+               [string]$final.Actions[0].Arguments -ne '/C exit 0'){
+              throw 'Original action changed during pre-switch SYSTEM recovery'
+            }
+            $markerPath=Join-Path $workspace 'boot-recovery-success.marker'
+            if(-not (Test-Path -LiteralPath $markerPath)){
+              throw 'No SYSTEM recovery marker'
+            }
+            Write-Host 'PASS: SYSTEM watchdog armed before candidate switch, original preserved and pending journal restored without reboot'
+          } finally {
+            Remove-Item Env:\VOLVE_CI_ABORT_BEFORE_CANDIDATE -ErrorAction SilentlyContinue
+            foreach($name in @($watch,$motor)){
+              $task=Get-ScheduledTask -TaskName $name -TaskPath '\' -ErrorAction SilentlyContinue
+              if($null -eq $task){continue}
+              if($task.TaskPath -ne '\' -or $task.Principal.UserId -notin @('SYSTEM','S-1-5-18')){
+                throw 'Refusing cleanup for foreign task'
+              }
+              if($task.State -eq 'Running'){Stop-ScheduledTask -TaskName $name -TaskPath '\' -ErrorAction Stop}
+              Unregister-ScheduledTask -TaskName $name -TaskPath '\' -Confirm:$false -ErrorAction Stop
+            }
+          }
       - name: Package VM-only recovery kit with SHA256 manifest
         shell: powershell
         run: |
