@@ -472,9 +472,7 @@ if($Mode -eq 'Cleanup') {
     $watch=Get-ScheduledTask -TaskName $bootTask -TaskPath '\' -ErrorAction SilentlyContinue
     $motor=Get-ScheduledTask -TaskName $labTask -TaskPath '\' -ErrorAction SilentlyContinue
     $phase=Resolve-VolvVMCleanupPhase -HasWatchdog ($null -ne $watch) -HasMotor ($null -ne $motor) -HasVerifiedIntent $verifiedIntent
-    if($preExistingReceipt -and $phase -cne 'COMPLETE'){
-        throw 'REFUSED: existing cleanup receipt claims completion but CI tasks remain registered'
-    }
+    $null=Assert-VolvVMCleanupReceiptPhase -Phase $phase -HasExistingReceipt $preExistingReceipt
 
     # During a new cleanup or recovery of a crash after watchdog removal,
     # the motor task must still be the *complete* original harmless fixture.
