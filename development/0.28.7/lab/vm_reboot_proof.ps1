@@ -457,11 +457,24 @@ if($Mode -eq 'Cleanup') {
         }
         $verifiedIntent=$true
     }
+    # An existing completion receipt must be validated BEFORE even the first
+    # destructive Task Scheduler action. A forged or stale completion record
+    # is a hard rejection, not a late post-deletion error.
+    $preExistingReceipt=$false
+    if(Test-Path -LiteralPath $receiptPath -PathType Leaf){
+        Assert-ProtectedEvidenceFile $receiptPath
+        $receipt=Get-Content -LiteralPath $receiptPath -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+        $null=Assert-VolvVMCleanupReceipt -Receipt $receipt -RunId $RunId -Computer $env:COMPUTERNAME -ProofSha256 $proofSHA -BootAfterUtc ([string]$proof.bootAfterUtc)
+        $preExistingReceipt=$true
+    }
     # Get-ScheduledTask cannot use a missing task as proof of completed
     # cleanup. It is acceptable only with the protected intent just checked.
     $watch=Get-ScheduledTask -TaskName $bootTask -TaskPath '\' -ErrorAction SilentlyContinue
     $motor=Get-ScheduledTask -TaskName $labTask -TaskPath '\' -ErrorAction SilentlyContinue
     $phase=Resolve-VolvVMCleanupPhase -HasWatchdog ($null -ne $watch) -HasMotor ($null -ne $motor) -HasVerifiedIntent $verifiedIntent
+    if($preExistingReceipt -and $phase -cne 'COMPLETE'){
+        throw 'REFUSED: existing cleanup receipt claims completion but CI tasks remain registered'
+    }
 
     # During a new cleanup or recovery of a crash after watchdog removal,
     # the motor task must still be the *complete* original harmless fixture.
@@ -521,18 +534,7 @@ if($Mode -eq 'Cleanup') {
        $null -ne (Get-ScheduledTask -TaskName $labTask -TaskPath '\' -ErrorAction SilentlyContinue)){
         throw 'REFUSED: cleanup incomplete; preserve protected intent and reboot evidence'
     }
-    if(Test-Path -LiteralPath $receiptPath -PathType Leaf){
-        Assert-ProtectedEvidenceFile $receiptPath
-        $receipt=Get-Content -LiteralPath $receiptPath -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
-        if($receipt.schema -ne 1 -or
-           [string]$receipt.kind -cne 'VOLVE_VM_CLEANUP_VERIFIED' -or
-           [string]$receipt.runId -cne $RunId -or
-           [string]$receipt.computer -cne $env:COMPUTERNAME -or
-           [string]$receipt.proofSha256 -cne $proofSHA -or
-           [string]$receipt.bootAfterUtc -cne [string]$proof.bootAfterUtc){
-            throw 'REFUSED: existing cleanup receipt does not match the protected real reboot'
-        }
-    } else {
+    if(-not $preExistingReceipt){
         $receipt=[ordered]@{
             schema=1;kind='VOLVE_VM_CLEANUP_VERIFIED';runId=$RunId;
             computer=$env:COMPUTERNAME;bootAfterUtc=[string]$proof.bootAfterUtc;
