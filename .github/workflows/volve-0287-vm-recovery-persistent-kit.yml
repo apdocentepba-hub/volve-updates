@@ -220,6 +220,26 @@ jobs:
                 [IO.File]::WriteAllBytes($file,$original)
               }
             }
+            foreach($case in @(
+              @{name='vm-environment-baseline.json';expected='Protected HOSTS/DNS/unrelated-task baseline changed after VM Prepare'},
+              @{name='vm_environment_baseline.ps1';expected='Protected HOSTS/DNS/unrelated-task baseline changed after VM Prepare'}
+            )){
+              $file=Join-Path $trialKit $case.name
+              $original=[IO.File]::ReadAllBytes($file)
+              try {
+                [IO.File]::AppendAllText($file,'VOLVE-CI-ENV-BASELINE-TAMPER')
+                $blocked=$false
+                try { & $script -Mode Verify -RunId $id }
+                catch {
+                  if($_.Exception.Message.Contains($case.expected)){$blocked=$true}else{throw}
+                }
+                if(-not $blocked){throw ('Environment baseline tampering was accepted: '+$case.name)}
+              } finally {
+                [IO.File]::WriteAllBytes($file,$original)
+              }
+            }
+            & $script -Mode AuditPrepared -RunId $id
+            Write-Host 'PASS: protected VM HOSTS/DNS/root-task baseline and its verification module reject post-Prepare tampering'
             $rejectedAfterRestoring=$false
             try { & $script -Mode Verify -RunId $id }
             catch { if($_.Exception.Message -like '*VM has not undergone a new boot*'){$rejectedAfterRestoring=$true}else{throw} }
