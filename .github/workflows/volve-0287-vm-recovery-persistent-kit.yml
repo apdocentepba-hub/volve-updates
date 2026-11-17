@@ -136,6 +136,44 @@ jobs:
               Register-ScheduledTask -TaskName $bootName -TaskPath '\' -Xml $savedWatchdog -Force -ErrorAction Stop|Out-Null
             }
             & $script -Mode AuditPrepared -RunId $id
+            # The VM's cleanup path must reject both missing and fabricated
+            # reboot evidence WITHOUT unregistering either disposable task.
+            $trialKit=Join-Path $env:ProgramData ('VOLVE-VM-RebootLab-'+$id)
+            $proofPath=Join-Path $trialKit 'vm-proof-evidence.json'
+            $cleanupDenied=$false
+            try { & $script -Mode Cleanup -RunId $id }
+            catch {
+              if($_.Exception.Message -like 'REFUSED: Cleanup requires verified real reboot proof*'){
+                $cleanupDenied=$true
+              } else {throw}
+            }
+            if(-not $cleanupDenied){throw 'UNSAFE: pending VM trial cleanup succeeded without real boot proof'}
+            $forged=[ordered]@{schema=2;test='FABRICATED-CI-PROOF';runId=$id}
+            try {
+              $forged|ConvertTo-Json|Set-Content -LiteralPath $proofPath -Encoding UTF8 -ErrorAction Stop
+              $forgeryDenied=$false
+              try { & $script -Mode Cleanup -RunId $id }
+              catch {
+                if($_.Exception.Message -like 'REFUSED: Cleanup proof does not match protected VM recovery receipt*'){
+                  $forgeryDenied=$true
+                } else {throw}
+              }
+              if(-not $forgeryDenied){throw 'UNSAFE: fabricated VM reboot evidence allowed cleanup'}
+            } finally {
+              if(Test-Path -LiteralPath $proofPath){Remove-Item -LiteralPath $proofPath -Force -ErrorAction Stop}
+            }
+            foreach($name in $taskNames){
+              $t=Get-ScheduledTask -TaskName $name -TaskPath '\' -ErrorAction Stop
+              if($t.Principal.UserId -notin @('SYSTEM','S-1-5-18')){
+                throw 'Unsafe cleanup changed task ownership'
+              }
+            }
+            $pendingJournal=Join-Path (Join-Path $trialKit ('VOLVE-CI-BOOT-'+$id)) 'recovery.json'
+            $pendingStatus=& $journal status $pendingJournal
+            if($LASTEXITCODE -ne 0 -or $pendingStatus -cne 'ROLLBACK_REQUIRED'){
+              throw 'Unsafe cleanup changed the pending recovery journal'
+            }
+            Write-Host 'PASS: cleanup refused with missing/forged reboot proof; both SYSTEM CI tasks and pending journal preserved'
             $rejected=$false
             try { & $script -Mode Verify -RunId $id }
             catch { if($_.Exception.Message -like '*VM has not undergone a new boot*'){$rejected=$true}else{throw} }
