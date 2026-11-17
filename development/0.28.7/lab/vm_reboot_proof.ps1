@@ -141,6 +141,19 @@ function Assert-LabIdentity([string]$dir,[object]$meta) {
     $taskSnapshot=Join-Path $dir ('VOLVE-CI-BOOT-'+$RunId)
     $originalXML=Join-Path $taskSnapshot 'old-task.xml'
     $oldFixture=Join-Path $taskSnapshot 'old-test-engine.bin'
+    $codeSeal=Join-Path $taskSnapshot 'recovery-code-seal.json'
+    Assert-ProtectedEvidenceFile $codeSeal
+    $seal=Get-Content -LiteralPath $codeSeal -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+    if($seal.schema -ne 1 -or $seal.taskName -cne ('VOLVE-CI-StartupMotor-'+$RunId) -or
+       $seal.watchdogName -cne ('VOLVE-CI-BootRecovery-'+$RunId) -or
+       $seal.workspace -cne $taskSnapshot -or
+       [string]$seal.labScriptSha256 -cne [string]$meta.labSha256 -or
+       [string]$seal.journalHelperSha256 -cne [string]$meta.journalSha256 -or
+       [string]$seal.verificationLibSha256 -cne [string]$meta.evidenceLibSha256 -or
+       [string]$seal.originalTaskXMLSha256 -cne [string]$meta.taskSnapshotSha256 -or
+       [string]$seal.previousFixtureSha256 -cne [string]$meta.originalFixtureSha256){
+        throw 'Protected recovery code seal does not match independent VM trial metadata'
+    }
     Assert-ProtectedEvidenceFile $originalXML
     Assert-ProtectedEvidenceFile $oldFixture
     if((Get-FileHash -Algorithm SHA256 -LiteralPath $originalXML).Hash -cne [string]$meta.taskSnapshotSha256){
