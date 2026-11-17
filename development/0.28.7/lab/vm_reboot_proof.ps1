@@ -117,7 +117,7 @@ function Read-Metadata([string]$dir) {
     Assert-ProtectedEvidenceFile $path
     $data = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json
     if($data.schema -ne 1 -or $data.runId -ne $RunId -or $data.computer -ne $env:COMPUTERNAME) {throw 'VM trial metadata mismatch'}
-    foreach($member in @('bootBeforeUtc','labSha256','journalSha256','evidenceLibSha256','taskSnapshotSha256','originalFixtureSha256')) {
+    foreach($member in @('bootBeforeUtc','labSha256','journalSha256','evidenceLibSha256','taskSnapshotSha256','originalFixtureSha256','watchdogTaskSnapshotSha256')) {
         if($null -eq $data.$member -or [string]::IsNullOrWhiteSpace([string]$data.$member)){throw ('Missing '+$member)}
     }
     return $data
@@ -142,6 +142,11 @@ function Assert-LabIdentity([string]$dir,[object]$meta) {
     $originalXML=Join-Path $taskSnapshot 'old-task.xml'
     $oldFixture=Join-Path $taskSnapshot 'old-test-engine.bin'
     $codeSeal=Join-Path $taskSnapshot 'recovery-code-seal.json'
+    $watchdogXML=Join-Path $dir 'watchdog-task.xml'
+    Assert-ProtectedEvidenceFile $watchdogXML
+    if((Get-FileHash -Algorithm SHA256 -LiteralPath $watchdogXML).Hash -cne [string]$meta.watchdogTaskSnapshotSha256){
+        throw 'Protected startup watchdog XML snapshot hash mismatch'
+    }
     Assert-ProtectedEvidenceFile $codeSeal
     $seal=Get-Content -LiteralPath $codeSeal -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
     if($seal.schema -ne 1 -or $seal.taskName -cne ('VOLVE-CI-StartupMotor-'+$RunId) -or
@@ -212,6 +217,12 @@ if($Mode -eq 'Prepare') {
     # snapshot has actually been staged and the boot watchdog armed.
     $originalXML=Join-Path $root 'old-task.xml'
     $oldFixture=Join-Path $root 'old-test-engine.bin'
+    # The watchdog itself is a privileged execution surface. Snapshot ALL
+    # its settings, including executable/arguments, not merely SYSTEM+boot.
+    $startupXML=Export-ScheduledTask -TaskName $bootTask -TaskPath '\' -ErrorAction Stop
+    $startupXMLPath=Join-Path $kit 'watchdog-task.xml'
+    [IO.File]::WriteAllText($startupXMLPath,[string]$startupXML,[Text.UTF8Encoding]::new($false))
+    Assert-ProtectedEvidenceFile $startupXMLPath
     Assert-ProtectedEvidenceFile $originalXML
     Assert-ProtectedEvidenceFile $oldFixture
     $metadata=[ordered]@{
@@ -222,6 +233,7 @@ if($Mode -eq 'Prepare') {
         evidenceLibSha256=(Get-FileHash -Algorithm SHA256 -LiteralPath $copiedEvidenceLib).Hash;
         taskSnapshotSha256=(Get-FileHash -Algorithm SHA256 -LiteralPath $originalXML).Hash;
         originalFixtureSha256=(Get-FileHash -Algorithm SHA256 -LiteralPath $oldFixture).Hash;
+        watchdogTaskSnapshotSha256=(Get-FileHash -Algorithm SHA256 -LiteralPath $startupXMLPath).Hash;
     }
     $metadata | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $kit 'vm-trial.json') -Encoding UTF8
     $watch=Get-ScheduledTask -TaskName $bootTask
@@ -231,6 +243,10 @@ if($Mode -eq 'Prepare') {
     # must stop here, not leave a potentially unrecoverable reboot rehearsal.
     $preparedMeta=Read-Metadata $kit
     Assert-LabIdentity $kit $preparedMeta
+    . $copiedEvidenceLib
+    if(-not (Assert-VolvRestoredTaskXML -SavedXML ([IO.File]::ReadAllText($startupXMLPath)) -RestoredXML (Export-ScheduledTask -TaskName $bootTask -TaskPath '\' -ErrorAction Stop))){
+        throw 'Protected startup watchdog definition diverged during VM preparation'
+    }
     Assert-ProtectedEvidenceFile (Join-Path $root 'old-task.xml')
     Assert-ProtectedEvidenceFile (Join-Path $root 'recovery.json')
     $journalState=& $copiedJournal status (Join-Path $root 'recovery.json')
@@ -272,6 +288,11 @@ if($Mode -eq 'Verify') {
     $bootChain=Get-VolvRealBootChain -TaskName ('\'+$bootTask) -BootUTC $now
     $watch=Get-ScheduledTask -TaskName $bootTask -ErrorAction Stop
     if($watch.Principal.UserId -notin @('SYSTEM','S-1-5-18') -or @($watch.Triggers).Count -ne 1 -or $watch.Triggers[0].CimClass.CimClassName -ne 'MSFT_TaskBootTrigger') {throw 'Unexpected watchdog task identity/trigger'}
+    $savedWatchdogXML=[IO.File]::ReadAllText((Join-Path $kit 'watchdog-task.xml'))
+    $currentWatchdogXML=Export-ScheduledTask -TaskName $bootTask -TaskPath '\' -ErrorAction Stop
+    if(-not (Assert-VolvRestoredTaskXML -SavedXML $savedWatchdogXML -RestoredXML $currentWatchdogXML)){
+        throw 'NOT VERIFIED: startup watchdog definition changed since VM Prepare'
+    }
     $taskInfo=Get-ScheduledTaskInfo -TaskName $bootTask -ErrorAction Stop
     if($taskInfo.LastTaskResult -ne 0 -or $taskInfo.LastRunTime.ToUniversalTime() -lt $now.AddSeconds(-3)) {throw 'No successful watchdog execution associated with this boot'}
     $task=Assert-LabTask $labTask $cmd
@@ -308,6 +329,8 @@ if($Mode -eq 'Verify') {
         recoveryJournalState=$status;
         restoredAction=$cmd;restoredArguments='/C exit 0';
         restoredTaskXMLMatchesProtectedSnapshot=$true;
+        startupWatchdogXMLMatchesProtectedSnapshot=$true;
+        startupWatchdogXMLSnapshotSha256=$meta.watchdogTaskSnapshotSha256;
         originalTaskSnapshotSha256=(Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $root 'old-task.xml')).Hash;
         originalFixtureSha256=(Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $root 'old-test-engine.bin')).Hash;
         bootChainVerificationSha256=$meta.evidenceLibSha256;
