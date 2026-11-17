@@ -99,7 +99,10 @@ jobs:
           $lab=Join-Path $base 'boot_recovery_lab.ps1'
           & wevtutil.exe sl Microsoft-Windows-TaskScheduler/Operational /e:true
           if($LASTEXITCODE -ne 0){throw 'Cannot enable ephemeral VM task history'}
-          $taskNames=@('VOLVE-CI-StartupMotor-'+$id,'VOLVE-CI-BootRecovery-'+$id)
+          $taskNames=@(('VOLVE-CI-StartupMotor-'+$id),('VOLVE-CI-BootRecovery-'+$id))
+          if(@($taskNames).Count -ne 2 -or $taskNames[0] -ceq $taskNames[1]){
+            throw 'CI cleanup requires exactly two distinct disposable task names'
+          }
           try{
             & $script -Mode Probe
             & $script -Mode Prepare -RunId $id -LabScript $lab -JournalExe $journal
