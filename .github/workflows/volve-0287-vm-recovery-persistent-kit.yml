@@ -120,55 +120,7 @@ jobs:
           $ErrorActionPreference='Stop'
           if($env:GITHUB_ACTIONS -ne 'true' -or $env:RUNNER_ENVIRONMENT -ne 'github-hosted'){throw 'Not disposable hosted CI'}
           $id=$env:GITHUB_RUN_ID+'456'
-          if($id -cnotmatch '^[0-9]{14,18}
-        shell: powershell
-        run: |
-          $ErrorActionPreference='Stop'
-          $out=Join-Path $env:RUNNER_TEMP 'VOLVE_VM_RECOVERY_BOOT_LAB'
-          New-Item -ItemType Directory -Path $out -ErrorAction Stop|Out-Null
-          $source='development/0.28.7/lab'
-          $names=@('vm_reboot_proof.ps1','boot_recovery_lab.ps1','reboot_event_chain.ps1','VM_ROLLBACK_BOOT_PACK_README.md')
-          foreach($name in $names){
-            Copy-Item -LiteralPath (Join-Path $source $name) -Destination (Join-Path $out $name) -ErrorAction Stop
-          }
-          Copy-Item -LiteralPath (Join-Path $env:RUNNER_TEMP 'volve-journal-lab.exe') -Destination (Join-Path $out 'volve-journal-lab.exe') -ErrorAction Stop
-          $manifest=[ordered]@{
-            schema=1;kind='VOLVE_CI_REAL_VM_TASK_ROLLBACK_KIT';source_revision=$env:GITHUB_SHA;
-            run_id=$env:GITHUB_RUN_ID;vm_only=$true;product_release=$false;
-            real_motor_upgrade_proven=$false;real_reboot_performed_by_ci=$false;
-            publisher_authorized=$false;files=@()
-          }
-          foreach($file in @('volve-journal-lab.exe')+$names){
-            $item=Get-Item -LiteralPath (Join-Path $out $file) -ErrorAction Stop
-            $manifest.files+=([ordered]@{name=$file;bytes=[int64]$item.Length;sha256=(Get-FileHash -Algorithm SHA256 -LiteralPath $item.FullName).Hash.ToLowerInvariant()})
-          }
-          $manifestPath=Join-Path $out 'SHA256_MANIFEST.json'
-          $manifest|ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $manifestPath -Encoding UTF8
-          $check=Get-Content -LiteralPath $manifestPath -Raw|ConvertFrom-Json
-          if($check.files.Count -ne 5 -or $check.vm_only -ne $true -or $check.product_release -ne $false){throw 'Invalid manifest'}
-          foreach($entry in $check.files){
-            $path=Join-Path $out $entry.name
-            if((Get-FileHash -Algorithm SHA256 -LiteralPath $path).Hash.ToLowerInvariant() -cne $entry.sha256){throw 'SHA256 mismatch'}
-          }
-          $readmePath=Join-Path $out 'VM_ROLLBACK_BOOT_PACK_README.md'
-          $readme=Get-Content -LiteralPath $readmePath -Raw -ErrorAction Stop
-          $snippetMatch=[regex]::Match($readme,'(?s)\*\*Verificación de integridad antes de ejecutar el kit:\*\*.*?\x60\x60\x60powershell\r?\n(.*?)\r?\n\x60\x60\x60')
-          if(-not $snippetMatch.Success){throw 'README integrity PowerShell example is missing or malformed'}
-          $snippet=$snippetMatch.Groups[1].Value
-          $originalRootLine=[string]::Concat('$root = ',[char]39,'C:',[char]92,'Lab',[char]92,'Rollback',[char]39)
-          $ciRootLine=[string]::Concat('$root = ',[char]39,$out,[char]39)
-          if(-not $snippet.Contains($originalRootLine)){throw 'README verification example no longer has the expected lab root'}
-          $ciSnippet=$snippet.Replace($originalRootLine,$ciRootLine)
-          & ([scriptblock]::Create($ciSnippet))
-          Write-Host 'PASS: executed the README integrity-verification example against the packaged kit'
-          Write-Host 'PASS: VM-only recovery kit manifest: 5 exact files; no release, no reboot'
-      - uses: actions/upload-artifact@v4
-        with:
-          name: VOLVE-0287-VM-RECOVERY-BOOT-LAB-NO-INSTALL
-          path: ${{ runner.temp }}/VOLVE_VM_RECOVERY_BOOT_LAB/
-          if-no-files-found: error
-          retention-days: 7
-){throw 'Invalid disposable CI identifier'}
+          if($id -cnotmatch '^[0-9]{14,18}$'){throw 'Invalid disposable CI identifier'}
           $source='development/0.28.7/lab/boot_recovery_lab.ps1'
           $journal=Join-Path $env:RUNNER_TEMP 'volve-journal-lab.exe'
           $workspace=Join-Path $env:RUNNER_TEMP ('VOLVE-CI-BOOT-'+$id)
