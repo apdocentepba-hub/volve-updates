@@ -432,32 +432,115 @@ if($Mode -eq 'Cleanup') {
     if($LASTEXITCODE -ne 0 -or $status -cne 'NO_ROLLBACK:restored'){
         throw 'REFUSED: Cleanup cannot remove watchdog with unfinished recovery journal'
     }
-    $watch=Get-ScheduledTask -TaskName $bootTask -TaskPath '\' -ErrorAction Stop
-    $motor=Get-ScheduledTask -TaskName $labTask -TaskPath '\' -ErrorAction Stop
-    if($watch.TaskPath -ne '\' -or $watch.Principal.UserId -notin @('SYSTEM','S-1-5-18') -or
-       @($watch.Actions).Count -ne 1 -or @($watch.Triggers).Count -ne 1 -or
-       $watch.Triggers[0].CimClass.CimClassName -cne 'MSFT_TaskBootTrigger'){
-        throw 'REFUSED: unexpected SYSTEM watchdog; no tasks removed'
+    # Recovery of an interrupted cleanup is deliberately separate from
+    # recovery of a migration. Both require real reboot proof, preserved
+    # journals and the complete original task definitions.
+    . (Join-Path $kit 'vm_cleanup_state_contract.ps1')
+    $intentPath=Join-Path $kit 'vm-cleanup-intent.json'
+    $receiptPath=Join-Path $kit 'vm-cleanup-evidence.json'
+    $proofSHA=(Get-FileHash -Algorithm SHA256 -LiteralPath $proofPath).Hash
+    $verifiedIntent=$false
+    if(Test-Path -LiteralPath $intentPath -PathType Leaf){
+        Assert-ProtectedEvidenceFile $intentPath
+        $intent=Get-Content -LiteralPath $intentPath -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+        if($intent.schema -ne 1 -or
+           [string]$intent.kind -cne 'VOLVE_VM_CLEANUP_INTENT' -or
+           [string]$intent.runId -cne $RunId -or
+           [string]$intent.computer -cne $env:COMPUTERNAME -or
+           [string]$intent.bootTask -cne $bootTask -or
+           [string]$intent.motorTask -cne $labTask -or
+           [string]$intent.bootAfterUtc -cne [string]$proof.bootAfterUtc -or
+           [string]$intent.proofSha256 -cne $proofSHA -or
+           [string]$intent.watchdogXMLSha256 -cne [string]$meta.watchdogTaskSnapshotSha256 -or
+           [string]$intent.motorXMLSha256 -cne [string]$meta.taskSnapshotSha256){
+            throw 'REFUSED: existing VM cleanup intent does not match protected recovery evidence'
+        }
+        $verifiedIntent=$true
     }
-    $action=$watch.Actions[0]
-    $expectedPowerShell=Join-Path $env:WINDIR 'System32\WindowsPowerShell\v1.0\powershell.exe'
-    if($action.Execute -ne $expectedPowerShell -or
-       [string]::IsNullOrWhiteSpace([string]$action.Arguments) -or
-       $action.Arguments.IndexOf($kit,[StringComparison]::OrdinalIgnoreCase) -lt 0){
-        throw 'REFUSED: unexpected watchdog command; no tasks removed'
+    # Get-ScheduledTask cannot use a missing task as proof of completed
+    # cleanup. It is acceptable only with the protected intent just checked.
+    $watch=Get-ScheduledTask -TaskName $bootTask -TaskPath '\' -ErrorAction SilentlyContinue
+    $motor=Get-ScheduledTask -TaskName $labTask -TaskPath '\' -ErrorAction SilentlyContinue
+    $phase=Resolve-VolvVMCleanupPhase -HasWatchdog ($null -ne $watch) -HasMotor ($null -ne $motor) -HasVerifiedIntent $verifiedIntent
+
+    # During a new cleanup or recovery of a crash after watchdog removal,
+    # the motor task must still be the *complete* original harmless fixture.
+    if($phase -in @('READY','RESUME_MOTOR')){
+        if($motor.TaskPath -ne '\' -or $motor.Principal.UserId -notin @('SYSTEM','S-1-5-18') -or
+           @($motor.Actions).Count -ne 1 -or $motor.Actions[0].Execute -ne $cmd -or
+           [string]$motor.Actions[0].Arguments -cne '/C exit 0'){
+            throw 'REFUSED: disposable motor not completely restored; no tasks removed'
+        }
+        if(-not (Assert-VolvRestoredTaskXML -SavedXML ([IO.File]::ReadAllText((Join-Path $root 'old-task.xml'))) -RestoredXML (Export-ScheduledTask -TaskName $labTask -TaskPath '\' -ErrorAction Stop))){
+            throw 'REFUSED: motor XML diverged; no tasks removed'
+        }
     }
-    if($motor.TaskPath -ne '\' -or $motor.Principal.UserId -notin @('SYSTEM','S-1-5-18') -or
-       @($motor.Actions).Count -ne 1 -or $motor.Actions[0].Execute -ne $cmd -or
-       [string]$motor.Actions[0].Arguments -cne '/C exit 0'){
-        throw 'REFUSED: disposable motor not completely restored; no tasks removed'
+    if($phase -eq 'READY'){
+        if($watch.TaskPath -ne '\' -or $watch.Principal.UserId -notin @('SYSTEM','S-1-5-18') -or
+           @($watch.Actions).Count -ne 1 -or @($watch.Triggers).Count -ne 1 -or
+           $watch.Triggers[0].CimClass.CimClassName -cne 'MSFT_TaskBootTrigger'){
+            throw 'REFUSED: unexpected SYSTEM watchdog; no tasks removed'
+        }
+        $action=$watch.Actions[0]
+        $expectedPowerShell=Join-Path $env:WINDIR 'System32\WindowsPowerShell\v1.0\powershell.exe'
+        if($action.Execute -ne $expectedPowerShell -or
+           [string]::IsNullOrWhiteSpace([string]$action.Arguments) -or
+           $action.Arguments.IndexOf($kit,[StringComparison]::OrdinalIgnoreCase) -lt 0){
+            throw 'REFUSED: unexpected watchdog command; no tasks removed'
+        }
+        if(-not (Assert-VolvRestoredTaskXML -SavedXML ([IO.File]::ReadAllText((Join-Path $kit 'watchdog-task.xml'))) -RestoredXML (Export-ScheduledTask -TaskName $bootTask -TaskPath '\' -ErrorAction Stop))){
+            throw 'REFUSED: watchdog XML diverged; no tasks removed'
+        }
+        if(-not $verifiedIntent){
+            # Intent is written to the ACL-protected evidence directory only
+            # after BOTH full task XMLs and the independent boot proof passed.
+            # It makes a crash BETWEEN the two deletions safely resumable.
+            $newIntent=[ordered]@{
+                schema=1;kind='VOLVE_VM_CLEANUP_INTENT';runId=$RunId;
+                computer=$env:COMPUTERNAME;bootTask=$bootTask;motorTask=$labTask;
+                bootAfterUtc=[string]$proof.bootAfterUtc;
+                proofSha256=$proofSHA;
+                watchdogXMLSha256=[string]$meta.watchdogTaskSnapshotSha256;
+                motorXMLSha256=[string]$meta.taskSnapshotSha256;
+                recordedUtc=[DateTime]::UtcNow.ToString('o');
+            }
+            $newIntent|ConvertTo-Json -Depth 4|Set-Content -LiteralPath $intentPath -Encoding UTF8 -ErrorAction Stop
+            Assert-ProtectedEvidenceFile $intentPath
+            $verifiedIntent=$true
+        }
+        # The watchdog is disarmed first; never leave a boot-time recovery
+        # command after the successfully attested migration has been closed.
+        Unregister-ScheduledTask -TaskName $bootTask -TaskPath '\' -Confirm:$false -ErrorAction Stop
     }
-    if(-not (Assert-VolvRestoredTaskXML -SavedXML ([IO.File]::ReadAllText((Join-Path $kit 'watchdog-task.xml'))) -RestoredXML (Export-ScheduledTask -TaskName $bootTask -TaskPath '\' -ErrorAction Stop)) -or
-       -not (Assert-VolvRestoredTaskXML -SavedXML ([IO.File]::ReadAllText((Join-Path $root 'old-task.xml'))) -RestoredXML (Export-ScheduledTask -TaskName $labTask -TaskPath '\' -ErrorAction Stop))){
-        throw 'REFUSED: one or more task definitions diverged; no tasks removed'
+    if($phase -in @('READY','RESUME_MOTOR')){
+        # If interrupted just after deleting the watchdog, reentry detects
+        # the protected intent and removes ONLY the still-validated motor.
+        Unregister-ScheduledTask -TaskName $labTask -TaskPath '\' -Confirm:$false -ErrorAction Stop
     }
-    # Only after all the independent guards above passed is any mutation allowed.
-    # Remove watchdog first to prevent a later replay; all evidence stays on disk.
-    Unregister-ScheduledTask -TaskName $bootTask -TaskPath '\' -Confirm:$false -ErrorAction Stop
-    Unregister-ScheduledTask -TaskName $labTask -TaskPath '\' -Confirm:$false -ErrorAction Stop
-    Write-Host ('CLEAN: both verified disposable VM tasks unregistered; protected reboot evidence remains at '+$kit)
+    if($null -ne (Get-ScheduledTask -TaskName $bootTask -TaskPath '\' -ErrorAction SilentlyContinue) -or
+       $null -ne (Get-ScheduledTask -TaskName $labTask -TaskPath '\' -ErrorAction SilentlyContinue)){
+        throw 'REFUSED: cleanup incomplete; preserve protected intent and reboot evidence'
+    }
+    if(Test-Path -LiteralPath $receiptPath -PathType Leaf){
+        Assert-ProtectedEvidenceFile $receiptPath
+        $receipt=Get-Content -LiteralPath $receiptPath -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+        if($receipt.schema -ne 1 -or
+           [string]$receipt.kind -cne 'VOLVE_VM_CLEANUP_VERIFIED' -or
+           [string]$receipt.runId -cne $RunId -or
+           [string]$receipt.computer -cne $env:COMPUTERNAME -or
+           [string]$receipt.proofSha256 -cne $proofSHA -or
+           [string]$receipt.bootAfterUtc -cne [string]$proof.bootAfterUtc){
+            throw 'REFUSED: existing cleanup receipt does not match the protected real reboot'
+        }
+    } else {
+        $receipt=[ordered]@{
+            schema=1;kind='VOLVE_VM_CLEANUP_VERIFIED';runId=$RunId;
+            computer=$env:COMPUTERNAME;bootAfterUtc=[string]$proof.bootAfterUtc;
+            proofSha256=$proofSHA;watchdogRemoved=$true;motorRemoved=$true;
+            completedUtc=[DateTime]::UtcNow.ToString('o');
+        }
+        $receipt|ConvertTo-Json -Depth 4|Set-Content -LiteralPath $receiptPath -Encoding UTF8 -ErrorAction Stop
+        Assert-ProtectedEvidenceFile $receiptPath
+    }
+    Write-Host ('CLEAN: both verified disposable VM tasks absent; restart-safe intent and evidence remain at '+$kit)
 }
