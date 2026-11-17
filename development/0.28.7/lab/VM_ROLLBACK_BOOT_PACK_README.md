@@ -39,8 +39,9 @@ Write-Host 'PASS: seis archivos esperados y cinco hashes del kit verificados.'
    wevtutil sl Microsoft-Windows-TaskScheduler/Operational /e:true
    powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\Lab\Rollback\vm_reboot_proof.ps1" -Mode Probe
    powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\Lab\Rollback\vm_reboot_proof.ps1" -Mode Prepare -RunId 20261102000201 -LabScript "C:\Lab\Rollback\boot_recovery_lab.ps1" -JournalExe "C:\Lab\Rollback\volve-journal-lab.exe"
+   powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\Lab\Rollback\vm_reboot_proof.ps1" -Mode AuditPrepared -RunId 20261102000201
    ```
-5. **Solo** si aparece `PREPARED` y verificación previa satisfactoria, reiniciar **el Windows de la VM** manualmente; no reiniciar el anfitrión. Después:
+5. **Solo** si aparecen `PREPARED` y el `PASS` de `AuditPrepared`, reiniciar **el Windows de la VM** manualmente; no reiniciar el anfitrión. `AuditPrepared` es de **solo lectura**: exige que la definición XML completa del watchdog SYSTEM coincida con la guardada antes del reinicio, comprueba los respaldos, el candidato y el journal pendiente. **No prueba un reinicio** y no reemplaza `Verify` después de arrancar. Después:
    ```powershell
    powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\Lab\Rollback\vm_reboot_proof.ps1" -Mode Verify -RunId 20261102000201
    ```
