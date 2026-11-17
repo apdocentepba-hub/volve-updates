@@ -7,7 +7,7 @@ $expected=[pscustomobject][ordered]@{
     kind='VOLVE_VM_READ_ONLY_ENVIRONMENT'
     hostsSha256=('A'*64)
     dnsRecords=@('2|2|192.0.2.10,192.0.2.11','2|23|2001:db8::53')
-    rootTaskRecords=@('VOLVE-CATALOGO|'+('B'*64),'WindowsMaintenance|'+('C'*64))
+    rootTaskRecords=@(('VOLVE-CATALOGO|'+('B'*64)),('WindowsMaintenance|'+('C'*64)))
 }
 $clone=$expected|ConvertTo-Json -Depth 6|ConvertFrom-Json
 if(-not (Assert-VolvVMBaselineState -Expected $expected -Actual $clone)){
@@ -17,8 +17,8 @@ $cases=@(
     @{field='hostsSha256';value=('D'*64)},
     @{field='dnsRecords';value=@('2|2|192.0.2.55','2|23|2001:db8::53')},
     @{field='dnsRecords';value=@('2|2|192.0.2.10,192.0.2.11')},
-    @{field='rootTaskRecords';value=@('VOLVE-CATALOGO|'+('E'*64),'WindowsMaintenance|'+('C'*64))},
-    @{field='rootTaskRecords';value=@('WindowsMaintenance|'+('C'*64))},
+    @{field='rootTaskRecords';value=@(('VOLVE-CATALOGO|'+('E'*64)),('WindowsMaintenance|'+('C'*64)))},
+    @{field='rootTaskRecords';value=@(('WindowsMaintenance|'+('C'*64)))},
     @{field='schema';value=2},
     @{field='kind';value='MALFORMED'},
     @{field='hostsSha256';remove=$true},
