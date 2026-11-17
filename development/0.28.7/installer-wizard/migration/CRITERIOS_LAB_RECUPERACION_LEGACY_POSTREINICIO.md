@@ -49,6 +49,13 @@ Estas son pruebas sintéticas de parser/resolvedor. No se leyeron los binarios e
 - **Alcance:** se extrajeron nombres de DLL y se resolvieron rutas recursivas sólo en fixtures sintéticas. No se certifican funciones/thunks exportados, `LoadLibrary`, COM, SxS/API-set, código gestionado, scripts ni carga efectiva en Windows. No se incorporaron al laboratorio los binarios legacy exactos del respaldo privado. L1 sigue **PARCIAL** y `TransitiveDependenciesCertified=false`.
 - **Bloqueos intactos:** L3–L5 y la prueba de reinicio real L4 no están aprobados. El gate no habilita instalación, sustitución, limpieza, merge ni release. No se modificó ninguna PC del usuario.
 
+## Cierre de ventana pre-switch en el ensayo VM — 17/11/2026
+
+- Antes, la secuencia `boot_recovery_lab.ps1 -Mode stage` reemplazaba la tarea temporal por un candidato **antes** de crear el watchdog SYSTEM. Se corrigió la secuencia: journal pendiente → registrar y verificar watchdog SYSTEM con trigger de arranque → reemplazar la tarea temporal → avanzar el journal. Si falla el armado del watchdog, el candidato no se sustituye.
+- El recover ahora distingue dos estados seguros, comprobando la identidad SYSTEM y la acción exacta: original todavía intacto (no lo reescribe) o candidato temporal reconocido (restaura el XML protegido). Rechaza cualquier otra acción.
+- Ensayo nuevo exclusivamente en runner Windows hospedado con tareas `VOLVE-CI-*`: inyección controlada de interrupción pre-switch, verificación de tarea original intacta, watchdog SYSTEM registrado, ejecución **manual** como SYSTEM y journal `NO_ROLLBACK:restored`. **PASS** en [CI 44075074583](https://github.com/apdocentepba-hub/volve-updates/actions/runs/44075074583), commit `12991b3529e0515fa9492312c73ebc4a15a1c3b3`. El mismo workflow compiló helper, verificó sintaxis PowerShell, rechazó Verify sin nuevo boot y empaquetó kit con SHA-256.
+- Esta prueba cierra sólo la ventana de cobertura previa a la sustitución en el **fixture de laboratorio**. No demuestra caída forzada del proceso durante una migración productiva, no ejercita restauración de las tres tareas legacy, no verifica DNS/HOSTS del host y **no reinicia Windows**. L2 y L3 siguen parciales; L4 y L5 pendientes. `TransitiveDependenciesCertified=false`, `RecoveryAfterRebootVerified=false`; sin instalación, limpieza ni release.
+
 ## Evidencia previa que no alcanza
 
 El laboratorio de reinicio de motor y DNS existente acredita persistencia del motor de CI y consultas DNS en su propio escenario. El reporte V4 declara `new_motor_migration_proven=false` y deja sin probar la restauración del ejecutable original y el XML de tarea tras interrumpir una migración. No satisface L1–L5.
