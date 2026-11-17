@@ -263,6 +263,14 @@ if($Mode -eq 'Verify') {
     if($taskInfo.LastTaskResult -ne 0 -or $taskInfo.LastRunTime.ToUniversalTime() -lt $now.AddSeconds(-3)) {throw 'No successful watchdog execution associated with this boot'}
     $task=Assert-LabTask $labTask $cmd
     if($task.Actions[0].Arguments -ne '/C exit 0') {throw 'Original harmless task arguments not recovered'}
+    # The visible action alone does not prove that principal, triggers,
+    # settings or additional actions match the protected original XML.
+    # This library was hash-pinned BEFORE reboot and parses XML without DTDs.
+    $savedTaskXml=[IO.File]::ReadAllText((Join-Path $root 'old-task.xml'))
+    $restoredTaskXml=Export-ScheduledTask -TaskName $labTask -ErrorAction Stop
+    if(-not (Assert-VolvRestoredTaskXML -SavedXML $savedTaskXml -RestoredXML $restoredTaskXml)){
+        throw 'NOT VERIFIED: complete original Task Scheduler XML was not recovered'
+    }
     $mark=Join-Path $root 'boot-recovery-success.marker'
     Assert-ProtectedEvidenceFile $mark
     Assert-ProtectedEvidenceFile (Join-Path $root 'old-task.xml')
@@ -286,6 +294,7 @@ if($Mode -eq 'Verify') {
         watchdogLastTaskResult=[int]$taskInfo.LastTaskResult;
         recoveryJournalState=$status;
         restoredAction=$cmd;restoredArguments='/C exit 0';
+        restoredTaskXMLMatchesProtectedSnapshot=$true;
         originalTaskSnapshotSha256=(Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $root 'old-task.xml')).Hash;
         originalFixtureSha256=(Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $root 'old-test-engine.bin')).Hash;
         bootChainVerificationSha256=$meta.evidenceLibSha256;
