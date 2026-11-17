@@ -531,6 +531,29 @@ jobs:
               Unregister-ScheduledTask -TaskName $name -TaskPath '\' -Confirm:$false -ErrorAction Stop
             }
           }
+      - name: Prove all ten disposable CI scheduled tasks were unregistered
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          if($env:GITHUB_ACTIONS -ne 'true' -or $env:RUNNER_ENVIRONMENT -ne 'github-hosted'){
+            throw 'Cleanup census only authorized in disposable GitHub-hosted Windows VM'
+          }
+          $expect=@()
+          foreach($suffix in @('123','456','789','987','654')){
+            $trial=$env:GITHUB_RUN_ID+$suffix
+            $expect+=('VOLVE-CI-StartupMotor-'+$trial)
+            $expect+=('VOLVE-CI-BootRecovery-'+$trial)
+          }
+          if($expect.Count -ne 10 -or @($expect|Select-Object -Unique).Count -ne 10){
+            throw 'Invalid disposable CI task census'
+          }
+          foreach($name in $expect){
+            $remaining=Get-ScheduledTask -TaskName $name -TaskPath '\' -ErrorAction SilentlyContinue
+            if($null -ne $remaining){
+              throw ('CI LEAK: disposable task was not unregistered after its trial: '+$name)
+            }
+          }
+          Write-Host 'PASS: all 10 expected VOLVE-CI tasks absent after 5 lab scenarios; no production task names touched'
       - name: Package VM-only recovery kit with SHA256 manifest
         shell: powershell
         run: |
