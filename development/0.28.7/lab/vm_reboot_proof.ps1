@@ -117,7 +117,7 @@ function Read-Metadata([string]$dir) {
     Assert-ProtectedEvidenceFile $path
     $data = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json
     if($data.schema -ne 1 -or $data.runId -ne $RunId -or $data.computer -ne $env:COMPUTERNAME) {throw 'VM trial metadata mismatch'}
-    foreach($member in @('bootBeforeUtc','labSha256','journalSha256','evidenceLibSha256')) {
+    foreach($member in @('bootBeforeUtc','labSha256','journalSha256','evidenceLibSha256','taskSnapshotSha256','originalFixtureSha256')) {
         if($null -eq $data.$member -or [string]::IsNullOrWhiteSpace([string]$data.$member)){throw ('Missing '+$member)}
     }
     return $data
@@ -134,6 +134,20 @@ function Assert-LabIdentity([string]$dir,[object]$meta) {
     Assert-ProtectedEvidenceFile $evidenceLib
     if((Get-FileHash -Algorithm SHA256 -LiteralPath $evidenceLib).Hash -ne $meta.evidenceLibSha256){
         throw 'Boot-event verification helper was changed after preparing the VM trial'
+    }
+    # Pin the exact original fixture bytes independently of the rollback
+    # journal. Otherwise a modified XML/engine could be silently accepted
+    # when the verifier first runs after the VM restarts.
+    $taskSnapshot=Join-Path $dir ('VOLVE-CI-BOOT-'+$RunId)
+    $originalXML=Join-Path $taskSnapshot 'old-task.xml'
+    $oldFixture=Join-Path $taskSnapshot 'old-test-engine.bin'
+    Assert-ProtectedEvidenceFile $originalXML
+    Assert-ProtectedEvidenceFile $oldFixture
+    if((Get-FileHash -Algorithm SHA256 -LiteralPath $originalXML).Hash -cne [string]$meta.taskSnapshotSha256){
+        throw 'Original XML snapshot hash mismatch since VM Prepare'
+    }
+    if((Get-FileHash -Algorithm SHA256 -LiteralPath $oldFixture).Hash -cne [string]$meta.originalFixtureSha256){
+        throw 'Original motor fixture hash mismatch since VM Prepare'
     }
 }
 function Assert-LabTask([string]$name,[string]$expectedPath) {
@@ -179,16 +193,24 @@ if($Mode -eq 'Prepare') {
     $copiedEvidenceLib=Join-Path $kit 'reboot_event_chain.ps1'
     Copy-Item -LiteralPath $sourceEvidenceLib -Destination $copiedEvidenceLib -ErrorAction Stop
     $before=BootTimeUTC
+    & $copiedLab -Mode stage -TaskName $labTask -WatchdogName $bootTask -Workspace $root -JournalExe $copiedJournal
+    if($LASTEXITCODE -ne 0){throw 'Failed to stage isolated VM recovery trial'}
+    # Only record a ready-to-verify metadata receipt AFTER the protected
+    # snapshot has actually been staged and the boot watchdog armed.
+    $originalXML=Join-Path $root 'old-task.xml'
+    $oldFixture=Join-Path $root 'old-test-engine.bin'
+    Assert-ProtectedEvidenceFile $originalXML
+    Assert-ProtectedEvidenceFile $oldFixture
     $metadata=[ordered]@{
         schema=1;runId=$RunId;computer=$env:COMPUTERNAME;
         bootBeforeUtc=$before.ToString('o');
         labSha256=(Get-FileHash -Algorithm SHA256 -LiteralPath $copiedLab).Hash;
         journalSha256=(Get-FileHash -Algorithm SHA256 -LiteralPath $copiedJournal).Hash;
         evidenceLibSha256=(Get-FileHash -Algorithm SHA256 -LiteralPath $copiedEvidenceLib).Hash;
+        taskSnapshotSha256=(Get-FileHash -Algorithm SHA256 -LiteralPath $originalXML).Hash;
+        originalFixtureSha256=(Get-FileHash -Algorithm SHA256 -LiteralPath $oldFixture).Hash;
     }
     $metadata | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $kit 'vm-trial.json') -Encoding UTF8
-    & $copiedLab -Mode stage -TaskName $labTask -WatchdogName $bootTask -Workspace $root -JournalExe $copiedJournal
-    if($LASTEXITCODE -ne 0){throw 'Failed to stage isolated VM recovery trial'}
     $watch=Get-ScheduledTask -TaskName $bootTask
     if(@($watch.Triggers).Count -ne 1 -or $watch.Triggers[0].CimClass.CimClassName -ne 'MSFT_TaskBootTrigger'){throw 'Recovery task has no boot trigger'}
     # The VM must be completely recovery-ready BEFORE the operator reboots.
@@ -265,6 +287,7 @@ if($Mode -eq 'Verify') {
         recoveryJournalState=$status;
         restoredAction=$cmd;restoredArguments='/C exit 0';
         originalTaskSnapshotSha256=(Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $root 'old-task.xml')).Hash;
+        originalFixtureSha256=(Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $root 'old-test-engine.bin')).Hash;
         bootChainVerificationSha256=$meta.evidenceLibSha256;
     }
     $proofPath=Join-Path $kit 'vm-proof-evidence.json'
