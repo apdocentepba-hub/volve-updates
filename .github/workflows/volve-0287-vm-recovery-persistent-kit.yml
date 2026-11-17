@@ -103,6 +103,39 @@ jobs:
           try{
             & $script -Mode Probe
             & $script -Mode Prepare -RunId $id -LabScript $lab -JournalExe $journal
+            & $script -Mode AuditPrepared -RunId $id
+            # The boot trigger and SYSTEM identity can remain unchanged
+            # while the watchdog ACTION is maliciously replaced. A pre-boot
+            # audit must reject the whole changed Task Scheduler definition.
+            $bootName='VOLVE-CI-BootRecovery-'+$id
+            $savedWatchdog=Export-ScheduledTask -TaskName $bootName -TaskPath '\' -ErrorAction Stop
+            try {
+              Set-ScheduledTask -TaskName $bootName -TaskPath '\' -Action (
+                New-ScheduledTaskAction -Execute (Join-Path $env:WINDIR 'System32\cmd.exe') -Argument '/C exit 0'
+              ) -ErrorAction Stop | Out-Null
+              $stillStartup=Get-ScheduledTask -TaskName $bootName -TaskPath '\' -ErrorAction Stop
+              if($stillStartup.Principal.UserId -notin @('SYSTEM','S-1-5-18') -or
+                 @($stillStartup.Triggers).Count -ne 1 -or
+                 $stillStartup.Triggers[0].CimClass.CimClassName -ne 'MSFT_TaskBootTrigger'){
+                throw 'Fixture no longer has the expected SYSTEM boot trigger'
+              }
+              $watchdogMismatchRejected=$false
+              try { & $script -Mode AuditPrepared -RunId $id }
+              catch {
+                if($_.Exception.Message -like '*Task Scheduler XML differs from original protected snapshot*'){
+                  $watchdogMismatchRejected=$true
+                } else {throw}
+              }
+              if(-not $watchdogMismatchRejected){throw 'Altered SYSTEM boot watchdog action passed pre-boot audit'}
+              $state=& $journal status (Join-Path (Join-Path $env:ProgramData ('VOLVE-VM-RebootLab-'+$id)) ('VOLVE-CI-BOOT-'+$id+'\recovery.json'))
+              if($LASTEXITCODE -ne 0 -or $state -ne 'ROLLBACK_REQUIRED'){
+                throw 'Read-only audit changed journal after watcher tampering'
+              }
+              Write-Host 'PASS: read-only VM pre-boot audit rejected a SYSTEM watchdog whose action changed but boot trigger stayed intact'
+            } finally {
+              Register-ScheduledTask -TaskName $bootName -TaskPath '\' -Xml $savedWatchdog -Force -ErrorAction Stop|Out-Null
+            }
+            & $script -Mode AuditPrepared -RunId $id
             $rejected=$false
             try { & $script -Mode Verify -RunId $id }
             catch { if($_.Exception.Message -like '*VM has not undergone a new boot*'){$rejected=$true}else{throw} }
