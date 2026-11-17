@@ -145,4 +145,14 @@ RejectChangedTaskXML 'DOCTYPE entity declaration' ('<!DOCTYPE Task [<!ENTITY x "
 RejectChangedTaskXML 'malformed XML' ($taskXml.Substring(0,$taskXml.Length-8))
 RejectChangedTaskXML 'oversized task XML' ($taskXml+('x'*1048576))
 if($script:xmlRejections -ne 10){throw ('Expected 10 task XML rejections, got '+$script:xmlRejections)}
-Write-Host 'PASS: complete Task Scheduler XML normalized comparison and 10 adversarial rejections'
+# A whitespace-only leaf argument is meaningful; never normalize it away.
+$emptyArgTask=$taskXml.Replace('<Arguments>/C exit 0</Arguments>','<Arguments></Arguments>')
+$blankArgTask=$taskXml.Replace('<Arguments>/C exit 0</Arguments>','<Arguments> </Arguments>')
+try {
+    $null=Assert-VolvRestoredTaskXML -SavedXML $emptyArgTask -RestoredXML $blankArgTask
+    throw 'UNSAFE: whitespace-only action arguments treated as empty XML text'
+} catch {
+    if($_.Exception.Message -notmatch '^NOT VERIFIED:'){throw}
+    Write-Host 'REJECTED TASK XML: whitespace-only Arguments leaf differs from empty Arguments'
+}
+Write-Host 'PASS: complete Task Scheduler XML normalized comparison, leaf text preservation and 11 adversarial rejections'
