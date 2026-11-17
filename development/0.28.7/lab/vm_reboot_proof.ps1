@@ -117,7 +117,7 @@ function Read-Metadata([string]$dir) {
     Assert-ProtectedEvidenceFile $path
     $data = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json
     if($data.schema -ne 1 -or $data.runId -ne $RunId -or $data.computer -ne $env:COMPUTERNAME) {throw 'VM trial metadata mismatch'}
-    foreach($member in @('bootBeforeUtc','labSha256','journalSha256','evidenceLibSha256','taskSnapshotSha256','originalFixtureSha256','watchdogTaskSnapshotSha256')) {
+    foreach($member in @('bootBeforeUtc','labSha256','journalSha256','evidenceLibSha256','taskSnapshotSha256','originalFixtureSha256','watchdogTaskSnapshotSha256','cleanupContractSha256')) {
         if($null -eq $data.$member -or [string]::IsNullOrWhiteSpace([string]$data.$member)){throw ('Missing '+$member)}
     }
     return $data
@@ -130,6 +130,11 @@ function Assert-LabIdentity([string]$dir,[object]$meta) {
     Assert-ProtectedEvidenceFile $helper
     if((Get-FileHash -Algorithm SHA256 -LiteralPath $lab).Hash -ne $meta.labSha256) {throw 'VM lab script was changed'}
     if((Get-FileHash -Algorithm SHA256 -LiteralPath $helper).Hash -ne $meta.journalSha256) {throw 'VM journal tool was changed'}
+    $cleanupContract=Join-Path $dir 'vm_cleanup_state_contract.ps1'
+    Assert-ProtectedEvidenceFile $cleanupContract
+    if((Get-FileHash -Algorithm SHA256 -LiteralPath $cleanupContract).Hash -cne [string]$meta.cleanupContractSha256){
+        throw 'VM cleanup contract was changed after preparing the VM trial'
+    }
     $evidenceLib=Join-Path $dir 'reboot_event_chain.ps1'
     Assert-ProtectedEvidenceFile $evidenceLib
     if((Get-FileHash -Algorithm SHA256 -LiteralPath $evidenceLib).Hash -ne $meta.evidenceLibSha256){
@@ -210,6 +215,12 @@ if($Mode -eq 'Prepare') {
     Copy-Item -LiteralPath $JournalExe -Destination $copiedJournal -ErrorAction Stop
     $copiedEvidenceLib=Join-Path $kit 'reboot_event_chain.ps1'
     Copy-Item -LiteralPath $sourceEvidenceLib -Destination $copiedEvidenceLib -ErrorAction Stop
+    $copiedCleanupContract=Join-Path $kit 'vm_cleanup_state_contract.ps1'
+    $sourceCleanupContract=Join-Path $PSScriptRoot 'vm_cleanup_state_contract.ps1'
+    if(-not (Test-Path -LiteralPath $sourceCleanupContract -PathType Leaf)){
+        throw 'Missing VM cleanup contract before staging; refusing trial'
+    }
+    Copy-Item -LiteralPath $sourceCleanupContract -Destination $copiedCleanupContract -ErrorAction Stop
     $before=BootTimeUTC
     & $copiedLab -Mode stage -TaskName $labTask -WatchdogName $bootTask -Workspace $root -JournalExe $copiedJournal
     if($LASTEXITCODE -ne 0){throw 'Failed to stage isolated VM recovery trial'}
@@ -234,6 +245,7 @@ if($Mode -eq 'Prepare') {
         taskSnapshotSha256=(Get-FileHash -Algorithm SHA256 -LiteralPath $originalXML).Hash;
         originalFixtureSha256=(Get-FileHash -Algorithm SHA256 -LiteralPath $oldFixture).Hash;
         watchdogTaskSnapshotSha256=(Get-FileHash -Algorithm SHA256 -LiteralPath $startupXMLPath).Hash;
+        cleanupContractSha256=(Get-FileHash -Algorithm SHA256 -LiteralPath $copiedCleanupContract).Hash;
     }
     $metadata | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $kit 'vm-trial.json') -Encoding UTF8
     $watch=Get-ScheduledTask -TaskName $bootTask
