@@ -12,6 +12,8 @@ on:
       - 'development/0.28.7/lab/test_vm_cleanup_state_contract.ps1'
       - 'development/0.28.7/lab/test_vm_cleanup_scheduler_roundtrip.ps1'
       - 'development/0.28.7/lab/test_vm_cleanup_receipt_contract.ps1'
+      - 'development/0.28.7/lab/vm_environment_baseline.ps1'
+      - 'development/0.28.7/lab/test_vm_environment_baseline.ps1'
       - 'development/0.28.7/lab/VM_ROLLBACK_BOOT_PACK_README.md'
       - 'development/0.28.7/complete-source-parts/**'
       - 'development/0.28.7/inapp/apply_overlay.go'
@@ -27,6 +29,8 @@ on:
       - 'development/0.28.7/lab/test_vm_cleanup_state_contract.ps1'
       - 'development/0.28.7/lab/test_vm_cleanup_scheduler_roundtrip.ps1'
       - 'development/0.28.7/lab/test_vm_cleanup_receipt_contract.ps1'
+      - 'development/0.28.7/lab/vm_environment_baseline.ps1'
+      - 'development/0.28.7/lab/test_vm_environment_baseline.ps1'
       - 'development/0.28.7/lab/VM_ROLLBACK_BOOT_PACK_README.md'
       - 'development/0.28.7/complete-source-parts/**'
       - 'development/0.28.7/inapp/apply_overlay.go'
@@ -82,7 +86,7 @@ jobs:
         run: |
           $ErrorActionPreference='Stop'
           $root='development/0.28.7/lab'
-          foreach($name in @('vm_reboot_proof.ps1','boot_recovery_lab.ps1','reboot_event_chain.ps1','test_reboot_event_chain.ps1','vm_cleanup_state_contract.ps1','test_vm_cleanup_state_contract.ps1','test_vm_cleanup_receipt_contract.ps1','test_vm_cleanup_scheduler_roundtrip.ps1')){
+          foreach($name in @('vm_reboot_proof.ps1','boot_recovery_lab.ps1','reboot_event_chain.ps1','test_reboot_event_chain.ps1','vm_cleanup_state_contract.ps1','test_vm_cleanup_state_contract.ps1','test_vm_cleanup_receipt_contract.ps1','test_vm_cleanup_scheduler_roundtrip.ps1','vm_environment_baseline.ps1','test_vm_environment_baseline.ps1')){
             $tokens=$null;$errors=$null
             [Management.Automation.Language.Parser]::ParseFile((Resolve-Path (Join-Path $root $name)).Path,[ref]$tokens,[ref]$errors)|Out-Null
             if($errors.Count -ne 0){
@@ -98,6 +102,8 @@ jobs:
           if($LASTEXITCODE -and $LASTEXITCODE -ne 0){throw 'VM cleanup contract tests failed'}
           & (Join-Path $root 'test_vm_cleanup_receipt_contract.ps1')
           if($LASTEXITCODE -and $LASTEXITCODE -ne 0){throw 'VM cleanup receipt safety tests failed'}
+          & (Join-Path $root 'test_vm_environment_baseline.ps1')
+          if($LASTEXITCODE -and $LASTEXITCODE -ne 0){throw 'VM environment safety contract tests failed'}
       - name: Prove VM Prepare and reject Verify without actual reboot
         shell: powershell
         run: |
@@ -581,7 +587,7 @@ jobs:
           $out=Join-Path $env:RUNNER_TEMP 'VOLVE_VM_RECOVERY_BOOT_LAB'
           New-Item -ItemType Directory -Path $out -ErrorAction Stop|Out-Null
           $source='development/0.28.7/lab'
-          $names=@('vm_reboot_proof.ps1','boot_recovery_lab.ps1','reboot_event_chain.ps1','vm_cleanup_state_contract.ps1','VM_ROLLBACK_BOOT_PACK_README.md')
+          $names=@('vm_reboot_proof.ps1','boot_recovery_lab.ps1','reboot_event_chain.ps1','vm_cleanup_state_contract.ps1','vm_environment_baseline.ps1','VM_ROLLBACK_BOOT_PACK_README.md')
           foreach($name in $names){
             Copy-Item -LiteralPath (Join-Path $source $name) -Destination (Join-Path $out $name) -ErrorAction Stop
           }
@@ -599,7 +605,7 @@ jobs:
           $manifestPath=Join-Path $out 'SHA256_MANIFEST.json'
           $manifest|ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $manifestPath -Encoding UTF8
           $check=Get-Content -LiteralPath $manifestPath -Raw|ConvertFrom-Json
-          if($check.files.Count -ne 6 -or $check.vm_only -ne $true -or $check.product_release -ne $false){throw 'Invalid manifest'}
+          if($check.files.Count -ne 7 -or $check.vm_only -ne $true -or $check.product_release -ne $false){throw 'Invalid manifest'}
           foreach($entry in $check.files){
             $path=Join-Path $out $entry.name
             if((Get-FileHash -Algorithm SHA256 -LiteralPath $path).Hash.ToLowerInvariant() -cne $entry.sha256){throw 'SHA256 mismatch'}
@@ -615,7 +621,7 @@ jobs:
           $ciSnippet=$snippet.Replace($originalRootLine,$ciRootLine)
           & ([scriptblock]::Create($ciSnippet))
           Write-Host 'PASS: executed the README integrity-verification example against the packaged kit'
-          Write-Host 'PASS: VM-only recovery kit manifest: 6 exact hashed files; no release, no reboot'
+          Write-Host 'PASS: VM-only recovery kit manifest: 7 exact hashed files; no release, no reboot'
       - uses: actions/upload-artifact@v4
         with:
           name: VOLVE-0287-VM-RECOVERY-BOOT-LAB-NO-INSTALL
