@@ -70,6 +70,12 @@ Estas son pruebas sintéticas de parser/resolvedor. No se leyeron los binarios e
 - **CI PASS** del nuevo guard en [kit 44081485321](https://github.com/apdocentepba-hub/volve-updates/actions/runs/44081485321), commit `69d13b3dd944deae4e26be1a177126bcfd7c884a`. Los gates de cobertura y límites pasaron en ese commit. El E2E signed migration de ese mismo HEAD se consultó todavía en ejecución; no debe contarse como completado sin su resultado.
 - **Limitación fundamental:** en ambos ensayos el watchdog SYSTEM fue disparado **manualmente**, y la tarea, el motor y el journal eran únicamente fixtures de CI. No hubo reinicio de Windows ni restauración de las tres tareas legacy exactas; por lo tanto L3/L4 siguen NO APROBADOS y `RecoveryAfterRebootVerified=false`. Este código no autoriza DNS, instalación, limpieza, merge ni release.
 
+## Ensayo negativo del watchdog SYSTEM: acción original, trigger alterado — 17/11/2026
+
+- El workflow [44086226478](https://github.com/apdocentepba-hub/volve-updates/actions/runs/44086226478) probó una **tarea real pero descartable** `VOLVE-CI-StartupMotor-*` en Windows CI: después de armar el journal y watchdog, reemplazó la tarea ficticia para que su acción volviera a ser `cmd.exe /C exit 0` pero cambió su disparador a otra fecha. Esto simula una definición parcialmente restaurada que puede superar una comprobación superficial de acciones.
+- **PASS comprobado en logs:** la ejecución manual del watchdog como SYSTEM detectó diferencias del XML frente al respaldo intacto y reportó fallo; el journal permaneció `ROLLBACK_REQUIRED`, el marcador `boot-recovery-success.marker` no existió y la definición siguió siendo distinta. El mismo run verificó también la ruta positiva con restauración XML completa.
+- **No hubo reboot real**, ni se tocaron tareas de VOLVÉ del usuario ni su motor DNS. Esto acredita el comportamiento *fail-closed* del verificador real de Windows Scheduler, pero no valida recuperación autónoma de las tres tareas legacy tras reinicio o los binarios exactos. Los criterios L3/L4 siguen pendientes; sin autorización de instalar/publicar.
+
 ## Evidencia previa que no alcanza
 
 El laboratorio de reinicio de motor y DNS existente acredita persistencia del motor de CI y consultas DNS en su propio escenario. El reporte V4 declara `new_motor_migration_proven=false` y deja sin probar la restauración del ejecutable original y el XML de tarea tras interrumpir una migración. No satisface L1–L5.
