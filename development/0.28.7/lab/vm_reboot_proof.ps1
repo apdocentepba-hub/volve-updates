@@ -372,22 +372,80 @@ if($Mode -eq 'Verify') {
 }
 
 if($Mode -eq 'Cleanup') {
-    $watch=Get-ScheduledTask -TaskName $bootTask -ErrorAction SilentlyContinue
-    if($watch){
-        if($watch.TaskPath -ne '\' -or $watch.Principal.UserId -notin @('SYSTEM','S-1-5-18') -or @($watch.Actions).Count -ne 1){throw 'Refusing to delete unexpected recovery task'}
-        $a=$watch.Actions[0]
-        $expectedPS=Join-Path $env:WINDIR 'System32\WindowsPowerShell\v1.0\powershell.exe'
-        if($a.Execute -ne $expectedPS -or $a.Arguments.IndexOf($kit,[StringComparison]::OrdinalIgnoreCase) -lt 0){
-            throw 'Unexpected recovery task command; refusing deletion'
-        }
-        Unregister-ScheduledTask -TaskName $bootTask -Confirm:$false
+    # Fail closed: never retire the watchdog while a test is still pending,
+    # failed, or unverified. A crafted success marker alone is insufficient.
+    # No mutations happen before BOTH disposable task definitions are checked.
+    $proofPath=Join-Path $kit 'vm-proof-evidence.json'
+    if(-not (Test-Path -LiteralPath $proofPath -PathType Leaf)){
+        throw 'REFUSED: Cleanup requires verified real reboot proof; pending or failed trials must preserve watchdog and evidence'
     }
-    $motor=Get-ScheduledTask -TaskName $labTask -ErrorAction SilentlyContinue
-    if($motor){
-        $a=@($motor.Actions)[0]
-        $allow=@($cmd,(Join-Path $env:WINDIR 'System32\notepad.exe'))
-        if($motor.TaskPath -ne '\' -or $motor.Principal.UserId -notin @('SYSTEM','S-1-5-18') -or @($motor.Actions).Count -ne 1 -or $a.Execute -notin $allow){throw 'Refusing to delete unexpected motor task'}
-        Unregister-ScheduledTask -TaskName $labTask -Confirm:$false
+    Assert-ProtectedEvidenceFile $proofPath
+    $proof=Get-Content -LiteralPath $proofPath -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+    if($proof.schema -ne 2 -or
+       [string]$proof.test -cne 'VOLVE-VM-REAL-REBOOT' -or
+       [string]$proof.runId -cne $RunId -or
+       [string]$proof.computer -cne $env:COMPUTERNAME -or
+       [string]$proof.watchdogTask -cne $bootTask -or
+       [string]$proof.motorTask -cne $labTask -or
+       [string]$proof.bootBeforeUtc -cne [string]$meta.bootBeforeUtc -or
+       [string]$proof.startupWatchdogXMLSnapshotSha256 -cne [string]$meta.watchdogTaskSnapshotSha256 -or
+       [string]$proof.originalTaskSnapshotSha256 -cne [string]$meta.taskSnapshotSha256 -or
+       [string]$proof.originalFixtureSha256 -cne [string]$meta.originalFixtureSha256 -or
+       $proof.startupWatchdogXMLMatchesProtectedSnapshot -ne $true -or
+       $proof.restoredTaskXMLMatchesProtectedSnapshot -ne $true -or
+       [string]$proof.recoveryJournalState -cne 'NO_ROLLBACK:restored'){
+        throw 'REFUSED: Cleanup proof does not match protected VM recovery receipt'
     }
-    Write-Host ('CLEAN: only disposable VM lab tasks unregistered. Evidence remains at '+$kit)
+    $before=[DateTime]::Parse([string]$proof.bootBeforeUtc,[Globalization.CultureInfo]::InvariantCulture,[Globalization.DateTimeStyles]::RoundtripKind).ToUniversalTime()
+    $after=[DateTime]::Parse([string]$proof.bootAfterUtc,[Globalization.CultureInfo]::InvariantCulture,[Globalization.DateTimeStyles]::RoundtripKind).ToUniversalTime()
+    $currentBoot=BootTimeUTC
+    if($after -le $before.AddSeconds(5) -or $currentBoot -ne $after){
+        throw 'REFUSED: Cleanup cannot confirm the previously verified Windows VM boot'
+    }
+    . (Join-Path $kit 'reboot_event_chain.ps1')
+    $bootChain=Get-VolvRealBootChain -TaskName ('\'+$bootTask) -BootUTC $currentBoot
+    if([string]$bootChain.InstanceId -cne [string]$proof.taskInstanceId -or
+       (($bootChain.EventIds -join ',') -cne ($proof.schedulerEventIds -join ',')) -or
+       (($bootChain.RecordIds -join ',') -cne ($proof.schedulerEventRecordIds -join ','))){
+        throw 'REFUSED: Cleanup proof does not match real Task Scheduler boot instance events'
+    }
+    $mark=Join-Path $root 'boot-recovery-success.marker'
+    Assert-ProtectedEvidenceFile $mark
+    Assert-ProtectedEvidenceFile (Join-Path $root 'recovery.json')
+    if([IO.File]::ReadAllText($mark) -cne 'RESTORED_BY_SYSTEM_STARTUP_TASK' -or
+       (Test-Path -LiteralPath (Join-Path $root 'boot-recovery-failed.marker'))){
+        throw 'REFUSED: Cleanup requires an unambiguous recovery-success marker'
+    }
+    $status=& (Join-Path $kit 'volve-journal-lab.exe') status (Join-Path $root 'recovery.json')
+    if($LASTEXITCODE -ne 0 -or $status -cne 'NO_ROLLBACK:restored'){
+        throw 'REFUSED: Cleanup cannot remove watchdog with unfinished recovery journal'
+    }
+    $watch=Get-ScheduledTask -TaskName $bootTask -TaskPath '\' -ErrorAction Stop
+    $motor=Get-ScheduledTask -TaskName $labTask -TaskPath '\' -ErrorAction Stop
+    if($watch.TaskPath -ne '\' -or $watch.Principal.UserId -notin @('SYSTEM','S-1-5-18') -or
+       @($watch.Actions).Count -ne 1 -or @($watch.Triggers).Count -ne 1 -or
+       $watch.Triggers[0].CimClass.CimClassName -cne 'MSFT_TaskBootTrigger'){
+        throw 'REFUSED: unexpected SYSTEM watchdog; no tasks removed'
+    }
+    $action=$watch.Actions[0]
+    $expectedPowerShell=Join-Path $env:WINDIR 'System32\WindowsPowerShell\v1.0\powershell.exe'
+    if($action.Execute -ne $expectedPowerShell -or
+       [string]::IsNullOrWhiteSpace([string]$action.Arguments) -or
+       $action.Arguments.IndexOf($kit,[StringComparison]::OrdinalIgnoreCase) -lt 0){
+        throw 'REFUSED: unexpected watchdog command; no tasks removed'
+    }
+    if($motor.TaskPath -ne '\' -or $motor.Principal.UserId -notin @('SYSTEM','S-1-5-18') -or
+       @($motor.Actions).Count -ne 1 -or $motor.Actions[0].Execute -ne $cmd -or
+       [string]$motor.Actions[0].Arguments -cne '/C exit 0'){
+        throw 'REFUSED: disposable motor not completely restored; no tasks removed'
+    }
+    if(-not (Assert-VolvRestoredTaskXML -SavedXML ([IO.File]::ReadAllText((Join-Path $kit 'watchdog-task.xml'))) -RestoredXML (Export-ScheduledTask -TaskName $bootTask -TaskPath '\' -ErrorAction Stop)) -or
+       -not (Assert-VolvRestoredTaskXML -SavedXML ([IO.File]::ReadAllText((Join-Path $root 'old-task.xml'))) -RestoredXML (Export-ScheduledTask -TaskName $labTask -TaskPath '\' -ErrorAction Stop))){
+        throw 'REFUSED: one or more task definitions diverged; no tasks removed'
+    }
+    # Only after all the independent guards above passed is any mutation allowed.
+    # Remove watchdog first to prevent a later replay; all evidence stays on disk.
+    Unregister-ScheduledTask -TaskName $bootTask -TaskPath '\' -Confirm:$false -ErrorAction Stop
+    Unregister-ScheduledTask -TaskName $labTask -TaskPath '\' -Confirm:$false -ErrorAction Stop
+    Write-Host ('CLEAN: both verified disposable VM tasks unregistered; protected reboot evidence remains at '+$kit)
 }
