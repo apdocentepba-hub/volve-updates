@@ -102,6 +102,19 @@ if($Mode -eq 'recover'){
    Register-ScheduledTask -TaskName $TaskName -Xml $saved -Force | Out-Null
   }
   TaskAction $TaskName $cmd '/C exit 0'
+  # A correct-looking action is not sufficient. The SYSTEM watchdog itself
+  # must verify the whole task definition BEFORE marking the journal restored.
+  # This exact helper is shipped alongside this fixture in the protected VM
+  # kit; if missing or unparseable, fail closed and retain recovery evidence.
+  $xmlVerifier=Join-Path $PSScriptRoot 'reboot_event_chain.ps1'
+  if(-not (Test-Path -LiteralPath $xmlVerifier -PathType Leaf)){
+   throw 'Full XML recovery verifier is missing; journal remains pending'
+  }
+  . $xmlVerifier
+  $actualXML=Export-ScheduledTask -TaskName $TaskName -TaskPath '\' -ErrorAction Stop
+  if(-not (Assert-VolvRestoredTaskXML -SavedXML $saved -RestoredXML $actualXML)){
+   throw 'Full original Task Scheduler XML was not recovered'
+  }
   Journal -Arguments @('advance',$journal,'restored') | Out-Null
   [IO.File]::WriteAllText($success,'RESTORED_BY_SYSTEM_STARTUP_TASK',[Text.Encoding]::ASCII)
   Write-Host 'PASS: SYSTEM startup recovery restored original test task.'
