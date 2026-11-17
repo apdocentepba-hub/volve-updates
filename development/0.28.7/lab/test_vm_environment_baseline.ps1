@@ -7,7 +7,7 @@ $expected=[pscustomobject][ordered]@{
     kind='VOLVE_VM_READ_ONLY_ENVIRONMENT'
     hostsSha256=('A'*64)
     dnsRecords=@('2|2|192.0.2.10,192.0.2.11','2|23|2001:db8::53')
-    rootTaskRecords=@(('VOLVE-CATALOGO|'+('B'*64)),('WindowsMaintenance|'+('C'*64)))
+    taskRecords=@(('\VOLVE-CATALOGO|'+('B'*64)),('\Microsoft\Windows\Maintenance\WindowsMaintenance|'+('C'*64)))
 }
 $clone=$expected|ConvertTo-Json -Depth 6|ConvertFrom-Json
 if(-not (Assert-VolvVMBaselineState -Expected $expected -Actual $clone)){
@@ -17,13 +17,13 @@ $cases=@(
     @{field='hostsSha256';value=('D'*64)},
     @{field='dnsRecords';value=@('2|2|192.0.2.55','2|23|2001:db8::53')},
     @{field='dnsRecords';value=@('2|2|192.0.2.10,192.0.2.11')},
-    @{field='rootTaskRecords';value=@(('VOLVE-CATALOGO|'+('E'*64)),('WindowsMaintenance|'+('C'*64)))},
-    @{field='rootTaskRecords';value=@(('WindowsMaintenance|'+('C'*64)))},
+    @{field='taskRecords';value=@(('\VOLVE-CATALOGO|'+('E'*64)),('\Microsoft\Windows\Maintenance\WindowsMaintenance|'+('C'*64)))},
+    @{field='taskRecords';value=@(('\Microsoft\Windows\Maintenance\WindowsMaintenance|'+('C'*64)))},
     @{field='schema';value=2},
     @{field='kind';value='MALFORMED'},
     @{field='hostsSha256';remove=$true},
     @{field='dnsRecords';remove=$true},
-    @{field='rootTaskRecords';remove=$true}
+    @{field='taskRecords';remove=$true}
 )
 foreach($case in $cases){
     $modified=$expected|ConvertTo-Json -Depth 6|ConvertFrom-Json
@@ -39,4 +39,24 @@ foreach($case in $cases){
     }
     if(-not $rejected){throw ('Unsafe VM environment drift accepted for '+$case.field)}
 }
-Write-Host ('PASS: VM environment baseline matched and rejected '+$cases.Count+' synthetic HOSTS/DNS/unrelated-task drifts')
+$own='20261117123456123'
+$other='20261117123456999'
+$identityCases=@(
+    @{name=('VOLVE-CI-StartupMotor-'+$own);path='\';excluded=$true},
+    @{name=('VOLVE-CI-BootRecovery-'+$own);path='\';excluded=$true},
+    @{name=('VOLVE-CI-StartupMotor-'+$other);path='\';excluded=$false},
+    @{name=('VOLVE-CI-BootRecovery-'+$other);path='\';excluded=$false},
+    @{name=('VOLVE-CI-StartupMotor-'+$own);path='\Microsoft\Windows\';excluded=$false},
+    @{name=('VOLVE-CI-BootRecovery-'+$own);path='\Other\';excluded=$false},
+    @{name=('volve-CI-StartupMotor-'+$own);path='\';excluded=$false},
+    @{name='VOLVE-CATALOGO-0230';path='\';excluded=$false},
+    @{name='WindowsMaintenance';path='\Microsoft\Windows\Maintenance\';excluded=$false}
+)
+foreach($c in $identityCases){
+    $actual=Test-VolvVMBaselineExcludedTask -RunId $own -TaskPath $c.path -TaskName $c.name
+    if($actual -ne $c.excluded){
+        throw ('Unsafe task exclusion: '+$c.path+$c.name+' shouldExclude='+$c.excluded)
+    }
+}
+Write-Host ('PASS: VM environment baseline matched and rejected '+$cases.Count+' synthetic HOSTS/DNS/all-folder-task drifts')
+Write-Host ('PASS: '+$identityCases.Count+' task ownership cases; only two exact root tasks from current RunId are excluded')
