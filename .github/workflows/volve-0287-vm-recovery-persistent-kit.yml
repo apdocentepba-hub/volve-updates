@@ -212,6 +212,77 @@ jobs:
               Unregister-ScheduledTask -TaskName $name -TaskPath '\' -Confirm:$false -ErrorAction Stop
             }
           }
+      - name: Prove actual Windows Task Scheduler XML roundtrip via manual SYSTEM recovery (NO REBOOT)
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          if($env:GITHUB_ACTIONS -ne 'true' -or $env:RUNNER_ENVIRONMENT -ne 'github-hosted'){
+            throw 'Only an isolated GitHub-hosted Windows VM can perform this test'
+          }
+          $id=$env:GITHUB_RUN_ID+'789'
+          if($id -cnotmatch '^[0-9]{14,18}$'){throw 'Invalid VM-only task identifier'}
+          $lab='development/0.28.7/lab/boot_recovery_lab.ps1'
+          $journal=Join-Path $env:RUNNER_TEMP 'volve-journal-lab.exe'
+          $workspace=Join-Path $env:RUNNER_TEMP ('VOLVE-CI-BOOT-'+$id)
+          $motor='VOLVE-CI-StartupMotor-'+$id
+          $watch='VOLVE-CI-BootRecovery-'+$id
+          $rootTask='\'+$motor
+          $sourceXML=Join-Path $workspace 'old-task.xml'
+          $stateFile=Join-Path $workspace 'recovery.json'
+          . 'development/0.28.7/lab/reboot_event_chain.ps1'
+          try {
+            & $lab -Mode stage -TaskName $motor -WatchdogName $watch -Workspace $workspace -JournalExe $journal
+            if($LASTEXITCODE -ne 0){throw 'Disposable candidate stage failed'}
+            $candidate=Get-ScheduledTask -TaskName $motor -TaskPath '\' -ErrorAction Stop
+            if(@($candidate.Actions).Count -ne 1 -or
+               $candidate.Actions[0].Execute -ne (Join-Path $env:WINDIR 'System32\notepad.exe')){
+              throw 'Fixture did not enter candidate state before recovery'
+            }
+            # Deliberate manual trigger, NOT a Windows restart or boot proof.
+            Start-ScheduledTask -TaskName $watch -TaskPath '\' -ErrorAction Stop
+            $ready=$false
+            for($i=0;$i -lt 100;$i++){
+              Start-Sleep -Milliseconds 250
+              if(Test-Path -LiteralPath (Join-Path $workspace 'boot-recovery-failed.marker')){
+                throw 'Independent SYSTEM watchdog reported recovery failure'
+              }
+              $state=& $journal status $stateFile
+              if($LASTEXITCODE -eq 0 -and $state -eq 'NO_ROLLBACK:restored'){
+                $ready=$true
+                break
+              }
+            }
+            if(-not $ready){throw 'SYSTEM watchdog did not finish fixture rollback'}
+            $current=Get-ScheduledTask -TaskName $motor -TaskPath '\' -ErrorAction Stop
+            if($current.Principal.UserId -notin @('SYSTEM','S-1-5-18')){
+              throw 'Restored task principal is not SYSTEM'
+            }
+            $saved=[IO.File]::ReadAllText($sourceXML)
+            $restored=Export-ScheduledTask -TaskName $motor -TaskPath '\' -ErrorAction Stop
+            if(-not (Assert-VolvRestoredTaskXML -SavedXML $saved -RestoredXML $restored)){
+              throw 'Full Task Scheduler XML did not roundtrip through Windows'
+            }
+            if(@($current.Actions).Count -ne 1 -or
+               $current.Actions[0].Execute -ne (Join-Path $env:WINDIR 'System32\cmd.exe') -or
+               [string]$current.Actions[0].Arguments -ne '/C exit 0'){
+              throw 'Recovered task action differs from original'
+            }
+            if([IO.File]::ReadAllText((Join-Path $workspace 'boot-recovery-success.marker')) -cne 'RESTORED_BY_SYSTEM_STARTUP_TASK'){
+              throw 'Recovery completion marker did not match'
+            }
+            Write-Host 'PASS: actual Windows Task Scheduler full XML restored byte-semantically from protected lab snapshot by manual SYSTEM watchdog'
+            Write-Host 'NO REAL REBOOT: manual SYSTEM invocation alone cannot certify post-boot recovery.'
+          } finally {
+            foreach($name in @($watch,$motor)){
+              $task=Get-ScheduledTask -TaskName $name -TaskPath '\' -ErrorAction SilentlyContinue
+              if($null -eq $task){continue}
+              if($task.TaskPath -ne '\' -or $task.Principal.UserId -notin @('SYSTEM','S-1-5-18')){
+                throw 'Refusing to remove an unexpected non-CI task'
+              }
+              if($task.State -eq 'Running'){Stop-ScheduledTask -TaskName $name -TaskPath '\' -ErrorAction Stop}
+              Unregister-ScheduledTask -TaskName $name -TaskPath '\' -Confirm:$false -ErrorAction Stop
+            }
+          }
       - name: Package VM-only recovery kit with SHA256 manifest
         shell: powershell
         run: |
