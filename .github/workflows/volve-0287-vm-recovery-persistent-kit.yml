@@ -102,6 +102,32 @@ jobs:
             try { & $script -Mode Verify -RunId $id }
             catch { if($_.Exception.Message -like '*VM has not undergone a new boot*'){$rejected=$true}else{throw} }
             if(-not $rejected){throw 'False success: same-session staged task passed Verify'}
+            # The first post-boot verification must reject altered backup
+            # bytes even if an unrelated journal still claims to be healthy.
+            $snapshotRoot=Join-Path (Join-Path $env:ProgramData ('VOLVE-VM-RebootLab-'+$id)) ('VOLVE-CI-BOOT-'+$id)
+            foreach($case in @(
+              @{name='old-task.xml';expected='Original XML snapshot hash mismatch'},
+              @{name='old-test-engine.bin';expected='Original motor fixture hash mismatch'}
+            )){
+              $file=Join-Path $snapshotRoot $case.name
+              $original=[IO.File]::ReadAllBytes($file)
+              try {
+                [IO.File]::AppendAllText($file,'VOLVE-CI-POST-PREPARE-TAMPER')
+                $blocked=$false
+                try { & $script -Mode Verify -RunId $id }
+                catch {
+                  if($_.Exception.Message.Contains($case.expected)){$blocked=$true}else{throw}
+                }
+                if(-not $blocked){throw ('Post-Prepare tampering was accepted: '+$case.name)}
+              } finally {
+                [IO.File]::WriteAllBytes($file,$original)
+              }
+            }
+            $rejectedAfterRestoring=$false
+            try { & $script -Mode Verify -RunId $id }
+            catch { if($_.Exception.Message -like '*VM has not undergone a new boot*'){$rejectedAfterRestoring=$true}else{throw} }
+            if(-not $rejectedAfterRestoring){throw 'Snapshot restoration bypassed genuine boot check'}
+            Write-Host 'PASS: backed-up XML and old motor fixture are separately hash-pinned; tampering rejected before boot check'
             Write-Host 'PASS: staged disposable SYSTEM boot watchdog + journal; refused fake reboot'
           } finally {
             foreach($name in $taskNames){
