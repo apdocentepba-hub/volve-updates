@@ -104,7 +104,18 @@ function Assert-VolvVMBaselineState {
         }
         for($i=0;$i -lt $before.Count;$i++){
             if([string]$before[$i] -cne [string]$after[$i]){
-                throw ('NOT VERIFIED: VM '+$field+' changed since Prepare')
+                $detail=''
+                if($field -ceq 'taskRecords' -and $env:GITHUB_ACTIONS -ceq 'true'){
+                    # CI diagnostics only. Do not expose task names, XML or hashes.
+                    $expectedPath=([string]$before[$i]).Split('|')[0]
+                    $actualPath=([string]$after[$i]).Split('|')[0]
+                    if($expectedPath -ceq $actualPath){
+                        $detail=' (first difference: definition changed for the same task)'
+                    } else {
+                        $detail=' (first difference: task identity changed)'
+                    }
+                }
+                throw ('NOT VERIFIED: VM '+$field+' changed since Prepare'+$detail)
             }
         }
     }
