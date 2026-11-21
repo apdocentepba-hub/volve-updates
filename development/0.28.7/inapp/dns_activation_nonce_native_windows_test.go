@@ -123,3 +123,76 @@ func TestWindowsNativeSignedDNSActivationNonceConcurrentReplayOnlyOneWins(t *tes
  }
  if err:=nativeDNSOriginalBackupACL(context.Background(),path);err!=nil{t.Fatal(err)}
 }
+
+
+func TestWindowsSignedDNSActivationNonceAndRecoveryShareOneRealKernelLease(t *testing.T){
+ if os.Getenv("GITHUB_ACTIONS")!="true"||os.Getenv("RUNNER_ENVIRONMENT")!="github-hosted"{
+  t.Skip("requires disposable GitHub-hosted Windows NTFS runner")
+ }
+ parent,grantJSON,signature,pub,pins,now,noncePath:=makeNativeDNSActivationOnceFixture(t)
+ journal,err:=os.ReadFile(filepath.Join(parent,DNSOriginalBackupDirectoryName,DNSOriginalBackupFileName))
+ if err!=nil{t.Fatal(err)}
+ records,err:=VerifyDNSOriginalJournal(context.Background(),journal,pins.OriginalDNSJournalSHA256)
+ if err!=nil{t.Fatal(err)}
+ originals:=make([]DNSServerState,0,len(records))
+ backend:=&activationTestBackend{current:make(map[string]DNSServerState)}
+ for _,record:=range records{
+  originals=append(originals,copyActivationState(record.Original))
+  backend.current[activationKey(record.Original.InterfaceGUID,record.Original.Family)]=copyActivationState(record.Original)
+ }
+ backend.failOn=1 // simulate netsh mutating first family then reporting failure
+ inner:=&activationTestGuard{backend:backend,originals:originals}
+ auth:=DNSActivationPublisherAuthorization{
+  GrantJSON:grantJSON,Signature:signature,PinnedPublisherKey:pub,PinnedEvidence:pins,
+ }
+ signed,err:=newPublisherScopedDNSActivationGuard(
+  context.Background(),journal,pins.OriginalDNSJournalSHA256,auth,inner,
+  func()time.Time{return now},
+ )
+ if err!=nil{t.Fatal(err)}
+ factory:=func(ctx context.Context,guarded DNSActivationSafetyGuard)(DNSAdapterBackend,error){
+  lease,ok:=guarded.(*exclusiveDNSActivationGuard)
+  if !ok{return nil,errors.New("SYSTEM activation lost native protected lease")}
+  // As in the real Windows entrypoint: preflight originals before spending
+  // a one-use signed nonce. This backend is in-memory only; no DNS writes.
+  if err:=verifyDNSActivationTransition(ctx,records,backend,0);err!=nil{return nil,err}
+  if _,err:=reserveSignedDNSActivationOnceUnderHeldLeaseNativeWindows(
+   ctx,parent,grantJSON,signature,pub,pins,now,lease,
+  );err!=nil{return nil,err}
+  if _,err:=os.Stat(noncePath);err!=nil{return nil,err}
+  return backend,nil
+ }
+ ctx,cancel:=context.WithTimeout(context.Background(),90*time.Second)
+ defer cancel()
+ err=activateVOLVEDNSUnderProtectedLease(
+  ctx,journal,pins.OriginalDNSJournalSHA256,signed,
+  AcquireProtectedResidentTransitionLease,factory,
+ )
+ if err==nil||!strings.Contains(err.Error(),"DNS activation write"){
+  t.Fatalf("simulated mid-write failure unexpectedly succeeded: %v",err)
+ }
+ if backend.writes!=1||inner.recoverCalls!=1||inner.commitCalls!=0{
+  t.Fatalf("independent recovery was not requested under same mutex: writes=%d recovery=%d committed=%d",
+   backend.writes,inner.recoverCalls,inner.commitCalls)
+ }
+ for _,state:=range originals{
+  live,err:=backend.Read(context.Background(),state.InterfaceGUID,state.Family)
+  if err!=nil||!sameDNSState(live,state){t.Fatal("original DNS not restored after simulated failure")}
+ }
+ if err:=nativeDNSOriginalBackupACL(context.Background(),noncePath);err!=nil{t.Fatal(err)}
+ originalReceipt,err:=os.ReadFile(noncePath)
+ if err!=nil{t.Fatal(err)}
+ // A new attempt may acquire the OS mutex, but MUST be rejected because
+ // the already-spent nonce persists after recovery. No second DNS write.
+ retryErr:=activateVOLVEDNSUnderProtectedLease(
+  ctx,journal,pins.OriginalDNSJournalSHA256,signed,
+  AcquireProtectedResidentTransitionLease,factory,
+ )
+ if retryErr==nil||!strings.Contains(retryErr.Error(),"already reserved")||
+  backend.writes!=1||inner.commitCalls!=0{
+  t.Fatalf("failed installer replayed signed grant or changed DNS: %v",retryErr)
+ }
+ after,err:=os.ReadFile(noncePath)
+ if err!=nil||!bytes.Equal(originalReceipt,after){t.Fatal("replayed grant changed sealed NTFS nonce")}
+ t.Log("PASS: one real Windows kernel lease spans signed O_EXCL nonce reservation, simulated activation failure, independent recovery handoff; replay blocked; NO DNS WRITES")
+}
