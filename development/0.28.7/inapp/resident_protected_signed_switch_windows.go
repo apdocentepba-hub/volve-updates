@@ -10,6 +10,7 @@ import (
  "errors"
  "fmt"
  "sync"
+ "time"
 )
 
 // ProtectedSignedRecoveryHandoff is mandatory for a production signed
@@ -158,7 +159,13 @@ func(d *protectedSignedLegacyDriver)Restore(ctx context.Context)error{
  d.currentRelease=nil
  release()
  recoverErr:=d.handoff.RestoreAfterProtectedHandoff(ctx)
- nextRelease,lockErr:=AcquireProtectedResidentTransitionLease(ctx)
+ // The failed updater may have cancelled its original context. The
+ // independent SYSTEM watchdog must still be able to return control to a
+ // protected verification lease. Never treat cancellation as authority to
+ // skip the post-restore lock; use a bounded cleanup-only context instead.
+ reacquireCtx,stopReacquire:=context.WithTimeout(context.WithoutCancel(ctx),15*time.Second)
+ defer stopReacquire()
+ nextRelease,lockErr:=AcquireProtectedResidentTransitionLease(reacquireCtx)
  if lockErr!=nil{
   return errors.Join(recoverErr,fmt.Errorf("CRÍTICO: exclusive mutex could not be reacquired after watchdog: %w",lockErr))
  }
