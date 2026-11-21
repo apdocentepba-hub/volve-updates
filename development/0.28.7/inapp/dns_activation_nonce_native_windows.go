@@ -60,7 +60,7 @@ func sealNewDNSActivationOnceNativeFile(ctx context.Context,parent,path,nonce st
   return errors.New("activation nonce seal refused linked or special file")
  }
  root:=os.Getenv("SystemRoot")
- if !filepath.IsAbs(root)||strings.HasPrefix(root,\`\\\`){
+ if !filepath.IsAbs(root)||strings.HasPrefix(root,`\\`){
   return errors.New("trusted Windows SystemRoot unavailable for activation nonce seal")
  }
  ps:=filepath.Join(root,"System32","WindowsPowerShell","v1.0","powershell.exe")
