@@ -76,12 +76,14 @@ func (h *windowsActivationMemoryHost) invoke(ctx context.Context,args []string)e
 
 type windowsActivationIndependentGuard struct {
  h *windowsActivationMemoryHost
- armErr error
+ armErr,recoverErr error
+ onArm func(int)
  recoverCount,healthCount,commitCount,armCount int
 }
 func(g *windowsActivationIndependentGuard)VerifyArmed(ctx context.Context,pin string)error{
  if err:=ctx.Err();err!=nil{return err}
  g.armCount++
+ if g.onArm!=nil{g.onArm(g.armCount)}
  if len(pin)!=64{return errors.New("original journal SHA pin missing")}
  return g.armErr
 }
@@ -93,6 +95,7 @@ func(g *windowsActivationIndependentGuard)VerifyLiveProtection(ctx context.Conte
 func(g *windowsActivationIndependentGuard)RecoverIndependently(ctx context.Context,_ string)error{
  if err:=ctx.Err();err!=nil{return err}
  g.recoverCount++
+ if g.recoverErr!=nil{return g.recoverErr}
  originals:=windowsActivationHostFixture()
  for k,v:=range originals.states{g.h.states[k]=copyWindowsActivationDNSState(v)}
  return nil
@@ -212,5 +215,34 @@ func TestWindowsPinnedDNSActivationRejectsLostWatchdogDuringSecondFamily(t *test
  err=activateVOLVEDNSWithRecovery(context.Background(),raw,pin,backend,guard)
  if err==nil||guard.recoverCount!=1||guard.commitCount!=0||host.invocations!=1{
   t.Fatalf("vanished watchdog did not interrupt native activation: %v",err)
+ }
+}
+
+func TestWindowsPinnedDNSActivationRejectsConcurrentPostAttestationDNSChange(t *testing.T){
+ raw,pin:=windowsNativeActivationInput(t)
+ host:=windowsActivationHostFixture()
+ guard:=&windowsActivationIndependentGuard{h:host,
+  recoverErr:errors.New("independent watchdog refuses to overwrite third-party DNS"),
+ }
+ // Constructor calls VerifyArmed twice; coordinator calls a third time,
+ // loop a fourth time, and native Apply performs a fifth check. Simulate an
+ // external override in that narrow last-moment authorization window.
+ guard.onArm=func(call int){
+  if call==5{
+   host.states[DNSIPv4]=DNSServerState{InterfaceGUID:activationTestGUID,
+    Family:DNSIPv4,Mode:DNSStatic,Servers:[]string{"8.8.8.8"}}
+  }
+ }
+ backend,err:=newWindowsPinnedDNSActivationBackend(context.Background(),raw,pin,host.inspect,host.invoke,guard)
+ if err!=nil{t.Fatal(err)}
+ err=activateVOLVEDNSWithRecovery(context.Background(),raw,pin,backend,guard)
+ if err==nil||!strings.Contains(err.Error(),"CRITICAL")||
+  host.invocations!=0||guard.recoverCount!=1||guard.commitCount!=0{
+  t.Fatalf("TOCTOU change reached netsh or was falsely restored: %v",err)
+ }
+ actual:=host.states[DNSIPv4]
+ if !sameDNSState(actual,DNSServerState{InterfaceGUID:activationTestGUID,
+  Family:DNSIPv4,Mode:DNSStatic,Servers:[]string{"8.8.8.8"}}){
+  t.Fatal("external DNS should remain untouched after unsafe intervention")
  }
 }
