@@ -514,7 +514,15 @@ jobs:
             $tasksBefore=@(Get-ScheduledTask -ErrorAction Stop | Where-Object {$_.TaskName -match '^(?i:VOLVE[-_])'}).Count
             go test -mod=mod -count=1 -v ./hostroutebridge/cmd/preview
             if($LASTEXITCODE -ne 0){throw 'Hosted CI-only setup preview fail-closed tests failed'}
-            $raw=(& go run -mod=mod ./hostroutebridge/cmd/preview --review-only | Out-String).Trim()
+            # Compile the same reviewed source once, then reuse its exact binary
+            # for both route checks and the independent NSIS handoff step.
+            $reviewExe=Join-Path $env:RUNNER_TEMP ('VOLVE-CI-Native-Review-Only-'+$env:GITHUB_RUN_ID+'.exe')
+            & go build -mod=mod -o $reviewExe ./hostroutebridge/cmd/preview
+            if($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $reviewExe -PathType Leaf)){
+              throw 'Cannot compile verified Windows native review binary'
+            }
+            Add-Content -LiteralPath $env:GITHUB_ENV -Value ('VOLVE_CI_NATIVE_REVIEW_EXE='+$reviewExe)
+            $raw=(& $reviewExe --review-only | Out-String).Trim()
             if($LASTEXITCODE -ne 0){throw 'Native signed Windows setup preview execution failed'}
             $report=$raw | ConvertFrom-Json -ErrorAction Stop
             $reportBlockers=@()
@@ -552,7 +560,7 @@ jobs:
             }
             Write-Host $raw
             Write-Host 'PROTECTED PREVIEW CHECKPOINT: repeat full Windows preflight WHILE holding updater/recovery kernel mutex'
-            $protectedRaw=(& go run -mod=mod ./hostroutebridge/cmd/preview --review-under-protected-lock 2>&1 | Out-String).Trim()
+            $protectedRaw=(& $reviewExe --review-under-protected-lock 2>&1 | Out-String).Trim()
             $protectedExit=$LASTEXITCODE
             if($protectedExit -ne 0){
               if($protectedRaw -notmatch 'DNS servers exist on an interface without a unique adapter GUID|DNS interface index maps to conflicting adapter GUIDs|DNS assignment registry key missing|Unknown DNS client address family'){
@@ -648,7 +656,10 @@ jobs:
           & (Join-Path $wizardRoot 'test_wizard_preview_silent.ps1') -WizardExe $wizard
           Push-Location 'development/0.28.7/singlefile'
           try{
-            $raw=(& go run -mod=mod ./hostroutebridge/cmd/preview --review-only | Out-String).Trim()
+            if(-not (Test-Path -LiteralPath $env:VOLVE_CI_NATIVE_REVIEW_EXE -PathType Leaf)){
+              throw 'Previously compiled signed-route review binary missing'
+            }
+            $raw=(& $env:VOLVE_CI_NATIVE_REVIEW_EXE --review-only | Out-String).Trim()
             if($LASTEXITCODE -ne 0){throw 'Native Windows preinstallation preview failed'}
           }finally{Pop-Location}
           $report=$raw|ConvertFrom-Json -ErrorAction Stop
