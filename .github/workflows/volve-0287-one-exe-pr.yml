@@ -597,3 +597,91 @@ jobs:
           } finally {
             Pop-Location
           }
+      - name: NSIS + Authenticode + native review-only integration gate
+        timeout-minutes: 7
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          if($env:GITHUB_ACTIONS -cne 'true' -or $env:RUNNER_ENVIRONMENT -cne 'github-hosted'){throw 'REFUSED: integration requires hosted Windows CI'}
+          $vm=Get-CimInstance Win32_ComputerSystem -ErrorAction Stop
+          if(($vm.Manufacturer+' '+$vm.Model) -notmatch '(?i:virtual machine|hyper-v|vmware|kvm|qemu|virtualbox)'){throw 'REFUSED: not a verified VM'}
+          $signed=$env:VOLVE_CI_AUTHENTICODE_OS_BINARY
+          if((Split-Path -Leaf $signed) -cne 'VOLVE-CI-Signed-Container.exe' -or -not (Test-Path -LiteralPath $signed -PathType Leaf)){throw 'Signed CI bundle missing'}
+          foreach($pin in @($env:VOLVE_CI_AUTHENTICODE_FILE_SHA256,$env:VOLVE_CI_AUTHENTICODE_CERT_SHA256,$env:VOLVE_CI_ED25519_PUB)){
+            if($pin -cnotmatch '^[a-fA-F0-9]{64}$'){throw 'REFUSED: incomplete publisher/bundle pin'}
+          }
+          $exeSha=(Get-FileHash -LiteralPath $signed -Algorithm SHA256).Hash
+          if($exeSha -ine $env:VOLVE_CI_AUTHENTICODE_FILE_SHA256){throw 'REFUSED: signed bundle hash mismatch'}
+          $sig=Get-AuthenticodeSignature -LiteralPath $signed -ErrorAction Stop
+          if($sig.Status -ne 'Valid' -or $null -eq $sig.SignerCertificate){throw 'REFUSED: untrusted Authenticode publisher'}
+          $sha=[Security.Cryptography.SHA256]::Create()
+          try{$certSha=[BitConverter]::ToString($sha.ComputeHash($sig.SignerCertificate.GetRawCertData())).Replace('-','')}
+          finally{$sha.Dispose()}
+          if($certSha -ine $env:VOLVE_CI_AUTHENTICODE_CERT_SHA256){throw 'REFUSED: wrong Authenticode publisher pin'}
+          $verified=(& $signed --verify-bundle | Out-String)
+          if($LASTEXITCODE -ne 0 -or $verified -notmatch 'PASS VOLVE_SINGLEFILE_SIGNED_BUNDLE release=0.28.7 items=7 NO_INSTALL'){
+            throw 'REFUSED: embedded Ed25519-signed seven-component bundle invalid'
+          }
+          $stage=Join-Path $env:RUNNER_TEMP 'VOLVE-CI-verified-extraction'
+          foreach($asset in @('VOLVE_DNS_Motor_0_28_7.exe','VOLVE_Managed_Watchdog.exe','VOLVE_Browser_Policies.json','VOLVE_Full_Catalog.txt','manifest.json','manifest.ed25519')){
+            if(-not (Test-Path -LiteralPath (Join-Path $stage $asset) -PathType Leaf)){throw 'REFUSED: verified staged component missing'}
+          }
+          $dnsBefore=Get-DnsClientServerAddress -ErrorAction Stop | Sort-Object InterfaceIndex,AddressFamily | Select-Object InterfaceIndex,AddressFamily,ServerAddresses | ConvertTo-Json -Depth 7 -Compress
+          $tasksBefore=@(Get-ScheduledTask -ErrorAction Stop | Where-Object {$_.TaskName -match '^(?i:VOLVE[-_\.])'} | Sort-Object TaskPath,TaskName | ForEach-Object {$_.TaskPath+$_.TaskName}) -join '|'
+          $nsis=@('C:\Program Files (x86)\NSIS\makensis.exe','C:\Program Files\NSIS\makensis.exe') | Where-Object {Test-Path -LiteralPath $_ -PathType Leaf} | Select-Object -First 1
+          if(-not $nsis){
+            choco install nsis --yes --no-progress --limit-output
+            if($LASTEXITCODE -ne 0){throw 'REFUSED: NSIS compiler unavailable'}
+            $nsis=@('C:\Program Files (x86)\NSIS\makensis.exe','C:\Program Files\NSIS\makensis.exe') | Where-Object {Test-Path -LiteralPath $_ -PathType Leaf} | Select-Object -First 1
+          }
+          if(-not $nsis){throw 'REFUSED: no NSIS compiler'}
+          $wizardRoot='development/0.28.7/installer-wizard'
+          Push-Location $wizardRoot
+          try{
+            & $nsis '/V3' 'VOLVE_Asistente_0287_PREVIEW.nsi'
+            if($LASTEXITCODE -ne 0){throw 'NSIS preview failed compilation'}
+          }finally{Pop-Location}
+          $wizard=Join-Path $wizardRoot 'VOLVE_Asistente_VistaPrevia_0287.exe'
+          & (Join-Path $wizardRoot 'test_wizard_preview_silent.ps1') -WizardExe $wizard
+          Push-Location 'development/0.28.7/singlefile'
+          try{
+            $raw=(& go run -mod=mod ./hostroutebridge/cmd/preview --review-only | Out-String).Trim()
+            if($LASTEXITCODE -ne 0){throw 'Native Windows preinstallation preview failed'}
+          }finally{Pop-Location}
+          $report=$raw|ConvertFrom-Json -ErrorAction Stop
+          if($report.component -cne 'VOLVE-0287-WINDOWS-SETUP-PREVIEW-CI' -or
+             $report.scope -cne 'DISPOSABLE_WINDOWS_CI_ONLY_NOT_USER_PC' -or
+             $report.target_release -cne '0.28.7' -or
+             $report.result -cne 'REVIEW_ONLY' -or
+             $report.status -cne 'NO_INSTALL_OR_DNS_CHANGE_AUTHORIZED' -or
+             $report.synthetic_ci_signed_container_verified -ne $true -or
+             $report.windows_inventories_checked -ne 6 -or
+             $report.can_install -ne $false -or $report.can_upgrade -ne $false -or
+             $report.can_change_dns -ne $false -or $report.can_change_tasks -ne $false){
+            throw 'REFUSED: native Windows authorization contract allowed unsafe transition'
+          }
+          $dnsAfter=Get-DnsClientServerAddress -ErrorAction Stop | Sort-Object InterfaceIndex,AddressFamily | Select-Object InterfaceIndex,AddressFamily,ServerAddresses | ConvertTo-Json -Depth 7 -Compress
+          $tasksAfter=@(Get-ScheduledTask -ErrorAction Stop | Where-Object {$_.TaskName -match '^(?i:VOLVE[-_\.])'} | Sort-Object TaskPath,TaskName | ForEach-Object {$_.TaskPath+$_.TaskName}) -join '|'
+          if($dnsBefore -cne $dnsAfter -or $tasksBefore -cne $tasksAfter){throw 'REFUSED: cross-component preview altered host DNS or VOLVE tasks'}
+          $handoff=[ordered]@{
+            schema='VOLVE-CI-WIZARD-SIGNED-BUNDLE-HANDOFF-V1'
+            target_release='0.28.7'
+            wizard_sha256=(Get-FileHash -LiteralPath $wizard -Algorithm SHA256).Hash.ToLowerInvariant()
+            signed_bundle_sha256=$exeSha.ToLowerInvariant()
+            seven_component_ci_bundle_verified=$true
+            silent_wizard_did_not_install=$true
+            six_windows_inventories_review_only=$true
+            silent_consent_is_authorization=$false
+            real_reboot_proven=$false
+            can_install=$false
+            can_change_dns=$false
+            can_change_tasks=$false
+            product_release=$false
+          }
+          $receipt=Join-Path $env:RUNNER_TEMP 'VOLVE_CI_WIZARD_SIGNED_HANDOFF_REVIEW_ONLY.json'
+          $handoff | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $receipt -Encoding utf8
+          $back=Get-Content -LiteralPath $receipt -Raw | ConvertFrom-Json
+          if($back.product_release -ne $false -or $back.can_install -ne $false -or $back.can_change_dns -ne $false -or $back.real_reboot_proven -ne $false){
+            throw 'REFUSED: CI-only handoff mislabeled as install authorization'
+          }
+          Write-Host 'PASS VOLVE_NSIS_SIGNED_BUNDLE_NATIVE_WINDOWS_HANDOFF REVIEW_ONLY NO_INSTALL NO_DNS NO_TASKS'
