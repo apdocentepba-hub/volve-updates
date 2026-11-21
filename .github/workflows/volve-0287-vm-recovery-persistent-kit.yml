@@ -658,7 +658,7 @@ jobs:
           throw 'STRICT_VM_ENVIRONMENT_FAILED: isolated recovery tests do not clear the failed integrity baseline'
       - name: Package VM-only recovery kit with SHA256 manifest
         # Never publish even a VM-only package after an unverified environment drift.
-        if: ${{ !cancelled() && steps.verified_contract.outcome == 'success' && steps.strict_environment.outcome == 'success' }}
+        if: ${{ success() && steps.verified_contract.outcome == 'success' && steps.strict_environment.outcome == 'success' }}
         shell: powershell
         run: |
           $ErrorActionPreference='Stop'
