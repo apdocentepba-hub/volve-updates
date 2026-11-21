@@ -130,6 +130,93 @@ function Get-VolvCISecurity4702Summary {
     return [pscustomobject]$counts
 }
 
+
+# Optional Security 4688 (process creation) is correlated to Security 4702
+# strictly for postmortem triage. PID reuse, incomplete log retention and
+# missing process-start-key linkage forbid executable attribution or exemption.
+# The only output is aggregate counts; process paths/PIDs remain in the VM.
+function ConvertTo-VolvCIPidDecimal {
+    [CmdletBinding()]
+    param([AllowEmptyString()][string]$Value)
+    if(-not (Test-VolvCIEventPositivePid -Value $Value)){return $null}
+    $clean=$Value.Trim()
+    if($clean -match '^0[xX]'){
+        return ([Convert]::ToInt64($clean.Substring(2),16)).ToString([Globalization.CultureInfo]::InvariantCulture)
+    }
+    return ([int64]::Parse($clean,[Globalization.CultureInfo]::InvariantCulture)).ToString([Globalization.CultureInfo]::InvariantCulture)
+}
+
+function Get-VolvCIProcessCreationCorrelation {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory=$true)][string]$TaskIdentity,
+        [Parameter(Mandatory=$true)][AllowEmptyCollection()][string[]]$UpdateEventXML,
+        [Parameter(Mandatory=$true)][AllowEmptyCollection()][string[]]$CreationEventXML
+    )
+    function Read-CIEvent([string]$Raw) {
+        $doc=[System.Xml.XmlDocument]::new()
+        $doc.XmlResolver=$null
+        try {$doc.LoadXml($Raw)}
+        catch {throw 'NOT VERIFIED: malformed 4702/4688 event XML'}
+        $provider=$doc.SelectSingleNode("/*[local-name()='Event']/*[local-name()='System']/*[local-name()='Provider']")
+        $eventId=$doc.SelectSingleNode("/*[local-name()='Event']/*[local-name()='System']/*[local-name()='EventID']")
+        $when=$doc.SelectSingleNode("/*[local-name()='Event']/*[local-name()='System']/*[local-name()='TimeCreated']")
+        $date=$null
+        if($null -ne $when){
+            try {$date=[DateTimeOffset]::Parse([string]$when.GetAttribute('SystemTime'),
+              [Globalization.CultureInfo]::InvariantCulture)}
+            catch {$date=$null}
+        }
+        $fields=@($doc.SelectNodes("/*[local-name()='Event']/*[local-name()='EventData']/*[local-name()='Data']"))
+        return [pscustomobject]@{
+            event=if($null -eq $eventId){''}else{[string]$eventId.InnerText}
+            provider=if($null -eq $provider){''}else{[string]$provider.GetAttribute('Name')}
+            when=$date
+            data=$fields
+        }
+    }
+    function Read-OnlyField([object]$E,[string]$Field) {
+        $nodes=@($E.data | Where-Object {$_.GetAttribute('Name') -ceq $Field})
+        if($nodes.Count -ne 1){return $null}
+        return [string]$nodes[0].InnerText
+    }
+    $births=@()
+    foreach($raw in $CreationEventXML){
+        $event=Read-CIEvent $raw
+        if($event.event -cne '4688' -or
+           $event.provider -cne 'Microsoft-Windows-Security-Auditing' -or
+           $null -eq $event.when){continue}
+        $pid=ConvertTo-VolvCIPidDecimal (Read-OnlyField $event 'NewProcessId')
+        # Process creation event without an executable field cannot supply a
+        # usable candidate. Never emit the executable field to CI output.
+        $exe=Read-OnlyField $event 'NewProcessName'
+        if($null -eq $pid -or [string]::IsNullOrWhiteSpace($exe)){continue}
+        $births+=([pscustomobject]@{pid=$pid;when=$event.when})
+    }
+    $counts=[ordered]@{taskUpdateEvents=0;creationCandidate=0;creationMissing=0;creationAmbiguous=0;invalidUpdateEvidence=0}
+    foreach($raw in $UpdateEventXML){
+        $event=Read-CIEvent $raw
+        if($event.event -cne '4702' -or
+           $event.provider -cne 'Microsoft-Windows-Security-Auditing'){continue}
+        $name=Read-OnlyField $event 'TaskName'
+        if($null -eq $name -or -not [string]::Equals($name,$TaskIdentity,[StringComparison]::OrdinalIgnoreCase)){continue}
+        $counts.taskUpdateEvents++
+        $pid=ConvertTo-VolvCIPidDecimal (Read-OnlyField $event 'ClientProcessId')
+        if($null -eq $pid -or $null -eq $event.when){
+            $counts.invalidUpdateEvidence++
+            continue
+        }
+        $matches=@($births | Where-Object {
+            $_.pid -ceq $pid -and $_.when -le $event.when -and
+            $_.when -ge $event.when.AddMinutes(-30)
+        })
+        if($matches.Count -eq 1){$counts.creationCandidate++}
+        elseif($matches.Count -gt 1){$counts.creationAmbiguous++}
+        else{$counts.creationMissing++}
+    }
+    return [pscustomobject]$counts
+}
+
 if($Mode -ceq 'Test'){
     $fixture='\Microsoft\Windows\Synthetic\NeverPublicTask'
     # Constant well-formed fixtures: no PowerShell array/concatenation precedence.
@@ -195,6 +282,44 @@ if($Mode -ceq 'Test'){
     try{$null=Get-VolvCISecurity4702Summary -TaskIdentity $fixture -EventXML @('<Event><System>')}
     catch{if($_.Exception.Message -eq 'NOT VERIFIED: invalid Security 4702 XML'){$bad4702Rejected=$true}else{throw}}
     if(-not $bad4702Rejected){throw 'NOT VERIFIED: malformed Security 4702 XML was accepted'}
+
+    # No sensitive executable name, PID, username or complete event XML may
+    # appear in diagnostic output. Matching is temporal and NEVER causal proof.
+    $valid4702='<Event><System><Provider Name="Microsoft-Windows-Security-Auditing"/><EventID>4702</EventID><TimeCreated SystemTime="2026-11-21T11:01:00Z"/></System><EventData><Data Name="TaskName">\Microsoft\Windows\Synthetic\NeverPublicTask</Data><Data Name="ClientProcessId">0x1F4</Data></EventData></Event>'
+    $birth4688='<Event><System><Provider Name="Microsoft-Windows-Security-Auditing"/><EventID>4688</EventID><TimeCreated SystemTime="2026-11-21T11:00:00Z"/></System><EventData><Data Name="NewProcessId">500</Data><Data Name="NewProcessName">C:\PRIVATE\SecretProgram.exe</Data></EventData></Event>'
+    $match=Get-VolvCIProcessCreationCorrelation -TaskIdentity $fixture -UpdateEventXML @($valid4702) -CreationEventXML @($birth4688)
+    if($match.taskUpdateEvents -ne 1 -or $match.creationCandidate -ne 1 -or
+       $match.creationMissing -ne 0 -or $match.creationAmbiguous -ne 0 -or
+       $match.invalidUpdateEvidence -ne 0){throw 'NOT VERIFIED: 4702/4688 synthetic correlation failed'}
+    $miss=Get-VolvCIProcessCreationCorrelation -TaskIdentity $fixture -UpdateEventXML @($valid4702) -CreationEventXML @()
+    if($miss.creationMissing -ne 1 -or $miss.creationCandidate -ne 0){throw 'NOT VERIFIED: missing birth event falsely matched'}
+    $afterBirth=$birth4688.Replace('11:00:00Z','11:02:00Z')
+    $late=Get-VolvCIProcessCreationCorrelation -TaskIdentity $fixture -UpdateEventXML @($valid4702) -CreationEventXML @($afterBirth)
+    if($late.creationMissing -ne 1){throw 'NOT VERIFIED: future process creation accepted'}
+    $oldBirth=$birth4688.Replace('11:00:00Z','10:00:00Z')
+    $stale=Get-VolvCIProcessCreationCorrelation -TaskIdentity $fixture -UpdateEventXML @($valid4702) -CreationEventXML @($oldBirth)
+    if($stale.creationMissing -ne 1){throw 'NOT VERIFIED: stale process creation accepted'}
+    $ambiguous=Get-VolvCIProcessCreationCorrelation -TaskIdentity $fixture -UpdateEventXML @($valid4702) -CreationEventXML @($birth4688,$birth4688)
+    if($ambiguous.creationAmbiguous -ne 1 -or $ambiguous.creationCandidate -ne 0){
+        throw 'NOT VERIFIED: reused PID was falsely attributed'
+    }
+    $missingPID=Get-VolvCIProcessCreationCorrelation -TaskIdentity $fixture -UpdateEventXML @(
+      $valid4702.Replace('0x1F4','0x0')) -CreationEventXML @($birth4688)
+    if($missingPID.invalidUpdateEvidence -ne 1){throw 'NOT VERIFIED: invalid PID accepted'}
+    $otherTask=Get-VolvCIProcessCreationCorrelation -TaskIdentity $fixture -UpdateEventXML @(
+      $valid4702.Replace($fixture,'\Other\Task')) -CreationEventXML @($birth4688)
+    if($otherTask.taskUpdateEvents -ne 0){throw 'NOT VERIFIED: foreign task correlated'}
+    $otherProvider=Get-VolvCIProcessCreationCorrelation -TaskIdentity $fixture -UpdateEventXML @(
+      $valid4702.Replace('Microsoft-Windows-Security-Auditing','Untrusted-Source')) -CreationEventXML @($birth4688)
+    if($otherProvider.taskUpdateEvents -ne 0){throw 'NOT VERIFIED: forged event provider accepted'}
+    $broken=$false
+    try{$null=Get-VolvCIProcessCreationCorrelation -TaskIdentity $fixture -UpdateEventXML @('<Event>') -CreationEventXML @()}
+    catch{if($_.Exception.Message -ceq 'NOT VERIFIED: malformed 4702/4688 event XML'){$broken=$true}else{throw}}
+    if(-not $broken){throw 'NOT VERIFIED: invalid event XML accepted'}
+    if(($match|ConvertTo-Json -Compress) -match 'PRIVATE|SecretProgram|0x1F4|500'){
+        throw 'NOT VERIFIED: sensitive process evidence escaped the aggregate correlation'
+    }
+    Write-Host 'PASS: SECURITY_4702_4688_CORRELATION synthetic time/PID candidate, missing/ambiguous/future/stale/reused PID rejection; process identity remains UNPROVEN'
     Write-Host 'PASS: SECURITY_4702_READ_ONLY classifies valid/missing/invalid PID fields, refuses duplicate PID, wrong provider, wrong task, malformed XML and never outputs private event data'
     Write-Host 'PASS: CI_TASK_EVENT_DIAGNOSTIC matches synthetic events 106/140/141, classifies actor accounts, and rejects wrong task, unlisted ID and malformed XML'
     Write-Host 'PASS: CI_TASK_EVENT_DIAGNOSTIC exposes no task names, event identities, usernames or command arguments'
@@ -257,6 +382,27 @@ try {
     $securityStatus='unavailable'
 }
 
+
+# Optional process creation audit is not enabled here: this is READ-ONLY.
+# A timestamp/PID match alone is an investigative lead, not actor proof.
+$creationAudit='unavailable'
+$processCandidates=[pscustomobject]@{taskUpdateEvents=0;creationCandidate=0;creationMissing=0;creationAmbiguous=0;invalidUpdateEvidence=0}
+if($securityStatus -ceq 'available'){
+    try {
+        $creationEvents=@(Get-WinEvent -FilterHashtable @{
+            LogName='Security';Id=4688;StartTime=(Get-Date).AddMinutes(-$Minutes)
+        } -MaxEvents 2000 -ErrorAction Stop)
+        $processCandidates=Get-VolvCIProcessCreationCorrelation -TaskIdentity $fullIdentity -UpdateEventXML @(
+            $securityEvents | ForEach-Object {$_.ToXml()}
+        ) -CreationEventXML @(
+            $creationEvents | ForEach-Object {$_.ToXml()}
+        )
+        $creationAudit='available'
+    } catch {
+        $creationAudit='unavailable'
+    }
+}
+
 $summary=Get-VolvCIEventSummary -TaskIdentity $fullIdentity -EventXML $eventXml
 Write-Host ('CI TASK EVENT POSTMORTEM: identityId='+$IdentityId.ToUpperInvariant()+
     '; registered='+$summary.registration+'; updated='+$summary.updated+
@@ -268,4 +414,8 @@ Write-Host ('CI TASK EVENT POSTMORTEM: identityId='+$IdentityId.ToUpperInvariant
     '; security4702Matching='+$securitySummary.matched4702+
     '; security4702ClientPidFields='+$securitySummary.clientPidFieldPresent+
     '; security4702ParentPidFields='+$securitySummary.parentPidFieldPresent+
+    '; security4688='+$creationAudit+
+    '; pidTemporalCandidate='+$processCandidates.creationCandidate+
+    '; pidBirthAbsent='+$processCandidates.creationMissing+
+    '; pidBirthAmbiguous='+$processCandidates.creationAmbiguous+
     '; processAttribution=UNPROVEN; originalBaseline=FAILED')
