@@ -88,6 +88,20 @@ func(b *windowsPinnedDNSActivationBackend)Read(
  if err!=nil||index!=pinned.index{return denied,errors.New("DNS adapter GUID or InterfaceIndex changed")}
  observed,err:=InspectWindowsDNSAssignmentProvenanceReadOnly(ctx,b.inspect)
  if err!=nil{return denied,err}
+ // A valid journal must cover the ENTIRE independently observed Windows
+ // adapter/family census. Checking only requested GUIDs would permit a
+ // newly attached VPN/virtual adapter to silently bypass localhost DNS.
+ // Any additional/disappeared family requires a new, separately signed
+ // protected original snapshot; never silently update the journal.
+ if len(observed.States)!=len(b.pinned){
+  return denied,errors.New("live Windows DNS census no longer matches sealed IPv4/IPv6 journal coverage")
+ }
+ for i:=range observed.States{
+  family:=&observed.States[i]
+  if _,exists:=b.pinned[windowsActivationFamilyKey(family.InterfaceGUID,family.Family)];!exists{
+   return denied,errors.New("unprotected Windows DNS adapter or family appeared during activation")
+  }
+ }
  var match *DNSServerState
  for i:=range observed.States{
   item:=&observed.States[i]
