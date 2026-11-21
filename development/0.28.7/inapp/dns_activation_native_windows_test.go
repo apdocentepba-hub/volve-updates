@@ -246,3 +246,90 @@ func TestWindowsPinnedDNSActivationRejectsConcurrentPostAttestationDNSChange(t *
   t.Fatal("external DNS should remain untouched after unsafe intervention")
  }
 }
+
+
+const activationUnexpectedAdapterGUID="{aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa}"
+
+// A second adapter is not in the signed original DNS journal. The test
+// simulates a VPN or virtual interface appearing while VOLVE is activated;
+// it NEVER modifies real Windows network configuration.
+func windowsActivationInspectorWithExtraAdapter(
+ host *windowsActivationMemoryHost, extra *bool,
+) WindowsReadOnlyPowerShell {
+ return func(ctx context.Context,query string)([]byte,error){
+  raw,err:=host.inspect(ctx,query)
+  if err!=nil||!*extra{return raw,err}
+  switch query {
+  case windowsAdapterInventoryQuery:
+   var adapters []windowsAdapterRecord
+   if err:=json.Unmarshal(raw,&adapters);err!=nil{return nil,err}
+   adapters=append(adapters,windowsAdapterRecord{
+    InterfaceGuid:activationUnexpectedAdapterGUID,InterfaceIndex:88,
+   })
+   return json.Marshal(adapters)
+  case windowsDNSAssignmentSourceQuery:
+   var records []windowsDNSAssignmentRecord
+   if err:=json.Unmarshal(raw,&records);err!=nil{return nil,err}
+   for _,family:=range []DNSAddressFamily{DNSIPv4,DNSIPv6}{
+    effective:=[]string{"8.8.8.8"}
+    if family==DNSIPv6{effective=[]string{"2001:4860:4860::8888"}}
+    records=append(records,windowsDNSAssignmentRecord{
+     InterfaceGUID:activationUnexpectedAdapterGUID,
+     InterfaceIndex:88,Family:string(family),
+     RegistryKeyPresent:true,NameServerKind:"Missing",
+     Mode:"automatic",EffectiveServers:effective,
+    })
+   }
+   return json.Marshal(records)
+  default:
+   return raw,nil
+  }
+ }
+}
+
+func TestWindowsPinnedDNSActivationRejectsIncompleteAdapterCoverageBeforeWrite(t *testing.T){
+ raw,pin:=windowsNativeActivationInput(t)
+ host:=windowsActivationHostFixture()
+ present:=true
+ guard:=&windowsActivationIndependentGuard{h:host}
+ inspector:=windowsActivationInspectorWithExtraAdapter(host,&present)
+ backend,err:=newWindowsPinnedDNSActivationBackend(
+  context.Background(),raw,pin,inspector,host.invoke,guard,
+ )
+ if err==nil||backend!=nil||host.invocations!=0||guard.commitCount!=0{
+  t.Fatalf("original DNS journal omitted an observed VPN adapter but was accepted: %v",err)
+ }
+ if !strings.Contains(err.Error(),"census"){
+  t.Fatalf("unexpected incomplete DNS census rejection: %v",err)
+ }
+}
+
+func TestWindowsPinnedDNSActivationNewAdapterDuringSwitchNeverCommits(t *testing.T){
+ raw,pin:=windowsNativeActivationInput(t)
+ host:=windowsActivationHostFixture()
+ present:=false
+ guard:=&windowsActivationIndependentGuard{h:host}
+ inspector:=windowsActivationInspectorWithExtraAdapter(host,&present)
+ invoke:=func(ctx context.Context,args []string)error{
+  err:=host.invoke(ctx,args)
+  if err==nil&&host.invocations==1{present=true}
+  return err
+ }
+ backend,err:=newWindowsPinnedDNSActivationBackend(
+  context.Background(),raw,pin,inspector,invoke,guard,
+ )
+ if err!=nil{t.Fatal(err)}
+ err=activateVOLVEDNSWithRecovery(context.Background(),raw,pin,backend,guard)
+ if err==nil||!strings.Contains(err.Error(),"CRITICAL")||
+  guard.recoverCount!=1||guard.commitCount!=0||host.invocations!=1{
+  t.Fatalf("late VPN adapter addition was silently accepted or falsely recovered: %v",err)
+ }
+ // The rollback restores the original journaled adapter, but cannot claim
+ // whole-host safety while an independently observed adapter is still new.
+ originals:=windowsActivationHostFixture()
+ for _,fam:=range []DNSAddressFamily{DNSIPv4,DNSIPv6}{
+  if !sameDNSState(host.states[fam],originals.states[fam]){
+   t.Fatalf("interrupted activation did not restore original %s DNS",fam)
+  }
+ }
+}
