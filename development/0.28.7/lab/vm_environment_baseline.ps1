@@ -17,6 +17,49 @@ function Test-VolvVMBaselineExcludedTask {
     ))
 }
 
+# Read-only section fingerprints. Store digests ONLY inside the VM-protected
+# baseline, never raw XML or task command lines in a public CI log.
+function Get-VolvVMBaselineSha {
+    [CmdletBinding()]
+    param([Parameter(Mandatory=$true)][AllowEmptyString()][string]$Value)
+    $sha=[Security.Cryptography.SHA256]::Create()
+    try {
+        return [BitConverter]::ToString($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($Value))).Replace('-','')
+    } finally {$sha.Dispose()}
+}
+
+function Get-VolvVMBaselineTaskRecord {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory=$true)][string]$TaskPath,
+        [Parameter(Mandatory=$true)][string]$TaskName,
+        [Parameter(Mandatory=$true)][string]$XMLText
+    )
+    if($TaskPath.Contains('|') -or $TaskName.Contains('|')){
+        throw 'NOT VERIFIED: task identity cannot be encoded safely'
+    }
+    # Uses the existing strict XML root/DTD/size/whitespace verifier.
+    $canonical=ConvertTo-VolvTaskXMLFingerprint -XMLText $XMLText
+    $document=[System.Xml.XmlDocument]::new()
+    $document.XmlResolver=$null
+    $document.PreserveWhitespace=$true
+    $document.LoadXml($canonical)
+    $sections=@('RegistrationInfo','Triggers','Principals','Settings','Actions')
+    $sectionHashes=@()
+    foreach($section in $sections){
+        $matches=@($document.DocumentElement.ChildNodes | Where-Object {
+            $_.NodeType -eq [System.Xml.XmlNodeType]::Element -and
+            $_.LocalName -ceq $section -and
+            $_.NamespaceURI -ceq 'http://schemas.microsoft.com/windows/2004/02/mit/task'
+        })
+        if($matches.Count -gt 1){throw 'NOT VERIFIED: duplicate Task Scheduler XML section'}
+        $value='<absent>'
+        if($matches.Count -eq 1){$value=[string]$matches[0].OuterXml}
+        $sectionHashes+=Get-VolvVMBaselineSha -Value $value
+    }
+    return ($TaskPath+$TaskName+'|'+(Get-VolvVMBaselineSha -Value $canonical)+'|'+($sectionHashes -join '|'))
+}
+
 function Get-VolvVMBaselineState {
     [CmdletBinding()]
     param(
@@ -52,14 +95,7 @@ function Get-VolvVMBaselineState {
             throw 'NOT VERIFIED: Scheduler returned a task without a full path or name'
         }
         $xml=Export-ScheduledTask -TaskName $task.TaskName -TaskPath $task.TaskPath -ErrorAction Stop
-        $canonical=ConvertTo-VolvTaskXMLFingerprint -XMLText ([string]$xml)
-        $sha=[Security.Cryptography.SHA256]::Create()
-        try {
-            $digest=[BitConverter]::ToString($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($canonical))).Replace('-','')
-        } finally {
-            $sha.Dispose()
-        }
-        [string]$task.TaskPath+[string]$task.TaskName+'|'+$digest
+        Get-VolvVMBaselineTaskRecord -TaskPath ([string]$task.TaskPath) -TaskName ([string]$task.TaskName) -XMLText ([string]$xml)
     } | Sort-Object -CaseSensitive)
     if($taskRecords.Count -gt 20000){throw 'NOT VERIFIED: excessive Scheduler task inventory'}
     if(@($taskRecords | Select-Object -Unique).Count -ne $taskRecords.Count){
@@ -83,21 +119,37 @@ function Get-VolvVMBaselineTaskDriftHint {
         [Parameter(Mandatory=$true)][AllowEmptyString()][string]$ExpectedRecord,
         [Parameter(Mandatory=$true)][AllowEmptyString()][string]$ActualRecord
     )
-    $a=$ExpectedRecord.LastIndexOf('|')
-    $b=$ActualRecord.LastIndexOf('|')
-    if($a -le 0 -or $b -le 0){return ' (first difference: malformed task record)'}
-    $oldIdentity=$ExpectedRecord.Substring(0,$a)
-    $newIdentity=$ActualRecord.Substring(0,$b)
-    if($oldIdentity -cne $newIdentity){return ' (first difference: task identity changed)'}
+    $before=@($ExpectedRecord.Split('|'))
+    $after=@($ActualRecord.Split('|'))
+    if($before.Count -lt 2 -or $after.Count -lt 2 -or
+       [string]::IsNullOrWhiteSpace($before[0]) -or [string]::IsNullOrWhiteSpace($after[0])){
+        return ' (first difference: malformed task record)'
+    }
+    $oldIdentity=[string]$before[0]
+    $newIdentity=[string]$after[0]
+    if($oldIdentity -cne $newIdentity){
+        return ' (first difference: task identity changed)'
+    }
     $scope='other-folder'
     if($oldIdentity.StartsWith('\Microsoft\Windows\',[StringComparison]::OrdinalIgnoreCase)){
         $scope='microsoft-windows-folder'
     }
-    $sha=[Security.Cryptography.SHA256]::Create()
-    try {
-        $identityId=[BitConverter]::ToString($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($oldIdentity))).Replace('-','').Substring(0,16)
-    } finally {$sha.Dispose()}
-    return (' (first difference: definition changed for the same task; scope='+$scope+'; identityId='+$identityId+')')
+    $identityId=(Get-VolvVMBaselineSha -Value $oldIdentity).Substring(0,16)
+    $changed='unavailable'
+    # Six SHA256 values: full XML followed by five fixed, coarse sections.
+    # Never log task names, complete XML, raw command arguments or full SHA256s.
+    if($before.Count -eq 7 -and $after.Count -eq 7){
+        $names=@('RegistrationInfo','Triggers','Principals','Settings','Actions')
+        $diff=@()
+        for($i=0;$i -lt $names.Count;$i++){
+            if($before[$i+2] -cne $after[$i+2]){$diff+=($names[$i])}
+        }
+        if($diff.Count -gt 0){$changed=$diff -join ','}
+        elseif($before[1] -cne $after[1]){$changed='TaskRootOrUnclassified'}
+        else {$changed='UnclassifiedRecordChange'}
+    }
+    return (' (first difference: definition changed for the same task; scope='+$scope+
+        '; identityId='+$identityId+'; changedSections='+$changed+')')
 }
 
 function Assert-VolvVMBaselineState {

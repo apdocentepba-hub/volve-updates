@@ -67,7 +67,80 @@ try {
     $message=''
     try {$null=Assert-VolvVMBaselineState -Expected $expected -Actual $changed}
     catch {$message=$_.Exception.Message}
-    if($message -notmatch '^NOT VERIFIED: VM taskRecords changed since Prepare \(first difference: definition changed for the same task; scope=other-folder; identityId=[A-F0-9]{16}\)$'){
+    if($message -notmatch '^NOT VERIFIED: VM taskRecords changed since Prepare \(first difference: definition changed for the same task; scope=other-folder; identityId=[A-F0-9]{16}; changedSections=unavailable\){
+        throw ('Unexpected CI drift response: '+$message)
+    }
+    if($message.Contains('VOLVE-CATALOGO') -or $message.Contains(('B'*64)) -or $message.Contains(('E'*64))){
+        throw 'CI leaked the task name or definition hash'
+    }
+    $second=''
+    try {$null=Assert-VolvVMBaselineState -Expected $expected -Actual $changed}
+    catch {$second=$_.Exception.Message}
+    if($message -cne $second){throw 'Task identity hash was not deterministic'}
+    $renamed=$expected | ConvertTo-Json -Depth 6 | ConvertFrom-Json
+    $renamed.taskRecords[0]='\UNRELATED-TASK|'+('B'*64)
+    $message=''
+    try {$null=Assert-VolvVMBaselineState -Expected $expected -Actual $renamed}
+    catch {$message=$_.Exception.Message}
+    if($message -cne 'NOT VERIFIED: VM taskRecords changed since Prepare (first difference: task identity changed)'){
+        throw 'Renamed task did not fail closed without exposing identity'
+    }
+    $builtin=Get-VolvVMBaselineTaskDriftHint -ExpectedRecord ('\Microsoft\Windows\Maintenance\Task|'+('A'*64)) -ActualRecord ('\Microsoft\Windows\Maintenance\Task|'+('B'*64))
+    if($builtin -notmatch 'scope=microsoft-windows-folder; identityId=[A-F0-9]{16}; changedSections=unavailable'){
+        throw 'Microsoft Windows task folder scope not classified'
+    }
+    if((Get-VolvVMBaselineTaskDriftHint -ExpectedRecord 'bad' -ActualRecord 'bad') -cne ' (first difference: malformed task record)'){
+        throw 'Malformed task record diagnostic failed'
+    }
+} finally {
+    if($null -eq $priorActions){Remove-Item Env:\GITHUB_ACTIONS -ErrorAction SilentlyContinue}
+    else {$env:GITHUB_ACTIONS=$priorActions}
+}
+
+# Synthetic XML only. The real protected inventory still checks WHOLE XML,
+# while diagnostics compare five coarse section digests without raw values.
+. (Join-Path $PSScriptRoot 'reboot_event_chain.ps1')
+$testXML=@'
+<Task xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task" version="1.4"><RegistrationInfo><Author>LAB</Author></RegistrationInfo><Triggers><BootTrigger><Enabled>true</Enabled></BootTrigger></Triggers><Principals><Principal id="Author"><UserId>S-1-5-18</UserId></Principal></Principals><Settings><Enabled>true</Enabled></Settings><Actions Context="Author"><Exec><Command>cmd.exe</Command></Exec></Actions></Task>
+'@
+$baselineRecord=Get-VolvVMBaselineTaskRecord -TaskPath '\' -TaskName 'Synthetic-Task' -XMLText $testXML
+if(@($baselineRecord.Split('|')).Count -ne 7){throw 'Missing five independent section digests'}
+$mutations=@(
+    @{name='RegistrationInfo';old='<Author>LAB</Author>';new='<Author>OTHER</Author>'},
+    @{name='Triggers';old='<BootTrigger><Enabled>true</Enabled></BootTrigger>';new='<BootTrigger><Enabled>false</Enabled></BootTrigger>'},
+    @{name='Principals';old='<UserId>S-1-5-18</UserId>';new='<UserId>S-1-5-19</UserId>'},
+    @{name='Settings';old='<Settings><Enabled>true</Enabled></Settings>';new='<Settings><Enabled>false</Enabled></Settings>'},
+    @{name='Actions';old='<Command>cmd.exe</Command>';new='<Command>notepad.exe</Command>'}
+)
+foreach($mutation in $mutations){
+    if(-not $testXML.Contains($mutation.old)){throw 'Fixture mutation target absent'}
+    $changedRecord=Get-VolvVMBaselineTaskRecord -TaskPath '\' -TaskName 'Synthetic-Task' -XMLText ($testXML.Replace($mutation.old,$mutation.new))
+    if($baselineRecord -ceq $changedRecord){throw ('Whole task hash ignored '+$mutation.name)}
+    $hint=Get-VolvVMBaselineTaskDriftHint -ExpectedRecord $baselineRecord -ActualRecord $changedRecord
+    if(-not $hint.Contains('changedSections='+$mutation.name+')')){
+        throw ('Wrong Task Scheduler XML drift group for '+$mutation.name+': '+$hint)
+    }
+    if($hint.Contains('cmd.exe') -or $hint.Contains('notepad.exe') -or $hint.Contains('Synthetic-Task')){
+        throw 'Task Scheduler XML information leaked into CI diagnostic'
+    }
+    $before=$expected|ConvertTo-Json -Depth 6|ConvertFrom-Json
+    $after=$expected|ConvertTo-Json -Depth 6|ConvertFrom-Json
+    $before.taskRecords=@($baselineRecord)
+    $after.taskRecords=@($changedRecord)
+    $rejected=$false
+    try {$null=Assert-VolvVMBaselineState -Expected $before -Actual $after}
+    catch {if($_.Exception.Message -like 'NOT VERIFIED: VM taskRecords changed since Prepare*'){$rejected=$true}else{throw}}
+    if(-not $rejected){throw ('Unsafe XML drift accepted for '+$mutation.name)}
+}
+$rejectedDoctype=$false
+try {$null=Get-VolvVMBaselineTaskRecord -TaskPath '\' -TaskName 'Synthetic-Task' -XMLText ('<!DOCTYPE Task [<!ENTITY x "bad">]>'+$testXML)}
+catch {$rejectedDoctype=$true}
+if(-not $rejectedDoctype){throw 'Malformed or DTD-backed Task Scheduler XML was accepted'}
+Write-Host 'PASS: FIVE_XML_DRIFT_SECTIONS anonymous diagnostics and full-document fail-closed tests'
+Write-Host 'PASS: ANONYMOUS_DRIFT_HINT detects task drift without bypass or leaked task details'
+Write-Host ('PASS: VM environment baseline matched and rejected '+$cases.Count+' synthetic HOSTS/DNS/all-folder-task drifts')
+Write-Host ('PASS: '+$identityCases.Count+' task ownership cases; only two exact root tasks from current RunId are excluded')
+){
         throw ('Unexpected CI drift response: '+$message)
     }
     if($message.Contains('VOLVE-CATALOGO') -or $message.Contains(('B'*64)) -or $message.Contains(('E'*64))){
