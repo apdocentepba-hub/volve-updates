@@ -109,6 +109,9 @@ jobs:
           & (Join-Path $root 'test_vm_environment_baseline.ps1')
           if($LASTEXITCODE -and $LASTEXITCODE -ne 0){throw 'VM environment safety contract tests failed'}
       - name: Prove VM Prepare and reject Verify without actual reboot
+        id: strict_environment
+        # Continue independent tests without hiding environmental failures.
+        continue-on-error: true
         shell: powershell
         run: |
           $ErrorActionPreference='Stop'
@@ -281,7 +284,7 @@ jobs:
             }
           }
       - name: Read-only TaskScheduler 106/140/141 postmortem if strict baseline fails
-        if: failure()
+        if: ${{ steps.strict_environment.outcome == 'failure' }}
         continue-on-error: true
         shell: powershell
         run: |
@@ -648,10 +651,14 @@ jobs:
           if($LASTEXITCODE -and $LASTEXITCODE -ne 0){
             throw 'Interrupted cleanup Scheduler integration test failed'
           }
+      - name: Mandatory strict VM environmental integrity gate (no greenwashing)
+        if: ${{ always() && steps.strict_environment.outcome == 'failure' }}
+        shell: powershell
+        run: |
+          throw 'STRICT_VM_ENVIRONMENT_FAILED: isolated recovery tests do not clear the failed integrity baseline'
       - name: Package VM-only recovery kit with SHA256 manifest
-        # Continue independent, isolated CI trials even when the strict VM environment gate rejects external Windows drift.
-        # The failed baseline step stays FAILED: no greenwashing, no release, no protection activation.
-        if: ${{ !cancelled() && steps.verified_contract.outcome == 'success' }}
+        # Never publish even a VM-only package after an unverified environment drift.
+        if: ${{ !cancelled() && steps.verified_contract.outcome == 'success' && steps.strict_environment.outcome == 'success' }}
         shell: powershell
         run: |
           $ErrorActionPreference='Stop'
