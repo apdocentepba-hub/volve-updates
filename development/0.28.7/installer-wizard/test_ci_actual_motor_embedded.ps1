@@ -246,7 +246,7 @@ SectionEnd
   $reasonPath=Join-Path $stage 'VOLVE-CI-Verify-Receipt.txt'
   if(Test-Path -LiteralPath $reasonPath -PathType Leaf){
    $verifyReason=(Get-Content -LiteralPath $reasonPath -Raw).Trim()
-   if(($verifyReason -cnotin @('missing-motor','auth-status','missing-cert','wrong-cert','wrong-hash','pass','exception','exception-command-init') -and $verifyReason -cnotmatch '^exception-[A-Za-z]{3,64}(-[a-z]{3,8})?)){$verifyReason='invalid'}
+   if(($verifyReason -cnotin @('missing-motor','auth-status','missing-cert','wrong-cert','wrong-hash','pass','exception','exception-command-init')) -and ($verifyReason -cnotmatch '^exception-[A-Za-z]{3,64}(-[a-z]{3,8})?$')){$verifyReason='invalid'}
   }
   $rawChild='missing'
   $childReceipt=Join-Path $stage 'VOLVE-CI-Checker-ExitCode.txt'
