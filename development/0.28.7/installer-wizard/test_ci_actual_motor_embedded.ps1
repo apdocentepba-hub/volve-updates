@@ -167,8 +167,33 @@ SectionEnd
    $proc.Dispose()
   }
  }
+ # Windows PowerShell 5.1 is the process launched by NSIS. Validate
+ # its own exact trust decision BEFORE compiling the wrapper.
+ $winPS=Join-Path $env:WINDIR 'System32\WindowsPowerShell\v1.0\powershell.exe'
+ & $winPS '-NoProfile' '-NonInteractive' '-ExecutionPolicy' 'Bypass' '-File' $verifier
+ $preNSISVerifierExit=$LASTEXITCODE
+ if($preNSISVerifierExit -ne 0){
+  $authFromWindows=Get-AuthenticodeSignature -LiteralPath $signedMotor -ErrorAction Stop
+  Write-Host ('CI MOTOR PREFLIGHT: windowsPowerShellVerifier=REFUSED; signatureStatus='+$authFromWindows.Status)
+  throw 'Windows PowerShell verifier rejected signed motor before NSIS staging'
+ }
  $goodCandidate=Build-VolvCICandidate 'valid' $signedMotor
- if((Run-VolvCICandidate $goodCandidate) -ne 0){throw 'Actual signed motor/bundle NSIS stage refused valid inputs'}
+ $goodExit=Run-VolvCICandidate $goodCandidate
+ if($goodExit -ne 0){
+  $stage=$stages[0]
+  $stageExists=Test-Path -LiteralPath $stage -PathType Container
+  $motorExists=$stageExists -and (Test-Path -LiteralPath (Join-Path $stage 'VOLVE-CI-Real-Motor-0287.exe') -PathType Leaf)
+  $bundleExists=$stageExists -and (Test-Path -LiteralPath (Join-Path $stage 'VOLVE-CI-Signed-Container.exe') -PathType Leaf)
+  $verifierExists=$stageExists -and (Test-Path -LiteralPath (Join-Path $stage 'VOLVE-CI-Verify-Motor.ps1') -PathType Leaf)
+  $stageSigner='unavailable'
+  $stageHashEquals=$false
+  if($motorExists){
+   $stageSigner=[string](Get-AuthenticodeSignature -LiteralPath (Join-Path $stage 'VOLVE-CI-Real-Motor-0287.exe')).Status
+   $stageHashEquals=((Get-FileHash -LiteralPath (Join-Path $stage 'VOLVE-CI-Real-Motor-0287.exe') -Algorithm SHA256).Hash -ceq $hash)
+  }
+  Write-Host ("CI MOTOR STAGE DIAGNOSTIC: exit=$goodExit; stageExists=$stageExists; motorExists=$motorExists; bundleExists=$bundleExists; verifierExists=$verifierExists; signatureStatus=$stageSigner; exactHash=$stageHashEquals")
+  throw 'Actual signed motor/bundle NSIS stage refused valid inputs'
+ }
  $goodStage=$stages[0]
  $names=@(Get-ChildItem -LiteralPath $goodStage -File -ErrorAction Stop|Select-Object -ExpandProperty Name|Sort-Object)
  $expected=@('VOLVE-CI-Real-Motor-0287.exe','VOLVE-CI-Signed-Container.exe','VOLVE-CI-Verify-Motor.ps1')|Sort-Object
