@@ -22,6 +22,14 @@ jobs:
         run: |
           $ErrorActionPreference='Stop'
           $ProgressPreference='SilentlyContinue'
+          # Fail closed before touching ANY disposable or existing network adapter.
+          if($env:GITHUB_ACTIONS -ne 'true' -or $env:RUNNER_ENVIRONMENT -ne 'github-hosted'){
+            throw 'REFUSED: this isolated DNS crash lab requires a GitHub-hosted disposable Windows VM'
+          }
+          $vm=Get-CimInstance Win32_ComputerSystem -ErrorAction Stop
+          if(($vm.Manufacturer+' '+$vm.Model) -notmatch '(?i:virtual machine|vmware|kvm|hyper-v|qemu|virtualbox)'){
+            throw 'REFUSED: not a positively identified disposable virtual machine'
+          }
           $alias='VOLVE-CI-DNS-LAB-'+$env:GITHUB_RUN_ID+'00000'
           if($alias -notmatch '^VOLVE-CI-DNS-LAB-[0-9]{12,20}$'){
             throw 'FATAL: invalid disposable adapter name'

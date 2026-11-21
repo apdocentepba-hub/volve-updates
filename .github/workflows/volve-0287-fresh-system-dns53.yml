@@ -1,7 +1,7 @@
 name: VOLVE pilot fresh motor SYSTEM DNS53 (DISPOSABLE VM ONLY)
 on:
   push:
-    branches: [feature/motor-updater-0287-pilot]
+    branches: [feature/motor-updater-0287-pilot, work/0287-native-setup-preview-20261113]
     paths:
       - 'development/0.28.7/inapp/ci_fresh_dns53_windows.go'
       - 'development/0.28.7/inapp/ci_fresh_dns53_windows_test.go'
