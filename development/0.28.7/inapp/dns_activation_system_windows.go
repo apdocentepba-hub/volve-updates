@@ -11,6 +11,7 @@ import (
  "context"
  "errors"
  "fmt"
+ "time"
 )
 
 // activateWindowsDNSAsProtectedSYSTEM ties together the real Windows
@@ -21,7 +22,7 @@ import (
 // grant, protected original journal and armed boot task on every call.
 func activateWindowsDNSAsProtectedSYSTEM(
  ctx context.Context, originalJournal []byte, independentlyPinnedSHA256 string,
- guard DNSActivationSafetyGuard,
+ guard DNSActivationSafetyGuard, publisherAuthorization DNSActivationPublisherAuthorization,
 )error{
  if ctx==nil{return errors.New("SYSTEM DNS activation context required")}
  if err:=ctx.Err();err!=nil{return err}
@@ -29,8 +30,17 @@ func activateWindowsDNSAsProtectedSYSTEM(
  if err:=VerifyWindowsCurrentSystemSIDReadOnly();err!=nil{
   return fmt.Errorf("VOLVE DNS activation requires the actual Windows LocalSystem SID: %w",err)
  }
+ // A signed RESTORE or MIGRATION receipt alone cannot authorize DNS activation.
+ // This admission must be bound to the current publisher, exact candidate,
+ // original DNS and independently armed watchdog task. It is repeated before
+ // each family-scoped native write and before durable commit.
+ publisherBound,err:=newPublisherScopedDNSActivationGuard(
+  ctx,originalJournal,independentlyPinnedSHA256,publisherAuthorization,
+  guard,time.Now,
+ )
+ if err!=nil{return fmt.Errorf("VOLVE signed DNS activation rejected: %w",err)}
  return activateVOLVEDNSUnderProtectedLease(
-  ctx,originalJournal,independentlyPinnedSHA256,guard,
+  ctx,originalJournal,independentlyPinnedSHA256,publisherBound,
   AcquireProtectedResidentTransitionLease,
   func(ctx context.Context,guarded DNSActivationSafetyGuard)(DNSAdapterBackend,error){
    return newWindowsPinnedDNSActivationBackend(
