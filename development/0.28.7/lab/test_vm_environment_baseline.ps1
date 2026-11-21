@@ -152,7 +152,11 @@ $triggerCases=@(
 )
 foreach($tc in $triggerCases){
     if(-not $triggerProbeXML.Contains($tc.old)){throw 'Trigger fixture missing test mutation'}
-    $mutated=Get-VolvVMBaselineTaskRecord -TaskPath '\' -TaskName 'Synthetic-Task' -XMLText ($triggerProbeXML.Replace($tc.old,$tc.new))
+    $changedXML=$triggerProbeXML.Replace($tc.old,$tc.new)
+    if($tc.category -ceq 'Other'){
+        $changedXML=$changedXML.Replace('</BootTrigger>','</TimeTrigger>')
+    }
+    $mutated=Get-VolvVMBaselineTaskRecord -TaskPath '\' -TaskName 'Synthetic-Task' -XMLText $changedXML
     $hint=Get-VolvVMBaselineTaskDriftHint -ExpectedRecord $triggerOrigin -ActualRecord $mutated
     if(-not $hint.Contains('changedSections=Triggers; changedTriggerFields='+$tc.category+')')){
         throw ('Trigger subfield diagnostic did not classify '+$tc.category+': '+$hint)
