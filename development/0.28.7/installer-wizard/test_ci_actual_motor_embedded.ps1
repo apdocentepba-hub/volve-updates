@@ -103,6 +103,21 @@ function Stop-CIVerify([string]$Reason){
 }
 $file=Join-Path $PSScriptRoot 'VOLVE-CI-Real-Motor-0287.exe'
 if(-not (Test-Path -LiteralPath $file -PathType Leaf)){Stop-CIVerify 'missing-motor'}
+# The NSIS child inherits a different environment than the GitHub Actions
+# shell. Load exact Windows PowerShell built-in modules independently of
+# PSModulePath auto-loading. This NEVER changes certificate/hash requirements.
+try{
+ $builtinRoot=Join-Path $PSHOME 'Modules'
+ $securityModule=Join-Path $builtinRoot 'Microsoft.PowerShell.Security\Microsoft.PowerShell.Security.psd1'
+ $utilityModule=Join-Path $builtinRoot 'Microsoft.PowerShell.Utility\Microsoft.PowerShell.Utility.psd1'
+ Import-Module -Name $securityModule -ErrorAction Stop
+ Import-Module -Name $utilityModule -ErrorAction Stop
+ $null=Get-Command -Name Get-AuthenticodeSignature -ErrorAction Stop
+ $null=Get-Command -Name Get-FileHash -ErrorAction Stop
+}catch{
+ try{[IO.File]::WriteAllText($receipt,'exception-command-init',[Text.Encoding]::ASCII)}catch{}
+ exit 27
+}
 # Fresh NSIS extraction + Defender scanning may transiently lock the new PE.
 # Retry ONLY thrown IO/signature-read errors. Any actual mismatched pin or
 # signature is rejected immediately and never converted to success.
@@ -121,7 +136,11 @@ for($attempt=0;$attempt -lt 3;$attempt++){
   if($attempt -eq 2){
    $kind=$_.Exception.GetType().Name
    if($kind -notmatch '^[A-Za-z]{3,64}$'){$kind='Unknown'}
-   try{[IO.File]::WriteAllText($receipt,'exception-'+$kind,[Text.Encoding]::ASCII)}catch{}
+   $cmd=[string]$_.Exception.CommandName
+   $safeCmd='unknown'
+   if($cmd -ceq 'Get-AuthenticodeSignature'){$safeCmd='auth'}
+   if($cmd -ceq 'Get-FileHash'){$safeCmd='hash'}
+   try{[IO.File]::WriteAllText($receipt,'exception-'+$kind+'-'+$safeCmd,[Text.Encoding]::ASCII)}catch{}
    exit 27
   }
   Start-Sleep -Milliseconds 550
@@ -227,7 +246,57 @@ SectionEnd
   $reasonPath=Join-Path $stage 'VOLVE-CI-Verify-Receipt.txt'
   if(Test-Path -LiteralPath $reasonPath -PathType Leaf){
    $verifyReason=(Get-Content -LiteralPath $reasonPath -Raw).Trim()
-   if(($verifyReason -cnotin @('missing-motor','auth-status','missing-cert','wrong-cert','wrong-hash','pass','exception') -and $verifyReason -cnotmatch '^exception-[A-Za-z]{3,64}$')){$verifyReason='invalid'}
+   if(($verifyReason -cnotin @('missing-motor','auth-status','missing-cert','wrong-cert','wrong-hash','pass','exception','exception-command-init') -and $verifyReason -cnotmatch '^exception-[A-Za-z]{3,64}(-[a-z]{3,8})?)){$verifyReason='invalid'}
+  }
+  $rawChild='missing'
+  $childReceipt=Join-Path $stage 'VOLVE-CI-Checker-ExitCode.txt'
+  if(Test-Path -LiteralPath $childReceipt -PathType Leaf){
+    $rawChild=(Get-Content -LiteralPath $childReceipt -Raw).Trim()
+    if($rawChild -notmatch '^[0-9]{1,4}$'){$rawChild='invalid'}
+  }
+  $stagedWin64=-1;$stagedWin32=-1;$stagedSignerMatch=$false
+  if($verifierExists -and $motorExists){
+    $stagedVerifier=Join-Path $stage 'VOLVE-CI-Verify-Motor.ps1'
+    & $winPS '-NoProfile' '-NonInteractive' '-ExecutionPolicy' 'Bypass' '-File' $stagedVerifier
+    $stagedWin64=$LASTEXITCODE
+    $winPS32=Join-Path $env:WINDIR 'SysWOW64\WindowsPowerShell\v1.0\powershell.exe'
+    & $winPS32 '-NoProfile' '-NonInteractive' '-ExecutionPolicy' 'Bypass' '-File' $stagedVerifier
+    $stagedWin32=$LASTEXITCODE
+    $stagedSignerMatch=([string](Get-AuthenticodeSignature -LiteralPath (Join-Path $stage 'VOLVE-CI-Real-Motor-0287.exe')).SignerCertificate.Thumbprint -ceq $thumb)
+  }
+  Write-Host ("CI MOTOR STAGE DIAGNOSTIC: nsisExit=$goodExit; childExit=$rawChild; verifyReason=$verifyReason; stageExists=$stageExists; motorExists=$motorExists; bundleExists=$bundleExists; verifierExists=$verifierExists; signatureStatus=$stageSigner; certPinMatch=$stagedSignerMatch; exactHash=$stageHashEquals; win64ManualExit=$stagedWin64; win32ManualExit=$stagedWin32")
+  throw 'Actual signed motor/bundle NSIS stage refused valid inputs'
+ }
+ $goodStage=$stages[0]
+ $names=@(Get-ChildItem -LiteralPath $goodStage -File -ErrorAction Stop|Select-Object -ExpandProperty Name|Sort-Object)
+ $expected=@('VOLVE-CI-Checker-ExitCode.txt','VOLVE-CI-Real-Motor-0287.exe','VOLVE-CI-Signed-Container.exe','VOLVE-CI-Verify-Motor.ps1','VOLVE-CI-Verify-Receipt.txt')|Sort-Object
+ if(($names -join '|') -cne ($expected -join '|')){throw 'Embedded NSIS package staged unexpected files'}
+ if((Get-FileHash -LiteralPath (Join-Path $goodStage 'VOLVE-CI-Real-Motor-0287.exe') -Algorithm SHA256).Hash -cne $hash){
+  throw 'Actual motor modified by NSIS staging'
+ }
+ if((Get-Content -LiteralPath (Join-Path $goodStage 'VOLVE-CI-Verify-Receipt.txt') -Raw).Trim() -cne 'pass'){
+  throw 'Embedded motor verifier did not attest real motor'
+ }
+ $badCandidate=Build-VolvCICandidate 'motor-tampered' $tampered
+ if((Run-VolvCICandidate $badCandidate) -ne 27){
+  throw 'CRITICAL: tampered actual DNS motor was not rejected by embedded signed+SHA gate'
+ }
+ Write-Host 'PASS: ONE_NSIS_EXE_STAGES_ACTUAL_WINDOWS_DNS_MOTOR_AND_SIGNED_7_PART_BUNDLE'
+ Write-Host 'PASS: MOTOR_AUTHENTICODE_AND_EXACT_SHA256_VERIFIED; TAMPERED_REAL_MOTOR_REFUSED'
+}finally{
+ foreach($path in $stages){
+  if(Test-Path -LiteralPath $path){Remove-Item -LiteralPath $path -Recurse -Force -ErrorAction Stop}
+ }
+ if(Test-Path -LiteralPath $work){Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction Stop}
+ $after=Get-VolvCISafetyBaseline
+ foreach($key in @('dns','hosts','tasks')){
+  if([string]$baseline.$key -cne [string]$after.$key){
+   throw ('FATAL: CI-only embedded motor altered protected Windows '+$key)
+  }
+ }
+ Write-Host 'PASS: ACTUAL_MOTOR_BUNDLE_LAB_LEAVES_WINDOWS_DNS_HOSTS_TASKS_UNCHANGED; NO_RELEASE'
+}
+)){$verifyReason='invalid'}
   }
   $rawChild='missing'
   $childReceipt=Join-Path $stage 'VOLVE-CI-Checker-ExitCode.txt'
