@@ -84,6 +84,7 @@ jobs:
           if((Get-Item -LiteralPath $out).Length -lt 1048576){throw 'Unexpectedly short lab helper'}
           Write-Host 'PASS: compiled lab journal helper; not a product executable'
       - name: Parse legacy Windows PowerShell scripts and run event chain contract
+        id: verified_contract
         shell: powershell
         run: |
           $ErrorActionPreference='Stop'
@@ -287,6 +288,9 @@ jobs:
           $ErrorActionPreference='Stop'
           & 'development/0.28.7/lab/ci_task_scheduler_event_diagnostic.ps1' -Mode Investigate -IdentityId '4023F1322DB1C44E' -Minutes 45
       - name: Exercise pre-switch crash boundary under SYSTEM (NO REAL REBOOT)
+        # Continue independent, isolated CI trials even when the strict VM environment gate rejects external Windows drift.
+        # The failed baseline step stays FAILED: no greenwashing, no release, no protection activation.
+        if: ${{ !cancelled() && steps.verified_contract.outcome == 'success' }}
         shell: powershell
         run: |
           $ErrorActionPreference='Stop'
@@ -359,6 +363,9 @@ jobs:
             }
           }
       - name: Prove actual Windows Task Scheduler XML roundtrip via manual SYSTEM recovery (NO REBOOT)
+        # Continue independent, isolated CI trials even when the strict VM environment gate rejects external Windows drift.
+        # The failed baseline step stays FAILED: no greenwashing, no release, no protection activation.
+        if: ${{ !cancelled() && steps.verified_contract.outcome == 'success' }}
         shell: powershell
         run: |
           $ErrorActionPreference='Stop'
@@ -430,6 +437,9 @@ jobs:
             }
           }
       - name: Reject lookalike original task with altered trigger; keep journal pending (NO REBOOT)
+        # Continue independent, isolated CI trials even when the strict VM environment gate rejects external Windows drift.
+        # The failed baseline step stays FAILED: no greenwashing, no release, no protection activation.
+        if: ${{ !cancelled() && steps.verified_contract.outcome == 'success' }}
         shell: powershell
         run: |
           $ErrorActionPreference='Stop'
@@ -524,6 +534,9 @@ jobs:
             }
           }
       - name: Reject changed verifier before SYSTEM task rollback; retain pending journal (NO REBOOT)
+        # Continue independent, isolated CI trials even when the strict VM environment gate rejects external Windows drift.
+        # The failed baseline step stays FAILED: no greenwashing, no release, no protection activation.
+        if: ${{ !cancelled() && steps.verified_contract.outcome == 'success' }}
         shell: powershell
         run: |
           $ErrorActionPreference='Stop'
@@ -599,6 +612,9 @@ jobs:
             }
           }
       - name: Prove all ten disposable CI scheduled tasks were unregistered
+        # Continue independent, isolated CI trials even when the strict VM environment gate rejects external Windows drift.
+        # The failed baseline step stays FAILED: no greenwashing, no release, no protection activation.
+        if: ${{ !cancelled() && steps.verified_contract.outcome == 'success' }}
         shell: powershell
         run: |
           $ErrorActionPreference='Stop'
@@ -622,6 +638,9 @@ jobs:
           }
           Write-Host 'PASS: all 10 expected VOLVE-CI tasks absent after 5 lab scenarios; no production task names touched'
       - name: Exercise interrupted cleanup against actual disposable Windows SYSTEM tasks (NO REBOOT)
+        # Continue independent, isolated CI trials even when the strict VM environment gate rejects external Windows drift.
+        # The failed baseline step stays FAILED: no greenwashing, no release, no protection activation.
+        if: ${{ !cancelled() && steps.verified_contract.outcome == 'success' }}
         shell: powershell
         run: |
           $ErrorActionPreference='Stop'
@@ -630,6 +649,9 @@ jobs:
             throw 'Interrupted cleanup Scheduler integration test failed'
           }
       - name: Package VM-only recovery kit with SHA256 manifest
+        # Continue independent, isolated CI trials even when the strict VM environment gate rejects external Windows drift.
+        # The failed baseline step stays FAILED: no greenwashing, no release, no protection activation.
+        if: ${{ !cancelled() && steps.verified_contract.outcome == 'success' }}
         shell: powershell
         run: |
           $ErrorActionPreference='Stop'
