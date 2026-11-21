@@ -135,6 +135,65 @@ func TestProtectedSignedRollbackHandsOffThenReacquiresBeforeHealth(t *testing.T)
  last()
 }
 
+// Regression: cancellation of the updater must not prevent the independent
+// SYSTEM watchdog from yielding a newly protected verification lease.
+type cancelledProtectedHandoffSpy struct { unsafeLeaseStub }
+func(s *cancelledProtectedHandoffSpy)RestoreAfterProtectedHandoff(ctx context.Context)error{
+ s.handoffs++
+ if !errors.Is(ctx.Err(),context.Canceled){
+  return errors.New("test expected original updater to be cancelled")
+ }
+ // The independent watchdog has its own bounded lifetime. It must not
+ // inherit the aborted updater cancellation.
+ recoveryCtx,cancel:=context.WithTimeout(context.Background(),3*time.Second)
+ defer cancel()
+ unlock,err:=AcquireProtectedResidentTransitionLease(recoveryCtx)
+ if err!=nil{return err}
+ if unlock==nil{return errors.New("independent watchdog received no protected mutex release")}
+ unlock()
+ return nil
+}
+
+func TestProtectedSignedCancelledUpdaterStillReacquiresBeforeHealth(t *testing.T){
+ if os.Getenv("GITHUB_ACTIONS")!="true"||os.Getenv("RUNNER_ENVIRONMENT")!="github-hosted"{
+  t.Skip("protected cancellation handoff needs hosted disposable Windows CI")
+ }
+ spy:=&cancelledProtectedHandoffSpy{}
+ wrapped,err:=NewProtectedSignedLegacySwitchDriver(spy)
+ if err!=nil{t.Fatal(err)}
+ finish,err:=wrapped.AcquireExclusiveMigration(context.Background())
+ if err!=nil{t.Fatal(err)}
+ defer finish()
+ ctx,cancel:=context.WithCancel(context.Background())
+ cancel()
+ if err:=wrapped.Restore(ctx);err!=nil{
+  t.Fatalf("cancelled updater lost protected post-watchdog mutex: %v",err)
+ }
+ if spy.handoffs!=1||spy.calls!=0{
+  t.Fatalf("independent SYSTEM handoff or delegated mutex was incorrect: %+v",spy)
+ }
+ // The cancelled context must NOT authorize a health probe, while a
+ // different caller still cannot bypass the reacquired OS-wide mutex.
+ if err:=wrapped.Probe(ctx);!errors.Is(err,context.Canceled){
+  t.Fatalf("cancelled updater unexpectedly executed health probe: %v",err)
+ }
+ probeCtx,stop:=context.WithTimeout(context.Background(),300*time.Millisecond)
+ defer stop()
+ denied,err:=AcquireProtectedResidentTransitionLease(probeCtx)
+ if denied!=nil{denied()}
+ if !errors.Is(err,context.DeadlineExceeded){
+  t.Fatalf("post-watchdog health lease not exclusive: %v",err)
+ }
+ finish()
+ successCtx,successStop:=context.WithTimeout(context.Background(),3*time.Second)
+ defer successStop()
+ available,err:=AcquireProtectedResidentTransitionLease(successCtx)
+ if err!=nil||available==nil{
+  t.Fatalf("post-watchdog mutex was leaked on canceled transaction: %v",err)
+ }
+ available()
+}
+
 func TestProtectedSignedDriverRejectsHandoffMissing(t *testing.T){
  type noHandoffDriver struct{SignedLegacySwitchDriver}
  if d,err:=NewProtectedSignedLegacySwitchDriver(&noHandoffDriver{});err==nil||d!=nil{
