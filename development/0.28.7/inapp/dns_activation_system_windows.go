@@ -23,6 +23,7 @@ import (
 func activateWindowsDNSAsProtectedSYSTEM(
  ctx context.Context, originalJournal []byte, independentlyPinnedSHA256 string,
  guard DNSActivationSafetyGuard, publisherAuthorization DNSActivationPublisherAuthorization,
+ protectedRecoveryParent string,
 )error{
  if ctx==nil{return errors.New("SYSTEM DNS activation context required")}
  if err:=ctx.Err();err!=nil{return err}
@@ -39,6 +40,17 @@ func activateWindowsDNSAsProtectedSYSTEM(
   guard,time.Now,
  )
  if err!=nil{return fmt.Errorf("VOLVE signed DNS activation rejected: %w",err)}
+ // Consume the publisher nonce under the same OS-wide kernel mutex using
+ // atomic NTFS O_EXCL, SYSTEM/Admin-only ACLs and exact signed task/motor/
+ // original DNS pins. A failed install consumes its grant and needs a NEW
+ // independent publisher authorization; never silently recycle it.
+ if _,err:=ReserveSignedDNSActivationOnceNativeWindows(
+  ctx,protectedRecoveryParent,publisherAuthorization.GrantJSON,
+  publisherAuthorization.Signature,publisherAuthorization.PinnedPublisherKey,
+  publisherAuthorization.PinnedEvidence,time.Now(),
+ );err!=nil{
+  return fmt.Errorf("publisher activation nonce could not be durably reserved: %w",err)
+ }
  return activateVOLVEDNSUnderProtectedLease(
   ctx,originalJournal,independentlyPinnedSHA256,publisherBound,
   AcquireProtectedResidentTransitionLease,
