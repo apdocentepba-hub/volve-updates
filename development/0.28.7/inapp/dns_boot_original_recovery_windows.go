@@ -60,6 +60,18 @@ func restoreSignedOriginalDNSUnderProtectedLeaseWindows(
  if err!=nil{return fmt.Errorf("recovery protected Windows kernel mutex not acquired: %w",err)}
  if release==nil{return errors.New("recovery mutex acquired without owner release")}
  defer release()
+ return restoreSignedOriginalDNSUnderHeldLeaseWindows(
+  ctx,root,publisherKey,originalBindingJSON,originalBindingSignature,inspect,invoke)
+}
+
+// This core must run ONLY while holding the protected Windows kernel mutex.
+// Separating ownership from execution lets the restarted SYSTEM watchdog
+// reopen persisted signed evidence without reacquiring the same mutex.
+func restoreSignedOriginalDNSUnderHeldLeaseWindows(
+ ctx context.Context,root string,publisherKey ed25519.PublicKey,
+ originalBindingJSON,originalBindingSignature []byte,
+ inspect WindowsReadOnlyPowerShell,invoke WindowsDNSNativeInvoke,
+)error{
  verifyACL:=func(path string)error{return nativeDNSOriginalBackupACL(ctx,path)}
  grant,err:=LoadResidentDurablePublisherGrant(
   ctx,root,publisherKey,verifyACL,verifyACL,verifyACL,
@@ -122,6 +134,44 @@ func restoreSignedOriginalDNSUnderProtectedLeaseWindows(
   current.Intent,again.Permit,
  );err!=nil{return fmt.Errorf("original DNS publisher signature invalid at final readback: %w",err)}
  return verifySignedDNSBootRestoreCensus(ctx,records,inspect,true)
+}
+
+// This is the only boot-time DNS restoration entry that does not need signed
+// receipt bytes passed in memory by the installer. It reopens the already
+// sealed receipt and verifies it against the independently durable publisher
+// grant, pending motor journal and DNS snapshot, under ONE protected mutex.
+// Still private: no task or product command calls this without a verified
+// motor-stop / SYSTEM watchdog transaction.
+func restorePersistedSignedOriginalDNSAsSYSTEM(
+ ctx context.Context,root string,key ed25519.PublicKey,
+)error{
+ if ctx==nil{return errors.New("boot DNS recovery context unavailable")}
+ if err:=VerifyWindowsCurrentSystemSIDReadOnly();err!=nil{
+  return fmt.Errorf("boot original DNS recovery requires LocalSystem: %w",err)
+ }
+ return restorePersistedSignedOriginalDNSUnderProtectedLeaseWindows(
+  ctx,root,key,DefaultWindowsReadOnlyPowerShell,
+  runPinnedWindowsNativeDNS,AcquireProtectedResidentTransitionLease)
+}
+
+func restorePersistedSignedOriginalDNSUnderProtectedLeaseWindows(
+ ctx context.Context,root string,key ed25519.PublicKey,
+ inspect WindowsReadOnlyPowerShell,invoke WindowsDNSNativeInvoke,
+ acquire dnsBootRecoveryLease,
+)error{
+ if ctx==nil||inspect==nil||invoke==nil||acquire==nil{
+  return errors.New("persisted signed DNS recovery missing protected Windows services")
+ }
+ if err:=ctx.Err();err!=nil{return err}
+ if _,_,_,err:=dnsOriginalBindingEvidencePaths(root);err!=nil{return err}
+ release,err:=acquire(ctx)
+ if err!=nil{return fmt.Errorf("cannot obtain original DNS boot kernel mutex: %w",err)}
+ if release==nil{return errors.New("DNS recovery lease has no owner release")}
+ defer release()
+ raw,signature,err:=loadSignedOriginalDNSEvidenceUnderLeaseWindows(ctx,root,key)
+ if err!=nil{return fmt.Errorf("durable publisher signed original DNS binding rejected: %w",err)}
+ return restoreSignedOriginalDNSUnderHeldLeaseWindows(
+  ctx,root,key,raw,signature,inspect,invoke)
 }
 
 func verifySignedDNSBootRestoreCensus(
