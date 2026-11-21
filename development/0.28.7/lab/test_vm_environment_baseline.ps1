@@ -67,7 +67,7 @@ try {
     $message=''
     try {$null=Assert-VolvVMBaselineState -Expected $expected -Actual $changed}
     catch {$message=$_.Exception.Message}
-    if($message -notmatch '^NOT VERIFIED: VM taskRecords changed since Prepare \(first difference: definition changed for the same task; scope=other-folder; identityId=[A-F0-9]{16}; changedSections=unavailable\){
+    if($message -notmatch '^NOT VERIFIED: VM taskRecords changed since Prepare \(first difference: definition changed for the same task; scope=other-folder; identityId=[A-F0-9]{16}; changedSections=unavailable\)$'){
         throw ('Unexpected CI drift response: '+$message)
     }
     if($message.Contains('VOLVE-CATALOGO') -or $message.Contains(('B'*64)) -or $message.Contains(('E'*64))){
@@ -96,9 +96,7 @@ try {
     if($null -eq $priorActions){Remove-Item Env:\GITHUB_ACTIONS -ErrorAction SilentlyContinue}
     else {$env:GITHUB_ACTIONS=$priorActions}
 }
-
-# Synthetic XML only. The real protected inventory still checks WHOLE XML,
-# while diagnostics compare five coarse section digests without raw values.
+# Synthetic XML only; compare entire Task XML and five independent section digests.
 . (Join-Path $PSScriptRoot 'reboot_event_chain.ps1')
 $testXML=@'
 <Task xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task" version="1.4"><RegistrationInfo><Author>LAB</Author></RegistrationInfo><Triggers><BootTrigger><Enabled>true</Enabled></BootTrigger></Triggers><Principals><Principal id="Author"><UserId>S-1-5-18</UserId></Principal></Principals><Settings><Enabled>true</Enabled></Settings><Actions Context="Author"><Exec><Command>cmd.exe</Command></Exec></Actions></Task>
@@ -137,38 +135,6 @@ try {$null=Get-VolvVMBaselineTaskRecord -TaskPath '\' -TaskName 'Synthetic-Task'
 catch {$rejectedDoctype=$true}
 if(-not $rejectedDoctype){throw 'Malformed or DTD-backed Task Scheduler XML was accepted'}
 Write-Host 'PASS: FIVE_XML_DRIFT_SECTIONS anonymous diagnostics and full-document fail-closed tests'
-Write-Host 'PASS: ANONYMOUS_DRIFT_HINT detects task drift without bypass or leaked task details'
-Write-Host ('PASS: VM environment baseline matched and rejected '+$cases.Count+' synthetic HOSTS/DNS/all-folder-task drifts')
-Write-Host ('PASS: '+$identityCases.Count+' task ownership cases; only two exact root tasks from current RunId are excluded')
-){
-        throw ('Unexpected CI drift response: '+$message)
-    }
-    if($message.Contains('VOLVE-CATALOGO') -or $message.Contains(('B'*64)) -or $message.Contains(('E'*64))){
-        throw 'CI leaked the task name or definition hash'
-    }
-    $second=''
-    try {$null=Assert-VolvVMBaselineState -Expected $expected -Actual $changed}
-    catch {$second=$_.Exception.Message}
-    if($message -cne $second){throw 'Task identity hash was not deterministic'}
-    $renamed=$expected | ConvertTo-Json -Depth 6 | ConvertFrom-Json
-    $renamed.taskRecords[0]='\UNRELATED-TASK|'+('B'*64)
-    $message=''
-    try {$null=Assert-VolvVMBaselineState -Expected $expected -Actual $renamed}
-    catch {$message=$_.Exception.Message}
-    if($message -cne 'NOT VERIFIED: VM taskRecords changed since Prepare (first difference: task identity changed)'){
-        throw 'Renamed task did not fail closed without exposing identity'
-    }
-    $builtin=Get-VolvVMBaselineTaskDriftHint -ExpectedRecord ('\Microsoft\Windows\Maintenance\Task|'+('A'*64)) -ActualRecord ('\Microsoft\Windows\Maintenance\Task|'+('B'*64))
-    if($builtin -notmatch 'scope=microsoft-windows-folder; identityId=[A-F0-9]{16}'){
-        throw 'Microsoft Windows task folder scope not classified'
-    }
-    if((Get-VolvVMBaselineTaskDriftHint -ExpectedRecord 'bad' -ActualRecord 'bad') -cne ' (first difference: malformed task record)'){
-        throw 'Malformed task record diagnostic failed'
-    }
-} finally {
-    if($null -eq $priorActions){Remove-Item Env:\GITHUB_ACTIONS -ErrorAction SilentlyContinue}
-    else {$env:GITHUB_ACTIONS=$priorActions}
-}
 Write-Host 'PASS: ANONYMOUS_DRIFT_HINT detects task drift without bypass or leaked task details'
 Write-Host ('PASS: VM environment baseline matched and rejected '+$cases.Count+' synthetic HOSTS/DNS/all-folder-task drifts')
 Write-Host ('PASS: '+$identityCases.Count+' task ownership cases; only two exact root tasks from current RunId are excluded')
