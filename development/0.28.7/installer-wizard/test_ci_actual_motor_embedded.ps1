@@ -125,6 +125,10 @@ ci_bundle_ok:
  ; NSIS is a 32-bit process on this x64 CI guest. Sysnative resolves
  ; the 64-bit Windows PowerShell that the CI trust gate checked earlier.
  ExecWait '"$WINDIR\Sysnative\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$R1\VOLVE-CI-Verify-Motor.ps1"' $R0
+ ; Preserve ONLY the numeric verifier exit status in the disposable stage.
+ FileOpen $R2 "$R1\VOLVE-CI-Checker-ExitCode.txt" w
+ FileWrite $R2 "$R0"
+ FileClose $R2
  StrCmp $R0 0 ci_motor_ok
  SetErrorLevel 27
  Quit
@@ -196,12 +200,28 @@ SectionEnd
    $stageSigner=[string](Get-AuthenticodeSignature -LiteralPath (Join-Path $stage 'VOLVE-CI-Real-Motor-0287.exe')).Status
    $stageHashEquals=((Get-FileHash -LiteralPath (Join-Path $stage 'VOLVE-CI-Real-Motor-0287.exe') -Algorithm SHA256).Hash -ceq $hash)
   }
-  Write-Host ("CI MOTOR STAGE DIAGNOSTIC: exit=$goodExit; stageExists=$stageExists; motorExists=$motorExists; bundleExists=$bundleExists; verifierExists=$verifierExists; signatureStatus=$stageSigner; exactHash=$stageHashEquals")
+  $rawChild='missing'
+  $childReceipt=Join-Path $stage 'VOLVE-CI-Checker-ExitCode.txt'
+  if(Test-Path -LiteralPath $childReceipt -PathType Leaf){
+    $rawChild=(Get-Content -LiteralPath $childReceipt -Raw).Trim()
+    if($rawChild -notmatch '^[0-9]{1,4}$'){$rawChild='invalid'}
+  }
+  $stagedWin64=-1;$stagedWin32=-1;$stagedSignerMatch=$false
+  if($verifierExists -and $motorExists){
+    $stagedVerifier=Join-Path $stage 'VOLVE-CI-Verify-Motor.ps1'
+    & $winPS '-NoProfile' '-NonInteractive' '-ExecutionPolicy' 'Bypass' '-File' $stagedVerifier
+    $stagedWin64=$LASTEXITCODE
+    $winPS32=Join-Path $env:WINDIR 'SysWOW64\WindowsPowerShell\v1.0\powershell.exe'
+    & $winPS32 '-NoProfile' '-NonInteractive' '-ExecutionPolicy' 'Bypass' '-File' $stagedVerifier
+    $stagedWin32=$LASTEXITCODE
+    $stagedSignerMatch=([string](Get-AuthenticodeSignature -LiteralPath (Join-Path $stage 'VOLVE-CI-Real-Motor-0287.exe')).SignerCertificate.Thumbprint -ceq $thumb)
+  }
+  Write-Host ("CI MOTOR STAGE DIAGNOSTIC: nsisExit=$goodExit; childExit=$rawChild; stageExists=$stageExists; motorExists=$motorExists; bundleExists=$bundleExists; verifierExists=$verifierExists; signatureStatus=$stageSigner; certPinMatch=$stagedSignerMatch; exactHash=$stageHashEquals; win64ManualExit=$stagedWin64; win32ManualExit=$stagedWin32")
   throw 'Actual signed motor/bundle NSIS stage refused valid inputs'
  }
  $goodStage=$stages[0]
  $names=@(Get-ChildItem -LiteralPath $goodStage -File -ErrorAction Stop|Select-Object -ExpandProperty Name|Sort-Object)
- $expected=@('VOLVE-CI-Real-Motor-0287.exe','VOLVE-CI-Signed-Container.exe','VOLVE-CI-Verify-Motor.ps1')|Sort-Object
+ $expected=@('VOLVE-CI-Checker-ExitCode.txt','VOLVE-CI-Real-Motor-0287.exe','VOLVE-CI-Signed-Container.exe','VOLVE-CI-Verify-Motor.ps1')|Sort-Object
  if(($names -join '|') -cne ($expected -join '|')){throw 'Embedded NSIS package staged unexpected files'}
  if((Get-FileHash -LiteralPath (Join-Path $goodStage 'VOLVE-CI-Real-Motor-0287.exe') -Algorithm SHA256).Hash -cne $hash){
   throw 'Actual motor modified by NSIS staging'
