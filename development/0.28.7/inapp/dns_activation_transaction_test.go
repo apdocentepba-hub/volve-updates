@@ -43,6 +43,7 @@ type activationTestGuard struct {
     originals []DNSServerState
     armCalls,healthCalls,recoverCalls,commitCalls int
     armedErr,healthErr,commitErr,recoverErr error
+    pretendRecovered bool
 }
 func(g *activationTestGuard) VerifyArmed(ctx context.Context,pin string)error{
     if err:=ctx.Err();err!=nil{return err}
@@ -59,6 +60,7 @@ func(g *activationTestGuard) RecoverIndependently(ctx context.Context,pin string
     g.recoverCalls++
     if err:=ctx.Err();err!=nil{return err}
     if g.recoverErr!=nil{return g.recoverErr}
+    if g.pretendRecovered{return nil} // dishonest recoverer: must be detected by readback
     for _,original:=range g.originals {
         g.backend.current[activationKey(original.InterfaceGUID,original.Family)]=copyActivationState(original)
     }
@@ -194,4 +196,17 @@ func TestProtectedDNSActivationNeverClaimsSuccessWhenRecoveryFails(t *testing.T)
     if err==nil||!strings.Contains(err.Error(),"CRITICAL")||g.recoverCalls!=1||g.commitCalls!=0{
         t.Fatalf("failed emergency recovery was not reported: %v",err)
     }
+}
+
+func TestProtectedDNSActivationIndependentRecoveryMustProveOriginalReadback(t *testing.T){
+    raw,pin,b,g:=prepareActivationTest(t)
+    b.failOn=1 // driver writes IPv4 then raises an error
+    g.pretendRecovered=true // watchdog claims success without restoring
+    err:=activateVOLVEDNSWithRecovery(context.Background(),raw,pin,b,g)
+    if err==nil||!strings.Contains(err.Error(),"CRITICAL")||
+        !strings.Contains(err.Error(),"readback")||
+        g.recoverCalls!=1||g.commitCalls!=0{
+        t.Fatalf("unverified recovery incorrectly considered safe: %v",err)
+    }
+    if b.writes!=1{t.Fatalf("unexpected DNS writes after failure: %d",b.writes)}
 }
