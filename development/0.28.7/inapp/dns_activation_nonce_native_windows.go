@@ -23,6 +23,7 @@ import (
  "fmt"
  "io"
  "os"
+ "os/exec"
  "path/filepath"
  "strings"
  "time"
@@ -31,6 +32,67 @@ import (
 const dnsActivationOnceReceiptComponent="volve-dns-publisher-activation-once-v1"
 const dnsActivationOnceFilePrefix="dns-activation-used-"
 const dnsActivationOnceReceiptLimit=2048
+
+
+const dnsActivationOnceNativeSealAcknowledgment="VOLVE_NATIVE_SIGNED_ACTIVATION_ONCE_SEALED"
+
+// sealNewDNSActivationOnceNativeFile applies the same non-inherited Windows
+// SID ACL model as the original DNS backup. Merely creating a new file under
+// an NTFS parent is NOT enough: it may be owned by the current user and inherit
+// ACEs that fail the required SYSTEM/Administrators-only ACL attestation.
+func sealNewDNSActivationOnceNativeFile(ctx context.Context,parent,path,nonce string)error{
+ if err:=ctx.Err();err!=nil{return err}
+ if err:=verifyDNSActivationEvidencePins(DNSActivationExternallyPinnedEvidence{
+  IntentNonce:nonce,
+  OriginalDNSJournalSHA256:strings.Repeat("0",64),
+  TargetMotorSHA256:strings.Repeat("0",64),
+  WatchdogTaskXMLSHA256:strings.Repeat("0",64),
+ });err!=nil{return err}
+ if filepath.Base(parent)!="legacy-engine-recovery"||
+  filepath.Clean(parent)!=parent||
+  filepath.Join(parent,dnsActivationOnceFilePrefix+nonce+".json")!=path{
+  return errors.New("activation nonce seal outside exact protected recovery child")
+ }
+ if err:=nativeDNSOriginalBackupACL(ctx,parent);err!=nil{return err}
+ stat,err:=os.Lstat(path)
+ if err!=nil{return err}
+ if !stat.Mode().IsRegular()||stat.Mode()&os.ModeSymlink!=0{
+  return errors.New("activation nonce seal refused linked or special file")
+ }
+ root:=os.Getenv("SystemRoot")
+ if !filepath.IsAbs(root)||strings.HasPrefix(root,\`\\\`){
+  return errors.New("trusted Windows SystemRoot unavailable for activation nonce seal")
+ }
+ ps:=filepath.Join(root,"System32","WindowsPowerShell","v1.0","powershell.exe")
+ binary,err:=os.Lstat(ps)
+ if err!=nil{return err}
+ if !binary.Mode().IsRegular()||binary.Mode()&os.ModeSymlink!=0{
+  return errors.New("activation nonce sealer requires trusted WindowsPowerShell")
+ }
+ quoted:="'"+strings.ReplaceAll(path,"'","''")+"'"
+ script:="$ErrorActionPreference='Stop';$ProgressPreference='SilentlyContinue';"+
+  "$p="+quoted+";"+
+  "$attr=[IO.File]::GetAttributes($p);"+
+  "if(($attr -band [IO.FileAttributes]::ReparsePoint) -ne 0){throw 'Reparse point'};"+
+  "$sys=[Security.Principal.SecurityIdentifier]::new('S-1-5-18');"+
+  "$adm=[Security.Principal.SecurityIdentifier]::new('S-1-5-32-544');"+
+  "$full=[Security.AccessControl.FileSystemRights]::FullControl;"+
+  "$allow=[Security.AccessControl.AccessControlType]::Allow;"+
+  "$acl=New-Object Security.AccessControl.FileSecurity;"+
+  "foreach($sid in @($sys,$adm)){"+
+  "$rule=[Security.AccessControl.FileSystemAccessRule]::new($sid,$full,$allow);"+
+  "$acl.AddAccessRule($rule)};"+
+  "$acl.SetAccessRuleProtection($true,$false);$acl.SetOwner($adm);"+
+  "[IO.File]::SetAccessControl($p,$acl);"+
+  "Write-Output '"+dnsActivationOnceNativeSealAcknowledgment+"'"
+ output,err:=exec.CommandContext(ctx,ps,
+  "-NoLogo","-NoProfile","-NonInteractive","-Command",script).Output()
+ if err!=nil{return fmt.Errorf("activation nonce NTFS ACL seal refused: %w",err)}
+ if strings.TrimSpace(string(output))!=dnsActivationOnceNativeSealAcknowledgment{
+  return errors.New("activation nonce ACL seal returned untrusted acknowledgment")
+ }
+ return nativeDNSOriginalBackupACL(ctx,path)
+}
 
 type DNSActivationOnceReceipt struct{
  Schema int `json:"schema"`
@@ -108,6 +170,11 @@ func ReserveSignedDNSActivationOnceNativeWindows(
   return refused,errors.Join(errors.New("one-use activation receipt could not be durably committed"),writeErr,closeErr)
  }
  if err:=ctx.Err();err!=nil{return refused,err}
+ // Seal the BRAND-NEW marker under exact SYSTEM/Admin owner and DACL before
+ // any success receipt is exposed. Failure keeps the nonce consumed.
+ if err:=sealNewDNSActivationOnceNativeFile(ctx,recoveryParent,destination,grant.IntentNonce);err!=nil{
+  return refused,fmt.Errorf("activation nonce created but native ACL sealing failed; grant remains spent: %w",err)
+ }
  stat,err:=os.Lstat(destination)
  if err!=nil{return refused,err}
  if !stat.Mode().IsRegular()||stat.Mode()&os.ModeSymlink!=0||stat.Size()!=int64(len(raw)){
