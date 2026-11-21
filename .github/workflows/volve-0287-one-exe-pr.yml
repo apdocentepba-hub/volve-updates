@@ -685,3 +685,9 @@ jobs:
             throw 'REFUSED: CI-only handoff mislabeled as install authorization'
           }
           Write-Host 'PASS VOLVE_NSIS_SIGNED_BUNDLE_NATIVE_WINDOWS_HANDOFF REVIEW_ONLY NO_INSTALL NO_DNS NO_TASKS'
+      - name: CI-only single EXE embeds NSIS wizard plus signed bundle and rejects tampering
+        timeout-minutes: 7
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          & 'development/0.28.7/installer-wizard/test_ci_embedded_candidate.ps1' -GoodBundle $env:VOLVE_CI_AUTHENTICODE_OS_BINARY -TamperedBundle (Join-Path $env:RUNNER_TEMP 'VOLVE-CI-Tampered-Container.exe')
