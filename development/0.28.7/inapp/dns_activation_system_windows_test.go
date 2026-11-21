@@ -33,7 +33,7 @@ func TestWindowsProtectedDNSActivationLeaseRejectsNonSYSTEMEntry(t *testing.T){
  auth:=DNSActivationPublisherAuthorization{
   GrantJSON:raw,Signature:sig,PinnedPublisherKey:fixture.pub,PinnedEvidence:fixture.pins,
  }
- err:=activateWindowsDNSAsProtectedSYSTEM(context.Background(),journal,pin,guard,auth)
+ err:=activateWindowsDNSAsProtectedSYSTEM(context.Background(),journal,pin,guard,auth,"")
  if err==nil||!strings.Contains(err.Error(),"LocalSystem")||
   host.invocations!=0||guard.armCount!=0{
   t.Fatalf("non-SYSTEM OS token incorrectly admitted to DNS activation: %v",err)
