@@ -14,6 +14,7 @@ on:
       - 'development/0.28.7/lab/test_vm_cleanup_receipt_contract.ps1'
       - 'development/0.28.7/lab/vm_environment_baseline.ps1'
       - 'development/0.28.7/lab/test_vm_environment_baseline.ps1'
+      - 'development/0.28.7/lab/ci_task_scheduler_event_diagnostic.ps1'
       - 'development/0.28.7/lab/VM_ROLLBACK_BOOT_PACK_README.md'
       - 'development/0.28.7/complete-source-parts/**'
       - 'development/0.28.7/inapp/apply_overlay.go'
@@ -31,6 +32,7 @@ on:
       - 'development/0.28.7/lab/test_vm_cleanup_receipt_contract.ps1'
       - 'development/0.28.7/lab/vm_environment_baseline.ps1'
       - 'development/0.28.7/lab/test_vm_environment_baseline.ps1'
+      - 'development/0.28.7/lab/ci_task_scheduler_event_diagnostic.ps1'
       - 'development/0.28.7/lab/VM_ROLLBACK_BOOT_PACK_README.md'
       - 'development/0.28.7/complete-source-parts/**'
       - 'development/0.28.7/inapp/apply_overlay.go'
@@ -86,7 +88,7 @@ jobs:
         run: |
           $ErrorActionPreference='Stop'
           $root='development/0.28.7/lab'
-          foreach($name in @('vm_reboot_proof.ps1','boot_recovery_lab.ps1','reboot_event_chain.ps1','test_reboot_event_chain.ps1','vm_cleanup_state_contract.ps1','test_vm_cleanup_state_contract.ps1','test_vm_cleanup_receipt_contract.ps1','test_vm_cleanup_scheduler_roundtrip.ps1','vm_environment_baseline.ps1','test_vm_environment_baseline.ps1')){
+          foreach($name in @('vm_reboot_proof.ps1','boot_recovery_lab.ps1','reboot_event_chain.ps1','test_reboot_event_chain.ps1','vm_cleanup_state_contract.ps1','test_vm_cleanup_state_contract.ps1','test_vm_cleanup_receipt_contract.ps1','test_vm_cleanup_scheduler_roundtrip.ps1','vm_environment_baseline.ps1','test_vm_environment_baseline.ps1','ci_task_scheduler_event_diagnostic.ps1')){
             $tokens=$null;$errors=$null
             [Management.Automation.Language.Parser]::ParseFile((Resolve-Path (Join-Path $root $name)).Path,[ref]$tokens,[ref]$errors)|Out-Null
             if($errors.Count -ne 0){
@@ -102,6 +104,7 @@ jobs:
           if($LASTEXITCODE -and $LASTEXITCODE -ne 0){throw 'VM cleanup contract tests failed'}
           & (Join-Path $root 'test_vm_cleanup_receipt_contract.ps1')
           if($LASTEXITCODE -and $LASTEXITCODE -ne 0){throw 'VM cleanup receipt safety tests failed'}
+          & (Join-Path $root 'ci_task_scheduler_event_diagnostic.ps1') -Mode Test
           & (Join-Path $root 'test_vm_environment_baseline.ps1')
           if($LASTEXITCODE -and $LASTEXITCODE -ne 0){throw 'VM environment safety contract tests failed'}
       - name: Prove VM Prepare and reject Verify without actual reboot
@@ -276,6 +279,13 @@ jobs:
               Unregister-ScheduledTask -TaskName $name -TaskPath '\' -Confirm:$false -ErrorAction Stop
             }
           }
+      - name: Read-only TaskScheduler 106/140/141 postmortem if strict baseline fails
+        if: failure()
+        continue-on-error: true
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          & 'development/0.28.7/lab/ci_task_scheduler_event_diagnostic.ps1' -Mode Investigate -IdentityId '4023F1322DB1C44E' -Minutes 45
       - name: Exercise pre-switch crash boundary under SYSTEM (NO REAL REBOOT)
         shell: powershell
         run: |
