@@ -102,7 +102,7 @@ $testXML=@'
 <Task xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task" version="1.4"><RegistrationInfo><Author>LAB</Author></RegistrationInfo><Triggers><BootTrigger><Enabled>true</Enabled></BootTrigger></Triggers><Principals><Principal id="Author"><UserId>S-1-5-18</UserId></Principal></Principals><Settings><Enabled>true</Enabled></Settings><Actions Context="Author"><Exec><Command>cmd.exe</Command></Exec></Actions></Task>
 '@
 $baselineRecord=Get-VolvVMBaselineTaskRecord -TaskPath '\' -TaskName 'Synthetic-Task' -XMLText $testXML
-if(@($baselineRecord.Split('|')).Count -ne 7){throw 'Missing five independent section digests'}
+if(@($baselineRecord.Split('|')).Count -ne 13){throw 'Missing five section hashes plus six trigger forensic hashes'}
 $mutations=@(
     @{name='RegistrationInfo';old='<Author>LAB</Author>';new='<Author>OTHER</Author>'},
     @{name='Triggers';old='<BootTrigger><Enabled>true</Enabled></BootTrigger>';new='<BootTrigger><Enabled>false</Enabled></BootTrigger>'},
@@ -130,6 +130,42 @@ foreach($mutation in $mutations){
     catch {if($_.Exception.Message -like 'NOT VERIFIED: VM taskRecords changed since Prepare*'){$rejected=$true}else{throw}}
     if(-not $rejected){throw ('Unsafe XML drift accepted for '+$mutation.name)}
 }
+# SUBFIELD_TRIGGER_DIAGNOSTICS: each mutation must be rejected, and public
+# diagnostics may reveal only a fixed, non-sensitive XML field category.
+$triggerProbeXML=$testXML.Replace('<BootTrigger><Enabled>true</Enabled></BootTrigger>',
+    '<BootTrigger><StartBoundary>2026-01-01T00:00:00</StartBoundary><Enabled>true</Enabled><Repetition><Interval>PT15M</Interval></Repetition><Delay>PT30S</Delay></BootTrigger>')
+$triggerOrigin=Get-VolvVMBaselineTaskRecord -TaskPath '\' -TaskName 'Synthetic-Task' -XMLText $triggerProbeXML
+$triggerCases=@(
+    @{category='StartBoundary';old='2026-01-01T00:00:00';new='2026-01-02T00:00:00'},
+    @{category='Enabled';old='<Enabled>true</Enabled>';new='<Enabled>false</Enabled>'},
+    @{category='Repetition';old='<Interval>PT15M</Interval>';new='<Interval>PT30M</Interval>'},
+    @{category='Delay';old='<Delay>PT30S</Delay>';new='<Delay>PT40S</Delay>'},
+    @{category='Other';old='<BootTrigger>';new='<TimeTrigger>'}
+)
+foreach($tc in $triggerCases){
+    if(-not $triggerProbeXML.Contains($tc.old)){throw 'Trigger fixture missing test mutation'}
+    $mutated=Get-VolvVMBaselineTaskRecord -TaskPath '\' -TaskName 'Synthetic-Task' -XMLText ($triggerProbeXML.Replace($tc.old,$tc.new))
+    $hint=Get-VolvVMBaselineTaskDriftHint -ExpectedRecord $triggerOrigin -ActualRecord $mutated
+    if(-not $hint.Contains('changedSections=Triggers; changedTriggerFields='+$tc.category+')')){
+        throw ('Trigger subfield diagnostic did not classify '+$tc.category+': '+$hint)
+    }
+    foreach($secret in @('Synthetic-Task','2026-01-01','2026-01-02','PT15M','PT30M','BootTrigger','TimeTrigger')){
+        if($hint.Contains($secret)){throw 'CI leaked trigger identity or XML value'}
+    }
+    $beforeCase=$expected|ConvertTo-Json -Depth 6|ConvertFrom-Json
+    $afterCase=$expected|ConvertTo-Json -Depth 6|ConvertFrom-Json
+    $beforeCase.taskRecords=@($triggerOrigin)
+    $afterCase.taskRecords=@($mutated)
+    $rejected=$false
+    try {$null=Assert-VolvVMBaselineState -Expected $beforeCase -Actual $afterCase}
+    catch {if($_.Exception.Message -like 'NOT VERIFIED: VM taskRecords changed since Prepare*'){$rejected=$true}else{throw}}
+    if(-not $rejected){throw ('Unsafe trigger field change accepted: '+$tc.category)}
+}
+$nonTrigger=$triggerProbeXML.Replace('<Command>cmd.exe</Command>','<Command>notepad.exe</Command>')
+$nonTriggerRecord=Get-VolvVMBaselineTaskRecord -TaskPath '\' -TaskName 'Synthetic-Task' -XMLText $nonTrigger
+$noLeak=Get-VolvVMBaselineTaskDriftHint -ExpectedRecord $triggerOrigin -ActualRecord $nonTriggerRecord
+if($noLeak -match 'changedTriggerFields='){throw 'Unrelated action was mislabeled as a trigger change'}
+Write-Host 'PASS: SUBFIELD_TRIGGER_DIAGNOSTICS classifies five synthetic trigger mutations, fails closed, and leaks no XML values'
 $rejectedDoctype=$false
 try {$null=Get-VolvVMBaselineTaskRecord -TaskPath '\' -TaskName 'Synthetic-Task' -XMLText ('<!DOCTYPE Task [<!ENTITY x "bad">]>'+$testXML)}
 catch {$rejectedDoctype=$true}

@@ -28,6 +28,43 @@ function Get-VolvVMBaselineSha {
     } finally {$sha.Dispose()}
 }
 
+# CI diagnostics only: SHA256 of known trigger sub-elements and all remaining
+# trigger XML. These digests are stored in protected VM evidence, never public
+# task names, trigger values, actions or entire fingerprints.
+function Get-VolvVMBaselineTriggerDigests {
+    [CmdletBinding()]
+    param([Parameter(Mandatory=$true)][System.Xml.XmlDocument]$Document)
+    $ns='http://schemas.microsoft.com/windows/2004/02/mit/task'
+    $triggers=@($Document.DocumentElement.ChildNodes | Where-Object {
+        $_.NodeType -eq [System.Xml.XmlNodeType]::Element -and
+        $_.LocalName -ceq 'Triggers' -and $_.NamespaceURI -ceq $ns
+    })
+    if($triggers.Count -gt 1){throw 'NOT VERIFIED: duplicate Task Scheduler Triggers sections'}
+    $fields=@('StartBoundary','EndBoundary','Enabled','Repetition','Delay')
+    $hashes=@()
+    foreach($field in $fields){
+        $selected=@()
+        if($triggers.Count -eq 1){
+            $selected=@($triggers[0].SelectNodes(".//*[local-name()='$field']") | Where-Object {$_.NamespaceURI -ceq $ns} |
+                ForEach-Object {$_.OuterXml})
+        }
+        $hashes+=Get-VolvVMBaselineSha -Value (ConvertTo-Json -InputObject ([string[]]$selected) -Compress)
+    }
+    $remaining='<absent>'
+    if($triggers.Count -eq 1){
+        $copy=$triggers[0].CloneNode($true)
+        foreach($field in $fields){
+            $nodes=@($copy.SelectNodes(".//*[local-name()='$field']") | Where-Object {$_.NamespaceURI -ceq $ns})
+            foreach($node in $nodes){
+                if($null -ne $node.ParentNode){$null=$node.ParentNode.RemoveChild($node)}
+            }
+        }
+        $remaining=[string]$copy.OuterXml
+    }
+    $hashes+=Get-VolvVMBaselineSha -Value $remaining
+    return $hashes
+}
+
 function Get-VolvVMBaselineTaskRecord {
     [CmdletBinding()]
     param(
@@ -57,7 +94,9 @@ function Get-VolvVMBaselineTaskRecord {
         if($matches.Count -eq 1){$value=[string]$matches[0].OuterXml}
         $sectionHashes+=Get-VolvVMBaselineSha -Value $value
     }
-    return ($TaskPath+$TaskName+'|'+(Get-VolvVMBaselineSha -Value $canonical)+'|'+($sectionHashes -join '|'))
+    $triggerDigests=@(Get-VolvVMBaselineTriggerDigests -Document $document)
+    if($triggerDigests.Count -ne 6){throw 'NOT VERIFIED: incomplete trigger forensic record'}
+    return ($TaskPath+$TaskName+'|'+(Get-VolvVMBaselineSha -Value $canonical)+'|'+($sectionHashes -join '|')+'|'+($triggerDigests -join '|'))
 }
 
 function Get-VolvVMBaselineState {
@@ -136,9 +175,10 @@ function Get-VolvVMBaselineTaskDriftHint {
     }
     $identityId=(Get-VolvVMBaselineSha -Value $oldIdentity).Substring(0,16)
     $changed='unavailable'
-    # Six SHA256 values: full XML followed by five fixed, coarse sections.
+    # Full SHA256 XML, five sections, plus six trigger diagnostic digests.
     # Never log task names, complete XML, raw command arguments or full SHA256s.
-    if($before.Count -eq 7 -and $after.Count -eq 7){
+    if(($before.Count -eq 7 -and $after.Count -eq 7) -or
+       ($before.Count -eq 13 -and $after.Count -eq 13)){
         $names=@('RegistrationInfo','Triggers','Principals','Settings','Actions')
         $diff=@()
         for($i=0;$i -lt $names.Count;$i++){
@@ -147,6 +187,15 @@ function Get-VolvVMBaselineTaskDriftHint {
         if($diff.Count -gt 0){$changed=$diff -join ','}
         elseif($before[1] -cne $after[1]){$changed='TaskRootOrUnclassified'}
         else {$changed='UnclassifiedRecordChange'}
+        if($before.Count -eq 13 -and $after.Count -eq 13 -and $diff -contains 'Triggers'){
+            $triggerNames=@('StartBoundary','EndBoundary','Enabled','Repetition','Delay','Other')
+            $triggerDiff=@()
+            for($i=0;$i -lt $triggerNames.Count;$i++){
+                if($before[7+$i] -cne $after[7+$i]){$triggerDiff+=($triggerNames[$i])}
+            }
+            if($triggerDiff.Count -eq 0){$triggerDiff=@('UnclassifiedTriggerDifference')}
+            $changed+='; changedTriggerFields='+($triggerDiff -join ',')
+        }
     }
     return (' (first difference: definition changed for the same task; scope='+$scope+
         '; identityId='+$identityId+'; changedSections='+$changed+')')
