@@ -106,6 +106,7 @@ jobs:
               Copy-Item -LiteralPath $file.FullName -Destination $folder -ErrorAction Stop
             }
             Copy-Item -LiteralPath (Join-Path $source 'dns_restore_watchdog_crash_windows_test.go') -Destination $folder -ErrorAction Stop
+            Copy-Item -LiteralPath (Join-Path $source 'dns_restore_crash_lab_attestation_windows_test.go') -Destination $folder -ErrorAction Stop
             Copy-Item -LiteralPath (Join-Path $source 'dns_assignment_provenance_windows.go') -Destination $folder -ErrorAction Stop
             Copy-Item -LiteralPath (Join-Path $source 'resident_journal.go') -Destination $folder -ErrorAction Stop
             Copy-Item -LiteralPath (Join-Path $source 'resident_journal_test.go') -Destination $folder -ErrorAction Stop
