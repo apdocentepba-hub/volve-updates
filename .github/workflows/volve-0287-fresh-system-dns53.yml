@@ -29,6 +29,17 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: '1.23.x'
+      - name: Parse every VOLVE Go overlay before expensive CI build
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $all=@(Get-ChildItem 'development/0.28.7/inapp' -Filter '*.go' -File)
+          if($all.Count -lt 40){throw 'VOLVE Go overlay inventory unexpectedly incomplete'}
+          foreach($file in $all){
+            & gofmt -e -d $file.FullName *> $null
+            if($LASTEXITCODE -ne 0){throw ('Invalid Go syntax in overlay: '+$file.Name)}
+          }
+          Write-Host ('PASS: parsed '+$all.Count+' Go overlay files before source reconstruction')
       - name: Reconstruct and verify full VOLVE Go source
         shell: pwsh
         run: |
