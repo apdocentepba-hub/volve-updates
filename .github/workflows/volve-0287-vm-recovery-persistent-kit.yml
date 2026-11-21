@@ -108,6 +108,23 @@ jobs:
           & (Join-Path $root 'ci_task_scheduler_event_diagnostic.ps1') -Mode Test
           & (Join-Path $root 'test_vm_environment_baseline.ps1')
           if($LASTEXITCODE -and $LASTEXITCODE -ne 0){throw 'VM environment safety contract tests failed'}
+      - name: Enable Security 4702 audit only in disposable Windows CI for SPP attribution
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          if($env:GITHUB_ACTIONS -cne 'true' -or $env:RUNNER_ENVIRONMENT -cne 'github-hosted'){
+            throw 'REFUSED: security audit changes are allowed only in disposable GitHub CI'
+          }
+          $cs=Get-CimInstance Win32_ComputerSystem -ErrorAction Stop
+          if(($cs.Manufacturer+' '+$cs.Model) -notmatch '(?i:virtual machine|hyper-v|vmware|kvm|qemu)'){
+            throw 'REFUSED: host is not positively identified as an isolated Windows VM'
+          }
+          # The separate real 4702 CI run proved this audit category yields a
+          # ClientProcessId. No user machine, VOLVE task, DNS or HOSTS is changed.
+          & auditpol.exe /set '/subcategory:Other Object Access Events' '/success:enable' | Out-Null
+          if($LASTEXITCODE -ne 0){throw 'Cannot enable event 4702 evidence in CI'}
+          Write-Host 'PASS: ephemeral Windows Security 4702 task-update audit prepared; not a customer installation'
+
       - name: Prove VM Prepare and reject Verify without actual reboot
         id: strict_environment
         # Continue independent tests without hiding environmental failures.
