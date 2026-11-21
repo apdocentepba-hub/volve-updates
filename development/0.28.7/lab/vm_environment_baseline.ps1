@@ -65,6 +65,49 @@ function Get-VolvVMBaselineTriggerDigests {
     return $hashes
 }
 
+
+# Lab-only forensic digest: replace ONLY StartBoundary text, preserving
+# the element structure, attributes, root, security and every other XML node.
+# This does not authorize a baseline exception or installation.
+function Get-VolvVMMaskedStartBoundarySha {
+    [CmdletBinding()]
+    param([Parameter(Mandatory=$true)][System.Xml.XmlDocument]$Document)
+    $copy=$Document.CloneNode($true)
+    $ns='http://schemas.microsoft.com/windows/2004/02/mit/task'
+    $nodes=@($copy.SelectNodes("//*[local-name()='StartBoundary']") |
+        Where-Object {$_.NamespaceURI -ceq $ns})
+    foreach($node in $nodes){
+        if($node.ChildNodes.Count -gt 1 -or
+           ($node.ChildNodes.Count -eq 1 -and
+            $node.FirstChild.NodeType -ne [System.Xml.XmlNodeType]::Text)){
+            throw 'NOT VERIFIED: non-text StartBoundary element'
+        }
+        $node.InnerText='VOLVE-CI-REDACTED-START-BOUNDARY'
+    }
+    return (Get-VolvVMBaselineSha -Value ([string]$copy.OuterXml))
+}
+
+# An advisory forensic classification; the strict gate ALWAYS rejects drift.
+function Test-VolvVMSPPStartBoundaryOnlyCandidate {
+    [CmdletBinding()]
+    param([Parameter(Mandatory=$true)][string[]]$Before,
+          [Parameter(Mandatory=$true)][string[]]$After)
+    $identity='\Microsoft\Windows\SoftwareProtectionPlatform\SvcRestartTask'
+    if($Before.Count -ne 14 -or $After.Count -ne 14 -or
+       $Before[0] -cne $identity -or $After[0] -cne $identity){return $false}
+    for($i=1;$i -lt 14;$i++){
+        if($Before[$i] -cnotmatch '^[A-F0-9]{64}$' -or $After[$i] -cnotmatch '^[A-F0-9]{64}$'){
+            return $false
+        }
+    }
+    if($Before[1] -ceq $After[1] -or $Before[3] -ceq $After[3] -or
+       $Before[7] -ceq $After[7] -or $Before[13] -cne $After[13]){return $false}
+    foreach($i in @(2,4,5,6,8,9,10,11,12)){
+        if($Before[$i] -cne $After[$i]){return $false}
+    }
+    return $true
+}
+
 function Get-VolvVMBaselineTaskRecord {
     [CmdletBinding()]
     param(
@@ -96,7 +139,8 @@ function Get-VolvVMBaselineTaskRecord {
     }
     $triggerDigests=@(Get-VolvVMBaselineTriggerDigests -Document $document)
     if($triggerDigests.Count -ne 6){throw 'NOT VERIFIED: incomplete trigger forensic record'}
-    return ($TaskPath+$TaskName+'|'+(Get-VolvVMBaselineSha -Value $canonical)+'|'+($sectionHashes -join '|')+'|'+($triggerDigests -join '|'))
+    $maskedStartSha=Get-VolvVMMaskedStartBoundarySha -Document $document
+    return ($TaskPath+$TaskName+'|'+(Get-VolvVMBaselineSha -Value $canonical)+'|'+($sectionHashes -join '|')+'|'+($triggerDigests -join '|')+'|'+$maskedStartSha)
 }
 
 function Get-VolvVMBaselineState {
@@ -142,7 +186,7 @@ function Get-VolvVMBaselineState {
     }
 
     return [pscustomobject][ordered]@{
-        schema=1
+        schema=2
         kind='VOLVE_VM_READ_ONLY_ENVIRONMENT'
         hostsSha256=$hostsSHA
         dnsRecords=[string[]]$dns
@@ -178,7 +222,8 @@ function Get-VolvVMBaselineTaskDriftHint {
     # Full SHA256 XML, five sections, plus six trigger diagnostic digests.
     # Never log task names, complete XML, raw command arguments or full SHA256s.
     if(($before.Count -eq 7 -and $after.Count -eq 7) -or
-       ($before.Count -eq 13 -and $after.Count -eq 13)){
+       ($before.Count -eq 13 -and $after.Count -eq 13) -or
+       ($before.Count -eq 14 -and $after.Count -eq 14)){
         $names=@('RegistrationInfo','Triggers','Principals','Settings','Actions')
         $diff=@()
         for($i=0;$i -lt $names.Count;$i++){
@@ -187,7 +232,7 @@ function Get-VolvVMBaselineTaskDriftHint {
         if($diff.Count -gt 0){$changed=$diff -join ','}
         elseif($before[1] -cne $after[1]){$changed='TaskRootOrUnclassified'}
         else {$changed='UnclassifiedRecordChange'}
-        if($before.Count -eq 13 -and $after.Count -eq 13 -and $diff -contains 'Triggers'){
+        if($before.Count -ge 13 -and $after.Count -eq $before.Count -and $diff -contains 'Triggers'){
             $triggerNames=@('StartBoundary','EndBoundary','Enabled','Repetition','Delay','Other')
             $triggerDiff=@()
             for($i=0;$i -lt $triggerNames.Count;$i++){
@@ -195,6 +240,9 @@ function Get-VolvVMBaselineTaskDriftHint {
             }
             if($triggerDiff.Count -eq 0){$triggerDiff=@('UnclassifiedTriggerDifference')}
             $changed+='; changedTriggerFields='+($triggerDiff -join ',')
+            if(Test-VolvVMSPPStartBoundaryOnlyCandidate -Before ([string[]]$before) -After ([string[]]$after)){
+                $changed+='; boundedSPPStartBoundary=OBSERVED_NOT_EXEMPT'
+            }
         }
     }
     return (' (first difference: definition changed for the same task; scope='+$scope+
@@ -213,7 +261,7 @@ function Assert-VolvVMBaselineState {
                 throw ('NOT VERIFIED: VM environment baseline missing '+$name)
             }
         }
-        if($record.schema -ne 1 -or
+        if($record.schema -ne 2 -or
            [string]$record.kind -cne 'VOLVE_VM_READ_ONLY_ENVIRONMENT' -or
            [string]$record.hostsSha256 -cnotmatch '^[A-F0-9]{64}$'){
             throw 'NOT VERIFIED: malformed VM environment baseline'
