@@ -73,6 +73,63 @@ function Get-VolvCIEventSummary {
     return [pscustomobject]$counts
 }
 
+
+# Read-only Security 4702 correlation. Windows may provide ClientProcessId
+# and ParentProcessId on newer event versions. A PID is NOT an executable
+# identity or proof of causal attribution; the process can have exited/reused
+# the PID. Never export task XML, usernames, PIDs or account identifiers.
+function Test-VolvCIEventPositivePid {
+    [CmdletBinding()]
+    param([AllowEmptyString()][string]$Value)
+    if([string]::IsNullOrWhiteSpace($Value)){return $false}
+    $valueText=$Value.Trim()
+    $number=[int64]0
+    if($valueText -cmatch '^0[xX][0-9a-fA-F]{1,8}$'){
+        if(-not [int64]::TryParse($valueText.Substring(2),
+            [Globalization.NumberStyles]::AllowHexSpecifier,
+            [Globalization.CultureInfo]::InvariantCulture,[ref]$number)){return $false}
+    } elseif($valueText -cmatch '^[0-9]{1,10}$'){
+        if(-not [int64]::TryParse($valueText,
+            [Globalization.NumberStyles]::None,
+            [Globalization.CultureInfo]::InvariantCulture,[ref]$number)){return $false}
+    } else {return $false}
+    return ($number -gt 0 -and $number -le [int32]::MaxValue)
+}
+
+function Get-VolvCISecurity4702Summary {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory=$true)][string]$TaskIdentity,
+        [Parameter(Mandatory=$true)][AllowEmptyCollection()][string[]]$EventXML
+    )
+    $counts=[ordered]@{matched4702=0;clientPidFieldPresent=0;parentPidFieldPresent=0;pidMissingOrInvalid=0}
+    foreach($raw in $EventXML){
+        $doc=[System.Xml.XmlDocument]::new()
+        $doc.XmlResolver=$null
+        try{$doc.LoadXml($raw)}catch{throw 'NOT VERIFIED: invalid Security 4702 XML'}
+        $eid=$doc.SelectSingleNode("/*[local-name()='Event']/*[local-name()='System']/*[local-name()='EventID']")
+        $provider=$doc.SelectSingleNode("/*[local-name()='Event']/*[local-name()='System']/*[local-name()='Provider']")
+        if($null -eq $eid -or [string]$eid.InnerText -cne '4702' -or $null -eq $provider -or
+           $provider.GetAttribute('Name') -cne 'Microsoft-Windows-Security-Auditing'){continue}
+        $data=@($doc.SelectNodes("/*[local-name()='Event']/*[local-name()='EventData']/*[local-name()='Data']"))
+        $task=@($data | Where-Object {$_.GetAttribute('Name') -ceq 'TaskName'})
+        if($task.Count -ne 1 -or -not [string]::Equals([string]$task[0].InnerText,
+              $TaskIdentity,[StringComparison]::OrdinalIgnoreCase)){continue}
+        $counts.matched4702++
+        $client=@($data | Where-Object {$_.GetAttribute('Name') -ceq 'ClientProcessId'})
+        $parent=@($data | Where-Object {$_.GetAttribute('Name') -ceq 'ParentProcessId'})
+        if($client.Count -eq 1 -and (Test-VolvCIEventPositivePid -Value ([string]$client[0].InnerText))){
+            $counts.clientPidFieldPresent++
+        } else {
+            $counts.pidMissingOrInvalid++
+        }
+        if($parent.Count -eq 1 -and (Test-VolvCIEventPositivePid -Value ([string]$parent[0].InnerText))){
+            $counts.parentPidFieldPresent++
+        }
+    }
+    return [pscustomobject]$counts
+}
+
 if($Mode -ceq 'Test'){
     $fixture='\Microsoft\Windows\Synthetic\NeverPublicTask'
     # Constant well-formed fixtures: no PowerShell array/concatenation precedence.
@@ -108,6 +165,37 @@ if($Mode -ceq 'Test'){
     try{$null=Get-VolvCIEventSummary -TaskIdentity $fixture -EventXML @($badEvent)}
     catch {if($_.Exception.Message -like 'NOT VERIFIED: invalid synthetic*'){$rejected=$true}else{throw}}
     if(-not $rejected){throw 'NOT VERIFIED: malformed Scheduler event was not rejected'}
+
+    $s4702='Microsoft-Windows-Security-Auditing'
+    $sample4702='<Event><System><Provider Name="Microsoft-Windows-Security-Auditing"/><EventID>4702</EventID></System><EventData><Data Name="TaskName">\Microsoft\Windows\Synthetic\NeverPublicTask</Data><Data Name="ClientProcessId">0x1F4</Data><Data Name="ParentProcessId">264</Data><Data Name="TaskContentNew">PRIVATE XML MUST NOT BE PRINTED</Data></EventData></Event>'
+    $missingPid='<Event><System><Provider Name="Microsoft-Windows-Security-Auditing"/><EventID>4702</EventID></System><EventData><Data Name="TaskName">\Microsoft\Windows\Synthetic\NeverPublicTask</Data></EventData></Event>'
+    $invalidPid=$sample4702.Replace('0x1F4','not-a-pid')
+    $wrongTask=$sample4702.Replace($fixture,'\Other\Task')
+    $wrongProvider=$sample4702.Replace($s4702,'NOT-TRUSTED-PROVIDER')
+    $wrongEventId=$sample4702.Replace('<EventID>4702</EventID>','<EventID>4698</EventID>')
+    $duplicatePid=$sample4702.Replace('<Data Name="ClientProcessId">0x1F4</Data>',
+        '<Data Name="ClientProcessId">0x1F4</Data><Data Name="ClientProcessId">0x1F5</Data>')
+    $audit=Get-VolvCISecurity4702Summary -TaskIdentity $fixture -EventXML @(
+        $sample4702,$missingPid,$invalidPid,$wrongTask,$wrongProvider,$wrongEventId,$duplicatePid
+    )
+    if($audit.matched4702 -ne 4 -or $audit.clientPidFieldPresent -ne 1 -or
+       $audit.parentPidFieldPresent -ne 3 -or $audit.pidMissingOrInvalid -ne 3){
+        throw 'NOT VERIFIED: Security 4702 strict task/provider/PID evidence classification regression'
+    }
+    if((Get-VolvCISecurity4702Summary -TaskIdentity $fixture -EventXML @()).matched4702 -ne 0){
+        throw 'NOT VERIFIED: empty Security 4702 inventory accepted'
+    }
+    foreach($invalid in @('0','-1','4294967296','0xFFFFFFFF','not-a-pid','1.5','')) {
+        if(Test-VolvCIEventPositivePid -Value $invalid){throw 'NOT VERIFIED: invalid PID treated as process evidence'}
+    }
+    foreach($valid in @('4','0x1F4','524')) {
+        if(-not (Test-VolvCIEventPositivePid -Value $valid)){throw 'NOT VERIFIED: valid PID field rejected'}
+    }
+    $bad4702Rejected=$false
+    try{$null=Get-VolvCISecurity4702Summary -TaskIdentity $fixture -EventXML @('<Event><System>')}
+    catch{if($_.Exception.Message -eq 'NOT VERIFIED: invalid Security 4702 XML'){$bad4702Rejected=$true}else{throw}}
+    if(-not $bad4702Rejected){throw 'NOT VERIFIED: malformed Security 4702 XML was accepted'}
+    Write-Host 'PASS: SECURITY_4702_READ_ONLY classifies valid/missing/invalid PID fields, refuses duplicate PID, wrong provider, wrong task, malformed XML and never outputs private event data'
     Write-Host 'PASS: CI_TASK_EVENT_DIAGNOSTIC matches synthetic events 106/140/141, classifies actor accounts, and rejects wrong task, unlisted ID and malformed XML'
     Write-Host 'PASS: CI_TASK_EVENT_DIAGNOSTIC exposes no task names, event identities, usernames or command arguments'
     return
@@ -149,6 +237,26 @@ try {
     Write-Host 'CI TASK EVENT POSTMORTEM: eventAudit=unavailable; originalBaseline=FAILED'
     return
 }
+
+# Security 4702 auditing may not be enabled. Do not enable auditing, do not
+# alter ACLs or fetch/update any process: absence of evidence remains unknown.
+$securityStatus='unavailable'
+$securitySummary=[pscustomobject]@{matched4702=0;clientPidFieldPresent=0;parentPidFieldPresent=0;pidMissingOrInvalid=0}
+try {
+    $securityEvents=@(Get-WinEvent -FilterHashtable @{
+        LogName='Security'
+        Id=4702
+        StartTime=(Get-Date).AddMinutes(-$Minutes)
+    } -MaxEvents 2000 -ErrorAction Stop)
+    $securitySummary=Get-VolvCISecurity4702Summary -TaskIdentity $fullIdentity -EventXML @(
+        $securityEvents | ForEach-Object {$_.ToXml()}
+    )
+    $securityStatus='available'
+} catch {
+    # Auditing disabled, insufficient rights or malformed event: no causal claim.
+    $securityStatus='unavailable'
+}
+
 $summary=Get-VolvCIEventSummary -TaskIdentity $fullIdentity -EventXML $eventXml
 Write-Host ('CI TASK EVENT POSTMORTEM: identityId='+$IdentityId.ToUpperInvariant()+
     '; registered='+$summary.registration+'; updated='+$summary.updated+
@@ -156,4 +264,8 @@ Write-Host ('CI TASK EVENT POSTMORTEM: identityId='+$IdentityId.ToUpperInvariant
     '; updateActorNetworkService='+$summary.networkService+
     '; updateActorLocalService='+$summary.localService+
     '; updateActorOther='+$summary.other+'; updateActorUnknown='+$summary.unknown+
-    '; identityClass='+$identityClass+'; scanLimit=2000; processAttribution=UNPROVEN; originalBaseline=FAILED')
+    '; identityClass='+$identityClass+'; scanLimit=2000; security4702='+$securityStatus+
+    '; security4702Matching='+$securitySummary.matched4702+
+    '; security4702ClientPidFields='+$securitySummary.clientPidFieldPresent+
+    '; security4702ParentPidFields='+$securitySummary.parentPidFieldPresent+
+    '; processAttribution=UNPROVEN; originalBaseline=FAILED')
