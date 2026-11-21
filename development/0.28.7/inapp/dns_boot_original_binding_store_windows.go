@@ -74,8 +74,9 @@ func PersistSignedOriginalDNSEvidenceNativeWindows(
  }
  if err:=nativeDNSOriginalBackupACL(ctx,parent);err!=nil{return err}
  for _,name:=range []string{dataPath,sigPath}{
-  if _,e:=os.Lstat(name);e==nil{return errors.New("signed original DNS evidence already staged; never overwrite")}
-  else if !errors.Is(e,os.ErrNotExist){return e}
+  _,e:=os.Lstat(name)
+  if e==nil{return errors.New("signed original DNS evidence already staged; never overwrite")}
+  if !errors.Is(e,os.ErrNotExist){return e}
  }
  for _,pair:=range []struct{path string;raw []byte}{
   {dataPath,signedJSON},{sigPath,signedSignature},
