@@ -155,7 +155,7 @@ func reserveSignedDNSActivationOnceUnderHeldLeaseNativeWindows(
  }
  if !filepath.IsAbs(recoveryParent)||filepath.Clean(recoveryParent)!=recoveryParent||
   filepath.Base(recoveryParent)!="legacy-engine-recovery"||
-  strings.HasPrefix(recoveryParent,`\\\\`){
+  strings.HasPrefix(recoveryParent,`\\`){
   return refused,errors.New("one-use activation requires exact trusted local recovery parent")
  }
  grant,err:=VerifyPublisherSignedDNSActivationGrant(
