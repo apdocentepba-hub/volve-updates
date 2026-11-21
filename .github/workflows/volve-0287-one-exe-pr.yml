@@ -364,6 +364,19 @@ jobs:
           go run development/0.28.7/inapp/apply_overlay.go build/codigo
           if($LASTEXITCODE -ne 0){throw 'Windows six-inventory source overlay failed'}
           if(-not (Test-Path -LiteralPath 'build/codigo/go.mod' -PathType Leaf)){throw 'Signed source reconstruction did not produce native module'}
+      - name: Prepare NSIS compiler before early real motor handoff
+        timeout-minutes: 3
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $nsis=@('C:\Program Files (x86)\NSIS\makensis.exe','C:\Program Files\NSIS\makensis.exe') | Where-Object {Test-Path -LiteralPath $_ -PathType Leaf} | Select-Object -First 1
+          if(-not $nsis){
+            choco install nsis --yes --no-progress --limit-output
+            if($LASTEXITCODE -ne 0){throw 'CI cannot provision NSIS compiler'}
+            $nsis=@('C:\Program Files (x86)\NSIS\makensis.exe','C:\Program Files\NSIS\makensis.exe') | Where-Object {Test-Path -LiteralPath $_ -PathType Leaf} | Select-Object -First 1
+          }
+          if(-not $nsis){throw 'CI NSIS compiler still missing after provision'}
+          Write-Host 'PASS: disposable Windows NSIS compiler available before early integrity gate'
       - name: CI-only single NSIS EXE includes actual compiled DNS motor and rejects tamper
         timeout-minutes: 7
         shell: pwsh
