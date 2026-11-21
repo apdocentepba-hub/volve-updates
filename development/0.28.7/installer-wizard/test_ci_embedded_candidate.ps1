@@ -41,11 +41,13 @@ New-Item -ItemType Directory -Path $work -ErrorAction Stop | Out-Null
 Copy-Item -LiteralPath $terms -Destination (Join-Path $work 'TERMINOS_PREVIEW_0287.txt') -ErrorAction Stop
 $sectionTemplate=@'
 Section "CI-only embedded signed bundle verification (NO INSTALL)" SecPreview
- SetOutPath "$TEMP\VOLVE-CI-Embedded-__RUN_ID__"
+ StrCpy $R1 "$TEMP\VOLVE-CI-Embedded-__RUN_ID__"
+ SetOutPath "$R1"
  File /oname=VOLVE-CI-Signed-Container.exe "__BUNDLE_PATH__"
- ExecWait '"$OUTDIR\VOLVE-CI-Signed-Container.exe" --verify-bundle' $R0
- Delete "$OUTDIR\VOLVE-CI-Signed-Container.exe"
- RMDir "$OUTDIR"
+ ExecWait '"$R1\VOLVE-CI-Signed-Container.exe" --verify-bundle' $R0
+ Delete "$R1\VOLVE-CI-Signed-Container.exe"
+ SetOutPath "$TEMP"
+ RMDir "$R1"
  StrCmp $R0 0 signed_ok
  DetailPrint "REFUSED: embedded bundle is invalid"
  SetErrorLevel 14
