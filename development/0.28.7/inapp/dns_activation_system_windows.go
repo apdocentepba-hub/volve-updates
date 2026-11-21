@@ -40,25 +40,32 @@ func activateWindowsDNSAsProtectedSYSTEM(
   guard,time.Now,
  )
  if err!=nil{return fmt.Errorf("VOLVE signed DNS activation rejected: %w",err)}
- // Consume the publisher nonce under the same OS-wide kernel mutex using
- // atomic NTFS O_EXCL, SYSTEM/Admin-only ACLs and exact signed task/motor/
- // original DNS pins. A failed install consumes its grant and needs a NEW
- // independent publisher authorization; never silently recycle it.
- if _,err:=ReserveSignedDNSActivationOnceNativeWindows(
-  ctx,protectedRecoveryParent,publisherAuthorization.GrantJSON,
-  publisherAuthorization.Signature,publisherAuthorization.PinnedPublisherKey,
-  publisherAuthorization.PinnedEvidence,time.Now(),
- );err!=nil{
-  return fmt.Errorf("publisher activation nonce could not be durably reserved: %w",err)
- }
+ // The native backend is checked against ALL current original DNS
+ // interfaces before spending the signed grant. After that preflight,
+ // nonce O_EXCL reservation and every DNS write occur under ONE protected
+ // Windows kernel mutex, with no unlocked transition window. Recovery alone
+ // can temporarily yield this mutex to the independent SYSTEM watchdog.
  return activateVOLVEDNSUnderProtectedLease(
   ctx,originalJournal,independentlyPinnedSHA256,publisherBound,
   AcquireProtectedResidentTransitionLease,
   func(ctx context.Context,guarded DNSActivationSafetyGuard)(DNSAdapterBackend,error){
-   return newWindowsPinnedDNSActivationBackend(
+   backend,err:=newWindowsPinnedDNSActivationBackend(
     ctx,originalJournal,independentlyPinnedSHA256,
     DefaultWindowsReadOnlyPowerShell,runPinnedWindowsNativeDNS,guarded,
    )
+   if err!=nil{return nil,err}
+   exclusive,ok:=guarded.(*exclusiveDNSActivationGuard)
+   if !ok{return nil,errors.New("native DNS activation lost its protected kernel lease")}
+   // No second lease acquisition here; the reserved nonce and the
+   // activation's readback/commit must share one critical section.
+   if _,err:=reserveSignedDNSActivationOnceUnderHeldLeaseNativeWindows(
+    ctx,protectedRecoveryParent,publisherAuthorization.GrantJSON,
+    publisherAuthorization.Signature,publisherAuthorization.PinnedPublisherKey,
+    publisherAuthorization.PinnedEvidence,time.Now(),exclusive,
+   );err!=nil{
+    return nil,fmt.Errorf("protected publisher DNS nonce reservation refused: %w",err)
+   }
+   return backend,nil
   },
  )
 }
