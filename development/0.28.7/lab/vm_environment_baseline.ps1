@@ -75,6 +75,31 @@ function Get-VolvVMBaselineState {
     }
 }
 
+# CI-only diagnostics: compare task identity without exposing raw task names,
+# task XML, or definition hashes. The integrity gate below remains fail-closed.
+function Get-VolvVMBaselineTaskDriftHint {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory=$true)][AllowEmptyString()][string]$ExpectedRecord,
+        [Parameter(Mandatory=$true)][AllowEmptyString()][string]$ActualRecord
+    )
+    $a=$ExpectedRecord.LastIndexOf('|')
+    $b=$ActualRecord.LastIndexOf('|')
+    if($a -le 0 -or $b -le 0){return ' (first difference: malformed task record)'}
+    $oldIdentity=$ExpectedRecord.Substring(0,$a)
+    $newIdentity=$ActualRecord.Substring(0,$b)
+    if($oldIdentity -cne $newIdentity){return ' (first difference: task identity changed)'}
+    $scope='other-folder'
+    if($oldIdentity.StartsWith('\Microsoft\Windows\',[StringComparison]::OrdinalIgnoreCase)){
+        $scope='microsoft-windows-folder'
+    }
+    $sha=[Security.Cryptography.SHA256]::Create()
+    try {
+        $identityId=[BitConverter]::ToString($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($oldIdentity))).Replace('-','').Substring(0,16)
+    } finally {$sha.Dispose()}
+    return (' (first difference: definition changed for the same task; scope='+$scope+'; identityId='+$identityId+')')
+}
+
 function Assert-VolvVMBaselineState {
     [CmdletBinding()]
     param(
@@ -106,14 +131,8 @@ function Assert-VolvVMBaselineState {
             if([string]$before[$i] -cne [string]$after[$i]){
                 $detail=''
                 if($field -ceq 'taskRecords' -and $env:GITHUB_ACTIONS -ceq 'true'){
-                    # CI diagnostics only. Do not expose task names, XML or hashes.
-                    $expectedPath=([string]$before[$i]).Split('|')[0]
-                    $actualPath=([string]$after[$i]).Split('|')[0]
-                    if($expectedPath -ceq $actualPath){
-                        $detail=' (first difference: definition changed for the same task)'
-                    } else {
-                        $detail=' (first difference: task identity changed)'
-                    }
+                    # Read-only CI hint; still throw on every mismatch.
+                    $detail=Get-VolvVMBaselineTaskDriftHint -ExpectedRecord ([string]$before[$i]) -ActualRecord ([string]$after[$i])
                 }
                 throw ('NOT VERIFIED: VM '+$field+' changed since Prepare'+$detail)
             }

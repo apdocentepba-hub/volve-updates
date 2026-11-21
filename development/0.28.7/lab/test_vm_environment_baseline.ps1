@@ -58,5 +58,46 @@ foreach($c in $identityCases){
         throw ('Unsafe task exclusion: '+$c.path+$c.name+' shouldExclude='+$c.excluded)
     }
 }
+# ANONYMOUS_DRIFT_HINT: a changing task must still fail closed, no raw values in CI.
+$priorActions=$env:GITHUB_ACTIONS
+try {
+    $env:GITHUB_ACTIONS='true'
+    $changed=$expected | ConvertTo-Json -Depth 6 | ConvertFrom-Json
+    $changed.taskRecords[0]='\VOLVE-CATALOGO|'+('E'*64)
+    $message=''
+    try {$null=Assert-VolvVMBaselineState -Expected $expected -Actual $changed}
+    catch {$message=$_.Exception.Message}
+    if($message -notmatch '^NOT VERIFIED: VM taskRecords changed since Prepare \(first difference: definition changed for the same task; scope=other-folder; identityId=[A-F0-9]{16}\) and rejected '+$cases.Count+' synthetic HOSTS/DNS/all-folder-task drifts')
+Write-Host ('PASS: '+$identityCases.Count+' task ownership cases; only two exact root tasks from current RunId are excluded')
+){
+        throw ('Unexpected CI drift response: '+$message)
+    }
+    if($message.Contains('VOLVE-CATALOGO') -or $message.Contains(('B'*64)) -or $message.Contains(('E'*64))){
+        throw 'CI leaked the task name or definition hash'
+    }
+    $second=''
+    try {$null=Assert-VolvVMBaselineState -Expected $expected -Actual $changed}
+    catch {$second=$_.Exception.Message}
+    if($message -cne $second){throw 'Task identity hash was not deterministic'}
+    $renamed=$expected | ConvertTo-Json -Depth 6 | ConvertFrom-Json
+    $renamed.taskRecords[0]='\UNRELATED-TASK|'+('B'*64)
+    $message=''
+    try {$null=Assert-VolvVMBaselineState -Expected $expected -Actual $renamed}
+    catch {$message=$_.Exception.Message}
+    if($message -cne 'NOT VERIFIED: VM taskRecords changed since Prepare (first difference: task identity changed)'){
+        throw 'Renamed task did not fail closed without exposing identity'
+    }
+    $builtin=Get-VolvVMBaselineTaskDriftHint -ExpectedRecord ('\Microsoft\Windows\Maintenance\Task|'+('A'*64)) -ActualRecord ('\Microsoft\Windows\Maintenance\Task|'+('B'*64))
+    if($builtin -notmatch 'scope=microsoft-windows-folder; identityId=[A-F0-9]{16}'){
+        throw 'Microsoft Windows task folder scope not classified'
+    }
+    if((Get-VolvVMBaselineTaskDriftHint -ExpectedRecord 'bad' -ActualRecord 'bad') -cne ' (first difference: malformed task record)'){
+        throw 'Malformed task record diagnostic failed'
+    }
+} finally {
+    if($null -eq $priorActions){Remove-Item Env:\GITHUB_ACTIONS -ErrorAction SilentlyContinue}
+    else {$env:GITHUB_ACTIONS=$priorActions}
+}
+Write-Host 'PASS: ANONYMOUS_DRIFT_HINT detects task drift without bypass or leaked task details'
 Write-Host ('PASS: VM environment baseline matched and rejected '+$cases.Count+' synthetic HOSTS/DNS/all-folder-task drifts')
 Write-Host ('PASS: '+$identityCases.Count+' task ownership cases; only two exact root tasks from current RunId are excluded')
