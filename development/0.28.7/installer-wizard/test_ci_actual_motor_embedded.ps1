@@ -96,15 +96,25 @@ try {
  # compiled into the CI-only package, not read from the staged motor.
  $verifySource=@'
 $ErrorActionPreference='Stop'
+$receipt=Join-Path $PSScriptRoot 'VOLVE-CI-Verify-Receipt.txt'
+function Stop-CIVerify([string]$Reason){
+ [IO.File]::WriteAllText($receipt,$Reason,[Text.Encoding]::ASCII)
+ exit 27
+}
 try {
  $file=Join-Path $PSScriptRoot 'VOLVE-CI-Real-Motor-0287.exe'
- if(-not (Test-Path -LiteralPath $file -PathType Leaf)){exit 27}
+ if(-not (Test-Path -LiteralPath $file -PathType Leaf)){Stop-CIVerify 'missing-motor'}
  $signature=Get-AuthenticodeSignature -LiteralPath $file -ErrorAction Stop
- if($signature.Status -ne 'Valid' -or $null -eq $signature.SignerCertificate -or
-    $signature.SignerCertificate.Thumbprint -cne '__THUMBPRINT__'){exit 27}
- if((Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash -cne '__MOTOR_SHA256__'){exit 27}
+ if($signature.Status -ne 'Valid'){Stop-CIVerify 'auth-status'}
+ if($null -eq $signature.SignerCertificate){Stop-CIVerify 'missing-cert'}
+ if($signature.SignerCertificate.Thumbprint -cne '__THUMBPRINT__'){Stop-CIVerify 'wrong-cert'}
+ if((Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash -cne '__MOTOR_SHA256__'){Stop-CIVerify 'wrong-hash'}
+ [IO.File]::WriteAllText($receipt,'pass',[Text.Encoding]::ASCII)
  exit 0
-}catch{exit 27}
+}catch{
+ try{[IO.File]::WriteAllText($receipt,'exception',[Text.Encoding]::ASCII)}catch{}
+ exit 27
+}
 '@
  $verifySource=$verifySource.Replace('__THUMBPRINT__',$thumb).Replace('__MOTOR_SHA256__',$hash)
  $verifier=Join-Path $work 'VOLVE-CI-Verify-Motor.ps1'
@@ -200,6 +210,12 @@ SectionEnd
    $stageSigner=[string](Get-AuthenticodeSignature -LiteralPath (Join-Path $stage 'VOLVE-CI-Real-Motor-0287.exe')).Status
    $stageHashEquals=((Get-FileHash -LiteralPath (Join-Path $stage 'VOLVE-CI-Real-Motor-0287.exe') -Algorithm SHA256).Hash -ceq $hash)
   }
+  $verifyReason='missing'
+  $reasonPath=Join-Path $stage 'VOLVE-CI-Verify-Receipt.txt'
+  if(Test-Path -LiteralPath $reasonPath -PathType Leaf){
+   $verifyReason=(Get-Content -LiteralPath $reasonPath -Raw).Trim()
+   if($verifyReason -cnotin @('missing-motor','auth-status','missing-cert','wrong-cert','wrong-hash','pass','exception')){$verifyReason='invalid'}
+  }
   $rawChild='missing'
   $childReceipt=Join-Path $stage 'VOLVE-CI-Checker-ExitCode.txt'
   if(Test-Path -LiteralPath $childReceipt -PathType Leaf){
@@ -216,15 +232,18 @@ SectionEnd
     $stagedWin32=$LASTEXITCODE
     $stagedSignerMatch=([string](Get-AuthenticodeSignature -LiteralPath (Join-Path $stage 'VOLVE-CI-Real-Motor-0287.exe')).SignerCertificate.Thumbprint -ceq $thumb)
   }
-  Write-Host ("CI MOTOR STAGE DIAGNOSTIC: nsisExit=$goodExit; childExit=$rawChild; stageExists=$stageExists; motorExists=$motorExists; bundleExists=$bundleExists; verifierExists=$verifierExists; signatureStatus=$stageSigner; certPinMatch=$stagedSignerMatch; exactHash=$stageHashEquals; win64ManualExit=$stagedWin64; win32ManualExit=$stagedWin32")
+  Write-Host ("CI MOTOR STAGE DIAGNOSTIC: nsisExit=$goodExit; childExit=$rawChild; verifyReason=$verifyReason; stageExists=$stageExists; motorExists=$motorExists; bundleExists=$bundleExists; verifierExists=$verifierExists; signatureStatus=$stageSigner; certPinMatch=$stagedSignerMatch; exactHash=$stageHashEquals; win64ManualExit=$stagedWin64; win32ManualExit=$stagedWin32")
   throw 'Actual signed motor/bundle NSIS stage refused valid inputs'
  }
  $goodStage=$stages[0]
  $names=@(Get-ChildItem -LiteralPath $goodStage -File -ErrorAction Stop|Select-Object -ExpandProperty Name|Sort-Object)
- $expected=@('VOLVE-CI-Checker-ExitCode.txt','VOLVE-CI-Real-Motor-0287.exe','VOLVE-CI-Signed-Container.exe','VOLVE-CI-Verify-Motor.ps1')|Sort-Object
+ $expected=@('VOLVE-CI-Checker-ExitCode.txt','VOLVE-CI-Real-Motor-0287.exe','VOLVE-CI-Signed-Container.exe','VOLVE-CI-Verify-Motor.ps1','VOLVE-CI-Verify-Receipt.txt')|Sort-Object
  if(($names -join '|') -cne ($expected -join '|')){throw 'Embedded NSIS package staged unexpected files'}
  if((Get-FileHash -LiteralPath (Join-Path $goodStage 'VOLVE-CI-Real-Motor-0287.exe') -Algorithm SHA256).Hash -cne $hash){
   throw 'Actual motor modified by NSIS staging'
+ }
+ if((Get-Content -LiteralPath (Join-Path $goodStage 'VOLVE-CI-Verify-Receipt.txt') -Raw).Trim() -cne 'pass'){
+  throw 'Embedded motor verifier did not attest real motor'
  }
  $badCandidate=Build-VolvCICandidate 'motor-tampered' $tampered
  if((Run-VolvCICandidate $badCandidate) -ne 27){
