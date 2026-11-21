@@ -20,13 +20,31 @@ function Get-VolvCITaskPseudonym {
     } finally {$sha.Dispose()}
 }
 
+# Only the broad account category is exposed, never the EventData user value.
+# Event 140 contains UserName on common Windows builds; missing data stays unknown.
+# The actor account does not identify the process that made the change.
+function Get-VolvCIEventActorClass {
+    [CmdletBinding()]
+    param([Parameter(Mandatory=$true)][System.Xml.XmlDocument]$Document)
+    $users=@($Document.SelectNodes("/*[local-name()='Event']/*[local-name()='EventData']/*[local-name()='Data']") |
+        Where-Object {$_.GetAttribute('Name') -ceq 'UserName'})
+    if($users.Count -ne 1){return 'unknown'}
+    $user=[string]$users[0].InnerText
+    if([string]::IsNullOrWhiteSpace($user)){return 'unknown'}
+    $user=$user.Trim()
+    if($user -in @('SYSTEM','NT AUTHORITY\SYSTEM','S-1-5-18')){return 'system'}
+    if($user -in @('NETWORK SERVICE','NT AUTHORITY\NETWORK SERVICE','S-1-5-20')){return 'networkService'}
+    if($user -in @('LOCAL SERVICE','NT AUTHORITY\LOCAL SERVICE','S-1-5-19')){return 'localService'}
+    return 'other'
+}
+
 function Get-VolvCIEventSummary {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory=$true)][string]$TaskIdentity,
         [Parameter(Mandatory=$true)][AllowEmptyCollection()][string[]]$EventXML
     )
-    $counts=[ordered]@{registration=0;updated=0;deleted=0}
+    $counts=[ordered]@{registration=0;updated=0;deleted=0;system=0;networkService=0;localService=0;other=0;unknown=0}
     foreach($raw in $EventXML){
         $doc=[System.Xml.XmlDocument]::new()
         $doc.XmlResolver=$null
@@ -47,6 +65,10 @@ function Get-VolvCIEventSummary {
         if(-not [string]::Equals([string]$taskNodes[0].InnerText,$TaskIdentity,
                [StringComparison]::OrdinalIgnoreCase)){continue}
         $counts[$kind]++
+        if($kind -ceq 'updated'){
+            $class=Get-VolvCIEventActorClass -Document $doc
+            $counts[$class]++
+        }
     }
     return [pscustomobject]$counts
 }
@@ -55,7 +77,8 @@ if($Mode -ceq 'Test'){
     $fixture='\Microsoft\Windows\Synthetic\NeverPublicTask'
     # Constant well-formed fixtures: no PowerShell array/concatenation precedence.
     $xmls=@(
-        '<Event><System><EventID>140</EventID></System><EventData><Data Name="TaskName">\Microsoft\Windows\Synthetic\NeverPublicTask</Data><Data Name="UserContext">SECRET-ACCOUNT</Data></EventData></Event>'
+        '<Event><System><EventID>140</EventID></System><EventData><Data Name="TaskName">\Microsoft\Windows\Synthetic\NeverPublicTask</Data><Data Name="UserName">NT AUTHORITY\NETWORK SERVICE</Data></EventData></Event>'
+        '<Event><System><EventID>140</EventID></System><EventData><Data Name="TaskName">\Microsoft\Windows\Synthetic\NeverPublicTask</Data><Data Name="UserName">DOMAIN\PRIVATE-ACCOUNT</Data></EventData></Event>'
         '<Event><System><EventID>140</EventID></System><EventData><Data Name="TaskName">\Microsoft\Windows\Synthetic\NeverPublicTask</Data></EventData></Event>'
         '<Event><System><EventID>106</EventID></System><EventData><Data Name="TaskName">\Microsoft\Windows\Synthetic\NeverPublicTask</Data></EventData></Event>'
         '<Event><System><EventID>141</EventID></System><EventData><Data Name="TaskName">\Microsoft\Windows\Synthetic\NeverPublicTask</Data></EventData></Event>'
@@ -68,7 +91,9 @@ if($Mode -ceq 'Test'){
         throw 'NOT VERIFIED: Microsoft Software Protection task identity regression'
     }
     $summary=Get-VolvCIEventSummary -TaskIdentity $fixture -EventXML $xmls
-    if($summary.registration -ne 1 -or $summary.updated -ne 2 -or $summary.deleted -ne 1){
+    if($summary.registration -ne 1 -or $summary.updated -ne 3 -or $summary.deleted -ne 1 -or
+       $summary.networkService -ne 1 -or $summary.other -ne 1 -or $summary.unknown -ne 1 -or
+       $summary.system -ne 0 -or $summary.localService -ne 0){
         throw 'NOT VERIFIED: Scheduler event correlation failed synthetic event-count tests'
     }
     $empty=Get-VolvCIEventSummary -TaskIdentity $fixture -EventXML @()
@@ -83,7 +108,7 @@ if($Mode -ceq 'Test'){
     try{$null=Get-VolvCIEventSummary -TaskIdentity $fixture -EventXML @($badEvent)}
     catch {if($_.Exception.Message -like 'NOT VERIFIED: invalid synthetic*'){$rejected=$true}else{throw}}
     if(-not $rejected){throw 'NOT VERIFIED: malformed Scheduler event was not rejected'}
-    Write-Host 'PASS: CI_TASK_EVENT_DIAGNOSTIC matches synthetic events 106/140/141; rejects wrong task, unlisted ID and malformed XML'
+    Write-Host 'PASS: CI_TASK_EVENT_DIAGNOSTIC matches synthetic events 106/140/141, classifies actor accounts, and rejects wrong task, unlisted ID and malformed XML'
     Write-Host 'PASS: CI_TASK_EVENT_DIAGNOSTIC exposes no task names, event identities, usernames or command arguments'
     return
 }
@@ -127,4 +152,8 @@ try {
 $summary=Get-VolvCIEventSummary -TaskIdentity $fullIdentity -EventXML $eventXml
 Write-Host ('CI TASK EVENT POSTMORTEM: identityId='+$IdentityId.ToUpperInvariant()+
     '; registered='+$summary.registration+'; updated='+$summary.updated+
-    '; deleted='+$summary.deleted+'; identityClass='+$identityClass+'; scanLimit=2000; attribution=UNPROVEN; originalBaseline=FAILED')
+    '; deleted='+$summary.deleted+'; updateActorSystem='+$summary.system+
+    '; updateActorNetworkService='+$summary.networkService+
+    '; updateActorLocalService='+$summary.localService+
+    '; updateActorOther='+$summary.other+'; updateActorUnknown='+$summary.unknown+
+    '; identityClass='+$identityClass+'; scanLimit=2000; processAttribution=UNPROVEN; originalBaseline=FAILED')
