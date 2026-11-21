@@ -66,6 +66,12 @@ func activateVOLVEDNSWithRecovery(
         defer cancel()
         if rescueErr := guard.RecoverIndependently(recoveryCtx, independentlyPinnedSHA256); rescueErr != nil {
             err = errors.Join(err, fmt.Errorf("CRITICAL: independent DNS recovery unverified; protected journal must remain pending: %w", rescueErr))
+            return
+        }
+        // An acknowledgment from a watchdog is not proof that Windows DNS
+        // was actually restored. Independently inspect every family again.
+        if readbackErr := verifyDNSActivationTransition(recoveryCtx, records, backend, 0); readbackErr != nil {
+            err = errors.Join(err, fmt.Errorf("CRITICAL: independent recovery acknowledged completion but original DNS readback failed: %w", readbackErr))
         }
     }()
 
