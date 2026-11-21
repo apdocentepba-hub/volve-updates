@@ -67,9 +67,7 @@ try {
     $message=''
     try {$null=Assert-VolvVMBaselineState -Expected $expected -Actual $changed}
     catch {$message=$_.Exception.Message}
-    if($message -notmatch '^NOT VERIFIED: VM taskRecords changed since Prepare \(first difference: definition changed for the same task; scope=other-folder; identityId=[A-F0-9]{16}\) and rejected '+$cases.Count+' synthetic HOSTS/DNS/all-folder-task drifts')
-Write-Host ('PASS: '+$identityCases.Count+' task ownership cases; only two exact root tasks from current RunId are excluded')
-){
+    if($message -notmatch '^NOT VERIFIED: VM taskRecords changed since Prepare \(first difference: definition changed for the same task; scope=other-folder; identityId=[A-F0-9]{16}\)$'){
         throw ('Unexpected CI drift response: '+$message)
     }
     if($message.Contains('VOLVE-CATALOGO') -or $message.Contains(('B'*64)) -or $message.Contains(('E'*64))){
