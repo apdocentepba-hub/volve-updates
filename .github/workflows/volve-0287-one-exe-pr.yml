@@ -250,6 +250,13 @@ jobs:
           Write-Host 'CHECKPOINT 5/5 PASS: dual-signed Windows Authenticode + pinned SHA256 + Ed25519 bundle + staged integrity + negative cases; NO INSTALL NO DNS NO RELEASE'
           exit 0
 
+      - name: CI-only single NSIS EXE includes actual compiled DNS motor and rejects tamper
+        timeout-minutes: 7
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          & 'development/0.28.7/installer-wizard/test_ci_actual_motor_embedded.ps1' -GoodBundle $env:VOLVE_CI_AUTHENTICODE_OS_BINARY -MotorSourceRoot 'build/codigo'
+          if(-not $?){throw 'Actual DNS motor NSIS embedded stage/negative tamper failed'}
       - name: Prepare verified seven-part INACTIVE CI version (never install)
         timeout-minutes: 4
         shell: pwsh
@@ -705,10 +712,3 @@ jobs:
         run: |
           $ErrorActionPreference='Stop'
           & 'development/0.28.7/installer-wizard/test_ci_embedded_candidate.ps1' -GoodBundle $env:VOLVE_CI_AUTHENTICODE_OS_BINARY -TamperedBundle (Join-Path $env:RUNNER_TEMP 'VOLVE-CI-Tampered-Container.exe')
-      - name: CI-only single NSIS EXE includes actual compiled DNS motor and rejects tamper
-        timeout-minutes: 7
-        shell: pwsh
-        run: |
-          $ErrorActionPreference='Stop'
-          & 'development/0.28.7/installer-wizard/test_ci_actual_motor_embedded.ps1' -GoodBundle $env:VOLVE_CI_AUTHENTICODE_OS_BINARY -MotorSourceRoot 'build/codigo'
-          if(-not $?){throw 'Actual DNS motor NSIS embedded stage/negative tamper failed'}
