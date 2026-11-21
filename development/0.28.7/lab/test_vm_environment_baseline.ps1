@@ -3,7 +3,7 @@ $ErrorActionPreference='Stop'
 Set-StrictMode -Version Latest
 . (Join-Path $PSScriptRoot 'vm_environment_baseline.ps1')
 $expected=[pscustomobject][ordered]@{
-    schema=1
+    schema=2
     kind='VOLVE_VM_READ_ONLY_ENVIRONMENT'
     hostsSha256=('A'*64)
     dnsRecords=@('2|2|192.0.2.10,192.0.2.11','2|23|2001:db8::53')
@@ -19,7 +19,7 @@ $cases=@(
     @{field='dnsRecords';value=@('2|2|192.0.2.10,192.0.2.11')},
     @{field='taskRecords';value=@(('\VOLVE-CATALOGO|'+('E'*64)),('\Microsoft\Windows\Maintenance\WindowsMaintenance|'+('C'*64)))},
     @{field='taskRecords';value=@(('\Microsoft\Windows\Maintenance\WindowsMaintenance|'+('C'*64)))},
-    @{field='schema';value=2},
+    @{field='schema';value=3},
     @{field='kind';value='MALFORMED'},
     @{field='hostsSha256';remove=$true},
     @{field='dnsRecords';remove=$true},
@@ -102,7 +102,7 @@ $testXML=@'
 <Task xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task" version="1.4"><RegistrationInfo><Author>LAB</Author></RegistrationInfo><Triggers><BootTrigger><Enabled>true</Enabled></BootTrigger></Triggers><Principals><Principal id="Author"><UserId>S-1-5-18</UserId></Principal></Principals><Settings><Enabled>true</Enabled></Settings><Actions Context="Author"><Exec><Command>cmd.exe</Command></Exec></Actions></Task>
 '@
 $baselineRecord=Get-VolvVMBaselineTaskRecord -TaskPath '\' -TaskName 'Synthetic-Task' -XMLText $testXML
-if(@($baselineRecord.Split('|')).Count -ne 13){throw 'Missing five section hashes plus six trigger forensic hashes'}
+if(@($baselineRecord.Split('|')).Count -ne 14){throw 'Missing five section hashes, six trigger forensic hashes and masked full-document digest'}
 $mutations=@(
     @{name='RegistrationInfo';old='<Author>LAB</Author>';new='<Author>OTHER</Author>'},
     @{name='Triggers';old='<BootTrigger><Enabled>true</Enabled></BootTrigger>';new='<BootTrigger><Enabled>false</Enabled></BootTrigger>'},
@@ -178,6 +178,57 @@ $nonTriggerRecord=Get-VolvVMBaselineTaskRecord -TaskPath '\' -TaskName 'Syntheti
 $noLeak=Get-VolvVMBaselineTaskDriftHint -ExpectedRecord $triggerOrigin -ActualRecord $nonTriggerRecord
 if($noLeak -match 'changedTriggerFields='){throw 'Unrelated action was mislabeled as a trigger change'}
 Write-Host 'PASS: SUBFIELD_TRIGGER_DIAGNOSTICS classifies five synthetic trigger mutations, fails closed, and leaks no XML values'
+
+# SPP special-case forensics is diagnostic only: even exact value-only drift
+# MUST keep the integrity gate red pending actor attribution.
+$sppTaskName='SvcRestartTask'
+$sppTaskPath='\Microsoft\Windows\SoftwareProtectionPlatform\'
+$sppOldXML=$triggerProbeXML
+$sppNewXML=$sppOldXML.Replace('2026-01-01T00:00:00','2026-01-02T00:00:00')
+$sppOld=Get-VolvVMBaselineTaskRecord -TaskPath $sppTaskPath -TaskName $sppTaskName -XMLText $sppOldXML
+$sppNew=Get-VolvVMBaselineTaskRecord -TaskPath $sppTaskPath -TaskName $sppTaskName -XMLText $sppNewXML
+if($sppOld.Split('|').Count -ne 14){throw 'SPP digest missing masked whole-document hash'}
+$sppHint=Get-VolvVMBaselineTaskDriftHint -ExpectedRecord $sppOld -ActualRecord $sppNew
+if(-not $sppHint.Contains('changedSections=Triggers; changedTriggerFields=StartBoundary; boundedSPPStartBoundary=OBSERVED_NOT_EXEMPT)')){
+    throw ('Isolated SPP date value was not labeled non-exempt: '+$sppHint)
+}
+$oldEnv=$expected|ConvertTo-Json -Depth 6|ConvertFrom-Json
+$newEnv=$expected|ConvertTo-Json -Depth 6|ConvertFrom-Json
+$oldEnv.taskRecords=@($sppOld)
+$newEnv.taskRecords=@($sppNew)
+$denied=$false
+try{$null=Assert-VolvVMBaselineState -Expected $oldEnv -Actual $newEnv}
+catch{if($_.Exception.Message -like 'NOT VERIFIED: VM taskRecords changed since Prepare*'){$denied=$true}else{throw}}
+if(-not $denied){throw 'SPP drift illegally bypassed strict integrity gate'}
+$sppMutations=@(
+    @{kind='action'; xml=$sppNewXML.Replace('<Command>cmd.exe</Command>','<Command>notepad.exe</Command>')},
+    @{kind='principal'; xml=$sppNewXML.Replace('<UserId>S-1-5-18</UserId>','<UserId>S-1-5-19</UserId>')},
+    @{kind='enabled'; xml=$sppNewXML.Replace('<Enabled>true</Enabled>','<Enabled>false</Enabled>')},
+    @{kind='repetition'; xml=$sppNewXML.Replace('<Interval>PT15M</Interval>','<Interval>PT30M</Interval>')},
+    @{kind='registration'; xml=$sppNewXML.Replace('<Author>LAB</Author>','<Author>OTHER</Author>')},
+    @{kind='root'; xml=$sppNewXML.Replace('version="1.4"','version="1.5"')}
+)
+foreach($case in $sppMutations){
+    if($case.xml -ceq $sppNewXML){throw ('SPP fixture did not mutate '+$case.kind)}
+    $bad=Get-VolvVMBaselineTaskRecord -TaskPath $sppTaskPath -TaskName $sppTaskName -XMLText $case.xml
+    $hint=Get-VolvVMBaselineTaskDriftHint -ExpectedRecord $sppOld -ActualRecord $bad
+    if($hint.Contains('boundedSPPStartBoundary=')){throw ('SPP '+$case.kind+' falsely treated as only a date')}
+    $newEnv.taskRecords=@($bad)
+    $blocked=$false
+    try{$null=Assert-VolvVMBaselineState -Expected $oldEnv -Actual $newEnv}
+    catch{if($_.Exception.Message -like 'NOT VERIFIED: VM taskRecords changed since Prepare*'){$blocked=$true}else{throw}}
+    if(-not $blocked){throw ('SPP '+$case.kind+' change bypassed strict integrity')}
+}
+$foreign=Get-VolvVMBaselineTaskRecord -TaskPath '\Microsoft\Windows\Unrelated\' -TaskName $sppTaskName -XMLText $sppNewXML
+if((Get-VolvVMBaselineTaskDriftHint -ExpectedRecord $sppOld -ActualRecord $foreign).Contains('boundedSPPStartBoundary=')){
+    throw 'Unrelated Scheduler task treated as protected SPP identity'
+}
+$legacy13=$sppOld.Substring(0,$sppOld.LastIndexOf('|'))
+if((Get-VolvVMBaselineTaskDriftHint -ExpectedRecord $legacy13 -ActualRecord $sppNew).Contains('boundedSPPStartBoundary=')){
+    throw 'Legacy digest without whole XML evidence treated as SPP proof'
+}
+Write-Host 'PASS: SPP_MASKED_WHOLE_XML_DIAGNOSTIC no-exemption; isolated StartBoundary classified, six unsafe mutations rejected, foreign task and legacy schema rejected'
+
 $rejectedDoctype=$false
 try {$null=Get-VolvVMBaselineTaskRecord -TaskPath '\' -TaskName 'Synthetic-Task' -XMLText ('<!DOCTYPE Task [<!ENTITY x "bad">]>'+$testXML)}
 catch {$rejectedDoctype=$true}
