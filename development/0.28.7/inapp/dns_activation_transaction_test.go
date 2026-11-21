@@ -1,0 +1,197 @@
+package motorupdate
+
+import (
+    "context"
+    "errors"
+    "strings"
+    "testing"
+)
+
+const activationTestGUID = "{12345678-1234-1234-1234-123456789abc}"
+
+type activationTestBackend struct {
+    current map[string]DNSServerState
+    writes int
+    failOn int
+    cancel context.CancelFunc
+}
+
+func activationKey(guid string, family DNSAddressFamily) string {
+    return strings.ToLower(guid) + "|" + string(family)
+}
+func copyActivationState(s DNSServerState) DNSServerState {
+    s.Servers=append([]string(nil),s.Servers...)
+    return s
+}
+func (b *activationTestBackend) Read(ctx context.Context, guid string, family DNSAddressFamily)(DNSServerState,error){
+    if err:=ctx.Err();err!=nil{return DNSServerState{},err}
+    s,ok:=b.current[activationKey(guid,family)]
+    if !ok{return DNSServerState{},errors.New("adapter not found")}
+    return copyActivationState(s),nil
+}
+func (b *activationTestBackend) Apply(ctx context.Context, next DNSServerState)error{
+    if err:=ctx.Err();err!=nil{return err}
+    b.writes++
+    b.current[activationKey(next.InterfaceGUID,next.Family)]=copyActivationState(next)
+    if b.cancel!=nil && b.writes==1 { b.cancel() }
+    if b.failOn==b.writes{return errors.New("synthetic DNS driver failed after mutation")}
+    return nil
+}
+
+type activationTestGuard struct {
+    backend *activationTestBackend
+    originals []DNSServerState
+    armCalls,healthCalls,recoverCalls,commitCalls int
+    armedErr,healthErr,commitErr,recoverErr error
+}
+func(g *activationTestGuard) VerifyArmed(ctx context.Context,pin string)error{
+    if err:=ctx.Err();err!=nil{return err}
+    g.armCalls++
+    if len(pin)!=64{return errors.New("missing independent journal digest")}
+    return g.armedErr
+}
+func(g *activationTestGuard) VerifyLiveProtection(ctx context.Context,pin string)error{
+    if err:=ctx.Err();err!=nil{return err}
+    g.healthCalls++
+    return g.healthErr
+}
+func(g *activationTestGuard) RecoverIndependently(ctx context.Context,pin string)error{
+    g.recoverCalls++
+    if err:=ctx.Err();err!=nil{return err}
+    if g.recoverErr!=nil{return g.recoverErr}
+    for _,original:=range g.originals {
+        g.backend.current[activationKey(original.InterfaceGUID,original.Family)]=copyActivationState(original)
+    }
+    return nil
+}
+func(g *activationTestGuard) CommitActive(ctx context.Context,pin string)error{
+    if err:=ctx.Err();err!=nil{return err}
+    g.commitCalls++
+    return g.commitErr
+}
+func prepareActivationTest(t *testing.T)([]byte,string,*activationTestBackend,*activationTestGuard){
+    t.Helper()
+    originals:=[]DNSServerState{
+        {InterfaceGUID:activationTestGUID,Family:DNSIPv4,Mode:DNSStatic,Servers:[]string{"9.9.9.9","1.1.1.1"}},
+        {InterfaceGUID:activationTestGUID,Family:DNSIPv6,Mode:DNSAutomatic},
+    }
+    raw,pin,err:=BuildDNSOriginalJournal(context.Background(),originals)
+    if err!=nil{t.Fatalf("build test original DNS journal: %v",err)}
+    b:=&activationTestBackend{current:map[string]DNSServerState{}}
+    for _,s:=range originals{b.current[activationKey(s.InterfaceGUID,s.Family)]=copyActivationState(s)}
+    g:=&activationTestGuard{backend:b,originals:originals}
+    return raw,pin,b,g
+}
+func assertActivationTestState(t *testing.T,b *activationTestBackend,original bool){
+    t.Helper()
+    for _,fam:=range []DNSAddressFamily{DNSIPv4,DNSIPv6}{
+        current,err:=b.Read(context.Background(),activationTestGUID,fam)
+        if err!=nil{t.Fatal(err)}
+        if original{
+            mode:=DNSAutomatic
+            addresses:=[]string(nil)
+            if fam==DNSIPv4{mode=DNSStatic;addresses=[]string{"9.9.9.9","1.1.1.1"}}
+            if !sameDNSState(current,DNSServerState{InterfaceGUID:activationTestGUID,Family:fam,Mode:mode,Servers:addresses}){
+                t.Fatalf("original DNS state not restored for %s: %#v",fam,current)
+            }
+        }else{
+            local:="127.0.0.1"
+            if fam==DNSIPv6{local="::1"}
+            if !sameDNSState(current,DNSServerState{InterfaceGUID:activationTestGUID,Family:fam,Mode:DNSStatic,Servers:[]string{local}}){
+                t.Fatalf("local DNS target not verified for %s: %#v",fam,current)
+            }
+        }
+    }
+}
+
+func TestProtectedDNSActivationAllFamilyHealthyCommit(t *testing.T){
+    raw,pin,b,g:=prepareActivationTest(t)
+    if err:=activateVOLVEDNSWithRecovery(context.Background(),raw,pin,b,g);err!=nil{t.Fatal(err)}
+    if b.writes!=2||g.recoverCalls!=0||g.healthCalls!=1||g.commitCalls!=1||g.armCalls<3{
+        t.Fatalf("incomplete protected transaction: writes=%d guard=%+v",b.writes,g)
+    }
+    assertActivationTestState(t,b,false)
+}
+func TestProtectedDNSActivationRejectsUnpinnedOrModifiedJournalWithoutWrites(t *testing.T){
+    for _,variant:=range []string{"wrong-pin","altered-payload","no-guard"}{
+        t.Run(variant,func(t *testing.T){
+            raw,pin,b,g:=prepareActivationTest(t)
+            var guard DNSActivationSafetyGuard=g
+            switch variant{
+            case "wrong-pin":pin=strings.Repeat("0",64)
+            case "altered-payload":raw=append([]byte(nil),raw...);raw[len(raw)-2]^=1
+            case "no-guard":guard=nil
+            }
+            if err:=activateVOLVEDNSWithRecovery(context.Background(),raw,pin,b,guard);err==nil{
+                t.Fatal("unsigned journal or missing recovery guard accepted")
+            }
+            if b.writes!=0||g.recoverCalls!=0||g.commitCalls!=0{t.Fatal("mutation or recovery on untrusted input")}
+            assertActivationTestState(t,b,true)
+        })
+    }
+}
+func TestProtectedDNSActivationPreflightRejectsOtherFamilyBeforeAnyMutation(t *testing.T){
+    raw,pin,b,g:=prepareActivationTest(t)
+    b.current[activationKey(activationTestGUID,DNSIPv6)]=DNSServerState{
+        InterfaceGUID:activationTestGUID,Family:DNSIPv6,Mode:DNSStatic,Servers:[]string{"2001:4860:4860::8888"},
+    }
+    err:=activateVOLVEDNSWithRecovery(context.Background(),raw,pin,b,g)
+    if err==nil||!strings.Contains(err.Error(),"preflight"){t.Fatalf("preflight did not reject external IPv6: %v",err)}
+    if b.writes!=0||g.recoverCalls!=0{t.Fatal("preflight wrote DNS or launched recovery")}
+}
+func TestProtectedDNSActivationRefusesUnarmedWatchdogWithoutWrites(t *testing.T){
+    raw,pin,b,g:=prepareActivationTest(t)
+    g.armedErr=errors.New("watchdog not armed")
+    err:=activateVOLVEDNSWithRecovery(context.Background(),raw,pin,b,g)
+    if err==nil||b.writes!=0||g.recoverCalls!=0||g.commitCalls!=0{
+        t.Fatalf("missing watchdog was not fail-closed: %v",err)
+    }
+    assertActivationTestState(t,b,true)
+}
+func TestProtectedDNSActivationPartialMutationAlwaysRequestsIndependentRecovery(t *testing.T){
+    raw,pin,b,g:=prepareActivationTest(t)
+    b.failOn=2 // driver changes IPv6 THEN returns an error
+    err:=activateVOLVEDNSWithRecovery(context.Background(),raw,pin,b,g)
+    if err==nil||b.writes!=2||g.recoverCalls!=1||g.commitCalls!=0{
+        t.Fatalf("partial failure was incorrectly committed: %v",err)
+    }
+    assertActivationTestState(t,b,true)
+}
+func TestProtectedDNSActivationUnhealthyDNSRestoresOriginal(t *testing.T){
+    raw,pin,b,g:=prepareActivationTest(t)
+    g.healthErr=errors.New("independent allowed-domain and blocked-domain checks failed")
+    err:=activateVOLVEDNSWithRecovery(context.Background(),raw,pin,b,g)
+    if err==nil||g.healthCalls!=1||g.recoverCalls!=1||g.commitCalls!=0{
+        t.Fatalf("unhealthy DNS protection was not rolled back: %v",err)
+    }
+    assertActivationTestState(t,b,true)
+}
+func TestProtectedDNSActivationCommitFailureRestoresOriginal(t *testing.T){
+    raw,pin,b,g:=prepareActivationTest(t)
+    g.commitErr=errors.New("durable protected receipt failed")
+    err:=activateVOLVEDNSWithRecovery(context.Background(),raw,pin,b,g)
+    if err==nil||g.commitCalls!=1||g.recoverCalls!=1{
+        t.Fatalf("commit failure did not request independent rescue: %v",err)
+    }
+    assertActivationTestState(t,b,true)
+}
+func TestProtectedDNSActivationCancelledInstallerStillRequestsRescue(t *testing.T){
+    raw,pin,b,g:=prepareActivationTest(t)
+    ctx,cancel:=context.WithCancel(context.Background())
+    defer cancel()
+    b.cancel=cancel
+    err:=activateVOLVEDNSWithRecovery(ctx,raw,pin,b,g)
+    if err==nil||g.recoverCalls!=1||g.commitCalls!=0{
+        t.Fatalf("cancelled installer skipped independent rescue: %v",err)
+    }
+    assertActivationTestState(t,b,true)
+}
+func TestProtectedDNSActivationNeverClaimsSuccessWhenRecoveryFails(t *testing.T){
+    raw,pin,b,g:=prepareActivationTest(t)
+    b.failOn=1
+    g.recoverErr=errors.New("SYSTEM recovery process unreachable")
+    err:=activateVOLVEDNSWithRecovery(context.Background(),raw,pin,b,g)
+    if err==nil||!strings.Contains(err.Error(),"CRITICAL")||g.recoverCalls!=1||g.commitCalls!=0{
+        t.Fatalf("failed emergency recovery was not reported: %v",err)
+    }
+}
