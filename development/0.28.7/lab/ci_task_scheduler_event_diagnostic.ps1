@@ -53,13 +53,14 @@ function Get-VolvCIEventSummary {
 
 if($Mode -ceq 'Test'){
     $fixture='\Microsoft\Windows\Synthetic\NeverPublicTask'
+    # Constant well-formed fixtures: no PowerShell array/concatenation precedence.
     $xmls=@(
-        '<Event><System><EventID>140</EventID></System><EventData><Data Name="TaskName">'+$fixture+'</Data><Data Name="UserContext">SECRET-ACCOUNT</Data></EventData></Event>',
-        '<Event><System><EventID>140</EventID></System><EventData><Data Name="TaskName">'+$fixture+'</Data></EventData></Event>',
-        '<Event><System><EventID>106</EventID></System><EventData><Data Name="TaskName">'+$fixture+'</Data></EventData></Event>',
-        '<Event><System><EventID>141</EventID></System><EventData><Data Name="TaskName">'+$fixture+'</Data></EventData></Event>',
-        '<Event><System><EventID>140</EventID></System><EventData><Data Name="TaskName">\Other\Task</Data></EventData></Event>',
-        '<Event><System><EventID>200</EventID></System><EventData><Data Name="TaskName">'+$fixture+'</Data></EventData></Event>'
+        '<Event><System><EventID>140</EventID></System><EventData><Data Name="TaskName">\Microsoft\Windows\Synthetic\NeverPublicTask</Data><Data Name="UserContext">SECRET-ACCOUNT</Data></EventData></Event>'
+        '<Event><System><EventID>140</EventID></System><EventData><Data Name="TaskName">\Microsoft\Windows\Synthetic\NeverPublicTask</Data></EventData></Event>'
+        '<Event><System><EventID>106</EventID></System><EventData><Data Name="TaskName">\Microsoft\Windows\Synthetic\NeverPublicTask</Data></EventData></Event>'
+        '<Event><System><EventID>141</EventID></System><EventData><Data Name="TaskName">\Microsoft\Windows\Synthetic\NeverPublicTask</Data></EventData></Event>'
+        '<Event><System><EventID>140</EventID></System><EventData><Data Name="TaskName">\Other\Task</Data></EventData></Event>'
+        '<Event><System><EventID>200</EventID></System><EventData><Data Name="TaskName">\Microsoft\Windows\Synthetic\NeverPublicTask</Data></EventData></Event>'
     )
     $summary=Get-VolvCIEventSummary -TaskIdentity $fixture -EventXML $xmls
     if($summary.registration -ne 1 -or $summary.updated -ne 2 -or $summary.deleted -ne 1){
