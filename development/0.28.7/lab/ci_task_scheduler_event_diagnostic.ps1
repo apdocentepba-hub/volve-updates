@@ -62,6 +62,11 @@ if($Mode -ceq 'Test'){
         '<Event><System><EventID>140</EventID></System><EventData><Data Name="TaskName">\Other\Task</Data></EventData></Event>'
         '<Event><System><EventID>200</EventID></System><EventData><Data Name="TaskName">\Microsoft\Windows\Synthetic\NeverPublicTask</Data></EventData></Event>'
     )
+    # Stable known Windows task identity, derived from TaskPath+TaskName.
+    $spp='\Microsoft\Windows\SoftwareProtectionPlatform\SvcRestartTask'
+    if((Get-VolvCITaskPseudonym -Identity $spp) -cne '4023F1322DB1C44E'){
+        throw 'NOT VERIFIED: Microsoft Software Protection task identity regression'
+    }
     $summary=Get-VolvCIEventSummary -TaskIdentity $fixture -EventXML $xmls
     if($summary.registration -ne 1 -or $summary.updated -ne 2 -or $summary.deleted -ne 1){
         throw 'NOT VERIFIED: Scheduler event correlation failed synthetic event-count tests'
@@ -100,6 +105,11 @@ if($matchingTasks.Count -ne 1){
     return
 }
 $fullIdentity=[string]$matchingTasks[0].TaskPath+[string]$matchingTasks[0].TaskName
+$expectedSPP='\Microsoft\Windows\SoftwareProtectionPlatform\SvcRestartTask'
+$identityClass='unattributed'
+if([string]::Equals($fullIdentity,$expectedSPP,[StringComparison]::Ordinal)){
+    $identityClass='windows-software-protection-service-restart'
+}
 $eventXml=@()
 try {
     $events=@(Get-WinEvent -FilterHashtable @{
@@ -117,4 +127,4 @@ try {
 $summary=Get-VolvCIEventSummary -TaskIdentity $fullIdentity -EventXML $eventXml
 Write-Host ('CI TASK EVENT POSTMORTEM: identityId='+$IdentityId.ToUpperInvariant()+
     '; registered='+$summary.registration+'; updated='+$summary.updated+
-    '; deleted='+$summary.deleted+'; scanLimit=2000; attribution=UNPROVEN; originalBaseline=FAILED')
+    '; deleted='+$summary.deleted+'; identityClass='+$identityClass+'; scanLimit=2000; attribution=UNPROVEN; originalBaseline=FAILED')
