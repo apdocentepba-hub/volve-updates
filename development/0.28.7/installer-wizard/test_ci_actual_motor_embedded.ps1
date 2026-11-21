@@ -30,6 +30,9 @@ $compiler=@('C:\Program Files (x86)\NSIS\makensis.exe','C:\Program Files\NSIS\ma
 if(-not $compiler){throw 'REFUSED: NSIS compiler unavailable'}
 $thumb=[string]$env:VOLVE_CI_CERT_THUMBPRINT
 if($thumb -cnotmatch '^[A-Fa-f0-9]{40}$'){throw 'REFUSED: ephemeral CI test signer missing'}
+if(-not (Test-Path -LiteralPath (Join-Path $env:WINDIR 'SysWOW64\WindowsPowerShell\v1.0\powershell.exe') -PathType Leaf)){
+ throw 'REFUSED: expected x64 Windows with 32-bit NSIS and Sysnative redirection unavailable'
+}
 $cert=Get-Item -LiteralPath ('Cert:\CurrentUser\My\'+$thumb) -ErrorAction Stop
 if(-not $cert.HasPrivateKey){throw 'REFUSED: ephemeral CI signing key unavailable'}
 $scriptRoot=Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -119,7 +122,9 @@ Section "CI-only stage signed real motor and bundle (NO INSTALL)" SecPreview
  SetErrorLevel 14
  Quit
 ci_bundle_ok:
- ExecWait '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$R1\VOLVE-CI-Verify-Motor.ps1"' $R0
+ ; NSIS is a 32-bit process on this x64 CI guest. Sysnative resolves
+ ; the 64-bit Windows PowerShell that the CI trust gate checked earlier.
+ ExecWait '"$WINDIR\Sysnative\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$R1\VOLVE-CI-Verify-Motor.ps1"' $R0
  StrCmp $R0 0 ci_motor_ok
  SetErrorLevel 27
  Quit
