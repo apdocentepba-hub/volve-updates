@@ -7,11 +7,18 @@ on:
       - 'development/0.28.7/inapp/ci_fresh_dns53_windows_test.go'
       - 'development/0.28.7/inapp/apply_overlay.go'
       - '.github/workflows/volve-0287-fresh-system-dns53.yml'
+  pull_request:
+    branches: [work/0287-dns-cname-chain-guard-20261113]
+    paths:
+      - 'development/0.28.7/inapp/ci_fresh_dns53_windows.go'
+      - 'development/0.28.7/inapp/ci_fresh_dns53_windows_test.go'
+      - 'development/0.28.7/inapp/apply_overlay.go'
+      - '.github/workflows/volve-0287-fresh-system-dns53.yml'
   workflow_dispatch:
 permissions:
   contents: read
 concurrency:
-  group: volve-ci-fresh-resident53-${{ github.ref }}
+  group: volve-ci-fresh-resident53-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 jobs:
   fresh-system-dns53:
