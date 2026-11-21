@@ -101,20 +101,33 @@ function Stop-CIVerify([string]$Reason){
  [IO.File]::WriteAllText($receipt,$Reason,[Text.Encoding]::ASCII)
  exit 27
 }
-try {
- $file=Join-Path $PSScriptRoot 'VOLVE-CI-Real-Motor-0287.exe'
- if(-not (Test-Path -LiteralPath $file -PathType Leaf)){Stop-CIVerify 'missing-motor'}
- $signature=Get-AuthenticodeSignature -LiteralPath $file -ErrorAction Stop
- if($signature.Status -ne 'Valid'){Stop-CIVerify 'auth-status'}
- if($null -eq $signature.SignerCertificate){Stop-CIVerify 'missing-cert'}
- if($signature.SignerCertificate.Thumbprint -cne '__THUMBPRINT__'){Stop-CIVerify 'wrong-cert'}
- if((Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash -cne '__MOTOR_SHA256__'){Stop-CIVerify 'wrong-hash'}
- [IO.File]::WriteAllText($receipt,'pass',[Text.Encoding]::ASCII)
- exit 0
-}catch{
- try{[IO.File]::WriteAllText($receipt,'exception',[Text.Encoding]::ASCII)}catch{}
- exit 27
+$file=Join-Path $PSScriptRoot 'VOLVE-CI-Real-Motor-0287.exe'
+if(-not (Test-Path -LiteralPath $file -PathType Leaf)){Stop-CIVerify 'missing-motor'}
+# Fresh NSIS extraction + Defender scanning may transiently lock the new PE.
+# Retry ONLY thrown IO/signature-read errors. Any actual mismatched pin or
+# signature is rejected immediately and never converted to success.
+Start-Sleep -Milliseconds 1200
+for($attempt=0;$attempt -lt 3;$attempt++){
+ try {
+  $signature=Get-AuthenticodeSignature -LiteralPath $file -ErrorAction Stop
+  if($signature.Status -ne 'Valid'){Stop-CIVerify 'auth-status'}
+  if($null -eq $signature.SignerCertificate){Stop-CIVerify 'missing-cert'}
+  if($signature.SignerCertificate.Thumbprint -cne '__THUMBPRINT__'){Stop-CIVerify 'wrong-cert'}
+  $digest=(Get-FileHash -LiteralPath $file -Algorithm SHA256 -ErrorAction Stop).Hash
+  if($digest -cne '__MOTOR_SHA256__'){Stop-CIVerify 'wrong-hash'}
+  [IO.File]::WriteAllText($receipt,'pass',[Text.Encoding]::ASCII)
+  exit 0
+ }catch{
+  if($attempt -eq 2){
+   $kind=$_.Exception.GetType().Name
+   if($kind -notmatch '^[A-Za-z]{3,64}$'){$kind='Unknown'}
+   try{[IO.File]::WriteAllText($receipt,'exception-'+$kind,[Text.Encoding]::ASCII)}catch{}
+   exit 27
+  }
+  Start-Sleep -Milliseconds 550
+ }
 }
+Stop-CIVerify 'exception'
 '@
  $verifySource=$verifySource.Replace('__THUMBPRINT__',$thumb).Replace('__MOTOR_SHA256__',$hash)
  $verifier=Join-Path $work 'VOLVE-CI-Verify-Motor.ps1'
@@ -214,7 +227,7 @@ SectionEnd
   $reasonPath=Join-Path $stage 'VOLVE-CI-Verify-Receipt.txt'
   if(Test-Path -LiteralPath $reasonPath -PathType Leaf){
    $verifyReason=(Get-Content -LiteralPath $reasonPath -Raw).Trim()
-   if($verifyReason -cnotin @('missing-motor','auth-status','missing-cert','wrong-cert','wrong-hash','pass','exception')){$verifyReason='invalid'}
+   if(($verifyReason -cnotin @('missing-motor','auth-status','missing-cert','wrong-cert','wrong-hash','pass','exception') -and $verifyReason -cnotmatch '^exception-[A-Za-z]{3,64}$')){$verifyReason='invalid'}
   }
   $rawChild='missing'
   $childReceipt=Join-Path $stage 'VOLVE-CI-Checker-ExitCode.txt'
