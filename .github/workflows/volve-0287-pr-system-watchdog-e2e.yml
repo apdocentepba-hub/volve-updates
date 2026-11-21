@@ -67,7 +67,7 @@ jobs:
           if($LASTEXITCODE -ne 0){throw 'Durable grant failed persisted file/fresh process negative tests'}
           go test ./motorupdate -run '^(TestSignedPublisherBootRecovery|TestPublisherBoundProtectedBoot)' -count=1 -timeout 2m -v
           if($LASTEXITCODE -ne 0){throw 'Signed publisher grant and resident journal binding failed'}
-          go test ./motorupdate -run '^(TestProtectedSignedSwitchAndBootRecoveryShareProductionMutex|TestProtectedAdaptersFailClosedWithoutTrustedOperations|TestProtectedSignedRollbackHandsOffThenReacquiresBeforeHealth|TestProtectedSignedDriverRejectsHandoffMissing)$' -count=1 -timeout 3m -v
+          go test ./motorupdate -run '^(TestProtectedSignedSwitchAndBootRecoveryShareProductionMutex|TestProtectedAdaptersFailClosedWithoutTrustedOperations|TestProtectedSignedRollbackHandsOffThenReacquiresBeforeHealth|TestProtectedSignedCancelledUpdaterStillReacquiresBeforeHealth|TestProtectedSignedDriverRejectsHandoffMissing)$' -count=1 -timeout 3m -v
           if($LASTEXITCODE -ne 0){throw 'Production switch and boot recovery did not share protected mutex'}
           go test ./cmd/volve-managed-watchdog -run '^(TestIndependentWatchdogUsesMigrationBootLockEvenForTerminalJournal|TestProtectedResidentBootPolicyUsesProductionMutexBeforeReadingJournal|TestProtectedBootPlanAuditWaitsForProductionUpdateMutex|TestIndependentBootAuditAcrossFreshProcesses|TestDurableWindowsGrant)' -count=1 -timeout 6m -v
           if($LASTEXITCODE -ne 0){throw 'Watchdog did not respect migration-held BootLock'}
