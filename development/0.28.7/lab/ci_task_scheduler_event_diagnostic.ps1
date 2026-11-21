@@ -186,12 +186,12 @@ function Get-VolvCIProcessCreationCorrelation {
         if($event.event -cne '4688' -or
            $event.provider -cne 'Microsoft-Windows-Security-Auditing' -or
            $null -eq $event.when){continue}
-        $pid=ConvertTo-VolvCIPidDecimal (Read-OnlyField $event 'NewProcessId')
+        $clientProcessNumber=ConvertTo-VolvCIPidDecimal (Read-OnlyField $event 'NewProcessId')
         # Process creation event without an executable field cannot supply a
         # usable candidate. Never emit the executable field to CI output.
         $exe=Read-OnlyField $event 'NewProcessName'
-        if($null -eq $pid -or [string]::IsNullOrWhiteSpace($exe)){continue}
-        $births+=([pscustomobject]@{pid=$pid;when=$event.when})
+        if($null -eq $clientProcessNumber -or [string]::IsNullOrWhiteSpace($exe)){continue}
+        $births+=([pscustomobject]@{pid=$clientProcessNumber;when=$event.when})
     }
     $counts=[ordered]@{taskUpdateEvents=0;creationCandidate=0;creationMissing=0;creationAmbiguous=0;invalidUpdateEvidence=0}
     foreach($raw in $UpdateEventXML){
@@ -201,13 +201,13 @@ function Get-VolvCIProcessCreationCorrelation {
         $name=Read-OnlyField $event 'TaskName'
         if($null -eq $name -or -not [string]::Equals($name,$TaskIdentity,[StringComparison]::OrdinalIgnoreCase)){continue}
         $counts.taskUpdateEvents++
-        $pid=ConvertTo-VolvCIPidDecimal (Read-OnlyField $event 'ClientProcessId')
-        if($null -eq $pid -or $null -eq $event.when){
+        $clientProcessNumber=ConvertTo-VolvCIPidDecimal (Read-OnlyField $event 'ClientProcessId')
+        if($null -eq $clientProcessNumber -or $null -eq $event.when){
             $counts.invalidUpdateEvidence++
             continue
         }
         $matches=@($births | Where-Object {
-            $_.pid -ceq $pid -and $_.when -le $event.when -and
+            $_.pid -ceq $clientProcessNumber -and $_.when -le $event.when -and
             $_.when -ge $event.when.AddMinutes(-30)
         })
         if($matches.Count -eq 1){$counts.creationCandidate++}
