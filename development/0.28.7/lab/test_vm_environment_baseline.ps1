@@ -115,8 +115,16 @@ foreach($mutation in $mutations){
     $changedRecord=Get-VolvVMBaselineTaskRecord -TaskPath '\' -TaskName 'Synthetic-Task' -XMLText ($testXML.Replace($mutation.old,$mutation.new))
     if($baselineRecord -ceq $changedRecord){throw ('Whole task hash ignored '+$mutation.name)}
     $hint=Get-VolvVMBaselineTaskDriftHint -ExpectedRecord $baselineRecord -ActualRecord $changedRecord
-    if(-not $hint.Contains('changedSections='+$mutation.name+')')){
+    $categoryMarker='changedSections='+$mutation.name
+    if(-not $hint.Contains($categoryMarker)){
         throw ('Wrong Task Scheduler XML drift group for '+$mutation.name+': '+$hint)
+    }
+    if($mutation.name -ceq 'Triggers'){
+        if(-not $hint.Contains('changedTriggerFields=Enabled)')){
+            throw 'Changed Triggers did not identify the Enabled subfield'
+        }
+    } elseif($hint.Contains('changedTriggerFields=')){
+        throw 'Unrelated Task Scheduler section was mislabeled as Triggers'
     }
     if($hint.Contains('cmd.exe') -or $hint.Contains('notepad.exe') -or $hint.Contains('Synthetic-Task')){
         throw 'Task Scheduler XML information leaked into CI diagnostic'
