@@ -42,6 +42,21 @@ func DefaultWindowsDNSNativeInvoke(ctx context.Context, args []string) error {
 func validatePinnedWindowsDNSArgv(args []string) error {
     if reflect.DeepEqual(args,[]string{"interface","ipv4","show","interfaces"}) ||
        reflect.DeepEqual(args,[]string{"interface","ipv6","show","interfaces"}) {return nil}
+    // Exact 6-argument automatic-mode recovery. Only a separately pinned,
+    // journal-authenticated SYSTEM rollback writer may reach this internal
+    // invoker. No arbitrary args, IPs, interface names or shell are allowed.
+    // Microsoft documents source=dhcp for both IPv4 and IPv6 DNS servers.
+    if len(args)==6 && args[0]=="interface" &&
+       (args[1]=="ipv4"||args[1]=="ipv6") &&
+       args[2]=="set" && args[3]=="dnsservers" && args[5]=="source=dhcp" &&
+       strings.HasPrefix(args[4],"name="){
+        indexString:=strings.TrimPrefix(args[4],"name=")
+        index,err:=strconv.ParseUint(indexString,10,32)
+        if err!=nil||index==0||strconv.FormatUint(index,10)!=indexString{
+            return errors.New("invalid or noncanonical automatic DNS interface index")
+        }
+        return nil
+    }
     if len(args)!=8 || args[0]!="interface" || args[3]!="dnsservers" ||
         args[7]!="validate=no" || !strings.HasPrefix(args[4],"name=") {
         return errors.New("unsupported native Windows DNS command")
@@ -110,24 +125,49 @@ type windowsPinnedRestoreAction struct {
     command WindowsDNSCommand
 }
 
-// NewWindowsPinnedStaticDNSWriter pins every permitted command to a complete
-// GUID/family+current InterfaceIndex binding and the exact historical DNS
-// list. It never accepts a free-form netsh argv from the recovery journal.
-// Live adapter identity is rechecked immediately before every invocation.
-// Caller MUST pass an authenticated runner and invoke via the batch restore,
-// which independently checks observed DNS before and after each write.
+// NewWindowsPinnedStaticDNSWriter preserves the strict static-only legacy
+// API. A private, separate authenticated path may also restore automatic
+// DNS assignments exactly, but does not relax the static-only contract.
 func NewWindowsPinnedStaticDNSWriter(
     ctx context.Context,
     records []DNSRestoreRecord,
     inspect WindowsReadOnlyPowerShell,
     invoke WindowsDNSNativeInvoke,
 ) (WindowsDNSRestoreWriter,error) {
+    return newWindowsPinnedDNSRestoreWriter(ctx,records,inspect,invoke,false)
+}
+
+// NewWindowsPinnedDNSRecoveryWriter produces a GUID+family-bound native
+// rollback writer for BOTH exact static-original and automatic-original DNS.
+// It cannot be used outside a separately authorized SYSTEM watchdog with
+// publisher-signed journal, protected mutex, independent readback and task
+// attestation. Neither constructor invokes any OS write.
+func NewWindowsPinnedDNSRecoveryWriter(
+    ctx context.Context,
+    records []DNSRestoreRecord,
+    inspect WindowsReadOnlyPowerShell,
+    invoke WindowsDNSNativeInvoke,
+) (WindowsDNSRestoreWriter,error) {
+    return newWindowsPinnedDNSRestoreWriter(ctx,records,inspect,invoke,true)
+}
+
+func newWindowsPinnedDNSRestoreWriter(
+    ctx context.Context,
+    records []DNSRestoreRecord,
+    inspect WindowsReadOnlyPowerShell,
+    invoke WindowsDNSNativeInvoke,
+    allowAutomatic bool,
+) (WindowsDNSRestoreWriter,error) {
     if inspect==nil||invoke==nil||len(records)==0{return nil,errors.New("missing trusted recovery inputs")}
     if err:=ctx.Err();err!=nil{return nil,err}
     actions:=make([]windowsPinnedRestoreAction,0)
     seen:=map[string]bool{}
     for _,r:=range records {
-        if err:=validateWindowsStaticRecoveryRecord(r);err!=nil{return nil,err}
+        if allowAutomatic{
+            if err:=validateWindowsDNSRecoveryRecord(r);err!=nil{return nil,err}
+        }else{
+            if err:=validateWindowsStaticRecoveryRecord(r);err!=nil{return nil,err}
+        }
         key:=strings.ToLower(r.Original.InterfaceGUID)+string(r.Original.Family)
         if seen[key]{return nil,errors.New("duplicate adapter/family in pinned recovery")}
         seen[key]=true
