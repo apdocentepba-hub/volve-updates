@@ -1,0 +1,98 @@
+name: VOLVE 0.28.7 fast independent contract feedback (NO INSTALL)
+on:
+  pull_request:
+    branches: [work/0287-dns-cname-chain-guard-20261113]
+    paths:
+      - '.github/workflows/volve-0287-fast-feedback-pr.yml'
+      - '.github/workflows/volve-0287-vm-recovery-persistent-kit.yml'
+      - '.github/workflows/volve-0287-one-exe-pr.yml'
+      - 'development/0.28.7/taskrecoverygate/**'
+      - 'development/0.28.7/lab/**'
+      - 'development/0.28.7/installer-wizard/**'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+jobs:
+  go-migration-contract:
+    name: Fast Go migration contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 7
+    defaults:
+      run:
+        working-directory: development/0.28.7/taskrecoverygate
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.x'
+          cache: false
+      - name: Run isolated migration tests and vet (NO INSTALL)
+        shell: bash
+        run: |
+          set -euo pipefail
+          go test -count=1 ./...
+          go vet ./...
+          echo 'PASS: fast Go migration contract; NOT a production installer validation'
+  windows-synthetic-contract:
+    name: Fast Windows syntax and security contracts
+    runs-on: windows-2022
+    timeout-minutes: 9
+    steps:
+      - uses: actions/checkout@v4
+      - name: Parse entire recovery lab PowerShell source without running privileged commands
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $root='development/0.28.7/lab'
+          $names=@(
+            'vm_reboot_proof.ps1',
+            'boot_recovery_lab.ps1',
+            'reboot_event_chain.ps1',
+            'test_reboot_event_chain.ps1',
+            'vm_cleanup_state_contract.ps1',
+            'test_vm_cleanup_state_contract.ps1',
+            'test_vm_cleanup_receipt_contract.ps1',
+            'test_vm_cleanup_scheduler_roundtrip.ps1',
+            'vm_environment_baseline.ps1',
+            'test_vm_environment_baseline.ps1',
+            'ci_task_scheduler_event_diagnostic.ps1'
+          )
+          foreach($name in $names){
+            $file=Join-Path $root $name
+            if(-not (Test-Path -LiteralPath $file -PathType Leaf)){
+              throw ('Missing recovery contract source: '+$name)
+            }
+            $tokens=$null; $errors=$null
+            [Management.Automation.Language.Parser]::ParseFile((Resolve-Path $file).Path,
+              [ref]$tokens,[ref]$errors) | Out-Null
+            if(@($errors).Count -ne 0){
+              throw ('PowerShell syntax validation failed for '+$name)
+            }
+          }
+          Write-Host 'PASS: parsed 11 recovery laboratory scripts'
+      - name: Execute synthetic-only recovery and security tests (NO REBOOT NO DNS)
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $root='development/0.28.7/lab'
+          foreach($name in @(
+            'test_reboot_event_chain.ps1',
+            'test_vm_cleanup_state_contract.ps1',
+            'test_vm_cleanup_receipt_contract.ps1',
+            'ci_task_scheduler_event_diagnostic.ps1',
+            'test_vm_environment_baseline.ps1'
+          )){
+            $script=Join-Path $root $name
+            if($name -ceq 'ci_task_scheduler_event_diagnostic.ps1'){
+              & $script -Mode Test
+            }else{
+              & $script
+            }
+            if(-not $? -or ($LASTEXITCODE -and $LASTEXITCODE -ne 0)){
+              throw ('Synthetic contract failed: '+$name)
+            }
+          }
+          Write-Host 'PASS: fast independent Windows security/recovery contracts; no real reboot or installation proved'
