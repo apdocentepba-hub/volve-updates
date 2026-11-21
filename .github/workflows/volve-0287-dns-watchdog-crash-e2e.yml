@@ -1,9 +1,10 @@
 name: VOLVE 0.28.7 CRASH watchdog restores REAL isolated DNS (NO RELEASE)
 on:
   push:
-    branches: [feature/motor-updater-0287-pilot]
+    branches: [feature/motor-updater-0287-pilot, work/0287-native-setup-preview-20261113]
     paths:
       - '.github/workflows/volve-0287-dns-watchdog-crash-e2e.yml'
+      - 'development/0.28.7/inapp/dns_*.go'
   workflow_dispatch:
 permissions:
   contents: read
@@ -21,6 +22,14 @@ jobs:
         run: |
           $ErrorActionPreference='Stop'
           $ProgressPreference='SilentlyContinue'
+          # Fail closed before touching ANY disposable or existing network adapter.
+          if($env:GITHUB_ACTIONS -ne 'true' -or $env:RUNNER_ENVIRONMENT -ne 'github-hosted'){
+            throw 'REFUSED: this isolated DNS crash lab requires a GitHub-hosted disposable Windows VM'
+          }
+          $vm=Get-CimInstance Win32_ComputerSystem -ErrorAction Stop
+          if(($vm.Manufacturer+' '+$vm.Model) -notmatch '(?i:virtual machine|vmware|kvm|hyper-v|qemu|virtualbox)'){
+            throw 'REFUSED: not a positively identified disposable virtual machine'
+          }
           $alias='VOLVE-CI-DNS-LAB-'+$env:GITHUB_RUN_ID+'00000'
           if($alias -notmatch '^VOLVE-CI-DNS-LAB-[0-9]{12,20}$'){
             throw 'FATAL: invalid disposable adapter name'
@@ -88,6 +97,7 @@ jobs:
             $folder=Join-Path $env:RUNNER_TEMP 'volve-disposable-dns-real-e2e'
             New-Item -ItemType Directory -Path $folder -Force | Out-Null
             Copy-Item -Path (Join-Path $source 'dns_restore*.go') -Destination $folder -ErrorAction Stop
+            Copy-Item -LiteralPath (Join-Path $source 'dns_assignment_provenance_windows.go') -Destination $folder -ErrorAction Stop
             Copy-Item -LiteralPath (Join-Path $source 'resident_journal.go') -Destination $folder -ErrorAction Stop
             Copy-Item -LiteralPath (Join-Path $source 'resident_journal_test.go') -Destination $folder -ErrorAction Stop
             Push-Location $folder

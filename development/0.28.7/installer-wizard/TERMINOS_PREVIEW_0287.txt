@@ -1,0 +1,46 @@
+﻿VOLVÉ 0.28.7 - INFORMACIÓN PREVIA Y CONDICIONES DE USO
+VISTA PREVIA DEL INSTALADOR. NO ES UNA LICENCIA DEFINITIVA.
+
+1. Qué hará VOLVÉ cuando exista una versión operativa certificada
+VOLVÉ intentará restringir el acceso a sitios y servicios de apuestas usando
+un motor DNS local, controles compatibles de navegador y actualizaciones de
+listas. Ninguna herramienta garantiza bloquear todos los sitios, VPN, proxies
+o métodos de evasión. No sustituye el acompañamiento profesional.
+
+2. Permisos que deberán aprobarse explícitamente
+- Ajustar DNS IPv4/IPv6 de interfaces compatibles, únicamente después de
+  guardar y comprobar una restauración de configuración original.
+- Crear tareas de mantenimiento y recuperación con permisos elevados.
+- Aplicar políticas de navegador cuando sean compatibles y reversibles.
+- Descargar catálogos y paquetes de actualización con firmas verificadas.
+La versión de demostración NO solicita, guarda ni ejerce estos permisos.
+
+3. Compromiso de protección
+El usuario elegirá una duración definida (7, 30 o 90 días en este prototipo).
+Durante el plazo, la desactivación normal podrá requerir autorización adicional
+y un período de reflexión informado. El plazo no otorga al editor control
+irrevocable del sistema operativo ni elimina las opciones de recuperación.
+
+4. Retiro y asistencia
+El retiro habitual podrá realizarse mediante un procedimiento administrativo
+con consentimiento y autorización verificable de un solo uso, específica para
+la instalación y con vencimiento. Ante incidentes de conectividad, pérdida de
+acceso o seguridad, existirá una ruta de reparación y recuperación de emergencia.
+VOLVÉ no promete ser imposible de quitar por un administrador legítimo.
+
+5. Privacidad
+La herramienta de demostración no transmite datos, registra cuentas ni almacena
+preferencias. La versión operativa documentará de forma separada qué datos
+mantiene localmente y si requiere servicios remotos. La validación de fuentes
+de reglas no implica enviar el historial de navegación a servidores.
+
+6. Límites de este ejecutable
+Es SOLO una vista previa del flujo de pantallas. No instala motor, servicio,
+actualizador ni catálogo. No modifica DNS, registro, archivos HOSTS, tareas,
+políticas de navegador o configuraciones de Windows. No activa la protección.
+Al terminar, no queda una autoexclusión ni autorización vigente.
+
+7. Decisión
+Podés cancelar este asistente en cualquier momento. Aceptar estos términos
+sirve únicamente para revisar el diseño. Las condiciones definitivas de
+instalación se presentarán nuevamente cuando exista un instalador probado.

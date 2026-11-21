@@ -1,7 +1,14 @@
 name: VOLVE pilot fresh motor SYSTEM DNS53 (DISPOSABLE VM ONLY)
 on:
   push:
-    branches: [feature/motor-updater-0287-pilot]
+    branches: [feature/motor-updater-0287-pilot, work/0287-native-setup-preview-20261113]
+    paths:
+      - 'development/0.28.7/inapp/ci_fresh_dns53_windows.go'
+      - 'development/0.28.7/inapp/ci_fresh_dns53_windows_test.go'
+      - 'development/0.28.7/inapp/apply_overlay.go'
+      - '.github/workflows/volve-0287-fresh-system-dns53.yml'
+  pull_request:
+    branches: [work/0287-dns-cname-chain-guard-20261113]
     paths:
       - 'development/0.28.7/inapp/ci_fresh_dns53_windows.go'
       - 'development/0.28.7/inapp/ci_fresh_dns53_windows_test.go'
@@ -11,7 +18,7 @@ on:
 permissions:
   contents: read
 concurrency:
-  group: volve-ci-fresh-resident53-${{ github.ref }}
+  group: volve-ci-fresh-resident53-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 jobs:
   fresh-system-dns53:
@@ -103,8 +110,13 @@ jobs:
             $owner=Invoke-CimMethod -InputObject $matched[0] -MethodName GetOwnerSid -ErrorAction Stop
             if($owner.ReturnValue -ne 0 -or $owner.Sid -ne 'S-1-5-18'){throw 'DNS service owner is not SYSTEM'}
             $env:VOLVE_CI_FRESH_DNS53_PROBE='GITHUB-HOSTED-VM-ONLY'
-            go test . -run '^TestCIFreshResidentSYSTEMPort53$' -count=1 -timeout 1m -v
-            if($LASTEXITCODE -ne 0){throw 'External real DNS53 IPv4+IPv6 blocking verification failed'}
+            $firstProof=@(go test . -run '^TestCIFreshResidentSYSTEMPort53$' -count=1 -timeout 1m -v)
+            $firstExit=$LASTEXITCODE
+            $firstProof | Write-Host
+            if($firstExit -ne 0){throw 'External real DNS53 IPv4+IPv6 blocking verification failed'}
+            if(@($firstProof | Where-Object {$_ -match 'actually forwards an allowed A record'}).Count -ne 1){
+              throw 'DNS53 PASS without verified usable allowed-domain A answer'
+            }
             foreach($endpoint in @('127.0.0.1','::1')){
               $bound=@(Get-NetUDPEndpoint -LocalPort 53 -LocalAddress $endpoint -ErrorAction Stop)
               if($bound.Count -ne 1 -or $bound[0].OwningProcess -ne $matched[0].ProcessId){throw 'Port 53 is not owned exclusively by verified SYSTEM motor'}
@@ -122,8 +134,13 @@ jobs:
             $savedTask=Get-ScheduledTask -TaskName $task -ErrorAction Stop
             if($savedTask.Principal.UserId -notin @('SYSTEM','S-1-5-18') -or @($savedTask.Triggers).Count -ne 1){throw 'Installed startup task changed unexpectedly'}
             Start-ScheduledTask -TaskName $task -ErrorAction Stop
-            go test . -run '^TestCIFreshResidentSYSTEMPort53$' -count=1 -timeout 1m -v
-            if($LASTEXITCODE -ne 0){throw 'Real DNS/53 failed after restarting same registered SYSTEM task'}
+            $restartProof=@(go test . -run '^TestCIFreshResidentSYSTEMPort53$' -count=1 -timeout 1m -v)
+            $restartExit=$LASTEXITCODE
+            $restartProof | Write-Host
+            if($restartExit -ne 0){throw 'Real DNS/53 failed after restarting same registered SYSTEM task'}
+            if(@($restartProof | Where-Object {$_ -match 'actually forwards an allowed A record'}).Count -ne 1){
+              throw 'Restarted DNS53 PASS without a verified allowed A record'
+            }
             Write-Host 'PASS: persistent AtStartup SYSTEM task restarted with exact original 400k catalog and DNS blocking still works'
             # Corrupt the lab catalog after stopping, to prove the next start
             # refuses execution BEFORE opening DNS/53. This is VM-only.

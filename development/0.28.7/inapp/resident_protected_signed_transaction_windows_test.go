@@ -19,6 +19,7 @@ type protectedSignedFullTransactionLab struct {
  readyChecks int
  protectedHandoffs int
  preparedChecks int
+ coverageChecks int
 }
 
 func(d *protectedSignedFullTransactionLab)AcquireExclusiveMigration(context.Context)(func(),error){
@@ -43,6 +44,18 @@ func(d *protectedSignedFullTransactionLab)VerifyPreparedTarget(_ context.Context
  if m.Version!="0.28.7"{return errors.New("unexpected signed motor candidate")}
  return nil
 }
+func(d *protectedSignedFullTransactionLab)VerifyLegacyTaskRecoveryCoverage(ctx context.Context,proof VerifiedLegacyMigrationProof)(LegacyTaskRecoverySnapshot,error){
+ d.coverageChecks++
+ probeCtx,cancel:=context.WithTimeout(ctx,125*time.Millisecond)
+ defer cancel()
+ unlock,err:=AcquireProtectedResidentTransitionLease(probeCtx)
+ if unlock!=nil{unlock()}
+ if !errors.Is(err,context.DeadlineExceeded){
+  return LegacyTaskRecoverySnapshot{},errors.New("task recovery coverage review ran without the protected SYSTEM mutex")
+ }
+ return testLegacyTaskRecoverySnapshotForProof(completeLegacyTaskRecoverySnapshot(),proof),nil
+}
+
 func(d *protectedSignedFullTransactionLab)RestoreAfterProtectedHandoff(ctx context.Context)error{
  d.protectedHandoffs++
  // Recovery is a separate owner, after the signed updater has released
@@ -52,6 +65,83 @@ func(d *protectedSignedFullTransactionLab)RestoreAfterProtectedHandoff(ctx conte
  if release==nil{return errors.New("independent watchdog returned no protected kernel lease")}
  defer release()
  return d.managedDriverTest.Restore(ctx)
+}
+
+func TestProtectedSignedDriverUsesRecoveryReaderOnlyUnderNativeMutex(t *testing.T) {
+ residentProtectedCITest(t)
+ operations := &protectedSignedFullTransactionLab{managedDriverTest: &managedDriverTest{}}
+ calls := 0
+ proof := VerifiedLegacyMigrationProof{
+  LegacySHA256: testLegacyActionSHA256,
+  LegacyTaskXMLSHA256: testLegacyTaskXMLSHA256,
+ }
+ reader := ProtectedLegacyTaskRecoveryReader(func(ctx context.Context, got VerifiedLegacyMigrationProof) (LegacyTaskRecoverySnapshot, error) {
+  calls++
+  if got != proof { return LegacyTaskRecoverySnapshot{}, errors.New("signed proof was not forwarded unchanged") }
+  probeCtx, cancel := context.WithTimeout(ctx, 125*time.Millisecond)
+  defer cancel()
+  unlock, err := AcquireProtectedResidentTransitionLease(probeCtx)
+  if unlock != nil { unlock() }
+  if !errors.Is(err, context.DeadlineExceeded) {
+   return LegacyTaskRecoverySnapshot{}, errors.New("dedicated recovery reader ran without the native migration mutex")
+  }
+  return testLegacyTaskRecoverySnapshotForProof(completeLegacyTaskRecoverySnapshot(), got), nil
+ })
+ wrapped, err := NewProtectedSignedLegacySwitchDriverWithRecoveryReader(operations, reader)
+ if err != nil { t.Fatal(err) }
+ if _, err := wrapped.VerifyLegacyTaskRecoveryCoverage(context.Background(), proof); err == nil {
+  t.Fatal("recovery reader was callable before mutex acquisition")
+ }
+ if calls != 0 { t.Fatal("reader callback ran outside the protected lease") }
+ ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+ defer cancel()
+ release, err := wrapped.AcquireExclusiveMigration(ctx)
+ if err != nil { t.Fatal(err) }
+ snapshot, err := wrapped.VerifyLegacyTaskRecoveryCoverage(ctx, proof)
+ release()
+ if err != nil { t.Fatal(err) }
+ if calls != 1 || operations.coverageChecks != 0 {
+  t.Fatalf("protected reader did not replace delegated evidence source: callback=%d delegated=%d", calls, operations.coverageChecks)
+ }
+ if !ReviewLegacyTaskRecoveryCoverage(snapshot).RecoverySetComplete {
+  t.Fatal("native protected wrapper returned incomplete recovery evidence")
+ }
+}
+
+func TestProtectedSignedTransactionBlocksWhenDedicatedReaderLacksDependencyOrRebootEvidence(t *testing.T) {
+	residentProtectedCITest(t)
+	for _, missing := range []struct {
+		name string
+		clear func(*LegacyTaskRecoverySnapshot)
+		want string
+	}{
+		{"transitive dependencies", func(s *LegacyTaskRecoverySnapshot) { s.TransitiveDependenciesCertified = false }, "transitive_dependencies_uncertified"},
+		{"recovery after reboot", func(s *LegacyTaskRecoverySnapshot) { s.RecoveryAfterRebootVerified = false }, "recovery_after_reboot_unverified"},
+	} {
+		t.Run(missing.name, func(t *testing.T) {
+			fixture := newSignedBridge(t)
+			operations := &protectedSignedFullTransactionLab{managedDriverTest: &managedDriverTest{}}
+			calls := 0
+			reader := ProtectedLegacyTaskRecoveryReader(func(_ context.Context, got VerifiedLegacyMigrationProof) (LegacyTaskRecoverySnapshot, error) {
+				calls++
+				if !validLegacyTaskSHA256(got.LegacySHA256) || !validLegacyTaskSHA256(got.LegacyTaskXMLSHA256) {
+					return LegacyTaskRecoverySnapshot{}, errors.New("verified signed migration proof was not forwarded")
+				}
+				snapshot := testLegacyTaskRecoverySnapshotForProof(completeLegacyTaskRecoverySnapshot(), got)
+				missing.clear(&snapshot)
+				return snapshot, nil
+			})
+			wrapped, err := NewProtectedSignedLegacySwitchDriverWithRecoveryReader(operations, reader)
+			if err != nil { t.Fatal(err) }
+			err = runSignedLegacyLab(context.Background(), fixture, wrapped, testSecureLabFolderBridge, func() error { return nil })
+			if err == nil || !strings.Contains(err.Error(), missing.want) {
+				t.Fatalf("protected transaction accepted missing %s evidence: %v", missing.name, err)
+			}
+			if calls != 1 || operations.coverageChecks != 0 || operations.readyChecks != 0 || len(operations.calls) != 0 {
+				t.Fatalf("dedicated reader's negative evidence did not stop before any mutation: reader=%d delegated=%d ready=%d calls=%v", calls, operations.coverageChecks, operations.readyChecks, operations.calls)
+			}
+		})
+	}
 }
 
 func TestProtectedSignedFullTransactionCommitAndRecoveryUnderNativeMutex(t *testing.T){
@@ -79,7 +169,7 @@ func TestProtectedSignedFullTransactionCommitAndRecoveryUnderNativeMutex(t *test
    }
    if mode=="commit"{
     if err!=nil{t.Fatalf("signed transaction cannot commit under real kernel mutex: %v",err)}
-    if driver.readyChecks!=3||driver.preparedChecks!=2||driver.protectedHandoffs!=0{
+    if driver.readyChecks!=3||driver.preparedChecks!=2||driver.coverageChecks!=3||driver.protectedHandoffs!=0{
      t.Fatalf("incomplete signed fences/unsafe restore: ready=%d prepared=%d recovery=%d",
       driver.readyChecks,driver.preparedChecks,driver.protectedHandoffs)
     }

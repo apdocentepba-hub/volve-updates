@@ -14,6 +14,8 @@ import (
  "errors"
  "fmt"
  "net"
+ "os"
+ "path/filepath"
  "os/exec"
  "strings"
 )
@@ -39,12 +41,38 @@ const windowsAdapterInventoryQuery = `$ErrorActionPreference='Stop'; $items=@(Ge
 const windowsEffectiveDNSQuery = `$ErrorActionPreference='Stop'; $items=@(Get-DnsClientServerAddress -ErrorAction Stop | ForEach-Object { [pscustomobject]@{InterfaceIndex=[uint32]$_.InterfaceIndex;Family=$( switch ([string]$_.AddressFamily) { '2' {'IPv4'} '23' {'IPv6'} 'IPv4' {'IPv4'} 'IPv6' {'IPv6'} 'InterNetwork' {'IPv4'} 'InterNetworkV6' {'IPv6'} default {'Unknown'} } );Servers=@($_.ServerAddresses)} }); ConvertTo-Json -InputObject $items -Depth 4 -Compress`
 
 func DefaultWindowsReadOnlyPowerShell(ctx context.Context,script string)([]byte,error){
- if script!=windowsAdapterInventoryQuery && script!=windowsEffectiveDNSQuery {
+ if script!=windowsAdapterInventoryQuery && script!=windowsEffectiveDNSQuery &&
+  script!=windowsDNSAssignmentSourceQuery {
   return nil,errors.New("unrecognized read-only Windows inventory request")
  }
- cmd:=exec.CommandContext(ctx,"powershell.exe","-NoProfile","-NonInteractive","-Command",script)
+ if err:=ctx.Err();err!=nil{return nil,err}
+ root:=os.Getenv("SystemRoot")
+ if !filepath.IsAbs(root)||strings.HasPrefix(root,`\\`){
+  return nil,errors.New("trusted local Windows SystemRoot unavailable")
+ }
+ executable:=filepath.Join(root,"System32","WindowsPowerShell","v1.0","powershell.exe")
+ info,err:=os.Lstat(executable)
+ if err!=nil||!info.Mode().IsRegular()||info.Mode()&os.ModeSymlink!=0{
+  return nil,errors.New("pinned Windows PowerShell executable unavailable")
+ }
+ cmd:=exec.CommandContext(ctx,executable,"-NoLogo","-NoProfile","-NonInteractive","-Command",script)
  out,err:=cmd.Output()
- if err!=nil{return nil,fmt.Errorf("Windows read-only inventory failed: %w",err)}
+ if err!=nil{
+  safe:="PowerShell or Windows inventory command failed"
+  if exitErr,ok:=err.(*exec.ExitError);ok{
+   diagnostic:=string(exitErr.Stderr)
+   for _,known:=range []string{
+    "Unknown DNS client address family",
+    "DNS interface index does not map to exactly one adapter GUID",
+    "DNS servers exist on an interface without a unique adapter GUID",
+    "DNS interface index maps to conflicting adapter GUIDs",
+    "DNS assignment registry key missing",
+   }{
+    if strings.Contains(diagnostic,known){safe=known;break}
+   }
+  }
+  return nil,fmt.Errorf("Windows read-only inventory failed (%s): %w",safe,err)
+ }
  return out,nil
 }
 func parseWindowsAdapterInventory(raw []byte)([]WindowsAdapterBinding,error){

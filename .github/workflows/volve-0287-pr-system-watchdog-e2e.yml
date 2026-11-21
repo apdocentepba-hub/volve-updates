@@ -1,10 +1,11 @@
-name: VOLVE 0.28.7 PR signed migration + actual SYSTEM watchdog E2E (NO RELEASE)
+name: VOLVE 0.28.7 signed migration + SYSTEM watchdog lab (NO REAL REBOOT, NO RELEASE)
 on:
   pull_request:
-    branches: [feature/motor-updater-0287-pilot]
+    branches: [feature/motor-updater-0287-pilot, work/0287-dns-cname-chain-guard-20261113]
     paths:
       - '.github/workflows/volve-0287-pr-system-watchdog-e2e.yml'
       - 'development/0.28.7/inapp/signed_legacy_windows_task_lab_test.go'
+      - 'development/0.28.7/inapp/apply_overlay.go'
   workflow_dispatch:
 permissions:
   contents: read
@@ -53,7 +54,7 @@ jobs:
           print('Authenticated source assembled; no real installation touched.')
           PY
           go run development/0.28.7/inapp/apply_overlay.go build/codigo
-      - name: Execute signed Windows CI task switch with actual independent SYSTEM watchdog
+      - name: Execute signed CI task switch with independent SYSTEM watchdog (boot metadata only; NO REAL REBOOT)
         shell: pwsh
         working-directory: build/codigo
         run: |

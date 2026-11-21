@@ -22,9 +22,12 @@ type ProtectedSignedRecoveryHandoff interface {
  RestoreAfterProtectedHandoff(context.Context) error
 }
 
+type ProtectedLegacyTaskRecoveryReader func(context.Context, VerifiedLegacyMigrationProof) (LegacyTaskRecoverySnapshot, error)
+
 type protectedSignedLegacyDriver struct {
  operations SignedLegacySwitchDriver
  handoff ProtectedSignedRecoveryHandoff
+ coverageReader ProtectedLegacyTaskRecoveryReader
 
  // The Go lock serializes wrapper calls and finalizers; the named Windows
  // kernel mutex is the actual cross-process exclusion mechanism.
@@ -43,6 +46,27 @@ func NewProtectedSignedLegacySwitchDriver(operations SignedLegacySwitchDriver)(S
   return nil,errors.New("signed migration driver lacks independent protected watchdog handoff")
  }
  return &protectedSignedLegacyDriver{operations:operations,handoff:handoff},nil
+}
+
+// NewProtectedSignedLegacySwitchDriverWithRecoveryReader binds recovery
+// evidence to a dedicated read-only source. VerifyLegacyTaskRecoveryCoverage
+// calls the reader only while the wrapper holds the shared Windows mutex.
+func NewProtectedSignedLegacySwitchDriverWithRecoveryReader(
+	operations SignedLegacySwitchDriver,
+	reader ProtectedLegacyTaskRecoveryReader,
+) (SignedLegacySwitchDriver, error) {
+	if operations == nil || reader == nil {
+		return nil, errors.New("missing signed operations or protected recovery reader")
+	}
+	handoff, ok := operations.(ProtectedSignedRecoveryHandoff)
+	if !ok || handoff == nil {
+		return nil, errors.New("signed migration driver lacks independent protected watchdog handoff")
+	}
+	return &protectedSignedLegacyDriver{
+		operations: operations,
+		handoff: handoff,
+		coverageReader: reader,
+	}, nil
 }
 
 func(d *protectedSignedLegacyDriver)AcquireExclusiveMigration(ctx context.Context)(func(),error){
@@ -91,6 +115,19 @@ func(d *protectedSignedLegacyDriver)Preflight(ctx context.Context,manifest Manif
 }
 func(d *protectedSignedLegacyDriver)IndependentRecoveryReady(ctx context.Context,proof VerifiedLegacyMigrationProof)error{
  return d.withProtectedLease(ctx,func()error{return d.operations.IndependentRecoveryReady(ctx,proof)})
+}
+func(d *protectedSignedLegacyDriver)VerifyLegacyTaskRecoveryCoverage(ctx context.Context,proof VerifiedLegacyMigrationProof)(LegacyTaskRecoverySnapshot,error){
+ var snapshot LegacyTaskRecoverySnapshot
+ err:=d.withProtectedLease(ctx,func()error{
+  var err error
+  if d.coverageReader != nil {
+   snapshot,err=d.coverageReader(ctx,proof)
+  } else {
+   snapshot,err=d.operations.VerifyLegacyTaskRecoveryCoverage(ctx,proof)
+  }
+  return err
+ })
+ return snapshot,err
 }
 func(d *protectedSignedLegacyDriver)Snapshot(ctx context.Context)error{
  return d.withProtectedLease(ctx,func()error{return d.operations.Snapshot(ctx)})

@@ -1,13 +1,38 @@
 name: VOLVE 0.28.7 persistent VM SYSTEM watchdog recovery kit (NO RELEASE)
 on:
   push:
-    branches: [feature/motor-updater-0287-pilot]
+    branches: [feature/motor-updater-0287-pilot, work/0287-native-setup-preview-20261113]
     paths:
       - '.github/workflows/volve-0287-vm-recovery-persistent-kit.yml'
       - 'development/0.28.7/lab/vm_reboot_proof.ps1'
       - 'development/0.28.7/lab/boot_recovery_lab.ps1'
       - 'development/0.28.7/lab/reboot_event_chain.ps1'
       - 'development/0.28.7/lab/test_reboot_event_chain.ps1'
+      - 'development/0.28.7/lab/vm_cleanup_state_contract.ps1'
+      - 'development/0.28.7/lab/test_vm_cleanup_state_contract.ps1'
+      - 'development/0.28.7/lab/test_vm_cleanup_scheduler_roundtrip.ps1'
+      - 'development/0.28.7/lab/test_vm_cleanup_receipt_contract.ps1'
+      - 'development/0.28.7/lab/vm_environment_baseline.ps1'
+      - 'development/0.28.7/lab/test_vm_environment_baseline.ps1'
+      - 'development/0.28.7/lab/ci_task_scheduler_event_diagnostic.ps1'
+      - 'development/0.28.7/lab/VM_ROLLBACK_BOOT_PACK_README.md'
+      - 'development/0.28.7/complete-source-parts/**'
+      - 'development/0.28.7/inapp/apply_overlay.go'
+  pull_request:
+    branches: [work/0287-dns-cname-chain-guard-20261113]
+    paths:
+      - '.github/workflows/volve-0287-vm-recovery-persistent-kit.yml'
+      - 'development/0.28.7/lab/vm_reboot_proof.ps1'
+      - 'development/0.28.7/lab/boot_recovery_lab.ps1'
+      - 'development/0.28.7/lab/reboot_event_chain.ps1'
+      - 'development/0.28.7/lab/test_reboot_event_chain.ps1'
+      - 'development/0.28.7/lab/vm_cleanup_state_contract.ps1'
+      - 'development/0.28.7/lab/test_vm_cleanup_state_contract.ps1'
+      - 'development/0.28.7/lab/test_vm_cleanup_scheduler_roundtrip.ps1'
+      - 'development/0.28.7/lab/test_vm_cleanup_receipt_contract.ps1'
+      - 'development/0.28.7/lab/vm_environment_baseline.ps1'
+      - 'development/0.28.7/lab/test_vm_environment_baseline.ps1'
+      - 'development/0.28.7/lab/ci_task_scheduler_event_diagnostic.ps1'
       - 'development/0.28.7/lab/VM_ROLLBACK_BOOT_PACK_README.md'
       - 'development/0.28.7/complete-source-parts/**'
       - 'development/0.28.7/inapp/apply_overlay.go'
@@ -59,18 +84,51 @@ jobs:
           if((Get-Item -LiteralPath $out).Length -lt 1048576){throw 'Unexpectedly short lab helper'}
           Write-Host 'PASS: compiled lab journal helper; not a product executable'
       - name: Parse legacy Windows PowerShell scripts and run event chain contract
+        id: verified_contract
         shell: powershell
         run: |
           $ErrorActionPreference='Stop'
           $root='development/0.28.7/lab'
-          foreach($name in @('vm_reboot_proof.ps1','boot_recovery_lab.ps1','reboot_event_chain.ps1','test_reboot_event_chain.ps1')){
+          foreach($name in @('vm_reboot_proof.ps1','boot_recovery_lab.ps1','reboot_event_chain.ps1','test_reboot_event_chain.ps1','vm_cleanup_state_contract.ps1','test_vm_cleanup_state_contract.ps1','test_vm_cleanup_receipt_contract.ps1','test_vm_cleanup_scheduler_roundtrip.ps1','vm_environment_baseline.ps1','test_vm_environment_baseline.ps1','ci_task_scheduler_event_diagnostic.ps1')){
             $tokens=$null;$errors=$null
             [Management.Automation.Language.Parser]::ParseFile((Resolve-Path (Join-Path $root $name)).Path,[ref]$tokens,[ref]$errors)|Out-Null
-            if($errors.Count -ne 0){throw "Invalid PowerShell syntax in $name"}
+            if($errors.Count -ne 0){
+              foreach($parseError in $errors){
+                Write-Host ("PARSE ERROR {0} at {1}:{2}: {3}" -f $name,$parseError.Extent.StartLineNumber,$parseError.Extent.StartColumnNumber,$parseError.Message)
+              }
+              throw "Invalid PowerShell syntax in $name"
+            }
           }
           & (Join-Path $root 'test_reboot_event_chain.ps1')
           if($LASTEXITCODE -and $LASTEXITCODE -ne 0){throw 'Boot event chain tests failed'}
+          & (Join-Path $root 'test_vm_cleanup_state_contract.ps1')
+          if($LASTEXITCODE -and $LASTEXITCODE -ne 0){throw 'VM cleanup contract tests failed'}
+          & (Join-Path $root 'test_vm_cleanup_receipt_contract.ps1')
+          if($LASTEXITCODE -and $LASTEXITCODE -ne 0){throw 'VM cleanup receipt safety tests failed'}
+          & (Join-Path $root 'ci_task_scheduler_event_diagnostic.ps1') -Mode Test
+          & (Join-Path $root 'test_vm_environment_baseline.ps1')
+          if($LASTEXITCODE -and $LASTEXITCODE -ne 0){throw 'VM environment safety contract tests failed'}
+      - name: Enable Security 4702 audit only in disposable Windows CI for SPP attribution
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          if($env:GITHUB_ACTIONS -cne 'true' -or $env:RUNNER_ENVIRONMENT -cne 'github-hosted'){
+            throw 'REFUSED: security audit changes are allowed only in disposable GitHub CI'
+          }
+          $cs=Get-CimInstance Win32_ComputerSystem -ErrorAction Stop
+          if(($cs.Manufacturer+' '+$cs.Model) -notmatch '(?i:virtual machine|hyper-v|vmware|kvm|qemu)'){
+            throw 'REFUSED: host is not positively identified as an isolated Windows VM'
+          }
+          # The separate real 4702 CI run proved this audit category yields a
+          # ClientProcessId. No user machine, VOLVE task, DNS or HOSTS is changed.
+          & auditpol.exe /set '/subcategory:Other Object Access Events' '/success:enable' | Out-Null
+          if($LASTEXITCODE -ne 0){throw 'Cannot enable event 4702 evidence in CI'}
+          Write-Host 'PASS: ephemeral Windows Security 4702 task-update audit prepared; not a customer installation'
+
       - name: Prove VM Prepare and reject Verify without actual reboot
+        id: strict_environment
+        # Continue independent tests without hiding environmental failures.
+        continue-on-error: true
         shell: powershell
         run: |
           $ErrorActionPreference='Stop'
@@ -83,14 +141,153 @@ jobs:
           $lab=Join-Path $base 'boot_recovery_lab.ps1'
           & wevtutil.exe sl Microsoft-Windows-TaskScheduler/Operational /e:true
           if($LASTEXITCODE -ne 0){throw 'Cannot enable ephemeral VM task history'}
-          $taskNames=@('VOLVE-CI-StartupMotor-'+$id,'VOLVE-CI-BootRecovery-'+$id)
+          $taskNames=@(('VOLVE-CI-StartupMotor-'+$id),('VOLVE-CI-BootRecovery-'+$id))
+          if(@($taskNames).Count -ne 2 -or $taskNames[0] -ceq $taskNames[1]){
+            throw 'CI cleanup requires exactly two distinct disposable task names'
+          }
           try{
             & $script -Mode Probe
             & $script -Mode Prepare -RunId $id -LabScript $lab -JournalExe $journal
+            # Ground the whole-folder task inventory in Windows itself.
+            # The original snapshot predates the two disposable task writes.
+            $readOnlySnapshot=Join-Path (Join-Path $env:ProgramData ('VOLVE-VM-RebootLab-'+$id)) 'vm-environment-baseline.json'
+            $recorded=Get-Content -LiteralPath $readOnlySnapshot -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+            $currentAll=@(Get-ScheduledTask -ErrorAction Stop)
+            $unrelated=@($currentAll | Where-Object {
+              -not ($_.TaskPath -ceq '\' -and $_.TaskName -cin $taskNames)
+            })
+            if(@($recorded.taskRecords).Count -ne $unrelated.Count){
+              throw ('VM task inventory incomplete: snapshot='+@($recorded.taskRecords).Count+' currentlyUnrelated='+$unrelated.Count)
+            }
+            $outsideRoot=@($unrelated | Where-Object {$_.TaskPath -cne '\'})
+            foreach($task in $outsideRoot){
+              $fullPrefix=([string]$task.TaskPath+[string]$task.TaskName+'|')
+              if(@($recorded.taskRecords | Where-Object {$_.StartsWith($fullPrefix,[StringComparison]::Ordinal)}).Count -ne 1){
+                throw ('VM task inventory omitted subfolder task: '+$fullPrefix)
+              }
+            }
+            Write-Host ('PASS: baseline includes '+$unrelated.Count+' unrelated Scheduler tasks in ALL folders, including '+$outsideRoot.Count+' subfolder tasks')
+            & $script -Mode AuditPrepared -RunId $id
+            # The boot trigger and SYSTEM identity can remain unchanged
+            # while the watchdog ACTION is maliciously replaced. A pre-boot
+            # audit must reject the whole changed Task Scheduler definition.
+            $bootName='VOLVE-CI-BootRecovery-'+$id
+            $savedWatchdog=Export-ScheduledTask -TaskName $bootName -TaskPath '\' -ErrorAction Stop
+            try {
+              Set-ScheduledTask -TaskName $bootName -TaskPath '\' -Action (
+                New-ScheduledTaskAction -Execute (Join-Path $env:WINDIR 'System32\cmd.exe') -Argument '/C exit 0'
+              ) -ErrorAction Stop | Out-Null
+              $stillStartup=Get-ScheduledTask -TaskName $bootName -TaskPath '\' -ErrorAction Stop
+              if($stillStartup.Principal.UserId -notin @('SYSTEM','S-1-5-18') -or
+                 @($stillStartup.Triggers).Count -ne 1 -or
+                 $stillStartup.Triggers[0].CimClass.CimClassName -ne 'MSFT_TaskBootTrigger'){
+                throw 'Fixture no longer has the expected SYSTEM boot trigger'
+              }
+              $watchdogMismatchRejected=$false
+              try { & $script -Mode AuditPrepared -RunId $id }
+              catch {
+                if($_.Exception.Message -like '*Task Scheduler XML differs from original protected snapshot*'){
+                  $watchdogMismatchRejected=$true
+                } else {throw}
+              }
+              if(-not $watchdogMismatchRejected){throw 'Altered SYSTEM boot watchdog action passed pre-boot audit'}
+              $state=& $journal status (Join-Path (Join-Path $env:ProgramData ('VOLVE-VM-RebootLab-'+$id)) ('VOLVE-CI-BOOT-'+$id+'\recovery.json'))
+              if($LASTEXITCODE -ne 0 -or $state -ne 'ROLLBACK_REQUIRED'){
+                throw 'Read-only audit changed journal after watcher tampering'
+              }
+              Write-Host 'PASS: read-only VM pre-boot audit rejected a SYSTEM watchdog whose action changed but boot trigger stayed intact'
+            } finally {
+              Register-ScheduledTask -TaskName $bootName -TaskPath '\' -Xml $savedWatchdog -Force -ErrorAction Stop|Out-Null
+            }
+            & $script -Mode AuditPrepared -RunId $id
+            # The VM's cleanup path must reject both missing and fabricated
+            # reboot evidence WITHOUT unregistering either disposable task.
+            $trialKit=Join-Path $env:ProgramData ('VOLVE-VM-RebootLab-'+$id)
+            $proofPath=Join-Path $trialKit 'vm-proof-evidence.json'
+            $cleanupDenied=$false
+            try { & $script -Mode Cleanup -RunId $id }
+            catch {
+              if($_.Exception.Message -like 'REFUSED: Cleanup requires verified real reboot proof*'){
+                $cleanupDenied=$true
+              } else {throw}
+            }
+            if(-not $cleanupDenied){throw 'UNSAFE: pending VM trial cleanup succeeded without real boot proof'}
+            $forged=[ordered]@{schema=2;test='FABRICATED-CI-PROOF';runId=$id}
+            try {
+              $forged|ConvertTo-Json|Set-Content -LiteralPath $proofPath -Encoding UTF8 -ErrorAction Stop
+              $forgeryDenied=$false
+              try { & $script -Mode Cleanup -RunId $id }
+              catch {
+                if($_.Exception.Message -like 'REFUSED: Cleanup proof does not match protected VM recovery receipt*'){
+                  $forgeryDenied=$true
+                } else {throw}
+              }
+              if(-not $forgeryDenied){throw 'UNSAFE: fabricated VM reboot evidence allowed cleanup'}
+            } finally {
+              if(Test-Path -LiteralPath $proofPath){Remove-Item -LiteralPath $proofPath -Force -ErrorAction Stop}
+            }
+            foreach($name in $taskNames){
+              $t=Get-ScheduledTask -TaskName $name -TaskPath '\' -ErrorAction Stop
+              if($t.Principal.UserId -notin @('SYSTEM','S-1-5-18')){
+                throw 'Unsafe cleanup changed task ownership'
+              }
+            }
+            $pendingJournal=Join-Path (Join-Path $trialKit ('VOLVE-CI-BOOT-'+$id)) 'recovery.json'
+            $pendingStatus=& $journal status $pendingJournal
+            if($LASTEXITCODE -ne 0 -or $pendingStatus -cne 'ROLLBACK_REQUIRED'){
+              throw 'Unsafe cleanup changed the pending recovery journal'
+            }
+            Write-Host 'PASS: cleanup refused with missing/forged reboot proof; both SYSTEM CI tasks and pending journal preserved'
             $rejected=$false
             try { & $script -Mode Verify -RunId $id }
             catch { if($_.Exception.Message -like '*VM has not undergone a new boot*'){$rejected=$true}else{throw} }
             if(-not $rejected){throw 'False success: same-session staged task passed Verify'}
+            # The first post-boot verification must reject altered backup
+            # bytes even if an unrelated journal still claims to be healthy.
+            $snapshotRoot=Join-Path (Join-Path $env:ProgramData ('VOLVE-VM-RebootLab-'+$id)) ('VOLVE-CI-BOOT-'+$id)
+            foreach($case in @(
+              @{name='old-task.xml';expected='Original XML snapshot hash mismatch'},
+              @{name='old-test-engine.bin';expected='Original motor fixture hash mismatch'}
+            )){
+              $file=Join-Path $snapshotRoot $case.name
+              $original=[IO.File]::ReadAllBytes($file)
+              try {
+                [IO.File]::AppendAllText($file,'VOLVE-CI-POST-PREPARE-TAMPER')
+                $blocked=$false
+                try { & $script -Mode Verify -RunId $id }
+                catch {
+                  if($_.Exception.Message.Contains($case.expected)){$blocked=$true}else{throw}
+                }
+                if(-not $blocked){throw ('Post-Prepare tampering was accepted: '+$case.name)}
+              } finally {
+                [IO.File]::WriteAllBytes($file,$original)
+              }
+            }
+            foreach($case in @(
+              @{name='vm-environment-baseline.json';expected='Protected HOSTS/DNS/unrelated-task baseline changed after VM Prepare'},
+              @{name='vm_environment_baseline.ps1';expected='Protected HOSTS/DNS/unrelated-task baseline changed after VM Prepare'}
+            )){
+              $file=Join-Path $trialKit $case.name
+              $original=[IO.File]::ReadAllBytes($file)
+              try {
+                [IO.File]::AppendAllText($file,'VOLVE-CI-ENV-BASELINE-TAMPER')
+                $blocked=$false
+                try { & $script -Mode Verify -RunId $id }
+                catch {
+                  if($_.Exception.Message.Contains($case.expected)){$blocked=$true}else{throw}
+                }
+                if(-not $blocked){throw ('Environment baseline tampering was accepted: '+$case.name)}
+              } finally {
+                [IO.File]::WriteAllBytes($file,$original)
+              }
+            }
+            & $script -Mode AuditPrepared -RunId $id
+            Write-Host 'PASS: protected VM HOSTS/DNS/root-task baseline and its verification module reject post-Prepare tampering'
+            $rejectedAfterRestoring=$false
+            try { & $script -Mode Verify -RunId $id }
+            catch { if($_.Exception.Message -like '*VM has not undergone a new boot*'){$rejectedAfterRestoring=$true}else{throw} }
+            if(-not $rejectedAfterRestoring){throw 'Snapshot restoration bypassed genuine boot check'}
+            Write-Host 'PASS: backed-up XML and old motor fixture are separately hash-pinned; tampering rejected before boot check'
             Write-Host 'PASS: staged disposable SYSTEM boot watchdog + journal; refused fake reboot'
           } finally {
             foreach($name in $taskNames){
@@ -103,14 +300,389 @@ jobs:
               Unregister-ScheduledTask -TaskName $name -TaskPath '\' -Confirm:$false -ErrorAction Stop
             }
           }
+      - name: Read-only TaskScheduler 106/140/141 postmortem if strict baseline fails
+        if: ${{ steps.strict_environment.outcome == 'failure' }}
+        continue-on-error: true
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          & 'development/0.28.7/lab/ci_task_scheduler_event_diagnostic.ps1' -Mode Investigate -IdentityId '4023F1322DB1C44E' -Minutes 45
+      - name: Exercise pre-switch crash boundary under SYSTEM (NO REAL REBOOT)
+        # Continue independent, isolated CI trials even when the strict VM environment gate rejects external Windows drift.
+        # The failed baseline step stays FAILED: no greenwashing, no release, no protection activation.
+        if: ${{ !cancelled() && steps.verified_contract.outcome == 'success' }}
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          if($env:GITHUB_ACTIONS -ne 'true' -or $env:RUNNER_ENVIRONMENT -ne 'github-hosted'){throw 'Not disposable hosted CI'}
+          $id=$env:GITHUB_RUN_ID+'456'
+          if($id -cnotmatch '^[0-9]{14,18}$'){throw 'Invalid disposable CI identifier'}
+          $source='development/0.28.7/lab/boot_recovery_lab.ps1'
+          $journal=Join-Path $env:RUNNER_TEMP 'volve-journal-lab.exe'
+          $workspace=Join-Path $env:RUNNER_TEMP ('VOLVE-CI-BOOT-'+$id)
+          $motor='VOLVE-CI-StartupMotor-'+$id
+          $watch='VOLVE-CI-BootRecovery-'+$id
+          $stateFile=Join-Path $workspace 'recovery.json'
+          try {
+            $env:VOLVE_CI_ABORT_BEFORE_CANDIDATE='1'
+            & $source -Mode stage -TaskName $motor -WatchdogName $watch -Workspace $workspace -JournalExe $journal
+            if($LASTEXITCODE -ne 0){throw 'Pre-switch interruption fixture failed'}
+            Remove-Item Env:\VOLVE_CI_ABORT_BEFORE_CANDIDATE -ErrorAction SilentlyContinue
+            $watchTask=Get-ScheduledTask -TaskName $watch -ErrorAction Stop
+            if($watchTask.Principal.UserId -notin @('SYSTEM','S-1-5-18') -or
+               @($watchTask.Triggers).Count -ne 1 -or
+               $watchTask.Triggers[0].CimClass.CimClassName -ne 'MSFT_TaskBootTrigger'){
+              throw 'Independent SYSTEM watchdog not armed at pre-switch boundary'
+            }
+            $old=Get-ScheduledTask -TaskName $motor -ErrorAction Stop
+            if(@($old.Actions).Count -ne 1 -or
+               $old.Actions[0].Execute -ne (Join-Path $env:WINDIR 'System32\cmd.exe') -or
+               [string]$old.Actions[0].Arguments -ne '/C exit 0'){
+              throw 'Pre-switch fault unexpectedly changed the original task'
+            }
+            if((& $journal status $stateFile) -ne 'ROLLBACK_REQUIRED'){
+              throw 'Pre-switch pending journal not armed'
+            }
+            # Deliberate direct invocation isolates SYSTEM pre-switch recovery;
+            # it is NOT evidence that Windows restarted or a boot trigger fired.
+            Start-ScheduledTask -TaskName $watch -ErrorAction Stop
+            $restored=$false
+            for($i=0;$i -lt 100;$i++){
+              Start-Sleep -Milliseconds 250
+              $state=& $journal status $stateFile
+              if($LASTEXITCODE -eq 0 -and $state -eq 'NO_ROLLBACK:restored'){
+                $restored=$true
+                break
+              }
+              if(Test-Path -LiteralPath (Join-Path $workspace 'boot-recovery-failed.marker')){
+                throw 'SYSTEM recovery reported failure'
+              }
+            }
+            if(-not $restored){throw 'SYSTEM watchdog did not close pre-switch journal'}
+            $final=Get-ScheduledTask -TaskName $motor -ErrorAction Stop
+            if(@($final.Actions).Count -ne 1 -or
+               $final.Actions[0].Execute -ne (Join-Path $env:WINDIR 'System32\cmd.exe') -or
+               [string]$final.Actions[0].Arguments -ne '/C exit 0'){
+              throw 'Original action changed during pre-switch SYSTEM recovery'
+            }
+            $markerPath=Join-Path $workspace 'boot-recovery-success.marker'
+            if(-not (Test-Path -LiteralPath $markerPath)){
+              throw 'No SYSTEM recovery marker'
+            }
+            Write-Host 'PASS: SYSTEM watchdog armed before candidate switch, original preserved and pending journal restored without reboot'
+          } finally {
+            Remove-Item Env:\VOLVE_CI_ABORT_BEFORE_CANDIDATE -ErrorAction SilentlyContinue
+            foreach($name in @($watch,$motor)){
+              $task=Get-ScheduledTask -TaskName $name -TaskPath '\' -ErrorAction SilentlyContinue
+              if($null -eq $task){continue}
+              if($task.TaskPath -ne '\' -or $task.Principal.UserId -notin @('SYSTEM','S-1-5-18')){
+                throw 'Refusing cleanup for foreign task'
+              }
+              if($task.State -eq 'Running'){Stop-ScheduledTask -TaskName $name -TaskPath '\' -ErrorAction Stop}
+              Unregister-ScheduledTask -TaskName $name -TaskPath '\' -Confirm:$false -ErrorAction Stop
+            }
+          }
+      - name: Prove actual Windows Task Scheduler XML roundtrip via manual SYSTEM recovery (NO REBOOT)
+        # Continue independent, isolated CI trials even when the strict VM environment gate rejects external Windows drift.
+        # The failed baseline step stays FAILED: no greenwashing, no release, no protection activation.
+        if: ${{ !cancelled() && steps.verified_contract.outcome == 'success' }}
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          if($env:GITHUB_ACTIONS -ne 'true' -or $env:RUNNER_ENVIRONMENT -ne 'github-hosted'){
+            throw 'Only an isolated GitHub-hosted Windows VM can perform this test'
+          }
+          $id=$env:GITHUB_RUN_ID+'789'
+          if($id -cnotmatch '^[0-9]{14,18}$'){throw 'Invalid VM-only task identifier'}
+          $lab='development/0.28.7/lab/boot_recovery_lab.ps1'
+          $journal=Join-Path $env:RUNNER_TEMP 'volve-journal-lab.exe'
+          $workspace=Join-Path $env:RUNNER_TEMP ('VOLVE-CI-BOOT-'+$id)
+          $motor='VOLVE-CI-StartupMotor-'+$id
+          $watch='VOLVE-CI-BootRecovery-'+$id
+          $rootTask='\'+$motor
+          $sourceXML=Join-Path $workspace 'old-task.xml'
+          $stateFile=Join-Path $workspace 'recovery.json'
+          . 'development/0.28.7/lab/reboot_event_chain.ps1'
+          try {
+            & $lab -Mode stage -TaskName $motor -WatchdogName $watch -Workspace $workspace -JournalExe $journal
+            if($LASTEXITCODE -ne 0){throw 'Disposable candidate stage failed'}
+            $candidate=Get-ScheduledTask -TaskName $motor -TaskPath '\' -ErrorAction Stop
+            if(@($candidate.Actions).Count -ne 1 -or
+               $candidate.Actions[0].Execute -ne (Join-Path $env:WINDIR 'System32\notepad.exe')){
+              throw 'Fixture did not enter candidate state before recovery'
+            }
+            # Deliberate manual trigger, NOT a Windows restart or boot proof.
+            Start-ScheduledTask -TaskName $watch -TaskPath '\' -ErrorAction Stop
+            $ready=$false
+            for($i=0;$i -lt 100;$i++){
+              Start-Sleep -Milliseconds 250
+              if(Test-Path -LiteralPath (Join-Path $workspace 'boot-recovery-failed.marker')){
+                throw 'Independent SYSTEM watchdog reported recovery failure'
+              }
+              $state=& $journal status $stateFile
+              if($LASTEXITCODE -eq 0 -and $state -eq 'NO_ROLLBACK:restored'){
+                $ready=$true
+                break
+              }
+            }
+            if(-not $ready){throw 'SYSTEM watchdog did not finish fixture rollback'}
+            $current=Get-ScheduledTask -TaskName $motor -TaskPath '\' -ErrorAction Stop
+            if($current.Principal.UserId -notin @('SYSTEM','S-1-5-18')){
+              throw 'Restored task principal is not SYSTEM'
+            }
+            $saved=[IO.File]::ReadAllText($sourceXML)
+            $restored=Export-ScheduledTask -TaskName $motor -TaskPath '\' -ErrorAction Stop
+            if(-not (Assert-VolvRestoredTaskXML -SavedXML $saved -RestoredXML $restored)){
+              throw 'Full Task Scheduler XML did not roundtrip through Windows'
+            }
+            if(@($current.Actions).Count -ne 1 -or
+               $current.Actions[0].Execute -ne (Join-Path $env:WINDIR 'System32\cmd.exe') -or
+               [string]$current.Actions[0].Arguments -ne '/C exit 0'){
+              throw 'Recovered task action differs from original'
+            }
+            if([IO.File]::ReadAllText((Join-Path $workspace 'boot-recovery-success.marker')) -cne 'RESTORED_BY_SYSTEM_STARTUP_TASK'){
+              throw 'Recovery completion marker did not match'
+            }
+            Write-Host 'PASS: actual Windows Task Scheduler full XML restored byte-semantically from protected lab snapshot by manual SYSTEM watchdog'
+            Write-Host 'NO REAL REBOOT: manual SYSTEM invocation alone cannot certify post-boot recovery.'
+          } finally {
+            foreach($name in @($watch,$motor)){
+              $task=Get-ScheduledTask -TaskName $name -TaskPath '\' -ErrorAction SilentlyContinue
+              if($null -eq $task){continue}
+              if($task.TaskPath -ne '\' -or $task.Principal.UserId -notin @('SYSTEM','S-1-5-18')){
+                throw 'Refusing to remove an unexpected non-CI task'
+              }
+              if($task.State -eq 'Running'){Stop-ScheduledTask -TaskName $name -TaskPath '\' -ErrorAction Stop}
+              Unregister-ScheduledTask -TaskName $name -TaskPath '\' -Confirm:$false -ErrorAction Stop
+            }
+          }
+      - name: Reject lookalike original task with altered trigger; keep journal pending (NO REBOOT)
+        # Continue independent, isolated CI trials even when the strict VM environment gate rejects external Windows drift.
+        # The failed baseline step stays FAILED: no greenwashing, no release, no protection activation.
+        if: ${{ !cancelled() && steps.verified_contract.outcome == 'success' }}
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          if($env:GITHUB_ACTIONS -ne 'true' -or $env:RUNNER_ENVIRONMENT -ne 'github-hosted'){
+            throw 'Only disposable GitHub-hosted Windows VM allowed'
+          }
+          $id=$env:GITHUB_RUN_ID+'987'
+          if($id -cnotmatch '^[0-9]{14,18}$'){throw 'Invalid CI-only task ID'}
+          $lab='development/0.28.7/lab/boot_recovery_lab.ps1'
+          $journal=Join-Path $env:RUNNER_TEMP 'volve-journal-lab.exe'
+          $workspace=Join-Path $env:RUNNER_TEMP ('VOLVE-CI-BOOT-'+$id)
+          $motor='VOLVE-CI-StartupMotor-'+$id
+          $watch='VOLVE-CI-BootRecovery-'+$id
+          $journalFile=Join-Path $workspace 'recovery.json'
+          $savedXMLPath=Join-Path $workspace 'old-task.xml'
+          $failureMarker=Join-Path $workspace 'boot-recovery-failed.marker'
+          $successMarker=Join-Path $workspace 'boot-recovery-success.marker'
+          $cmd=Join-Path $env:WINDIR 'System32\cmd.exe'
+          . 'development/0.28.7/lab/reboot_event_chain.ps1'
+          try {
+            & $lab -Mode stage -TaskName $motor -WatchdogName $watch -Workspace $workspace -JournalExe $journal
+            if($LASTEXITCODE -ne 0){throw 'Could not stage isolated changed-task fixture'}
+            $original=[IO.File]::ReadAllText($savedXMLPath)
+            # Make the task LOOK correct by its action but silently move its
+            # trigger by two years. This must not qualify as restored.
+            Set-ScheduledTask -TaskName $motor -TaskPath '\' -Action (
+              New-ScheduledTaskAction -Execute $cmd -Argument '/C exit 0'
+            ) -Trigger (New-ScheduledTaskTrigger -Once -At ((Get-Date).AddYears(2))) -ErrorAction Stop | Out-Null
+            $looksRight=Get-ScheduledTask -TaskName $motor -TaskPath '\' -ErrorAction Stop
+            if(@($looksRight.Actions).Count -ne 1 -or
+               $looksRight.Principal.UserId -notin @('SYSTEM','S-1-5-18') -or
+               $looksRight.Actions[0].Execute -ne $cmd -or
+               [string]$looksRight.Actions[0].Arguments -ne '/C exit 0'){
+              throw 'Fixture lost the original-looking action or SYSTEM identity'
+            }
+            $modified=Export-ScheduledTask -TaskName $motor -TaskPath '\' -ErrorAction Stop
+            $differenceDetected=$false
+            try { $null=Assert-VolvRestoredTaskXML -SavedXML $original -RestoredXML $modified }
+            catch {
+              if($_.Exception.Message -like 'NOT VERIFIED: restored Task Scheduler XML differs*'){
+                $differenceDetected=$true
+              } else {throw}
+            }
+            if(-not $differenceDetected){throw 'Test setup failed: altered trigger did not change whole-task XML'}
+            if((& $journal status $journalFile) -ne 'ROLLBACK_REQUIRED'){
+              throw 'Pending recovery journal missing before negative SYSTEM run'
+            }
+            # Trigger the real SYSTEM watchdog manually, not via OS startup.
+            # It must refuse to finalize even though the action matches.
+            Start-ScheduledTask -TaskName $watch -TaskPath '\' -ErrorAction Stop
+            $failed=$false
+            for($i=0;$i -lt 100;$i++){
+              Start-Sleep -Milliseconds 250
+              if(Test-Path -LiteralPath $successMarker){
+                throw 'FALSE PASS: watchdog marked a mismatched original task as restored'
+              }
+              if(Test-Path -LiteralPath $failureMarker){
+                $failureText=[IO.File]::ReadAllText($failureMarker)
+                if($failureText -notlike '*Task Scheduler XML differs from original protected snapshot*'){
+                  throw ('Wrong watchdog rejection reason: '+$failureText)
+                }
+                $failed=$true
+                break
+              }
+            }
+            if(-not $failed){throw 'SYSTEM watchdog did not reject the altered-trigger task'}
+            $state=& $journal status $journalFile
+            if($LASTEXITCODE -ne 0 -or $state -ne 'ROLLBACK_REQUIRED'){
+              throw ('Journal was incorrectly finalized after XML mismatch: '+$state)
+            }
+            if(Test-Path -LiteralPath $successMarker){throw 'False success marker exists after recovery failure'}
+            $after=Export-ScheduledTask -TaskName $motor -TaskPath '\' -ErrorAction Stop
+            $stillDifferent=$false
+            try { $null=Assert-VolvRestoredTaskXML -SavedXML $original -RestoredXML $after }
+            catch {
+              if($_.Exception.Message -like 'NOT VERIFIED: restored Task Scheduler XML differs*'){
+                $stillDifferent=$true
+              } else {throw}
+            }
+            if(-not $stillDifferent){throw 'Fixture unexpectedly changed to original; cannot certify rejection'}
+            Write-Host 'PASS: SYSTEM watchdog rejected original-looking task with changed trigger; journal stays ROLLBACK_REQUIRED, no success marker'
+            Write-Host 'NO REAL REBOOT; only disposable VOLVE-CI tasks were altered.'
+          } finally {
+            foreach($name in @($watch,$motor)){
+              $t=Get-ScheduledTask -TaskName $name -TaskPath '\' -ErrorAction SilentlyContinue
+              if($null -eq $t){continue}
+              if($t.TaskPath -ne '\' -or $t.Principal.UserId -notin @('SYSTEM','S-1-5-18')){
+                throw 'Refusing cleanup of unexpected task'
+              }
+              if($t.State -eq 'Running'){Stop-ScheduledTask -TaskName $name -TaskPath '\' -ErrorAction Stop}
+              Unregister-ScheduledTask -TaskName $name -TaskPath '\' -Confirm:$false -ErrorAction Stop
+            }
+          }
+      - name: Reject changed verifier before SYSTEM task rollback; retain pending journal (NO REBOOT)
+        # Continue independent, isolated CI trials even when the strict VM environment gate rejects external Windows drift.
+        # The failed baseline step stays FAILED: no greenwashing, no release, no protection activation.
+        if: ${{ !cancelled() && steps.verified_contract.outcome == 'success' }}
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          if($env:GITHUB_ACTIONS -ne 'true' -or $env:RUNNER_ENVIRONMENT -ne 'github-hosted'){
+            throw 'This integrity attack test requires an isolated hosted Windows VM'
+          }
+          $id=$env:GITHUB_RUN_ID+'654'
+          if($id -cnotmatch '^[0-9]{14,18}$'){throw 'Invalid disposable CI trial ID'}
+          $sourceDir=Join-Path $env:RUNNER_TEMP ('VOLVE-CI-CodeSource-'+$id)
+          $workspace=Join-Path $env:RUNNER_TEMP ('VOLVE-CI-BOOT-'+$id)
+          $motor='VOLVE-CI-StartupMotor-'+$id
+          $watch='VOLVE-CI-BootRecovery-'+$id
+          $journal=Join-Path $env:RUNNER_TEMP 'volve-journal-lab.exe'
+          $stateFile=Join-Path $workspace 'recovery.json'
+          $failureMarker=Join-Path $workspace 'boot-recovery-failed.marker'
+          $successMarker=Join-Path $workspace 'boot-recovery-success.marker'
+          New-Item -ItemType Directory -Path $sourceDir -ErrorAction Stop|Out-Null
+          $lab=Join-Path $sourceDir 'boot_recovery_lab.ps1'
+          $verifier=Join-Path $sourceDir 'reboot_event_chain.ps1'
+          Copy-Item -LiteralPath 'development/0.28.7/lab/boot_recovery_lab.ps1' -Destination $lab -ErrorAction Stop
+          Copy-Item -LiteralPath 'development/0.28.7/lab/reboot_event_chain.ps1' -Destination $verifier -ErrorAction Stop
+          try {
+            & $lab -Mode stage -TaskName $motor -WatchdogName $watch -Workspace $workspace -JournalExe $journal
+            if($LASTEXITCODE -ne 0){throw 'Cannot prepare disposable integrity-attack fixture'}
+            $sealPath=Join-Path $workspace 'recovery-code-seal.json'
+            $seal=Get-Content -LiteralPath $sealPath -Raw -ErrorAction Stop|ConvertFrom-Json
+            if($seal.verificationLibSha256 -cne (Get-FileHash -Algorithm SHA256 -LiteralPath $verifier).Hash){
+              throw 'Recovery source seal was not written before watchdog registration'
+            }
+            [IO.File]::AppendAllText($verifier,"# DISPOSABLE-CI-VERIFIER-TAMPER")
+            if((Get-FileHash -Algorithm SHA256 -LiteralPath $verifier).Hash -ceq $seal.verificationLibSha256){
+              throw 'Integrity attack did not change verifier bytes'
+            }
+            # Manually trigger SYSTEM: absence of a reboot is intentional.
+            Start-ScheduledTask -TaskName $watch -TaskPath '\' -ErrorAction Stop
+            $failed=$false
+            for($i=0;$i -lt 100;$i++){
+              Start-Sleep -Milliseconds 250
+              if(Test-Path -LiteralPath $successMarker){
+                throw 'FALSE SUCCESS: mutated verifier permitted completed rollback'
+              }
+              if(Test-Path -LiteralPath $failureMarker){
+                $reason=[IO.File]::ReadAllText($failureMarker)
+                if($reason -notlike '*Recovery seal hash mismatch: verification library*'){
+                  throw ('Unexpected integrity rejection: '+$reason)
+                }
+                $failed=$true
+                break
+              }
+            }
+            if(-not $failed){throw 'SYSTEM watchdog did not reject modified recovery code'}
+            $state=& $journal status $stateFile
+            if($LASTEXITCODE -ne 0 -or $state -ne 'ROLLBACK_REQUIRED'){
+              throw ('Journal incorrectly finalized despite changed verifier: '+$state)
+            }
+            $task=Get-ScheduledTask -TaskName $motor -TaskPath '\' -ErrorAction Stop
+            if($task.Principal.UserId -notin @('SYSTEM','S-1-5-18') -or
+               @($task.Actions).Count -ne 1 -or
+               $task.Actions[0].Execute -ne (Join-Path $env:WINDIR 'System32\notepad.exe')){
+              throw 'Verifier integrity failure occurred after an unauthorized task change'
+            }
+            Write-Host 'PASS: SYSTEM watchdog rejected changed recovery verifier BEFORE altering the disposable task; journal still pending'
+            Write-Host 'NO REAL REBOOT; original VOLVE installation never accessed.'
+          } finally {
+            foreach($name in @($watch,$motor)){
+              $task=Get-ScheduledTask -TaskName $name -TaskPath '\' -ErrorAction SilentlyContinue
+              if($null -eq $task){continue}
+              if($task.TaskPath -ne '\' -or $task.Principal.UserId -notin @('SYSTEM','S-1-5-18')){
+                throw 'Refusing to delete a task outside isolated CI ownership'
+              }
+              if($task.State -eq 'Running'){Stop-ScheduledTask -TaskName $name -TaskPath '\' -ErrorAction Stop}
+              Unregister-ScheduledTask -TaskName $name -TaskPath '\' -Confirm:$false -ErrorAction Stop
+            }
+          }
+      - name: Prove all ten disposable CI scheduled tasks were unregistered
+        # Continue independent, isolated CI trials even when the strict VM environment gate rejects external Windows drift.
+        # The failed baseline step stays FAILED: no greenwashing, no release, no protection activation.
+        if: ${{ !cancelled() && steps.verified_contract.outcome == 'success' }}
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          if($env:GITHUB_ACTIONS -ne 'true' -or $env:RUNNER_ENVIRONMENT -ne 'github-hosted'){
+            throw 'Cleanup census only authorized in disposable GitHub-hosted Windows VM'
+          }
+          $expect=@()
+          foreach($suffix in @('123','456','789','987','654')){
+            $trial=$env:GITHUB_RUN_ID+$suffix
+            $expect+=('VOLVE-CI-StartupMotor-'+$trial)
+            $expect+=('VOLVE-CI-BootRecovery-'+$trial)
+          }
+          if($expect.Count -ne 10 -or @($expect|Select-Object -Unique).Count -ne 10){
+            throw 'Invalid disposable CI task census'
+          }
+          foreach($name in $expect){
+            $remaining=Get-ScheduledTask -TaskName $name -TaskPath '\' -ErrorAction SilentlyContinue
+            if($null -ne $remaining){
+              throw ('CI LEAK: disposable task was not unregistered after its trial: '+$name)
+            }
+          }
+          Write-Host 'PASS: all 10 expected VOLVE-CI tasks absent after 5 lab scenarios; no production task names touched'
+      - name: Exercise interrupted cleanup against actual disposable Windows SYSTEM tasks (NO REBOOT)
+        # Continue independent, isolated CI trials even when the strict VM environment gate rejects external Windows drift.
+        # The failed baseline step stays FAILED: no greenwashing, no release, no protection activation.
+        if: ${{ !cancelled() && steps.verified_contract.outcome == 'success' }}
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          & 'development/0.28.7/lab/test_vm_cleanup_scheduler_roundtrip.ps1'
+          if($LASTEXITCODE -and $LASTEXITCODE -ne 0){
+            throw 'Interrupted cleanup Scheduler integration test failed'
+          }
+      - name: Mandatory strict VM environmental integrity gate (no greenwashing)
+        if: ${{ always() && steps.strict_environment.outcome == 'failure' }}
+        shell: powershell
+        run: |
+          throw 'STRICT_VM_ENVIRONMENT_FAILED: isolated recovery tests do not clear the failed integrity baseline'
       - name: Package VM-only recovery kit with SHA256 manifest
+        # Never publish even a VM-only package after an unverified environment drift.
+        if: ${{ success() && steps.verified_contract.outcome == 'success' && steps.strict_environment.outcome == 'success' }}
         shell: powershell
         run: |
           $ErrorActionPreference='Stop'
           $out=Join-Path $env:RUNNER_TEMP 'VOLVE_VM_RECOVERY_BOOT_LAB'
           New-Item -ItemType Directory -Path $out -ErrorAction Stop|Out-Null
           $source='development/0.28.7/lab'
-          $names=@('vm_reboot_proof.ps1','boot_recovery_lab.ps1','reboot_event_chain.ps1','VM_ROLLBACK_BOOT_PACK_README.md')
+          $names=@('vm_reboot_proof.ps1','boot_recovery_lab.ps1','reboot_event_chain.ps1','vm_cleanup_state_contract.ps1','vm_environment_baseline.ps1','VM_ROLLBACK_BOOT_PACK_README.md')
           foreach($name in $names){
             Copy-Item -LiteralPath (Join-Path $source $name) -Destination (Join-Path $out $name) -ErrorAction Stop
           }
@@ -128,12 +700,23 @@ jobs:
           $manifestPath=Join-Path $out 'SHA256_MANIFEST.json'
           $manifest|ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $manifestPath -Encoding UTF8
           $check=Get-Content -LiteralPath $manifestPath -Raw|ConvertFrom-Json
-          if($check.files.Count -ne 5 -or $check.vm_only -ne $true -or $check.product_release -ne $false){throw 'Invalid manifest'}
+          if($check.files.Count -ne 7 -or $check.vm_only -ne $true -or $check.product_release -ne $false){throw 'Invalid manifest'}
           foreach($entry in $check.files){
             $path=Join-Path $out $entry.name
             if((Get-FileHash -Algorithm SHA256 -LiteralPath $path).Hash.ToLowerInvariant() -cne $entry.sha256){throw 'SHA256 mismatch'}
           }
-          Write-Host 'PASS: VM-only recovery kit manifest: 5 exact files; no release, no reboot'
+          $readmePath=Join-Path $out 'VM_ROLLBACK_BOOT_PACK_README.md'
+          $readme=Get-Content -LiteralPath $readmePath -Raw -ErrorAction Stop
+          $snippetMatch=[regex]::Match($readme,'(?s)\*\*Verificación de integridad antes de ejecutar el kit:\*\*.*?\x60\x60\x60powershell\r?\n(.*?)\r?\n\x60\x60\x60')
+          if(-not $snippetMatch.Success){throw 'README integrity PowerShell example is missing or malformed'}
+          $snippet=$snippetMatch.Groups[1].Value
+          $originalRootLine=[string]::Concat('$root = ',[char]39,'C:',[char]92,'Lab',[char]92,'Rollback',[char]39)
+          $ciRootLine=[string]::Concat('$root = ',[char]39,$out,[char]39)
+          if(-not $snippet.Contains($originalRootLine)){throw 'README verification example no longer has the expected lab root'}
+          $ciSnippet=$snippet.Replace($originalRootLine,$ciRootLine)
+          & ([scriptblock]::Create($ciSnippet))
+          Write-Host 'PASS: executed the README integrity-verification example against the packaged kit'
+          Write-Host 'PASS: VM-only recovery kit manifest: 7 exact hashed files; no release, no reboot'
       - uses: actions/upload-artifact@v4
         with:
           name: VOLVE-0287-VM-RECOVERY-BOOT-LAB-NO-INSTALL

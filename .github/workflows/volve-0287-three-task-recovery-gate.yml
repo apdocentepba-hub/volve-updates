@@ -1,0 +1,28 @@
+name: VOLVE 0.28.7 three-task recovery coverage gate (read-only)
+
+on:
+  pull_request:
+  push:
+    branches:
+      - work/0287-native-setup-preview-20261113
+    paths:
+      - 'development/0.28.7/taskrecoverygate/**'
+      - '.github/workflows/volve-0287-three-task-recovery-gate.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  coverage-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.x'
+      - name: Test the read-only legacy task coverage gate
+        working-directory: development/0.28.7/taskrecoverygate
+        run: |
+          go test -race -count=1 ./...
+          go vet ./...

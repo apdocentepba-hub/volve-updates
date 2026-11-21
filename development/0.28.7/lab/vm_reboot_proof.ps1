@@ -5,7 +5,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory=$true)]
-    [ValidateSet('Probe','Prepare','Verify','Cleanup')]
+    [ValidateSet('Probe','Prepare','AuditPrepared','Verify','Cleanup')]
     [string]$Mode,
     [ValidatePattern('^[0-9]{14,18}$')]
     [string]$RunId,
@@ -117,7 +117,7 @@ function Read-Metadata([string]$dir) {
     Assert-ProtectedEvidenceFile $path
     $data = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json
     if($data.schema -ne 1 -or $data.runId -ne $RunId -or $data.computer -ne $env:COMPUTERNAME) {throw 'VM trial metadata mismatch'}
-    foreach($member in @('bootBeforeUtc','labSha256','journalSha256','evidenceLibSha256')) {
+    foreach($member in @('bootBeforeUtc','labSha256','journalSha256','evidenceLibSha256','taskSnapshotSha256','originalFixtureSha256','watchdogTaskSnapshotSha256','cleanupContractSha256','environmentScriptSha256','environmentBaselineSha256')) {
         if($null -eq $data.$member -or [string]::IsNullOrWhiteSpace([string]$data.$member)){throw ('Missing '+$member)}
     }
     return $data
@@ -130,11 +130,68 @@ function Assert-LabIdentity([string]$dir,[object]$meta) {
     Assert-ProtectedEvidenceFile $helper
     if((Get-FileHash -Algorithm SHA256 -LiteralPath $lab).Hash -ne $meta.labSha256) {throw 'VM lab script was changed'}
     if((Get-FileHash -Algorithm SHA256 -LiteralPath $helper).Hash -ne $meta.journalSha256) {throw 'VM journal tool was changed'}
+    $cleanupContract=Join-Path $dir 'vm_cleanup_state_contract.ps1'
+    Assert-ProtectedEvidenceFile $cleanupContract
+    if((Get-FileHash -Algorithm SHA256 -LiteralPath $cleanupContract).Hash -cne [string]$meta.cleanupContractSha256){
+        throw 'VM cleanup contract was changed after preparing the VM trial'
+    }
+    $environmentModule=Join-Path $dir 'vm_environment_baseline.ps1'
+    $environmentSnapshot=Join-Path $dir 'vm-environment-baseline.json'
+    Assert-ProtectedEvidenceFile $environmentModule
+    Assert-ProtectedEvidenceFile $environmentSnapshot
+    if((Get-FileHash -Algorithm SHA256 -LiteralPath $environmentModule).Hash -cne [string]$meta.environmentScriptSha256 -or
+       (Get-FileHash -Algorithm SHA256 -LiteralPath $environmentSnapshot).Hash -cne [string]$meta.environmentBaselineSha256){
+        throw 'Protected HOSTS/DNS/unrelated-task baseline changed after VM Prepare'
+    }
     $evidenceLib=Join-Path $dir 'reboot_event_chain.ps1'
     Assert-ProtectedEvidenceFile $evidenceLib
     if((Get-FileHash -Algorithm SHA256 -LiteralPath $evidenceLib).Hash -ne $meta.evidenceLibSha256){
         throw 'Boot-event verification helper was changed after preparing the VM trial'
     }
+    # Pin the exact original fixture bytes independently of the rollback
+    # journal. Otherwise a modified XML/engine could be silently accepted
+    # when the verifier first runs after the VM restarts.
+    $taskSnapshot=Join-Path $dir ('VOLVE-CI-BOOT-'+$RunId)
+    $originalXML=Join-Path $taskSnapshot 'old-task.xml'
+    $oldFixture=Join-Path $taskSnapshot 'old-test-engine.bin'
+    $codeSeal=Join-Path $taskSnapshot 'recovery-code-seal.json'
+    $watchdogXML=Join-Path $dir 'watchdog-task.xml'
+    Assert-ProtectedEvidenceFile $watchdogXML
+    if((Get-FileHash -Algorithm SHA256 -LiteralPath $watchdogXML).Hash -cne [string]$meta.watchdogTaskSnapshotSha256){
+        throw 'Protected startup watchdog XML snapshot hash mismatch'
+    }
+    Assert-ProtectedEvidenceFile $codeSeal
+    $seal=Get-Content -LiteralPath $codeSeal -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+    if($seal.schema -ne 1 -or $seal.taskName -cne ('VOLVE-CI-StartupMotor-'+$RunId) -or
+       $seal.watchdogName -cne ('VOLVE-CI-BootRecovery-'+$RunId) -or
+       $seal.workspace -cne $taskSnapshot -or
+       [string]$seal.labScriptSha256 -cne [string]$meta.labSha256 -or
+       [string]$seal.journalHelperSha256 -cne [string]$meta.journalSha256 -or
+       [string]$seal.verificationLibSha256 -cne [string]$meta.evidenceLibSha256 -or
+       [string]$seal.originalTaskXMLSha256 -cne [string]$meta.taskSnapshotSha256 -or
+       [string]$seal.previousFixtureSha256 -cne [string]$meta.originalFixtureSha256){
+        throw 'Protected recovery code seal does not match independent VM trial metadata'
+    }
+    Assert-ProtectedEvidenceFile $originalXML
+    Assert-ProtectedEvidenceFile $oldFixture
+    if((Get-FileHash -Algorithm SHA256 -LiteralPath $originalXML).Hash -cne [string]$meta.taskSnapshotSha256){
+        throw 'Original XML snapshot hash mismatch since VM Prepare'
+    }
+    if((Get-FileHash -Algorithm SHA256 -LiteralPath $oldFixture).Hash -cne [string]$meta.originalFixtureSha256){
+        throw 'Original motor fixture hash mismatch since VM Prepare'
+    }
+}
+function Assert-VMEnvironmentIntegrity([string]$dir) {
+    # Fail-closed, purely read-only. The module is hash-pinned in VM metadata
+    # and the snapshot was captured BEFORE registering any disposable task.
+    . (Join-Path $dir 'reboot_event_chain.ps1')
+    . (Join-Path $dir 'vm_environment_baseline.ps1')
+    $snapshot=Get-Content -LiteralPath (Join-Path $dir 'vm-environment-baseline.json') -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+    $current=Get-VolvVMBaselineState -RunId $RunId
+    if(-not (Assert-VolvVMBaselineState -Expected $snapshot -Actual $current)){
+        throw 'NOT VERIFIED: VM environment integrity check failed'
+    }
+    return $true
 }
 function Assert-LabTask([string]$name,[string]$expectedPath) {
     $task=Get-ScheduledTask -TaskName $name -ErrorAction Stop
@@ -149,7 +206,7 @@ if($Mode -eq 'Probe') {
     return
 }
 if([string]::IsNullOrWhiteSpace($RunId)) {
-    if($Mode -ne 'Prepare') {throw '-RunId is mandatory for Verify and Cleanup'}
+    if($Mode -ne 'Prepare') {throw '-RunId is mandatory for AuditPrepared, Verify and Cleanup'}
     $RunId=(Get-Date).ToUniversalTime().ToString('yyyyMMddHHmmss') + (Get-Random -Minimum 100 -Maximum 999).ToString()
 }
 $kit=Get-KitPath $RunId
@@ -178,17 +235,53 @@ if($Mode -eq 'Prepare') {
     Copy-Item -LiteralPath $JournalExe -Destination $copiedJournal -ErrorAction Stop
     $copiedEvidenceLib=Join-Path $kit 'reboot_event_chain.ps1'
     Copy-Item -LiteralPath $sourceEvidenceLib -Destination $copiedEvidenceLib -ErrorAction Stop
+    $copiedCleanupContract=Join-Path $kit 'vm_cleanup_state_contract.ps1'
+    $sourceCleanupContract=Join-Path $PSScriptRoot 'vm_cleanup_state_contract.ps1'
+    if(-not (Test-Path -LiteralPath $sourceCleanupContract -PathType Leaf)){
+        throw 'Missing VM cleanup contract before staging; refusing trial'
+    }
+    Copy-Item -LiteralPath $sourceCleanupContract -Destination $copiedCleanupContract -ErrorAction Stop
+    $sourceEnvironmentModule=Join-Path $PSScriptRoot 'vm_environment_baseline.ps1'
+    if(-not (Test-Path -LiteralPath $sourceEnvironmentModule -PathType Leaf)){
+        throw 'Missing read-only VM environment audit module; refusing to stage'
+    }
+    $copiedEnvironmentModule=Join-Path $kit 'vm_environment_baseline.ps1'
+    Copy-Item -LiteralPath $sourceEnvironmentModule -Destination $copiedEnvironmentModule -ErrorAction Stop
+    . $copiedEvidenceLib
+    . $copiedEnvironmentModule
+    $environmentSnapshotPath=Join-Path $kit 'vm-environment-baseline.json'
+    $environmentSnapshot=Get-VolvVMBaselineState -RunId $RunId
+    $environmentSnapshot | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $environmentSnapshotPath -Encoding UTF8 -ErrorAction Stop
+    Assert-ProtectedEvidenceFile $environmentSnapshotPath
     $before=BootTimeUTC
+    & $copiedLab -Mode stage -TaskName $labTask -WatchdogName $bootTask -Workspace $root -JournalExe $copiedJournal
+    if($LASTEXITCODE -ne 0){throw 'Failed to stage isolated VM recovery trial'}
+    # Only record a ready-to-verify metadata receipt AFTER the protected
+    # snapshot has actually been staged and the boot watchdog armed.
+    $originalXML=Join-Path $root 'old-task.xml'
+    $oldFixture=Join-Path $root 'old-test-engine.bin'
+    # The watchdog itself is a privileged execution surface. Snapshot ALL
+    # its settings, including executable/arguments, not merely SYSTEM+boot.
+    $startupXML=Export-ScheduledTask -TaskName $bootTask -TaskPath '\' -ErrorAction Stop
+    $startupXMLPath=Join-Path $kit 'watchdog-task.xml'
+    [IO.File]::WriteAllText($startupXMLPath,[string]$startupXML,[Text.UTF8Encoding]::new($false))
+    Assert-ProtectedEvidenceFile $startupXMLPath
+    Assert-ProtectedEvidenceFile $originalXML
+    Assert-ProtectedEvidenceFile $oldFixture
     $metadata=[ordered]@{
         schema=1;runId=$RunId;computer=$env:COMPUTERNAME;
         bootBeforeUtc=$before.ToString('o');
         labSha256=(Get-FileHash -Algorithm SHA256 -LiteralPath $copiedLab).Hash;
         journalSha256=(Get-FileHash -Algorithm SHA256 -LiteralPath $copiedJournal).Hash;
         evidenceLibSha256=(Get-FileHash -Algorithm SHA256 -LiteralPath $copiedEvidenceLib).Hash;
+        taskSnapshotSha256=(Get-FileHash -Algorithm SHA256 -LiteralPath $originalXML).Hash;
+        originalFixtureSha256=(Get-FileHash -Algorithm SHA256 -LiteralPath $oldFixture).Hash;
+        watchdogTaskSnapshotSha256=(Get-FileHash -Algorithm SHA256 -LiteralPath $startupXMLPath).Hash;
+        cleanupContractSha256=(Get-FileHash -Algorithm SHA256 -LiteralPath $copiedCleanupContract).Hash;
+        environmentScriptSha256=(Get-FileHash -Algorithm SHA256 -LiteralPath $copiedEnvironmentModule).Hash;
+        environmentBaselineSha256=(Get-FileHash -Algorithm SHA256 -LiteralPath $environmentSnapshotPath).Hash;
     }
     $metadata | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $kit 'vm-trial.json') -Encoding UTF8
-    & $copiedLab -Mode stage -TaskName $labTask -WatchdogName $bootTask -Workspace $root -JournalExe $copiedJournal
-    if($LASTEXITCODE -ne 0){throw 'Failed to stage isolated VM recovery trial'}
     $watch=Get-ScheduledTask -TaskName $bootTask
     if(@($watch.Triggers).Count -ne 1 -or $watch.Triggers[0].CimClass.CimClassName -ne 'MSFT_TaskBootTrigger'){throw 'Recovery task has no boot trigger'}
     # The VM must be completely recovery-ready BEFORE the operator reboots.
@@ -196,6 +289,11 @@ if($Mode -eq 'Prepare') {
     # must stop here, not leave a potentially unrecoverable reboot rehearsal.
     $preparedMeta=Read-Metadata $kit
     Assert-LabIdentity $kit $preparedMeta
+    $null=Assert-VMEnvironmentIntegrity $kit
+    . $copiedEvidenceLib
+    if(-not (Assert-VolvRestoredTaskXML -SavedXML ([IO.File]::ReadAllText($startupXMLPath)) -RestoredXML (Export-ScheduledTask -TaskName $bootTask -TaskPath '\' -ErrorAction Stop))){
+        throw 'Protected startup watchdog definition diverged during VM preparation'
+    }
     Assert-ProtectedEvidenceFile (Join-Path $root 'old-task.xml')
     Assert-ProtectedEvidenceFile (Join-Path $root 'recovery.json')
     $journalState=& $copiedJournal status (Join-Path $root 'recovery.json')
@@ -218,6 +316,34 @@ if($Mode -eq 'Prepare') {
 if(-not (Test-Path -LiteralPath $kit -PathType Container)){throw 'Trial folder not found'}
 $meta=Read-Metadata $kit
 Assert-LabIdentity $kit $meta
+$null=Assert-VMEnvironmentIntegrity $kit
+
+if($Mode -eq 'AuditPrepared') {
+    # Pure read-only pre-boot evidence gate. This must never be confused with
+    # the real reboot proof, which requires a fresh OS boot and Scheduler
+    # instance correlation. Useful for VM operator preflight and CI tampering.
+    . (Join-Path $kit 'reboot_event_chain.ps1')
+    $watch=Get-ScheduledTask -TaskName $bootTask -TaskPath '\' -ErrorAction Stop
+    if($watch.Principal.UserId -notin @('SYSTEM','S-1-5-18') -or
+       @($watch.Triggers).Count -ne 1 -or
+       $watch.Triggers[0].CimClass.CimClassName -ne 'MSFT_TaskBootTrigger'){
+        throw 'NOT VERIFIED: startup watchdog identity or trigger changed'
+    }
+    if(-not (Assert-VolvRestoredTaskXML -SavedXML ([IO.File]::ReadAllText((Join-Path $kit 'watchdog-task.xml'))) -RestoredXML (Export-ScheduledTask -TaskName $bootTask -TaskPath '\' -ErrorAction Stop))){
+        throw 'NOT VERIFIED: startup watchdog definition changed'
+    }
+    $current=Assert-LabTask $labTask (Join-Path $env:WINDIR 'System32\notepad.exe')
+    if([string]$current.Actions[0].Arguments -ne ''){
+        throw 'NOT VERIFIED: disposable candidate arguments changed'
+    }
+    Assert-ProtectedEvidenceFile (Join-Path $root 'recovery.json')
+    $journalState=& (Join-Path $kit 'volve-journal-lab.exe') status (Join-Path $root 'recovery.json')
+    if($LASTEXITCODE -ne 0 -or $journalState -ne 'ROLLBACK_REQUIRED'){
+        throw 'NOT VERIFIED: pre-boot rollback journal no longer pending'
+    }
+    Write-Host 'PASS: protected VM pre-boot snapshots, original watchdog XML, candidate and pending journal; NO REBOOT PROOF'
+    return
+}
 
 if($Mode -eq 'Verify') {
     $before=$meta.bootBeforeUtc
@@ -237,10 +363,23 @@ if($Mode -eq 'Verify') {
     $bootChain=Get-VolvRealBootChain -TaskName ('\'+$bootTask) -BootUTC $now
     $watch=Get-ScheduledTask -TaskName $bootTask -ErrorAction Stop
     if($watch.Principal.UserId -notin @('SYSTEM','S-1-5-18') -or @($watch.Triggers).Count -ne 1 -or $watch.Triggers[0].CimClass.CimClassName -ne 'MSFT_TaskBootTrigger') {throw 'Unexpected watchdog task identity/trigger'}
+    $savedWatchdogXML=[IO.File]::ReadAllText((Join-Path $kit 'watchdog-task.xml'))
+    $currentWatchdogXML=Export-ScheduledTask -TaskName $bootTask -TaskPath '\' -ErrorAction Stop
+    if(-not (Assert-VolvRestoredTaskXML -SavedXML $savedWatchdogXML -RestoredXML $currentWatchdogXML)){
+        throw 'NOT VERIFIED: startup watchdog definition changed since VM Prepare'
+    }
     $taskInfo=Get-ScheduledTaskInfo -TaskName $bootTask -ErrorAction Stop
     if($taskInfo.LastTaskResult -ne 0 -or $taskInfo.LastRunTime.ToUniversalTime() -lt $now.AddSeconds(-3)) {throw 'No successful watchdog execution associated with this boot'}
     $task=Assert-LabTask $labTask $cmd
     if($task.Actions[0].Arguments -ne '/C exit 0') {throw 'Original harmless task arguments not recovered'}
+    # The visible action alone does not prove that principal, triggers,
+    # settings or additional actions match the protected original XML.
+    # This library was hash-pinned BEFORE reboot and parses XML without DTDs.
+    $savedTaskXml=[IO.File]::ReadAllText((Join-Path $root 'old-task.xml'))
+    $restoredTaskXml=Export-ScheduledTask -TaskName $labTask -ErrorAction Stop
+    if(-not (Assert-VolvRestoredTaskXML -SavedXML $savedTaskXml -RestoredXML $restoredTaskXml)){
+        throw 'NOT VERIFIED: complete original Task Scheduler XML was not recovered'
+    }
     $mark=Join-Path $root 'boot-recovery-success.marker'
     Assert-ProtectedEvidenceFile $mark
     Assert-ProtectedEvidenceFile (Join-Path $root 'old-task.xml')
@@ -264,7 +403,11 @@ if($Mode -eq 'Verify') {
         watchdogLastTaskResult=[int]$taskInfo.LastTaskResult;
         recoveryJournalState=$status;
         restoredAction=$cmd;restoredArguments='/C exit 0';
+        restoredTaskXMLMatchesProtectedSnapshot=$true;
+        startupWatchdogXMLMatchesProtectedSnapshot=$true;
+        startupWatchdogXMLSnapshotSha256=$meta.watchdogTaskSnapshotSha256;
         originalTaskSnapshotSha256=(Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $root 'old-task.xml')).Hash;
+        originalFixtureSha256=(Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $root 'old-test-engine.bin')).Hash;
         bootChainVerificationSha256=$meta.evidenceLibSha256;
     }
     $proofPath=Join-Path $kit 'vm-proof-evidence.json'
@@ -277,22 +420,163 @@ if($Mode -eq 'Verify') {
 }
 
 if($Mode -eq 'Cleanup') {
-    $watch=Get-ScheduledTask -TaskName $bootTask -ErrorAction SilentlyContinue
-    if($watch){
-        if($watch.TaskPath -ne '\' -or $watch.Principal.UserId -notin @('SYSTEM','S-1-5-18') -or @($watch.Actions).Count -ne 1){throw 'Refusing to delete unexpected recovery task'}
-        $a=$watch.Actions[0]
-        $expectedPS=Join-Path $env:WINDIR 'System32\WindowsPowerShell\v1.0\powershell.exe'
-        if($a.Execute -ne $expectedPS -or $a.Arguments.IndexOf($kit,[StringComparison]::OrdinalIgnoreCase) -lt 0){
-            throw 'Unexpected recovery task command; refusing deletion'
+    # Fail closed: never retire the watchdog while a test is still pending,
+    # failed, or unverified. A crafted success marker alone is insufficient.
+    # No mutations happen before BOTH disposable task definitions are checked.
+    $proofPath=Join-Path $kit 'vm-proof-evidence.json'
+    if(-not (Test-Path -LiteralPath $proofPath -PathType Leaf)){
+        throw 'REFUSED: Cleanup requires verified real reboot proof; pending or failed trials must preserve watchdog and evidence'
+    }
+    Assert-ProtectedEvidenceFile $proofPath
+    $proof=Get-Content -LiteralPath $proofPath -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+    if($proof.schema -ne 2 -or
+       [string]$proof.test -cne 'VOLVE-VM-REAL-REBOOT' -or
+       [string]$proof.runId -cne $RunId -or
+       [string]$proof.computer -cne $env:COMPUTERNAME -or
+       [string]$proof.watchdogTask -cne $bootTask -or
+       [string]$proof.motorTask -cne $labTask -or
+       [string]$proof.bootBeforeUtc -cne [string]$meta.bootBeforeUtc -or
+       [string]$proof.startupWatchdogXMLSnapshotSha256 -cne [string]$meta.watchdogTaskSnapshotSha256 -or
+       [string]$proof.originalTaskSnapshotSha256 -cne [string]$meta.taskSnapshotSha256 -or
+       [string]$proof.originalFixtureSha256 -cne [string]$meta.originalFixtureSha256 -or
+       $proof.startupWatchdogXMLMatchesProtectedSnapshot -ne $true -or
+       $proof.restoredTaskXMLMatchesProtectedSnapshot -ne $true -or
+       [string]$proof.recoveryJournalState -cne 'NO_ROLLBACK:restored'){
+        throw 'REFUSED: Cleanup proof does not match protected VM recovery receipt'
+    }
+    $before=[DateTime]::Parse([string]$proof.bootBeforeUtc,[Globalization.CultureInfo]::InvariantCulture,[Globalization.DateTimeStyles]::RoundtripKind).ToUniversalTime()
+    $after=[DateTime]::Parse([string]$proof.bootAfterUtc,[Globalization.CultureInfo]::InvariantCulture,[Globalization.DateTimeStyles]::RoundtripKind).ToUniversalTime()
+    $currentBoot=BootTimeUTC
+    if($after -le $before.AddSeconds(5) -or $currentBoot -ne $after){
+        throw 'REFUSED: Cleanup cannot confirm the previously verified Windows VM boot'
+    }
+    . (Join-Path $kit 'reboot_event_chain.ps1')
+    $bootChain=Get-VolvRealBootChain -TaskName ('\'+$bootTask) -BootUTC $currentBoot
+    if([string]$bootChain.InstanceId -cne [string]$proof.taskInstanceId -or
+       (($bootChain.EventIds -join ',') -cne ($proof.schedulerEventIds -join ',')) -or
+       (($bootChain.RecordIds -join ',') -cne ($proof.schedulerEventRecordIds -join ','))){
+        throw 'REFUSED: Cleanup proof does not match real Task Scheduler boot instance events'
+    }
+    $mark=Join-Path $root 'boot-recovery-success.marker'
+    Assert-ProtectedEvidenceFile $mark
+    Assert-ProtectedEvidenceFile (Join-Path $root 'recovery.json')
+    if([IO.File]::ReadAllText($mark) -cne 'RESTORED_BY_SYSTEM_STARTUP_TASK' -or
+       (Test-Path -LiteralPath (Join-Path $root 'boot-recovery-failed.marker'))){
+        throw 'REFUSED: Cleanup requires an unambiguous recovery-success marker'
+    }
+    $status=& (Join-Path $kit 'volve-journal-lab.exe') status (Join-Path $root 'recovery.json')
+    if($LASTEXITCODE -ne 0 -or $status -cne 'NO_ROLLBACK:restored'){
+        throw 'REFUSED: Cleanup cannot remove watchdog with unfinished recovery journal'
+    }
+    # Recovery of an interrupted cleanup is deliberately separate from
+    # recovery of a migration. Both require real reboot proof, preserved
+    # journals and the complete original task definitions.
+    . (Join-Path $kit 'vm_cleanup_state_contract.ps1')
+    $intentPath=Join-Path $kit 'vm-cleanup-intent.json'
+    $receiptPath=Join-Path $kit 'vm-cleanup-evidence.json'
+    $proofSHA=(Get-FileHash -Algorithm SHA256 -LiteralPath $proofPath).Hash
+    $verifiedIntent=$false
+    if(Test-Path -LiteralPath $intentPath -PathType Leaf){
+        Assert-ProtectedEvidenceFile $intentPath
+        $intent=Get-Content -LiteralPath $intentPath -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+        if($intent.schema -ne 1 -or
+           [string]$intent.kind -cne 'VOLVE_VM_CLEANUP_INTENT' -or
+           [string]$intent.runId -cne $RunId -or
+           [string]$intent.computer -cne $env:COMPUTERNAME -or
+           [string]$intent.bootTask -cne $bootTask -or
+           [string]$intent.motorTask -cne $labTask -or
+           [string]$intent.bootAfterUtc -cne [string]$proof.bootAfterUtc -or
+           [string]$intent.proofSha256 -cne $proofSHA -or
+           [string]$intent.watchdogXMLSha256 -cne [string]$meta.watchdogTaskSnapshotSha256 -or
+           [string]$intent.motorXMLSha256 -cne [string]$meta.taskSnapshotSha256){
+            throw 'REFUSED: existing VM cleanup intent does not match protected recovery evidence'
         }
-        Unregister-ScheduledTask -TaskName $bootTask -Confirm:$false
+        $verifiedIntent=$true
     }
-    $motor=Get-ScheduledTask -TaskName $labTask -ErrorAction SilentlyContinue
-    if($motor){
-        $a=@($motor.Actions)[0]
-        $allow=@($cmd,(Join-Path $env:WINDIR 'System32\notepad.exe'))
-        if($motor.TaskPath -ne '\' -or $motor.Principal.UserId -notin @('SYSTEM','S-1-5-18') -or @($motor.Actions).Count -ne 1 -or $a.Execute -notin $allow){throw 'Refusing to delete unexpected motor task'}
-        Unregister-ScheduledTask -TaskName $labTask -Confirm:$false
+    # An existing completion receipt must be validated BEFORE even the first
+    # destructive Task Scheduler action. A forged or stale completion record
+    # is a hard rejection, not a late post-deletion error.
+    $preExistingReceipt=$false
+    if(Test-Path -LiteralPath $receiptPath -PathType Leaf){
+        Assert-ProtectedEvidenceFile $receiptPath
+        $receipt=Get-Content -LiteralPath $receiptPath -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+        $null=Assert-VolvVMCleanupReceipt -Receipt $receipt -RunId $RunId -Computer $env:COMPUTERNAME -ProofSha256 $proofSHA -BootAfterUtc ([string]$proof.bootAfterUtc)
+        $preExistingReceipt=$true
     }
-    Write-Host ('CLEAN: only disposable VM lab tasks unregistered. Evidence remains at '+$kit)
+    # Get-ScheduledTask cannot use a missing task as proof of completed
+    # cleanup. It is acceptable only with the protected intent just checked.
+    $watch=Get-ScheduledTask -TaskName $bootTask -TaskPath '\' -ErrorAction SilentlyContinue
+    $motor=Get-ScheduledTask -TaskName $labTask -TaskPath '\' -ErrorAction SilentlyContinue
+    $phase=Resolve-VolvVMCleanupPhase -HasWatchdog ($null -ne $watch) -HasMotor ($null -ne $motor) -HasVerifiedIntent $verifiedIntent
+    $null=Assert-VolvVMCleanupReceiptPhase -Phase $phase -HasExistingReceipt $preExistingReceipt
+
+    # During a new cleanup or recovery of a crash after watchdog removal,
+    # the motor task must still be the *complete* original harmless fixture.
+    if($phase -in @('READY','RESUME_MOTOR')){
+        if($motor.TaskPath -ne '\' -or $motor.Principal.UserId -notin @('SYSTEM','S-1-5-18') -or
+           @($motor.Actions).Count -ne 1 -or $motor.Actions[0].Execute -ne $cmd -or
+           [string]$motor.Actions[0].Arguments -cne '/C exit 0'){
+            throw 'REFUSED: disposable motor not completely restored; no tasks removed'
+        }
+        if(-not (Assert-VolvRestoredTaskXML -SavedXML ([IO.File]::ReadAllText((Join-Path $root 'old-task.xml'))) -RestoredXML (Export-ScheduledTask -TaskName $labTask -TaskPath '\' -ErrorAction Stop))){
+            throw 'REFUSED: motor XML diverged; no tasks removed'
+        }
+    }
+    if($phase -eq 'READY'){
+        if($watch.TaskPath -ne '\' -or $watch.Principal.UserId -notin @('SYSTEM','S-1-5-18') -or
+           @($watch.Actions).Count -ne 1 -or @($watch.Triggers).Count -ne 1 -or
+           $watch.Triggers[0].CimClass.CimClassName -cne 'MSFT_TaskBootTrigger'){
+            throw 'REFUSED: unexpected SYSTEM watchdog; no tasks removed'
+        }
+        $action=$watch.Actions[0]
+        $expectedPowerShell=Join-Path $env:WINDIR 'System32\WindowsPowerShell\v1.0\powershell.exe'
+        if($action.Execute -ne $expectedPowerShell -or
+           [string]::IsNullOrWhiteSpace([string]$action.Arguments) -or
+           $action.Arguments.IndexOf($kit,[StringComparison]::OrdinalIgnoreCase) -lt 0){
+            throw 'REFUSED: unexpected watchdog command; no tasks removed'
+        }
+        if(-not (Assert-VolvRestoredTaskXML -SavedXML ([IO.File]::ReadAllText((Join-Path $kit 'watchdog-task.xml'))) -RestoredXML (Export-ScheduledTask -TaskName $bootTask -TaskPath '\' -ErrorAction Stop))){
+            throw 'REFUSED: watchdog XML diverged; no tasks removed'
+        }
+        if(-not $verifiedIntent){
+            # Intent is written to the ACL-protected evidence directory only
+            # after BOTH full task XMLs and the independent boot proof passed.
+            # It makes a crash BETWEEN the two deletions safely resumable.
+            $newIntent=[ordered]@{
+                schema=1;kind='VOLVE_VM_CLEANUP_INTENT';runId=$RunId;
+                computer=$env:COMPUTERNAME;bootTask=$bootTask;motorTask=$labTask;
+                bootAfterUtc=[string]$proof.bootAfterUtc;
+                proofSha256=$proofSHA;
+                watchdogXMLSha256=[string]$meta.watchdogTaskSnapshotSha256;
+                motorXMLSha256=[string]$meta.taskSnapshotSha256;
+                recordedUtc=[DateTime]::UtcNow.ToString('o');
+            }
+            $newIntent|ConvertTo-Json -Depth 4|Set-Content -LiteralPath $intentPath -Encoding UTF8 -ErrorAction Stop
+            Assert-ProtectedEvidenceFile $intentPath
+            $verifiedIntent=$true
+        }
+        # The watchdog is disarmed first; never leave a boot-time recovery
+        # command after the successfully attested migration has been closed.
+        Unregister-ScheduledTask -TaskName $bootTask -TaskPath '\' -Confirm:$false -ErrorAction Stop
+    }
+    if($phase -in @('READY','RESUME_MOTOR')){
+        # If interrupted just after deleting the watchdog, reentry detects
+        # the protected intent and removes ONLY the still-validated motor.
+        Unregister-ScheduledTask -TaskName $labTask -TaskPath '\' -Confirm:$false -ErrorAction Stop
+    }
+    if($null -ne (Get-ScheduledTask -TaskName $bootTask -TaskPath '\' -ErrorAction SilentlyContinue) -or
+       $null -ne (Get-ScheduledTask -TaskName $labTask -TaskPath '\' -ErrorAction SilentlyContinue)){
+        throw 'REFUSED: cleanup incomplete; preserve protected intent and reboot evidence'
+    }
+    if(-not $preExistingReceipt){
+        $receipt=[ordered]@{
+            schema=1;kind='VOLVE_VM_CLEANUP_VERIFIED';runId=$RunId;
+            computer=$env:COMPUTERNAME;bootAfterUtc=[string]$proof.bootAfterUtc;
+            proofSha256=$proofSHA;watchdogRemoved=$true;motorRemoved=$true;
+            completedUtc=[DateTime]::UtcNow.ToString('o');
+        }
+        $receipt|ConvertTo-Json -Depth 4|Set-Content -LiteralPath $receiptPath -Encoding UTF8 -ErrorAction Stop
+        Assert-ProtectedEvidenceFile $receiptPath
+    }
+    Write-Host ('CLEAN: both verified disposable VM tasks absent; restart-safe intent and evidence remain at '+$kit)
 }

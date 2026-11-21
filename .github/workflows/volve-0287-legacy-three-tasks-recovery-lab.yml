@@ -1,0 +1,137 @@
+name: "VOLVE 0.28.7 - three legacy SYSTEM task direct actions backup (NO CLEANUP)"
+on:
+  push:
+    branches: [work/0287-native-setup-preview-20261113]
+    paths:
+      - 'development/0.28.7/installer-wizard/migration/**'
+      - '.github/workflows/volve-0287-legacy-three-tasks-recovery-lab.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  private-three-task-recovery-coverage:
+    runs-on: windows-2022
+    timeout-minutes: 15
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+      - name: Preserve direct action bytes for three SYSTEM fixtures, with no Windows protection changes
+        run: |
+          $ErrorActionPreference='Stop'
+          if($env:GITHUB_ACTIONS -ne 'true' -or $env:RUNNER_ENVIRONMENT -ne 'github-hosted'){
+            throw 'Only disposable GitHub-hosted Windows CI may exercise task fixtures'
+          }
+          $root=Join-Path $env:GITHUB_WORKSPACE 'development/0.28.7/installer-wizard/migration'
+          $ps51=Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+          $baseScript=Join-Path $root 'Preparar_Respaldo_VOLVE_SoloLectura.ps1'
+          $allScript=Join-Path $root 'Preparar_Cobertura_Legacy_3_Tareas_SoloRespaldo.ps1'
+          $verifyScript=Join-Path $root 'Verificar_Cobertura_Legacy_3_Tareas_SoloLectura.ps1'
+          $names=@('VOLVE-CATALOGO-0230','VOLVE-DNS-RESCUE-0270','VOLVE-DNS-SERVER-0270')
+          $foreign=@(Get-ScheduledTask | Where-Object{$_.TaskName -match '^(?i:VOLVE[-_])'})
+          if($foreign.Count -ne 0){throw 'CI runner unexpectedly contains original VOLVE tasks'}
+          $sourceRoot=Join-Path $env:ProgramFiles ('VOLVE-CI-Three-'+[guid]::NewGuid().ToString('N'))
+          $catalog=Join-Path $sourceRoot 'VOLVE_Motor_0210.exe'
+          $rescue=Join-Path $sourceRoot 'VOLVE_DNS_Rescue_0270.ps1'
+          $server=Join-Path $sourceRoot 'VOLVE_DNS_Server_0270.exe'
+          $created=$false
+          $registered=@()
+          $dnsBefore=Get-DnsClientServerAddress | Sort-Object InterfaceIndex,AddressFamily |
+            Select-Object InterfaceIndex,AddressFamily,ServerAddresses | ConvertTo-Json -Compress -Depth 6
+          $hostsPath=Join-Path $env:SystemRoot 'System32\drivers\etc\hosts'
+          $hostsBefore=(Get-FileHash -LiteralPath $hostsPath -Algorithm SHA256).Hash
+          try {
+            [void][IO.Directory]::CreateDirectory($sourceRoot)
+            $created=$true
+            Copy-Item -LiteralPath (Join-Path $env:SystemRoot 'System32\cmd.exe') -Destination $catalog -ErrorAction Stop
+            Copy-Item -LiteralPath (Join-Path $env:SystemRoot 'System32\cmd.exe') -Destination $server -ErrorAction Stop
+            [IO.File]::WriteAllText($rescue,'# VOLVE CI only; not executed',[Text.UTF8Encoding]::new($false))
+            $sources=@($catalog,$rescue,$server)
+            $sourceHashes=@($sources|ForEach-Object{(Get-FileHash -LiteralPath $_ -Algorithm SHA256).Hash.ToLowerInvariant()})
+            $trigger=New-ScheduledTaskTrigger -Once -At (Get-Date).AddDays(3)
+            $system=New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest
+            $actions=@(
+              (New-ScheduledTaskAction -Execute $catalog -Argument '--catalog-ci'),
+              (New-ScheduledTaskAction -Execute (Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe') -Argument ('-NoProfile -NonInteractive -File "'+$rescue+'"')),
+              (New-ScheduledTaskAction -Execute $server -Argument '--dns-service')
+            )
+            for($i=0;$i -lt $names.Count;$i++){
+              Register-ScheduledTask -TaskName $names[$i] -Action $actions[$i] -Trigger $trigger -Principal $system -ErrorAction Stop | Out-Null
+              $registered+= $names[$i]
+            }
+            $xmlBefore=@($names|ForEach-Object{Export-ScheduledTask -TaskName $_ -ErrorAction Stop})
+            $base=@(& $ps51 -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $baseScript 2>&1)
+            if($LASTEXITCODE -ne 0){throw ('Initial recovery snapshot refused: '+($base -join '|'))}
+            $pathLine=@($base|Where-Object{$_ -match '^CARPETA_LOCAL_PROTEGIDA='})
+            if($pathLine.Count -ne 1){throw 'Missing initial protected original-state snapshot'}
+            $original=$pathLine[0].Substring('CARPETA_LOCAL_PROTEGIDA='.Length)
+            $new=@(& $ps51 -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $allScript -BackupPath $original 2>&1)
+            if($LASTEXITCODE -ne 0 -or @($new|Where-Object{$_ -match '^VOLVE_LEGACY_THREE_TASKS_DIRECT_ACTIONS_BACKUP_OK;'}).Count -ne 1){
+              throw ('Protected three-task action backup rejected valid Windows CI setup: '+($new -join '|'))
+            }
+            if(@($new|Where-Object{$_ -match '^VOLVE_THREE_TASKS_INDEPENDENT_REVIEW=PASS;'}).Count -ne 1){
+              throw 'Independent action verifier not called before reporting success'
+            }
+            $snapshots=@(Get-ChildItem -LiteralPath $env:ProgramData -Force -Directory |
+              Where-Object {$_.Name -match '^VOLVE-Legacy-Three-Recovery-[a-f0-9]{32}$'})
+            if($snapshots.Count -ne 1){throw 'Expected exactly one private three-task snapshot'}
+            $folder=$snapshots[0].FullName
+            $receipt=Get-Content -LiteralPath (Join-Path $folder 'recibo-tres-tareas.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+            if($receipt.records.Count -ne 3 -or $receipt.cleanup_authorized -ne $false -or
+               $receipt.install_authorized -ne $false -or $receipt.transitive_dependencies_certified -ne $false){
+               throw 'Unsafe receipt or incomplete direct action snapshot'
+            }
+            for($i=0;$i -lt 3;$i++){
+              $name='accion-'+$i.ToString('000')+[IO.Path]::GetExtension($sources[$i])
+              $target=Join-Path $folder $name
+              if((Get-FileHash -LiteralPath $target -Algorithm SHA256).Hash.ToLowerInvariant() -cne $sourceHashes[$i]){
+                throw 'Private action bytes differ from original source'
+              }
+              $acl=Get-Acl -LiteralPath $target
+              if(-not $acl.AreAccessRulesProtected){throw 'Action backup ACL inherited untrusted access'}
+            }
+            function Check-Independent{
+              $r=@(& $ps51 -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $verifyScript -BackupPath $original -ThreeTasksBackupPath $folder 2>&1)
+              return [pscustomobject]@{status=$LASTEXITCODE;lines=($r -join '|')}
+            }
+            $ok=Check-Independent
+            if($ok.status -ne 0 -or -not $ok.lines.Contains('VOLVE_THREE_TASKS_DIRECT_ACTIONS_VERIFIED_READ_ONLY;')){
+              throw 'Independent re-read of all three protected action files refused'
+            }
+            $target=Join-Path $folder 'accion-001.ps1'
+            $saved=[IO.File]::ReadAllBytes($target)
+            try {
+              [IO.File]::WriteAllBytes($target,([byte[]]($saved+@(0x23))))
+              $bad=Check-Independent
+              if($bad.status -eq 0){throw 'Tampered rescue PowerShell script unexpectedly accepted'}
+            }finally{[IO.File]::WriteAllBytes($target,$saved)}
+            $ret=Check-Independent
+            if($ret.status -ne 0){throw ('Restored backup did not recover after tamper test: '+$ret.lines)}
+            Write-Host 'PASS VOLVE_THREE_SYSTEM_TASKS_ACTIONS_EXACT_COPY_AND_BYTE_TAMPER_REJECTION'
+            $target=Join-Path $folder 'accion-000.exe'
+            & icacls.exe $target '/grant' '*S-1-1-0:W' | Out-Null
+            if($LASTEXITCODE -ne 0){throw 'Cannot introduce disposable unsafe ACL'}
+            $badACL=Check-Independent
+            if($badACL.status -eq 0){throw 'Everyone-write ACL should be rejected'}
+            Write-Host 'PASS VOLVE_THREE_TASKS_PROTECTED_NTFS_ACL_FAIL_CLOSED'
+            $dnsAfter=Get-DnsClientServerAddress | Sort-Object InterfaceIndex,AddressFamily |
+              Select-Object InterfaceIndex,AddressFamily,ServerAddresses | ConvertTo-Json -Compress -Depth 6
+            if($dnsBefore -cne $dnsAfter -or
+              (Get-FileHash -LiteralPath $hostsPath -Algorithm SHA256).Hash -cne $hostsBefore){
+              throw 'Snapshot unexpectedly changed original DNS or HOSTS'
+            }
+            for($i=0;$i -lt 3;$i++){
+              $current=Export-ScheduledTask -TaskName $names[$i]
+              if($current -cne $xmlBefore[$i]){throw 'Snapshot changed original SYSTEM task'}
+            }
+            Write-Host 'PASS VOLVE_THREE_SYSTEM_TASKS_NO_HOSTS_DNS_TASK_MUTATION_NO_CLEANUP'
+            $global:LASTEXITCODE=0
+          }finally{
+            foreach($name in $registered){
+              Unregister-ScheduledTask -TaskName $name -Confirm:$false -ErrorAction Stop
+            }
+            if($created){Remove-Item -LiteralPath $sourceRoot -Recurse -Force -ErrorAction Stop}
+          }

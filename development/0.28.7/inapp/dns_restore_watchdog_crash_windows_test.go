@@ -22,6 +22,7 @@ import (
  "reflect"
  "strconv"
  "syscall"
+ "strings"
  "testing"
  "time"
  "unsafe"
@@ -177,6 +178,42 @@ func windowsDNSCrashWaitForUpdater(ctx context.Context,pid int)error{
  }
 }
 
+
+// windowsCrashLabProvenanceInspector scopes ONLY the disposable crash E2E's
+// provenance census to the exact freshly-created Hyper-V adapter. The outer
+// workflow snapshots and compares every pre-existing host DNS adapter before
+// and after the test. Production recovery keeps the all-adapter census.
+func windowsCrashLabProvenanceInspector(alias,guid string,base WindowsReadOnlyPowerShell)(WindowsReadOnlyPowerShell,error){
+ if base==nil||os.Getenv("GITHUB_ACTIONS")!="true"||
+  os.Getenv("VOLVE_CI_DNS_REAL_DISPOSABLE")!="INTERNAL_HYPERV_VM_ONLY"||
+  alias==""||alias!=os.Getenv("VOLVE_CI_DNS_LAB_ALIAS")||
+  guid==""||guid!=os.Getenv("VOLVE_CI_DNS_LAB_GUID"){
+  return nil,errors.New("scoped provenance inspector requires the exact disposable GitHub Hyper-V adapter")
+ }
+ if err:=validDNSState(DNSServerState{InterfaceGUID:guid,Family:DNSIPv4,Mode:DNSAutomatic});err!=nil{
+  return nil,fmt.Errorf("invalid pinned disposable adapter GUID: %w",err)
+ }
+ normalized:=strings.ToLower(strings.Trim(guid,"{}"))
+ adapterAll:="$adapters=@(Get-NetAdapter -IncludeHidden -ErrorAction Stop | Where-Object {$_.InterfaceGuid -and $_.InterfaceIndex -gt 0});"
+ adapterPinned:=fmt.Sprintf("$adapters=@(Get-NetAdapter -IncludeHidden -ErrorAction Stop | Where-Object {$_.InterfaceGuid -and $_.InterfaceIndex -gt 0 -and ([guid]$_.InterfaceGuid -eq [guid]'{%s}')}); if($adapters.Count -ne 1){throw 'Pinned disposable adapter GUID is not unique'};",normalized)
+ dnsAll:="$dnsRows=@(Get-DnsClientServerAddress -ErrorAction Stop);"
+ dnsPinned:="$dnsRows=@(Get-DnsClientServerAddress -InterfaceIndex ([uint32]$adapters[0].InterfaceIndex) -ErrorAction Stop);"
+ scoped:=strings.Replace(windowsDNSAssignmentSourceQuery,adapterAll,adapterPinned,1)
+ scoped=strings.Replace(scoped,dnsAll,dnsPinned,1)
+ if scoped==windowsDNSAssignmentSourceQuery||!strings.Contains(scoped,adapterPinned)||!strings.Contains(scoped,dnsPinned){
+  return nil,errors.New("could not construct exact-GUID disposable provenance query")
+ }
+ return func(ctx context.Context,query string)([]byte,error){
+  if query==windowsDNSAssignmentSourceQuery{
+   cmd:=exec.CommandContext(ctx,"powershell.exe","-NoProfile","-NonInteractive","-Command",scoped)
+   output,err:=cmd.CombinedOutput()
+   if err!=nil{return nil,fmt.Errorf("pinned disposable DNS provenance query failed: %w: %s",err,strings.TrimSpace(string(output)))}
+   return output,nil
+  }
+  return base(ctx,query)
+ },nil
+}
+
 func windowsDNSCrashChildWatchdog(t *testing.T){
  plan,err:=windowsDNSCrashPlanFromDisk()
  if err!=nil{t.Fatal(err)}
@@ -202,7 +239,9 @@ func windowsDNSCrashChildWatchdog(t *testing.T){
  if err!=nil{t.Fatalf("watchdog refused unsafe post-crash vNIC: %v",err)}
  pinned,err:=FindWindowsAdapterIndex(ctx,plan.GUID,DefaultWindowsReadOnlyPowerShell)
  if err!=nil||pinned!=adapter.InterfaceIndex{t.Fatal("watchdog vNIC index changed")}
- if err:=runAttestedWindowsStaticDNSRecovery(ctx,plan.Records,DefaultWindowsReadOnlyPowerShell,
+ labInspect,err:=windowsCrashLabProvenanceInspector(plan.Alias,plan.GUID,DefaultWindowsReadOnlyPowerShell)
+ if err!=nil{t.Fatal(err)}
+ if err:=runAttestedWindowsStaticDNSRecovery(ctx,plan.Records,labInspect,
   attestor,runPinnedWindowsNativeDNS,os.Getenv("VOLVE_CI_DNS_CRASH_LOCK"));err!=nil{
   t.Fatalf("signed-journal attested watchdog failed real dual-stack restore: %v",err)
  }

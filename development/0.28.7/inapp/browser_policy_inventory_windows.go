@@ -2,11 +2,11 @@
 
 package motorupdate
 
-// This module observes only the existence and anonymous numeric entry counts
-// of the browser policy keys used by legacy VOLVE 0.28.6. It never reads any
-// browsing history and deliberately never returns URL/filter values.
-// A registry entry is NOT evidence that a browser applied or enforced it.
-// In particular, motor DNS protection is a separate mechanism.
+// This module fingerprints browser policy registry content locally. It never
+// reads browsing history and never exports URL/filter values; only counts and
+// SHA-256 fingerprints leave the PowerShell process.
+// A registry entry or a stable fingerprint is NOT proof of browser enforcement.
+// Motor DNS protection is a separate mechanism.
 import (
  "bytes"
  "context"
@@ -17,6 +17,7 @@ import (
  "os"
  "os/exec"
  "path/filepath"
+ "strings"
 )
 
 const WindowsVOLVEBrowserPolicyQuery = `$ErrorActionPreference='Stop';$ProgressPreference='SilentlyContinue';
@@ -28,22 +29,39 @@ $policies=@(
 $items=@(foreach($spec in $policies){
  $exists=Test-Path -LiteralPath $spec.Path -PathType Container -ErrorAction Stop;
  $numbered=0;$invalid=0;$unexpected=0;
- if($exists){
-  $key=Get-Item -LiteralPath $spec.Path -ErrorAction Stop;
-  try {
-   foreach($name in @($key.GetValueNames())){
-    if($name -cmatch '^(?:[1-9][0-9]{0,2}|1000)$'){
+ $stream=[IO.MemoryStream]::new();
+ $writer=[IO.BinaryWriter]::new($stream,[Text.Encoding]::UTF8);
+ try {
+  # Length-prefixed canonical fingerprint. Raw policy values remain in this
+  # process only; they are never serialized into the JSON evidence.
+  $writer.Write([string]$spec.Name);$writer.Write([bool]$exists);
+  if($exists){
+   $key=Get-Item -LiteralPath $spec.Path -ErrorAction Stop;
+   try {
+    [string[]]$names=@($key.GetValueNames());
+    [Array]::Sort($names,[StringComparer]::Ordinal);
+    $writer.Write([int]$names.Length);
+    foreach($name in $names){
+     $kind=[string]$key.GetValueKind($name);
      $value=$key.GetValue($name,$null,[Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames);
-     if($value -is [string] -and $value.Length -gt 0 -and $value.Length -le 2048){$numbered++}
-     else{$invalid++}
-    } else{$unexpected++}
-   }
-  } finally { $key.Close() }
- }
+     $canonical=ConvertTo-Json -InputObject $value -Compress -Depth 8;
+     $writer.Write([string]$name);$writer.Write($kind);$writer.Write([string]$canonical);
+     if($name -cmatch '^(?:[1-9][0-9]{0,2}|1000)$'){
+      if($value -is [string] -and $value.Length -gt 0 -and $value.Length -le 2048){$numbered++}
+      else{$invalid++}
+     } else{$unexpected++}
+    }
+   } finally { $key.Close() }
+  } else {$writer.Write([int]0)}
+  $writer.Flush();
+  $sha=[Security.Cryptography.SHA256]::Create();
+  try {$digest=[BitConverter]::ToString($sha.ComputeHash($stream.ToArray())).Replace('-','').ToLowerInvariant()}
+  finally {$sha.Dispose()}
+ } finally {$writer.Dispose();$stream.Dispose()}
  [pscustomobject]@{
   Name=[string]$spec.Name;Present=[bool]$exists;
   NumberedEntries=[int]$numbered;InvalidEntries=[int]$invalid;
-  UnexpectedEntries=[int]$unexpected
+  UnexpectedEntries=[int]$unexpected;ContentSHA256=[string]$digest
  }
 });
 ConvertTo-Json -InputObject $items -Compress -Depth 4`
@@ -69,6 +87,7 @@ type WindowsBrowserPolicyRecord struct{
  NumberedEntries int `json:"NumberedEntries"`
  InvalidEntries int `json:"InvalidEntries"`
  UnexpectedEntries int `json:"UnexpectedEntries"`
+ ContentSHA256 string `json:"ContentSHA256"`
 }
 
 type WindowsBrowserPolicyEvidence struct{
@@ -78,15 +97,15 @@ type WindowsBrowserPolicyEvidence struct{
  TotalNumberedEntries int `json:"total_numbered_entries"`
  BrowserEnforcementVerified bool `json:"browser_enforcement_verified"`
  DNSMotorVerified bool `json:"dns_motor_verified"`
- NoRegistryValuesCollected bool `json:"no_registry_values_collected"`
+ NoRegistryValuesExported bool `json:"no_registry_values_exported"`
 }
 
-// InspectWindowsBrowserPoliciesReadOnly is an independent, potentially partial
-// view of the previous CENTRO's registry-policy controls. Fail closed on
-// malformed/injected data. All 3 policy keys must be independently queried;
-// empty values and unrecognized slots are reported as anomalies, never hidden.
+// InspectWindowsBrowserPoliciesReadOnly fails closed on incomplete or
+// malformed registry evidence. Each of the three policy locations must be
+// inspected; values are represented only by local SHA-256 fingerprints.
 func InspectWindowsBrowserPoliciesReadOnly(ctx context.Context,inspect WindowsBrowserPolicyInspect)(WindowsBrowserPolicyEvidence,error){
  var empty WindowsBrowserPolicyEvidence
+ if ctx==nil{return empty,errors.New("Windows browser inspection context required")}
  if err:=ctx.Err();err!=nil{return empty,err}
  if inspect==nil{return empty,errors.New("Windows browser registry reader unavailable")}
  raw,err:=inspect(ctx,WindowsVOLVEBrowserPolicyQuery)
@@ -101,12 +120,15 @@ func InspectWindowsBrowserPoliciesReadOnly(ctx context.Context,inspect WindowsBr
  want:=map[string]bool{"chrome":true,"edge":true,"firefox":true}
  total:=0
  for _,record:=range records{
-  if !want[record.Name] {return empty,errors.New("duplicate or unexpected browser registry key")}
+  if !want[record.Name]{return empty,errors.New("duplicate or unexpected browser registry key")}
   delete(want,record.Name)
+  if !hexRe.MatchString(strings.ToLower(record.ContentSHA256)){
+   return empty,errors.New("browser policy content fingerprint missing or malformed")
+  }
   for _,count:=range []int{record.NumberedEntries,record.InvalidEntries,record.UnexpectedEntries}{
    if count<0||count>1000{return empty,errors.New("impossible browser registry policy count")}
   }
-  if !record.Present && (record.NumberedEntries!=0||record.InvalidEntries!=0||record.UnexpectedEntries!=0){
+  if !record.Present&&(record.NumberedEntries!=0||record.InvalidEntries!=0||record.UnexpectedEntries!=0){
    return empty,errors.New("missing browser registry cannot contain policy entries")
   }
   if record.NumberedEntries+record.InvalidEntries>1000{
@@ -114,10 +136,11 @@ func InspectWindowsBrowserPoliciesReadOnly(ctx context.Context,inspect WindowsBr
   }
   total+=record.NumberedEntries
  }
+ if len(want)!=0{return empty,errors.New("one or more browser registry locations were not inspected")}
  if err:=ctx.Err();err!=nil{return empty,err}
  return WindowsBrowserPolicyEvidence{
   Schema:1,Component:"browser-policy-registry-read-only",Records:records,
   TotalNumberedEntries:total,BrowserEnforcementVerified:false,
-  DNSMotorVerified:false,NoRegistryValuesCollected:true,
+  DNSMotorVerified:false,NoRegistryValuesExported:true,
  },nil
 }

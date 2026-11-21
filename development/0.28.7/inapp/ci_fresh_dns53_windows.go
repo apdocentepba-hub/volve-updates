@@ -8,6 +8,7 @@ package main
 import (
  "bufio"
  "crypto/sha256"
+ "encoding/binary"
  "io"
  "context"
  "errors"
@@ -122,6 +123,42 @@ func writeCIFreshCatalog(root string)error{
  return verifyCIFreshCatalog(root)
 }
 
+
+// ciFreshAllowedUpstreamResponse is a DETERMINISTIC CI fixture, not Internet.
+// It returns one real DNS A answer only for example.org, using TEST-NET-3.
+// All other valid questions have NOERROR with zero answers; blocked domains
+// must NEVER reach this upstream fixture in the real motor integration test.
+func ciFreshAllowedUpstreamResponse(query []byte)([]byte,error){
+ if len(query)<17 || binary.BigEndian.Uint16(query[4:6])!=1 {
+  return nil,errors.New("CI upstream: invalid DNS question header")
+ }
+ offset:=12
+ labels:=make([]string,0,8)
+ for {
+  if offset>=len(query){return nil,errors.New("CI upstream: truncated DNS name")}
+  count:=int(query[offset]);offset++
+  if count==0{break}
+  if count>63 || (count&0xC0)!=0 || offset+count>len(query) {
+   return nil,errors.New("CI upstream: invalid DNS name")
+  }
+  labels=append(labels,strings.ToLower(string(query[offset:offset+count])))
+  offset+=count
+  if offset>255{return nil,errors.New("CI upstream: oversized DNS name")}
+ }
+ if offset+4>len(query){return nil,errors.New("CI upstream: incomplete DNS question")}
+ qtype:=binary.BigEndian.Uint16(query[offset:offset+2])
+ qclass:=binary.BigEndian.Uint16(query[offset+2:offset+4])
+ offset+=4
+ reply:=append([]byte(nil),query[:offset]...)
+ reply[2],reply[3]=0x81,0x80 // standard response, recursive available
+ for i:=6;i<12;i++{reply[i]=0} // no unaudited answers, authority or OPT
+ if strings.Join(labels,".")=="example.org" && qtype==1 && qclass==1 {
+  reply[7]=1 // one actual A record, not merely NOERROR
+  reply=append(reply,0xC0,0x0C,0,1,0,1,0,0,0,60,0,4,203,0,113,7)
+ }
+ return reply,nil
+}
+
 func runCIFreshDNS53(root,token string)error{
  return runCIFreshDNS53WithDuration(root,token,95*time.Second)
 }
@@ -148,8 +185,10 @@ func runCIFreshDNS53WithDuration(root,token string,duration time.Duration)error{
    n,peer,e:=upstream.ReadFrom(b)
    if e!=nil{return}
    if n<12{continue}
-   response:=append([]byte(nil),b[:n]...)
-   response[2],response[3]=0x81,0x80
+   // The previous fixture set RCODE=NOERROR but returned zero records:
+   // that was NOT evidence of a usable allowed-domain resolution.
+   response,e:=ciFreshAllowedUpstreamResponse(b[:n])
+   if e!=nil{continue}
    _,_=upstream.WriteTo(response,peer)
   }
  }()
