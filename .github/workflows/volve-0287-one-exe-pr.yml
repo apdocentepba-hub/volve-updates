@@ -1,19 +1,22 @@
 name: VOLVE one-EXE signed bundle lab (NO RELEASE)
 on:
-  push:
-    branches: [work/0287-native-setup-preview-20261113]
   pull_request:
-    branches: [feature/motor-updater-0287-pilot]
+    branches: [work/0287-dns-cname-chain-guard-20261113]
     paths:
       - 'development/0.28.7/singlefile-*'
       - 'development/0.28.7/singlefile-overlay/**'
       - 'development/0.28.7/hostroutebridge/**'
       - 'development/0.28.7/authenticode-source/**'
       - 'development/0.28.7/unifiedbundle/**'
+      - 'development/0.28.7/installer-wizard/**'
+      - 'development/0.28.7/taskrecoverygate/**'
       - '.github/workflows/volve-0287-one-exe-pr.yml'
   workflow_dispatch:
 permissions:
   contents: read
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 jobs:
   verify-windows-exe:
     runs-on: windows-latest
