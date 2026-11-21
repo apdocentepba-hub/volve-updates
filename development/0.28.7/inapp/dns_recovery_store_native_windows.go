@@ -28,8 +28,8 @@ func nativeDNSOriginalBackupACL(ctx context.Context,path string)error{
  return nil
 }
 
-// nativeSealNewDNSOriginalNode is allowlisted to the directory and its one
-// backup file. An existing backup cannot be resealed through the staging
+// nativeSealNewDNSOriginalNode is allowlisted to the DNS backup and the
+// two fixed-name signed original-DNS binding evidence files. An existing backup cannot be resealed through the staging
 // operation: StoreDNSOriginalBackupUnarmed must have created it exclusively.
 // Its PowerShell body uses only SID-based owner/ACL setting on that node.
 func nativeSealNewDNSOriginalNode(
@@ -44,7 +44,9 @@ func nativeSealNewDNSOriginalNode(
  }
  allowedDir:=filepath.Join(recoveryParent,DNSOriginalBackupDirectoryName)
  allowedFile:=filepath.Join(allowedDir,DNSOriginalBackupFileName)
- if path!=allowedDir&&path!=allowedFile{
+ allowedBinding:=filepath.Join(recoveryParent,dnsBootOriginalBindingJSONFile)
+ allowedSignature:=filepath.Join(recoveryParent,dnsBootOriginalBindingSignatureFile)
+ if path!=allowedDir&&path!=allowedFile&&path!=allowedBinding&&path!=allowedSignature{
   return errors.New("native DNS original seal refused unrelated file or folder")
  }
  stat,err:=os.Lstat(path)
