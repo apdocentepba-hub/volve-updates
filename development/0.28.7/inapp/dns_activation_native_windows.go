@@ -138,6 +138,13 @@ func(b *windowsPinnedDNSActivationBackend)Apply(ctx context.Context,next DNSServ
   return errors.New("native DNS activation must be a single family-scoped localhost command")
  }
  if err:=validatePinnedWindowsDNSArgv(cmds[0].Args);err!=nil{return err}
+ // A publisher/boot guard may take time to re-attest; during that window,
+ // another process could change DNS after our first read. Never clobber it.
+ immediatelyBefore,err:=b.Read(ctx,next.InterfaceGUID,next.Family)
+ if err!=nil{return fmt.Errorf("native DNS last-moment source verification failed: %w",err)}
+ if !sameDNSState(immediatelyBefore,pinned.record.Original){
+  return errors.New("DNS assignment changed after watchdog attestation; refuse native write")
+ }
  if err:=b.invoke(ctx,append([]string(nil),cmds[0].Args...));err!=nil{
   return fmt.Errorf("native localhost DNS write failed: %w",err)
  }
