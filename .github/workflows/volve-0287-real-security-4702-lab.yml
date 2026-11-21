@@ -1,7 +1,7 @@
 name: "VOLVE 0.28.7 - real Security 4702 on disposable Windows CI"
 on:
-  push:
-    branches: [work/0287-native-setup-preview-20261113]
+  pull_request:
+    branches: [work/0287-dns-cname-chain-guard-20261113]
     paths:
       - 'development/0.28.7/lab/ci_task_scheduler_event_diagnostic.ps1'
       - '.github/workflows/volve-0287-real-security-4702-lab.yml'
