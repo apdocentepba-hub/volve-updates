@@ -145,7 +145,7 @@ $triggerProbeXML=$testXML.Replace('<BootTrigger><Enabled>true</Enabled></BootTri
 $triggerOrigin=Get-VolvVMBaselineTaskRecord -TaskPath '\' -TaskName 'Synthetic-Task' -XMLText $triggerProbeXML
 $triggerCases=@(
     @{category='StartBoundary';old='2026-01-01T00:00:00';new='2026-01-02T00:00:00'},
-    @{category='Enabled';old='<Enabled>true</Enabled>';new='<Enabled>false</Enabled>'},
+    @{category='Enabled';old='<StartBoundary>2026-01-01T00:00:00</StartBoundary><Enabled>true</Enabled>';new='<StartBoundary>2026-01-01T00:00:00</StartBoundary><Enabled>false</Enabled>'},
     @{category='Repetition';old='<Interval>PT15M</Interval>';new='<Interval>PT30M</Interval>'},
     @{category='Delay';old='<Delay>PT30S</Delay>';new='<Delay>PT40S</Delay>'},
     @{category='Other';old='<BootTrigger>';new='<TimeTrigger>'}
