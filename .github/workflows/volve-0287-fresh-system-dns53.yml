@@ -61,7 +61,7 @@ jobs:
           $ErrorActionPreference='Stop'
           go test ./motorupdate -run '^TestFreshMotor' -count=1 -v
           if($LASTEXITCODE -ne 0){throw 'Fresh motor gates failed'}
-          go test ./motorupdate -run '^(TestProtectedDNSActivation|TestWindowsPinnedDNSActivation)' -count=1 -timeout 3m -v
+          go test ./motorupdate -run '^(TestProtectedDNSActivation|TestWindowsPinnedDNSActivation|TestWindowsProtectedDNSActivationLease)' -count=1 -timeout 3m -v
           if($LASTEXITCODE -ne 0){throw 'Protected dual-stack activation and independent recovery transaction failed'}
           go build -tags volveci -trimpath -o "$env:RUNNER_TEMP\VOLVE_CI_FreshDNS53.exe" .
           if($LASTEXITCODE -ne 0){throw 'Real motor executable compilation failed'}
