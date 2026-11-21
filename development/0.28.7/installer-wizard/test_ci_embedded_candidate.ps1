@@ -65,7 +65,7 @@ function Build-VolvCandidate([string]$payload,[string]$output){
  [IO.File]::WriteAllText($nsi,$candidate,[Text.UTF8Encoding]::new($true))
  Push-Location $work
  try{
-  & $compiler '/V3' (Split-Path -Leaf $nsi)
+  & $compiler '/V3' (Split-Path -Leaf $nsi) | Out-Null
   if($LASTEXITCODE -ne 0){throw ('NSIS compilation failed '+$output)}
  }finally{Pop-Location}
  $exe=Join-Path $work $output
