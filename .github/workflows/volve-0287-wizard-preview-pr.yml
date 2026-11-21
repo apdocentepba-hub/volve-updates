@@ -127,6 +127,11 @@ jobs:
             Write-Host 'PASS VOLVE_WINDOWS_SINGLE_EXE_WIZARD_COMPILED_NO_DNS_NO_TASKS'
           }finally{Pop-Location}
 
+      - name: E2E execute NSIS wizard in silent mode and prove no protected Windows changes
+        run: |
+          $ErrorActionPreference='Stop'
+          & './development/0.28.7/installer-wizard/test_wizard_preview_silent.ps1' -WizardExe './development/0.28.7/installer-wizard/VOLVE_Asistente_VistaPrevia_0287.exe'
+
       - name: Artifact explicitly labeled as NON-PROTECTIVE PREVIEW
         uses: actions/upload-artifact@v4
         with:
