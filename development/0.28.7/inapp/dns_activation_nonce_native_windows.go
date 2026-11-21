@@ -126,12 +126,52 @@ func ReserveSignedDNSActivationOnceNativeWindows(
  grant,err:=VerifyPublisherSignedDNSActivationGrant(
   ctx,grantJSON,signature,pinnedPublisherKey,independentlyPinned,now)
  if err!=nil{return refused,fmt.Errorf("one-use activation grant invalid: %w",err)}
- // THIS lease is held for every step. It is the identical protected kernel
- // mutex shared by future SYSTEM activation and independent boot recovery.
+ // Reserve once under the same kernel mutex used by the future activation.
+ // Standalone reservation always owns and releases its own short-lived lease.
  release,err:=AcquireProtectedResidentTransitionLease(ctx)
  if err!=nil{return refused,fmt.Errorf("protected activation reservation mutex denied: %w",err)}
  if release==nil{return refused,errors.New("protected activation reservation missing release")}
  defer release()
+ return reserveSignedDNSActivationOnceNativeCore(ctx,recoveryParent,grantJSON,grant,now)
+}
+
+// reserveSignedDNSActivationOnceUnderHeldLeaseNativeWindows is ONLY for the
+// protected SYSTEM activation path. Caller provides its live, exclusive
+// activation lease; acquiring this mutex again would deadlock. Admission,
+// nonce fsync, ACL sealing and DNS preflight now share ONE uninterrupted lease.
+func reserveSignedDNSActivationOnceUnderHeldLeaseNativeWindows(
+ ctx context.Context,recoveryParent string,grantJSON,signature []byte,
+ pinnedPublisherKey ed25519.PublicKey,
+ independentlyPinned DNSActivationExternallyPinnedEvidence,
+ now time.Time,held *exclusiveDNSActivationGuard,
+)(DNSActivationOnceReceipt,error){
+ var refused DNSActivationOnceReceipt
+ if ctx==nil||held==nil{return refused,errors.New("protected signed activation reservation requires live lease")}
+ if err:=ctx.Err();err!=nil{return refused,err}
+ // VerifyArmed checks exclusive ownership AND the publisher/watchdog safety
+ // guard. If either is unavailable, the one-use nonce MUST NOT be spent.
+ if err:=held.VerifyArmed(ctx,independentlyPinned.OriginalDNSJournalSHA256);err!=nil{
+  return refused,fmt.Errorf("protected activation lease or watchdog not armed: %w",err)
+ }
+ if !filepath.IsAbs(recoveryParent)||filepath.Clean(recoveryParent)!=recoveryParent||
+  filepath.Base(recoveryParent)!="legacy-engine-recovery"||
+  strings.HasPrefix(recoveryParent,`\\\\`){
+  return refused,errors.New("one-use activation requires exact trusted local recovery parent")
+ }
+ grant,err:=VerifyPublisherSignedDNSActivationGrant(
+  ctx,grantJSON,signature,pinnedPublisherKey,independentlyPinned,now)
+ if err!=nil{return refused,fmt.Errorf("one-use activation grant invalid: %w",err)}
+ return reserveSignedDNSActivationOnceNativeCore(ctx,recoveryParent,grantJSON,grant,now)
+}
+
+// The caller MUST own the trusted process-external Windows lease. This
+// function never acquires a second lock, never writes DNS, and preserves a
+// create-only, unreusable nonce even after an ACL or readback failure.
+func reserveSignedDNSActivationOnceNativeCore(
+ ctx context.Context,recoveryParent string,grantJSON []byte,
+ grant SignedDNSActivationGrant,now time.Time,
+)(DNSActivationOnceReceipt,error){
+ var refused DNSActivationOnceReceipt
  if err:=nativeDNSOriginalBackupACL(ctx,recoveryParent);err!=nil{
   return refused,fmt.Errorf("one-use activation parent has untrusted NTFS ACL: %w",err)
  }
