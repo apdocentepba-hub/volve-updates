@@ -218,6 +218,7 @@ func verifySignedDNSBootRestoreCensus(
   }
   index,ok:=before[strings.ToLower(state.InterfaceGUID)]
   if !ok||index==0{return errors.New("signed DNS adapter missing or ambiguous in independent GUID census")}
+  if evidence.interfaceIndexes[strings.ToLower(state.InterfaceGUID)]!=index{return errors.New("DNS source census disagrees with independently observed adapter index")}
   if _,_,err:=classifyWindowsDNSRestoreStage(record,state,index);err!=nil{
    return fmt.Errorf("untrusted live adapter restore stage: %w",err)
   }
