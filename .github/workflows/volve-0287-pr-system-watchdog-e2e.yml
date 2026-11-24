@@ -283,6 +283,8 @@ jobs:
             dns_reboot_verified=$false
             network_connectivity_verified=$false
             network_adapters=$null
+            scheduler_preflight=$null
+            private_guest_dns_scheduler=$null
             cleanup_ok=$false
             error_message=$null
           }
@@ -382,6 +384,53 @@ jobs:
               $session=Connect-Guest $vm.Id $credential 360
               Start-Sleep -Seconds 60
             }
+            # Prove Task Scheduler can execute an owned no-op as actual
+            # LocalSystem before arming any recovery or injecting DNS faults.
+            $report.stage='system_scheduler_preflight'
+            $probe=Invoke-Command -Session $session -ArgumentList $trial -ErrorAction Stop -ScriptBlock {
+              param($id)
+              $ErrorActionPreference='Stop'
+              $name='VOLVE-CI-SYSTEMProbe-'+$id
+              $root=Join-Path $env:ProgramData $name
+              if((Test-Path -LiteralPath $root) -or (Get-ScheduledTask -TaskName $name -ErrorAction SilentlyContinue)){throw 'Probe identity collision'}
+              New-Item -ItemType Directory -Path $root -ErrorAction Stop|Out-Null
+              & icacls.exe $root '/inheritance:r' '/grant:r' '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F'|Out-Null
+              if($LASTEXITCODE -ne 0){throw 'Probe ACL failed'}
+              & wevtutil.exe sl Microsoft-Windows-TaskScheduler/Operational /e:true
+              if($LASTEXITCODE -ne 0){throw 'Task history unavailable'}
+              $cmd=Join-Path $env:WINDIR 'System32\cmd.exe'
+              $who=Join-Path $env:WINDIR 'System32\whoami.exe'
+              $out=Join-Path $root 'sid.txt'
+              $action=New-ScheduledTaskAction -Execute $cmd -Argument ('/d /c ""'+$who+'" /user /fo csv /nh > "'+$out+'""') -WorkingDirectory $root
+              $principal=New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest
+              $settings=New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit (New-TimeSpan -Minutes 2)
+              Register-ScheduledTask -TaskName $name -TaskPath '\' -Action $action -Principal $principal -Settings $settings -ErrorAction Stop|Out-Null
+              try{
+                $start=Get-Date
+                Start-ScheduledTask -TaskName $name -TaskPath '\' -ErrorAction Stop
+                $limit=[datetime]::UtcNow.AddSeconds(90)
+                do{
+                  Start-Sleep -Seconds 2
+                  $t=Get-ScheduledTask -TaskName $name -TaskPath '\' -ErrorAction Stop
+                  $info=Get-ScheduledTaskInfo -TaskName $name -TaskPath '\' -ErrorAction Stop
+                  if((Test-Path -LiteralPath $out) -and $t.State -ne 'Running'){break}
+                }while([datetime]::UtcNow -lt $limit)
+                $sidVerified=(Test-Path -LiteralPath $out) -and ((Get-Content -LiteralPath $out -Raw) -match 'S-1-5-18')
+                $events=@(Get-WinEvent -FilterHashtable @{LogName='Microsoft-Windows-TaskScheduler/Operational';StartTime=$start.AddSeconds(-5)} -MaxEvents 1000 -ErrorAction SilentlyContinue|Where-Object {
+                  $xml=[xml]$_.ToXml()
+                  @($xml.Event.EventData.Data|Where-Object {$_.Name -eq 'TaskName' -and $_.'#text' -ceq ('\'+$name)}).Count -gt 0
+                }|ForEach-Object {[int]$_.Id})
+                [pscustomobject]@{sid_verified=$sidVerified;last_result=[int64]$info.LastTaskResult;state=[string]$t.State;event_ids=@($events|Sort-Object -Unique);scheduler_service=[string](Get-Service Schedule).Status}
+              }finally{
+                $owned=Get-ScheduledTask -TaskName $name -TaskPath '\' -ErrorAction Stop
+                if($owned.Principal.UserId -notin @('SYSTEM','S-1-5-18')){throw 'Probe task identity changed'}
+                if($owned.State -eq 'Running'){Stop-ScheduledTask -TaskName $name -TaskPath '\' -ErrorAction Stop}
+                Unregister-ScheduledTask -TaskName $name -TaskPath '\' -Confirm:$false -ErrorAction Stop
+                Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction Stop
+              }
+            }
+            $report.scheduler_preflight=$probe
+            if(-not $probe.sid_verified -or $probe.last_result -ne 0 -or $probe.state -eq 'Running'){throw 'Guest Scheduler did not demonstrate a successful LocalSystem no-op'}
             $nonce=[guid]::NewGuid().ToString('N')
             $before=Invoke-Command -Session $session -ArgumentList $nonce -ErrorAction Stop -ScriptBlock {
               param($nonce)
@@ -555,24 +604,30 @@ jobs:
               $ErrorActionPreference='Stop'
               $task='VOLVE-CI-GuestDNS-'+$id
               if(Get-ScheduledTask -TaskName $task -ErrorAction SilentlyContinue){throw 'Task collision'}
-              $runner=Join-Path $root 'run-test.ps1'
+              $runner=Join-Path $root 'run-test.cmd'
               $script=@'
-          $ErrorActionPreference='Stop'
-          $env:GITHUB_ACTIONS='true'
-          $env:RUNNER_ENVIRONMENT='github-hosted'
-          $env:VOLVE_CI_NESTED_GUEST_DNS='PRIVATE_GUEST_ONLY'
-          $exe=Join-Path $PSScriptRoot 'VOLVE-CI-GuestDNS.test.exe'
-          $log=Join-Path $PSScriptRoot 'test.log'
-          & $exe '-test.run=^TestNestedGuestSignedOriginalDNSNativeSYSTEM$' '-test.v' '-test.timeout=5m' *> $log
-          $code=$LASTEXITCODE
-          [IO.File]::WriteAllText((Join-Path $PSScriptRoot 'exit.txt'),[string]$code)
-          exit $code
+          @echo off
+          setlocal
+          "%SystemRoot%\System32\whoami.exe" /user /fo csv /nh > "%~dp0started.txt" 2>&1
+          if errorlevel 1 exit /b 91
+          set "GITHUB_ACTIONS=true"
+          set "RUNNER_ENVIRONMENT=github-hosted"
+          set "VOLVE_CI_NESTED_GUEST_DNS=PRIVATE_GUEST_ONLY"
+          "%~dp0VOLVE-CI-GuestDNS.test.exe" -test.run=^TestNestedGuestSignedOriginalDNSNativeSYSTEM$ -test.v -test.timeout=5m > "%~dp0test.log" 2>&1
+          set "RESULT=%ERRORLEVEL%"
+          > "%~dp0exit.tmp" echo %RESULT%
+          move /y "%~dp0exit.tmp" "%~dp0exit.txt" >nul
+          exit /b %RESULT%
           '@
-              Set-Content -LiteralPath $runner -Value $script -Encoding UTF8 -ErrorAction Stop
-              $action=New-ScheduledTaskAction -Execute (Join-Path $env:WINDIR 'System32\WindowsPowerShell\v1.0\powershell.exe') -Argument ('-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "'+$runner+'"')
+              Set-Content -LiteralPath $runner -Value $script -Encoding ASCII -ErrorAction Stop
+              $action=New-ScheduledTaskAction -Execute (Join-Path $env:WINDIR 'System32\cmd.exe') -Argument ('/d /c ""'+$runner+'""') -WorkingDirectory $root
               $principal=New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest
-              Register-ScheduledTask -TaskName $task -TaskPath '\' -Principal $principal -Action $action -ErrorAction Stop|Out-Null
+              $settings=New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit (New-TimeSpan -Minutes 7)
+              & wevtutil.exe sl Microsoft-Windows-TaskScheduler/Operational /e:true
+              if($LASTEXITCODE -ne 0){throw 'Task history unavailable'}
+              Register-ScheduledTask -TaskName $task -TaskPath '\' -Principal $principal -Action $action -Settings $settings -ErrorAction Stop|Out-Null
               try{
+                $startedAt=Get-Date
                 Start-ScheduledTask -TaskName $task -TaskPath '\' -ErrorAction Stop
                 $exitFile=Join-Path $root 'exit.txt'
                 $until=[datetime]::UtcNow.AddMinutes(6)
@@ -580,7 +635,15 @@ jobs:
                 $log=Join-Path $root 'test.log'
                 $output=if(Test-Path -LiteralPath $log){Get-Content -LiteralPath $log -Raw}else{''}
                 $code=if(Test-Path -LiteralPath $exitFile){[int]([IO.File]::ReadAllText($exitFile))}else{-999}
-                [pscustomobject]@{exit=$code;log=$output}
+                $started=Join-Path $root 'started.txt'
+                $sidVerified=(Test-Path -LiteralPath $started) -and ((Get-Content -LiteralPath $started -Raw) -match 'S-1-5-18')
+                $info=Get-ScheduledTaskInfo -TaskName $task -TaskPath '\' -ErrorAction Stop
+                $current=Get-ScheduledTask -TaskName $task -TaskPath '\' -ErrorAction Stop
+                $events=@(Get-WinEvent -FilterHashtable @{LogName='Microsoft-Windows-TaskScheduler/Operational';StartTime=$startedAt.AddSeconds(-5)} -MaxEvents 1000 -ErrorAction SilentlyContinue|Where-Object {
+                  $xml=[xml]$_.ToXml()
+                  @($xml.Event.EventData.Data|Where-Object {$_.Name -eq 'TaskName' -and $_.'#text' -ceq ('\'+$task)}).Count -gt 0
+                }|ForEach-Object {[int]$_.Id})
+                [pscustomobject]@{exit=$code;log=$output;system_sid_verified=$sidVerified;last_result=[int64]$info.LastTaskResult;state=[string]$current.State;event_ids=@($events|Sort-Object -Unique)}
               }finally{
                 $owned=Get-ScheduledTask -TaskName $task -TaskPath '\' -ErrorAction Stop
                 if($owned.Principal.UserId -notin @('SYSTEM','S-1-5-18')){throw 'Unexpected task identity'}
@@ -589,8 +652,9 @@ jobs:
               }
             }
             $report.private_guest_dns_test_exit=$test.exit
+            $report.private_guest_dns_scheduler=[ordered]@{system_sid_verified=$test.system_sid_verified;last_result=$test.last_result;state=$test.state;event_ids=$test.event_ids}
             Write-Host $test.log
-            if($test.exit -ne 0 -or $test.log -notmatch 'PASS VOLVE_NESTED_GUEST_REAL_SIGNED_SYSTEM_DNS_STATIC_IPV4_AUTOMATIC_IPV6' -or $test.log -notmatch '--- PASS: TestNestedGuestSignedOriginalDNSNativeSYSTEM'){throw 'Real native SYSTEM DNS recovery test did not pass'}
+            if(-not $test.system_sid_verified -or $test.exit -ne 0 -or $test.log -notmatch 'PASS VOLVE_NESTED_GUEST_REAL_SIGNED_SYSTEM_DNS_STATIC_IPV4_AUTOMATIC_IPV6' -or $test.log -notmatch '--- PASS: TestNestedGuestSignedOriginalDNSNativeSYSTEM'){throw 'Real native SYSTEM DNS recovery test did not pass'}
             $report.private_guest_dns_verified=$true
             $report.stage='native_dns_slice_verified_only'
             }
