@@ -81,6 +81,7 @@ func restoreSignedOriginalDNSUnderHeldLeaseWindows(
  if err!=nil||pending.Status!="recovery-required"{
   return errors.New("protected original DNS recovery requires exact pending motor transaction")
  }
+ if err:=VerifyExplicitResidentRecoveryScope(ctx,grant.Permit,grant.Signature,publisherKey,ResidentRecoveryScopeMotorAndDNS,pending.Intent.Nonce);err!=nil{return err}
  receipt,err:=VerifySignedDNSOriginalBinding(
   ctx,originalBindingJSON,originalBindingSignature,publisherKey,
   pending.Intent,grant.Permit,
