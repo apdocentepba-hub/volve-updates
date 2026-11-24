@@ -258,7 +258,11 @@ func TestNestedGuestSignedOriginalDNSNativeSYSTEM(t *testing.T){
  // durable-driver CI test alone previously took over four minutes.
  // Use one finite deadline for this isolated guest, not shorter per-stage
  // deadlines that can strand a partially exercised lab fixture.
- ctx,cancel:=context.WithTimeout(context.Background(),12*time.Minute)
+ // Actual nested guest 4d6f988 took 391s before restoration began and
+ // stopped exactly at 720s inside the second IPv4 step. Allow time for
+ // signed restore, independent readback and the idempotent retry, while
+ // retaining the same native evidence and per-command safety checks.
+ ctx,cancel:=context.WithTimeout(context.Background(),30*time.Minute)
  defer cancel()
  start:=time.Now()
  stage:=func(name string){t.Logf("VOLVE_GUEST_DNS_STAGE=%s elapsed_ms=%d",name,time.Since(start).Milliseconds())}
@@ -307,7 +311,8 @@ func TestNestedGuestSignedOriginalDNSNativeSYSTEM(t *testing.T){
   if !found{t.Fatal("expected actual loopback DNS state missing")}
  }
  stage("native-system-restore")
- if err:=restorePersistedSignedOriginalDNSAsSYSTEM(ctx,f.root,f.pub);err!=nil{t.Fatalf("real native SYSTEM restoration: %v",err)}
+ if err:=restorePersistedSignedOriginalDNSAsSYSTEM(ctx,f.root,f.pub);err!=nil{t.Fatalf("real native SYSTEM restoration: %v; trial_context=%v",err,ctx.Err())}
+ stage("native-system-restore-returned")
  if err:=verifySignedDNSBootRestoreCensus(ctx,records,DefaultWindowsReadOnlyPowerShell,true);err!=nil{t.Fatal(err)}
  after,err:=InspectWindowsDNSAssignmentProvenanceReadOnly(ctx,DefaultWindowsReadOnlyPowerShell)
  if err!=nil||after.SHA256!=census.SHA256{t.Fatal("original DNS provenance digest mismatch")}
