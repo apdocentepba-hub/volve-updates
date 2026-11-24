@@ -11,6 +11,11 @@ on:
       - 'development/0.28.7/installer-wizard/**'
       - 'development/0.28.7/taskrecoverygate/**'
       - '.github/workflows/volve-0287-one-exe-pr.yml'
+  push:
+    branches: [work/0287-installer-progress-20261124]
+    paths:
+      - 'development/0.28.7/hostroutebridge/**'
+      - '.github/workflows/volve-0287-one-exe-pr.yml'
   workflow_dispatch:
 permissions:
   contents: read
