@@ -585,18 +585,28 @@ jobs:
                     if(-not [guid]::TryParse($instanceText,[ref]$instance) -or $instance -eq [guid]::Empty){continue}
                     [pscustomobject]@{id=[int]$event.Id;record=[long]$event.RecordId;instance=$instance.ToString('D');result=[string]$fields['ResultCode']}
                   })
-                  foreach($trigger in @($records|Where-Object id -eq 110|Sort-Object record)){
-                    $last=[long]$trigger.record
-                    $ids=@($last)
-                    $ok=$true
-                    foreach($id in @(100,201,102)){
-                      $matches=@($records|Where-Object {$_.instance -ceq $trigger.instance -and $_.id -eq $id -and $_.record -gt $last}|Sort-Object record)
-                      if($matches.Count -ne 1){$ok=$false;break}
-                      $e=$matches[0]
-                      if(($id -eq 201 -or ($id -eq 102 -and $e.result)) -and $e.result -notin @('0','0x0','0x00000000')){$ok=$false;break}
-                      $last=$e.record;$ids+=@($last)
+                  # Real guest evidence (ca1ef94): providers emitted 100
+                  # before 110 for the SAME GUID. Both must be fresh and
+                  # unique, both precede successful action completion (201),
+                  # which precedes task completion (102). Do not require
+                  # ordering between the two independent start notifications.
+                  $instances=@($records|Group-Object instance)
+                  if($instances.Count -eq 1){
+                    $owned=@($instances[0].Group)
+                    $trigger=@($owned|Where-Object id -eq 110)
+                    $started=@($owned|Where-Object id -eq 100)
+                    $action=@($owned|Where-Object id -eq 201)
+                    $completed=@($owned|Where-Object id -eq 102)
+                    if($owned.Count -eq 4 -and $trigger.Count -eq 1 -and $started.Count -eq 1 -and $action.Count -eq 1 -and $completed.Count -eq 1){
+                      $ids=@($owned|Sort-Object record|ForEach-Object {[long]$_.record})
+                      if(@($ids|Sort-Object -Unique).Count -eq 4 -and
+                        $action[0].record -gt $trigger[0].record -and $action[0].record -gt $started[0].record -and
+                        $completed[0].record -gt $action[0].record -and
+                        $action[0].result -in @('0','0x0','0x00000000') -and
+                        (-not $completed[0].result -or $completed[0].result -in @('0','0x0','0x00000000'))){
+                        return [pscustomobject]@{verified=$true;record_ids=$ids;instance=$trigger[0].instance}
+                      }
                     }
-                    if($ok){return [pscustomobject]@{verified=$true;record_ids=$ids;instance=$trigger.instance}}
                   }
                   # Keep the exact owned event metadata on rejection so
                   # that provider ordering/schema differences are observable.
@@ -966,18 +976,28 @@ jobs:
                     if(-not [guid]::TryParse($instanceText,[ref]$instance) -or $instance -eq [guid]::Empty){continue}
                     [pscustomobject]@{id=[int]$event.Id;record=[long]$event.RecordId;instance=$instance.ToString('D');result=[string]$fields['ResultCode']}
                   })
-                  foreach($trigger in @($records|Where-Object id -eq 110|Sort-Object record)){
-                    $last=[long]$trigger.record
-                    $ids=@($last)
-                    $ok=$true
-                    foreach($id in @(100,201,102)){
-                      $matches=@($records|Where-Object {$_.instance -ceq $trigger.instance -and $_.id -eq $id -and $_.record -gt $last}|Sort-Object record)
-                      if($matches.Count -ne 1){$ok=$false;break}
-                      $e=$matches[0]
-                      if(($id -eq 201 -or ($id -eq 102 -and $e.result)) -and $e.result -notin @('0','0x0','0x00000000')){$ok=$false;break}
-                      $last=$e.record;$ids+=@($last)
+                  # Real guest evidence (ca1ef94): providers emitted 100
+                  # before 110 for the SAME GUID. Both must be fresh and
+                  # unique, both precede successful action completion (201),
+                  # which precedes task completion (102). Do not require
+                  # ordering between the two independent start notifications.
+                  $instances=@($records|Group-Object instance)
+                  if($instances.Count -eq 1){
+                    $owned=@($instances[0].Group)
+                    $trigger=@($owned|Where-Object id -eq 110)
+                    $started=@($owned|Where-Object id -eq 100)
+                    $action=@($owned|Where-Object id -eq 201)
+                    $completed=@($owned|Where-Object id -eq 102)
+                    if($owned.Count -eq 4 -and $trigger.Count -eq 1 -and $started.Count -eq 1 -and $action.Count -eq 1 -and $completed.Count -eq 1){
+                      $ids=@($owned|Sort-Object record|ForEach-Object {[long]$_.record})
+                      if(@($ids|Sort-Object -Unique).Count -eq 4 -and
+                        $action[0].record -gt $trigger[0].record -and $action[0].record -gt $started[0].record -and
+                        $completed[0].record -gt $action[0].record -and
+                        $action[0].result -in @('0','0x0','0x00000000') -and
+                        (-not $completed[0].result -or $completed[0].result -in @('0','0x0','0x00000000'))){
+                        return [pscustomobject]@{verified=$true;record_ids=$ids;instance=$trigger[0].instance}
+                      }
                     }
-                    if($ok){return [pscustomobject]@{verified=$true;record_ids=$ids;instance=$trigger.instance}}
                   }
                   # Keep the exact owned event metadata on rejection so
                   # that provider ordering/schema differences are observable.
