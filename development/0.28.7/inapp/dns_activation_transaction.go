@@ -16,7 +16,15 @@ import (
     "time"
 )
 
-const dnsActivationEmergencyRecoveryTimeout = 45 * time.Second
+// The real disposable Windows Server 2022 DNS recovery trial
+// 45459849542/job/138679464895 took 347.56 seconds after reboot and
+// the native restoration phase took 437.588 seconds before independent
+// readback. A 45s deadline cancels rescue far too early. Reserve a bounded
+// 15-minute budget for the separate SYSTEM agent, mutex reacquisition and
+// final DNS readback. This is not a guarantee for every host/adapter count:
+// exceeding it must leave the protected transaction pending, never mark
+// it successful or disarm the independently installed watchdog.
+const dnsActivationEmergencyRecoveryTimeout = 15 * time.Minute
 
 type DNSActivationSafetyGuard interface {
     // May not trust a UI boolean or a hash supplied by the same journal.
