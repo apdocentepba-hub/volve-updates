@@ -13,7 +13,7 @@ concurrency:
 jobs:
   exact-source-regression:
     runs-on: windows-2022
-    timeout-minutes: 12
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -59,7 +59,24 @@ jobs:
           foreach($name in $required){if($listed -cnotcontains $name){throw ('Missing regression '+$name)}}
           go test ./motorupdate -run $pattern -count=1 -v -timeout 2m
           if($LASTEXITCODE -ne 0){throw 'Activation contract regression failed'}
-          Write-Host 'PASS: exact candidate activation transaction tests; NO REAL INSTALL'
+          go test ./motorupdate -run '^(TestExplicitResidentRecoveryScope|TestScopedResidentPublisherRecoveryBindsExactPendingJournal)$' -count=1 -timeout 2m -v
+          if($LASTEXITCODE -ne 0){throw 'Signed scope regression failed'}
+          go test ./cmd/volve-managed-watchdog -run '^TestMotorOnlyPinnedBoot' -count=1 -timeout 2m -v
+          if($LASTEXITCODE -ne 0){throw 'Motor-only scope regression failed'}
+          Write-Host 'PASS: exact candidate activation and scope transaction tests; NO REAL INSTALL'
+      - name: Compile exact CI-tagged motor for private guest integration
+        shell: powershell
+        working-directory: build/codigo
+        run: |
+          $ErrorActionPreference='Stop'
+          $out=Join-Path $env:RUNNER_TEMP 'VOLVE-CI-ActualMotor.exe'
+          go build -tags volveci -trimpath -o $out .
+          if($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $out -PathType Leaf)){throw 'Exact CI motor compilation failed'}
+          $script=Join-Path $env:GITHUB_WORKSPACE 'development\0.28.7\lab\ci_private_motor_integration.ps1'
+          $tokens=$null;$errors=$null
+          $null=[System.Management.Automation.Language.Parser]::ParseFile($script,[ref]$tokens,[ref]$errors)
+          if(@($errors).Count -ne 0){throw ('Integrated motor script syntax failed: '+($errors|Out-String))}
+          Write-Host ('PASS: exact CI-tagged motor compiled SHA256='+((Get-FileHash -LiteralPath $out -Algorithm SHA256).Hash)+'; NO INSTALL')
       - name: Compile and test private DNS peer and parse client probe
         shell: powershell
         working-directory: development/0.28.7/lab
