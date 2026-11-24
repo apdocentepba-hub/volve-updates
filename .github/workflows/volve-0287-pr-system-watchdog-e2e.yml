@@ -237,7 +237,7 @@ jobs:
           & go test -c -trimpath -o $out ./motorupdate
           if($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $out)){throw 'Could not compile exact motorupdate tests'}
           Write-Host 'PASS: candidate motorupdate test executable compiled; NO PRODUCT INSTALL'
-      - name: Boot official evaluation guest and verify strict SYSTEM recovery after real reboot
+      - name: Boot official evaluation guest and execute selected isolated trial
         shell: powershell
         env:
           CANDIDATE_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
@@ -270,6 +270,7 @@ jobs:
             guest_os=$null
             guest_boot_before=$null
             guest_boot_after=$null
+            guest_poweroff_observed=$false
             disk_persistence_verified=$false
             recovery_kit_prepared=$false
             recovery_kit_audit_passed=$false
@@ -428,12 +429,20 @@ jobs:
             }
             $report.recovery_kit_audit_passed=$true
             $report.stage='restart_and_verify_guest_disk'
+            # The previous guest-initiated /r returned success twice without
+            # a new observable boot. Require a clean shutdown, independently
+            # observe the VM Off state, then start exactly the owned VM.
             Invoke-Command -Session $session -ErrorAction Stop -ScriptBlock {
-              & shutdown.exe /r /t 5 /f
+              & shutdown.exe /s /t 5 /f
               if($LASTEXITCODE -ne 0){throw 'Guest shutdown request failed'}
             }
             Remove-PSSession $session
             $session=$null
+            $offDeadline=[datetime]::UtcNow.AddMinutes(4)
+            while((Get-VM -Id $vm.Id -ErrorAction Stop).State -ne 'Off' -and [datetime]::UtcNow -lt $offDeadline){Start-Sleep -Seconds 3}
+            if((Get-VM -Id $vm.Id -ErrorAction Stop).State -ne 'Off'){throw 'Guest graceful shutdown not observed; no forced restart credited'}
+            $report.guest_poweroff_observed=$true
+            Start-VM -VM $vm -ErrorAction Stop
             Start-Sleep -Seconds 20
             $until=[datetime]::UtcNow.AddMinutes(8)
             do{
@@ -608,7 +617,29 @@ jobs:
                   $classify={param($name) [pscustomobject]@{id=(Get-VolvVMBaselineSha -Value $name).Substring(0,16);scope=$(if($name.StartsWith('\Microsoft\Windows\',[StringComparison]::OrdinalIgnoreCase)){'microsoft-windows'}else{'other'})}}
                   $marker=Join-Path $dir ('VOLVE-CI-BOOT-'+$id+'\boot-recovery-success.marker')
                   $failed=Join-Path $dir ('VOLVE-CI-BOOT-'+$id+'\boot-recovery-failed.marker')
+                  # Capture only the owned watchdog's startup events and
+                  # result, never raw event messages, XML or foreign task names.
+                  $taskName='VOLVE-CI-BootRecovery-'+$id
+                  $task=Get-ScheduledTask -TaskName $taskName -TaskPath '\' -ErrorAction Stop
+                  $info=Get-ScheduledTaskInfo -TaskName $taskName -TaskPath '\' -ErrorAction Stop
+                  $boot=(Get-CimInstance Win32_OperatingSystem).LastBootUpTime
+                  $events=@(Get-WinEvent -FilterHashtable @{LogName='Microsoft-Windows-TaskScheduler/Operational';StartTime=$boot.AddSeconds(-5)} -MaxEvents 2000 -ErrorAction SilentlyContinue|Where-Object {
+                    $xml=[xml]$_.ToXml()
+                    @($xml.Event.EventData.Data|Where-Object {$_.Name -eq 'TaskName' -and $_.'#text' -ceq ('\'+$taskName)}).Count -gt 0
+                  }|ForEach-Object {[int]$_.Id})
+                  $journalStatus='unavailable'
+                  $journal=Join-Path $dir ('VOLVE-CI-BOOT-'+$id+'\recovery.json')
+                  $helper=Join-Path $dir 'volve-journal-lab.exe'
+                  if((Test-Path -LiteralPath $journal) -and (Test-Path -LiteralPath $helper)){
+                    $value=& $helper status $journal
+                    if($LASTEXITCODE -eq 0 -and $value -match '^(ROLLBACK_REQUIRED|NO_ROLLBACK:restored)$'){$journalStatus=$value}
+                  }
                   [pscustomobject]@{
+                    watchdog_state=[string]$task.State
+                    watchdog_last_result=[int64]$info.LastTaskResult
+                    watchdog_last_run_after_boot=($info.LastRunTime -ge $boot.AddSeconds(-5))
+                    watchdog_event_ids=@($events|Sort-Object -Unique)
+                    recovery_journal_status=$journalStatus
                     before=@($old.taskRecords).Count;after=@($new.taskRecords).Count
                     added=@($added|ForEach-Object {& $classify $_})
                     removed=@($removed|ForEach-Object {& $classify $_})
