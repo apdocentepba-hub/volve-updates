@@ -310,6 +310,8 @@ jobs:
           $tokens=$null;$errors=$null
           $null=[System.Management.Automation.Language.Parser]::ParseFile((Join-Path (Get-Location) 'private_dns_client_probe.ps1'),[ref]$tokens,[ref]$errors)
           if(@($errors).Count -ne 0){throw ('Private DNS client probe parse failed: '+($errors|Out-String))}
+          $null=[System.Management.Automation.Language.Parser]::ParseFile((Join-Path (Get-Location) 'private_dns_peer_vm.ps1'),[ref]$tokens,[ref]$errors)
+          if(@($errors).Count -ne 0){throw ('Private DNS VM helper parse failed: '+($errors|Out-String))}
           Write-Host ('PASS: private DNS peer compiled SHA256='+((Get-FileHash -LiteralPath $out -Algorithm SHA256).Hash)+'; CLIENT PARSED ONLY; NO NETWORK PROOF')
       - name: Parse exact candidate guest orchestration without executing it
         shell: powershell
@@ -355,6 +357,8 @@ jobs:
           $vhd=Join-Path $dir 'evaluation.vhd'
           $vm=$null
           $privateSwitch=$null
+          $peerVM=$null
+          $peerSession=$null
           $mounted=$false
           $session=$null
           $report=[ordered]@{
@@ -380,6 +384,9 @@ jobs:
             recovery_kit_cleanup_verified=$false
             recovery_proof_sha256=$null
             private_guest_dns_verified=$false
+            private_peer_topology_verified=$false
+            private_peer_challenges=@()
+            private_network_connectivity_verified=$false
             private_guest_dns_test_exit=$null
             dns_test_exe_sha256=$null
             dns_reboot_verified=$false
@@ -480,7 +487,19 @@ jobs:
             Dismount-VHD -Path $vhd -ErrorAction Stop
             $mounted=$false
             $report.stage='start_windows_guest'
-            $vm=New-VM -Name $name -Generation $report.generation -MemoryStartupBytes 4GB -VHDPath $vhd -Path $dir -ErrorAction Stop
+            $clientDisk=$vhd
+            if($env:VOLVE_GUEST_TRIAL -ceq 'native-dns'){
+              . (Join-Path $env:GITHUB_WORKSPACE 'development\0.28.7\lab\private_dns_peer_vm.ps1')
+              $clientDisk=Join-Path $dir 'client-diff.vhd'
+              $peerDisk=Join-Path $dir 'peer-diff.vhd'
+              New-VHD -Path $clientDisk -ParentPath $vhd -Differencing -ErrorAction Stop|Out-Null
+              New-VHD -Path $peerDisk -ParentPath $vhd -Differencing -ErrorAction Stop|Out-Null
+              foreach($child in @($clientDisk,$peerDisk)){
+                $info=Get-VHD -Path $child -ErrorAction Stop
+                if([string]$info.VhdType -cne 'Differencing' -or [IO.Path]::GetFullPath($info.ParentPath) -cne [IO.Path]::GetFullPath($vhd)){throw 'Unexpected guest differencing disk ancestry'}
+              }
+            }
+            $vm=New-VM -Name $name -Generation $report.generation -MemoryStartupBytes 4GB -VHDPath $clientDisk -Path $dir -ErrorAction Stop
             $vm | Set-VMProcessor -Count 2 -ErrorAction Stop
             $vm | Set-VM -AutomaticCheckpointsEnabled $false -ErrorAction Stop
             $vm | Get-VMNetworkAdapter | Remove-VMNetworkAdapter -Confirm:$false -ErrorAction Stop
@@ -950,6 +969,25 @@ jobs:
               & icacls.exe $root '/inheritance:r' '/grant:r' '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F'|Out-Null
               if($LASTEXITCODE -ne 0){throw 'Could not protect DNS test folder'}
             }
+            $report.stage='prepare_isolated_dns_peer'
+            $free=[long](Get-CimInstance Win32_OperatingSystem -ErrorAction Stop).FreePhysicalMemory*1KB
+            if($free -lt 3GB){throw 'Insufficient host memory for second isolated Windows guest; no connectivity verdict'}
+            $peerVM=New-VM -Name ($name+'-PEER') -Generation $report.generation -MemoryStartupBytes 2GB -VHDPath $peerDisk -Path $dir -ErrorAction Stop
+            $peerVM|Set-VMProcessor -Count 1 -ErrorAction Stop
+            $peerVM|Set-VM -AutomaticCheckpointsEnabled $false -ErrorAction Stop
+            $peerVM|Get-VMNetworkAdapter|Remove-VMNetworkAdapter -Confirm:$false -ErrorAction Stop
+            Add-VMNetworkAdapter -VM $peerVM -Name 'VOLVE-CI-PRIVATE-DNS-PEER' -SwitchName $switchName -ErrorAction Stop
+            $peerExe=Join-Path $env:RUNNER_TEMP 'VOLVE-CI-PrivateDNSPeer.exe'
+            $peerSHA=(Get-FileHash -LiteralPath $peerExe -Algorithm SHA256).Hash
+            $peerSession=Start-VolvPrivateDNSPeer -Peer $peerVM -Client $vm -Switch $privateSwitch -Credential $credential -PeerExe $peerExe -ExpectedSHA $peerSHA
+            $report.private_peer_topology_verified=Assert-VolvPrivatePeerTopology -ClientId $vm.Id -PeerId $peerVM.Id -SwitchId $privateSwitch.Id
+            $probeSource=Join-Path $env:GITHUB_WORKSPACE 'development\0.28.7\lab\private_dns_client_probe.ps1'
+            $probeSHA=(Get-FileHash -LiteralPath $probeSource -Algorithm SHA256).Hash
+            $probeGuest=Join-Path $guestDNS 'private_dns_client_probe.ps1'
+            Copy-Item -LiteralPath $probeSource -Destination $probeGuest -ToSession $session -ErrorAction Stop
+            foreach($transport in @('Default','TCP')){
+              $report.private_peer_challenges+=Assert-VolvPrivateDNSPeerChallenge -ClientSession $session -PeerSession $peerSession -ClientId $vm.Id -PeerId $peerVM.Id -SwitchId $privateSwitch.Id -ProbePath $probeGuest -ProbeSHA $probeSHA -Phase Original -Transport $transport
+            }
             # Read-only forensic census: do not exclude unknown adapters.
             # Establish whether the unpaired DNS rows belong to an actual
             # .NET loopback interface or an unexpected virtual adapter.
@@ -1139,6 +1177,9 @@ jobs:
             $chainSource=Join-Path $env:GITHUB_WORKSPACE 'development\0.28.7\lab\reboot_event_chain.ps1'
             $chainHash=(Get-FileHash -LiteralPath $chainSource -Algorithm SHA256).Hash
             Copy-Item -LiteralPath $chainSource -Destination (Join-Path $recoverDir 'reboot_event_chain.ps1') -ToSession $session -ErrorAction Stop
+            foreach($transport in @('Default','TCP')){
+              $report.private_peer_challenges+=Assert-VolvPrivateDNSPeerChallenge -ClientSession $session -PeerSession $peerSession -ClientId $vm.Id -PeerId $peerVM.Id -SwitchId $privateSwitch.Id -ProbePath $probeGuest -ProbeSHA $probeSHA -Phase Fault -Transport $transport
+            }
             $report.stage='register_dedicated_system_dns_startup_recovery'
             $bootTask=Invoke-Command -Session $session -ArgumentList $recoverDir,$trial,$keyPin,$originalPin,$chainHash -ErrorAction Stop -ScriptBlock {
               param($root,$id,$key,$original,$chainSHA)
@@ -1243,11 +1284,17 @@ jobs:
             Write-Host $observation.log
             if($observation.exit -ne 0 -or $observation.log -notmatch 'PASS VOLVE_DNS_REBOOT_INDEPENDENT_READBACK_NO_WRITES' -or $observation.log -notmatch '--- PASS: TestNestedGuestDNSRebootVerifyReadOnly'){throw 'Independent postboot DNS readback failed'}
             $report.dns_reboot_independent_readback=$true
+            $report.stage='verify_private_network_after_dns_reboot'
+            foreach($transport in @('Default','TCP')){
+              $report.private_peer_challenges+=Assert-VolvPrivateDNSPeerChallenge -ClientSession $session -PeerSession $peerSession -ClientId $vm.Id -PeerId $peerVM.Id -SwitchId $privateSwitch.Id -ProbePath $probeGuest -ProbeSHA $probeSHA -Phase Restored -Transport $transport
+            }
+            if($report.private_peer_challenges.Count -ne 6 -or @($report.private_peer_challenges|ForEach-Object nonce|Sort-Object -Unique).Count -ne 6){throw 'Incomplete private connectivity challenge census'}
+            $report.private_network_connectivity_verified=$true
             $report.guest_boot_after=$recovery.boot
             $report.dns_reboot_event_chain=$recovery.chain
             $report.disk_persistence_verified=$true
             $report.dns_reboot_verified=$true
-            $report.stage='native_signed_dns_reboot_verified_no_motor_no_connectivity'
+            $report.stage='native_signed_dns_reboot_and_private_connectivity_verified_no_motor_no_internet'
             }
           }catch{
             $report.error_message=$_.Exception.Message
@@ -1335,6 +1382,13 @@ jobs:
                 if($owned.State -ne 'Off'){Stop-VM -VM $owned -TurnOff -Force -ErrorAction Stop}
                 Remove-VM -VM $owned -Force -ErrorAction Stop
               }
+              if($peerSession){Remove-PSSession $peerSession -ErrorAction SilentlyContinue}
+              if($peerVM){
+                $ownedPeer=Get-VM -Id $peerVM.Id -ErrorAction Stop
+                if($ownedPeer.Name -cne ($name+'-PEER')){throw 'Unexpected peer VM identity'}
+                if($ownedPeer.State -ne 'Off'){Stop-VM -VM $ownedPeer -TurnOff -Force -ErrorAction Stop}
+                Remove-VM -VM $ownedPeer -Force -ErrorAction Stop
+              }
               if($privateSwitch){
                 $ownedSwitch=Get-VMSwitch -Id $privateSwitch.Id -ErrorAction Stop
                 if($ownedSwitch.Name -cne ($name+'-PRIVATE') -or [string]$ownedSwitch.SwitchType -cne 'Private'){throw 'Unexpected private switch identity'}
@@ -1356,5 +1410,6 @@ jobs:
           }else{
             if(-not $report.private_guest_dns_verified){throw 'Private guest signed native DNS test not proven'}
             if(-not $report.dns_reboot_verified -or -not $report.dns_reboot_independent_readback -or -not $report.dns_reboot_arm_verified -or -not $report.guest_poweroff_observed -or -not $report.disk_persistence_verified){throw 'Signed DNS startup recovery not proven'}
-            Write-Host 'PASS: real signed native SYSTEM DNS slice plus actual boot-triggered DNS recovery; NO REAL MOTOR, NO CONNECTIVITY PROOF, NO INSTALL.'
+            if(-not $report.private_network_connectivity_verified -or -not $report.private_peer_topology_verified){throw 'Private connectivity not proven'}
+            Write-Host 'PASS: signed native DNS reboot recovery and isolated UDP/TCP resolver connectivity; NO REAL MOTOR, NO INTERNET PROOF, NO INSTALL.'
           }
