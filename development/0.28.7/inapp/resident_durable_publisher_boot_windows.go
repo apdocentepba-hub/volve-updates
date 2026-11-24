@@ -12,6 +12,8 @@ import (
  "crypto/ed25519"
  "errors"
  "fmt"
+ "path/filepath"
+ "reflect"
 )
 
 type durablePublisherBootDriver struct{
@@ -95,4 +97,140 @@ func(d *durablePublisherBootDriver)VerifySealedOriginal(ctx context.Context,inte
 }
 func(d *durablePublisherBootDriver)RestoreOriginal(ctx context.Context,intent ResidentRecoveryIntent)error{
  return d.withDurableSignedLease(ctx,intent,true)
+}
+
+
+// DNS-aware adapter for the new boot policy. Not registered as a task,
+// exported as a product command, or called by the installer.
+// A future trusted Windows motor driver must prove that the failed candidate
+// and its restart mechanisms cannot write DNS; never use a UI flag or a
+// success-only callback for this proof.
+type residentFailedCandidateFence func(context.Context,ResidentRecoveryIntent)error
+
+type durablePublisherDNSBootDriver struct {
+ *durablePublisherBootDriver
+ verifySystem func()error
+ verifyCandidateStopped residentFailedCandidateFence
+ inspect WindowsReadOnlyPowerShell
+ invoke WindowsDNSNativeInvoke
+ firstBinding []byte
+ firstBindingSignature []byte
+}
+
+var _ ResidentDNSBootRecoveryDriver = (*durablePublisherDNSBootDriver)(nil)
+
+// Native bridge, deliberately private until exact task/process fencing and
+// real reboot/network tests are certified. The public key is supplied by
+// the trusted watchdog binary, never read from mutable disk configuration.
+func newNativeDurablePublisherDNSBootDriver(
+ ops ResidentOriginalRecoveryOps, root string, key ed25519.PublicKey,
+ fence residentFailedCandidateFence,
+)(ResidentDNSBootRecoveryDriver,error){
+ return newDurablePublisherDNSBootDriver(ops,root,key,fence,
+  VerifyWindowsCurrentSystemSIDReadOnly,DefaultWindowsReadOnlyPowerShell,runPinnedWindowsNativeDNS)
+}
+
+func newDurablePublisherDNSBootDriver(
+ ops ResidentOriginalRecoveryOps, root string,key ed25519.PublicKey,
+ fence residentFailedCandidateFence,system func()error,
+ inspect WindowsReadOnlyPowerShell,invoke WindowsDNSNativeInvoke,
+)(ResidentDNSBootRecoveryDriver,error){
+ if fence==nil||system==nil||inspect==nil||invoke==nil{
+  return nil,errors.New("DNS boot driver requires trusted SYSTEM, stopped candidate, inspector and native writer")
+ }
+ // Fail closed before privileged operations, even when constructed by an
+ // elevated administrator who does not possess the actual SYSTEM token.
+ if err:=system();err!=nil{return nil,fmt.Errorf("DNS recovery requires LocalSystem: %w",err)}
+ // ACL callbacks must remain native and cannot be supplied by the caller.
+ acl:=func(path string)error{return nativeDNSOriginalBackupACL(context.Background(),path)}
+ base,err:=NewDurablePublisherBoundProtectedResidentBootDriver(ops,root,key,acl,acl,acl)
+ if err!=nil{return nil,err}
+ durable,ok:=base.(*durablePublisherBootDriver)
+ if !ok{return nil,errors.New("unexpected boot authorization adapter")}
+ return &durablePublisherDNSBootDriver{
+  durablePublisherBootDriver:durable,verifySystem:system,
+  verifyCandidateStopped:fence,inspect:inspect,invoke:invoke,
+ },nil
+}
+
+func(d *durablePublisherDNSBootDriver)AcquireExclusive(ctx context.Context)(func(),error){
+ if ctx==nil{return nil,errors.New("missing DNS boot lease context")}
+ if err:=d.verifySystem();err!=nil{return nil,err}
+ return d.durablePublisherBootDriver.AcquireExclusive(ctx)
+}
+
+// All reads and writes below use the outer resident lease; never call the
+// DNS-only public-lease entry here (would reacquire the same mutex).
+func(d *durablePublisherDNSBootDriver)withOriginalDNS(
+ ctx context.Context,intent ResidentRecoveryIntent,
+ work func(*protectedResidentBootDriver,[]byte,[]byte,[]DNSRestoreRecord)error,
+)error{
+ if ctx==nil{return errors.New("missing DNS boot context")}
+ protected,ok:=d.ResidentBootRecoveryDriver.(*protectedResidentBootDriver)
+ if !ok||protected==nil{return errors.New("DNS boot recovery lacks native resident lease")}
+ return protected.underProtectedLease(ctx,func()error{
+  if err:=d.verifySystem();err!=nil{return err}
+  if err:=d.verifyDurableEvidence(ctx,intent);err!=nil{return err}
+  raw,sig,err:=loadSignedOriginalDNSEvidenceUnderLeaseWindows(ctx,d.root,d.publisher)
+  if err!=nil{return err}
+  receipt,err:=VerifySignedDNSOriginalBinding(ctx,raw,sig,d.publisher,intent,d.firstPermit)
+  if err!=nil{return err}
+  if d.firstBinding!=nil&&(!bytes.Equal(raw,d.firstBinding)||!bytes.Equal(sig,d.firstBindingSignature)){
+   return errors.New("signed DNS binding changed within resident recovery")
+  }
+  records,err:=ReadDNSOriginalBackupNativeWindows(ctx,filepath.Join(d.root,"legacy-engine-recovery"),receipt.OriginalDNSJournalSHA256)
+  if err!=nil{return err}
+  if err:=validateDNSRecoveryRecords(records);err!=nil{return err}
+  if d.firstBinding==nil{
+   d.firstBinding=append([]byte(nil),raw...)
+   d.firstBindingSignature=append([]byte(nil),sig...)
+  }
+  return work(protected,raw,sig,records)
+ })
+}
+
+// Before any motor change, authenticate the DNS snapshot and verify every
+// live adapter is at an allowed recovery stage. Do not require that the
+// failed candidate has stopped yet: motor restoration follows this check.
+func(d *durablePublisherDNSBootDriver)VerifySealedOriginal(ctx context.Context,intent ResidentRecoveryIntent)error{
+ return d.withOriginalDNS(ctx,intent,func(p *protectedResidentBootDriver,_ ,_ []byte,records []DNSRestoreRecord)error{
+  if err:=verifySignedDNSBootRestoreCensus(ctx,records,d.inspect,false);err!=nil{return err}
+  return p.operations.VerifySealedOriginal(ctx,intent)
+ })
+}
+
+func(d *durablePublisherDNSBootDriver)RestoreOriginal(ctx context.Context,intent ResidentRecoveryIntent)error{
+ return d.withOriginalDNS(ctx,intent,func(p *protectedResidentBootDriver,_ ,_ []byte,records []DNSRestoreRecord)error{
+  if err:=verifySignedDNSBootRestoreCensus(ctx,records,d.inspect,false);err!=nil{return err}
+  return p.operations.RestoreOriginal(ctx,intent)
+ })
+}
+
+func(d *durablePublisherDNSBootDriver)RestoreOriginalDNS(ctx context.Context,intent ResidentRecoveryIntent)error{
+ return d.withOriginalDNS(ctx,intent,func(_ *protectedResidentBootDriver,raw,sig []byte,records []DNSRestoreRecord)error{
+  if err:=d.verifyCandidateStopped(ctx,intent);err!=nil{return fmt.Errorf("failed candidate not fenced: %w",err)}
+  return restoreSignedOriginalDNSUnderHeldLeaseWindows(ctx,d.root,d.publisher,raw,sig,d.inspect,
+   func(ctx context.Context,args []string)error{
+    if err:=d.verifySystem();err!=nil{return err}
+    if err:=d.verifyCandidateStopped(ctx,intent);err!=nil{return err}
+    // Reopen the sealed binding before EVERY actual native DNS command.
+    now,signature,err:=loadSignedOriginalDNSEvidenceUnderLeaseWindows(ctx,d.root,d.publisher)
+    if err!=nil||!bytes.Equal(now,raw)||!bytes.Equal(signature,sig){return errors.New("signed DNS authorization drift before native write")}
+    return d.invoke(ctx,args)
+   })
+ })
+}
+
+func(d *durablePublisherDNSBootDriver)VerifyOriginalDNS(ctx context.Context,intent ResidentRecoveryIntent)error{
+ return d.withOriginalDNS(ctx,intent,func(_ *protectedResidentBootDriver,raw,sig []byte,records []DNSRestoreRecord)error{
+  if err:=d.verifyCandidateStopped(ctx,intent);err!=nil{return err}
+  if err:=verifySignedDNSBootRestoreCensus(ctx,records,d.inspect,true);err!=nil{return err}
+  after,signature,err:=loadSignedOriginalDNSEvidenceUnderLeaseWindows(ctx,d.root,d.publisher)
+  if err!=nil||!bytes.Equal(after,raw)||!bytes.Equal(signature,sig){return errors.New("signed DNS evidence changed during independent readback")}
+  receipt,err:=VerifySignedDNSOriginalBinding(ctx,after,signature,d.publisher,intent,d.firstPermit)
+  if err!=nil{return err}
+  again,err:=ReadDNSOriginalBackupNativeWindows(ctx,filepath.Join(d.root,"legacy-engine-recovery"),receipt.OriginalDNSJournalSHA256)
+  if err!=nil||!reflect.DeepEqual(records,again){return errors.New("original DNS snapshot drifted during readback")}
+  return d.verifyCandidateStopped(ctx,intent)
+ })
 }
