@@ -271,6 +271,15 @@ jobs:
         working-directory: build/codigo
         run: |
           $ErrorActionPreference='Stop'
+          # Explicit census: the fast migration workflow does not run these
+          # Windows-only decoder tests. Do not credit a zero-match Go filter.
+          $dnsTests=@('TestWindowsDNSAssignmentProvenanceSeparatesStaticAndAutomatic','TestWindowsDNSAssignmentProvenanceRejectsUnknownOrConflictingSource','TestWindowsDNSAssignmentProvenanceRejectsDuplicateOrIncompleteFamilies','TestWindowsDNSAssignmentFingerprintIgnoresAutomaticLeaseAddressButPreservesStaticOrder','TestWindowsDNSAssignmentProvenanceRejectsCancellationAndMutableQueries','TestWindowsDNSAssignmentProvenanceRejectsMissingNullAndAliasedEvidence')
+          $dnsRegex='^('+($dnsTests -join '|')+')$'
+          $dnsListed=@(go test ./motorupdate -list $dnsRegex)
+          if($LASTEXITCODE -ne 0){throw 'DNS provenance test census failed'}
+          foreach($testName in $dnsTests){if($dnsListed -cnotcontains $testName){throw ('Required DNS provenance test missing: '+$testName)}}
+          go test ./motorupdate -run $dnsRegex -count=1 -timeout 2m -v
+          if($LASTEXITCODE -ne 0){throw 'DNS provenance regression failed; refuse guest trial'}
           $name='TestNestedGuestDNSIsolationScriptParsesWithoutExecution'
           $listed=@(go test ./motorupdate -list ('^'+$name+'$'))
           if($LASTEXITCODE -ne 0 -or $listed -cnotcontains $name){throw 'Mandatory guest PowerShell syntax test is missing'}
