@@ -332,6 +332,7 @@ jobs:
             guest_setup_ready=$false
             guest_clock_skew_seconds=$null
             private_guest_dns_scheduler=$null
+            private_guest_dns_inventory=$null
             cleanup_ok=$false
             error_message=$null
           }
@@ -803,6 +804,7 @@ jobs:
             Add-VMNetworkAdapter -VM $vm -Name 'VOLVE-CI-PRIVATE-DNS' -SwitchName $switchName -ErrorAction Stop
             $nic=@($vm|Get-VMNetworkAdapter)
             if($nic.Count -ne 1 -or $nic[0].SwitchName -cne $switchName){throw 'Unexpected guest network attachment'}
+            $report.network_adapters=$nic.Count
             $hostNic=@(Get-VMNetworkAdapter -ManagementOS|Where-Object {$_.SwitchName -ceq $switchName})
             if($hostNic.Count -ne 0){throw 'Host network interface is attached to private guest switch'}
             Start-VM -VM $vm -ErrorAction Stop
@@ -834,6 +836,32 @@ jobs:
               New-Item -ItemType Directory -Path $root -ErrorAction Stop|Out-Null
               & icacls.exe $root '/inheritance:r' '/grant:r' '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F'|Out-Null
               if($LASTEXITCODE -ne 0){throw 'Could not protect DNS test folder'}
+            }
+            # Read-only forensic census: do not exclude unknown adapters.
+            # Establish whether the unpaired DNS rows belong to an actual
+            # .NET loopback interface or an unexpected virtual adapter.
+            # No GUID, DNS address, interface name or route is exported.
+            $report.private_guest_dns_inventory=Invoke-Command -Session $session -ErrorAction Stop -ScriptBlock {
+              $ErrorActionPreference='Stop'
+              $adapters=@(Get-NetAdapter -IncludeHidden -ErrorAction Stop|Where-Object {$_.InterfaceGuid -and $_.InterfaceIndex -gt 0})
+              $loopIndexes=@(foreach($n in [Net.NetworkInformation.NetworkInterface]::GetAllNetworkInterfaces()){
+                if($n.NetworkInterfaceType -ne [Net.NetworkInformation.NetworkInterfaceType]::Loopback){continue}
+                $p=$n.GetIPProperties()
+                if($n.Supports([Net.NetworkInformation.NetworkInterfaceComponent]::IPv4)){$p.GetIPv4Properties().Index}
+                if($n.Supports([Net.NetworkInformation.NetworkInterfaceComponent]::IPv6)){$p.GetIPv6Properties().Index}
+              })
+              $loopIndexes=@($loopIndexes|Sort-Object -Unique)
+              $rows=@(foreach($d in Get-DnsClientServerAddress -ErrorAction Stop){
+                $idx=[uint32]$d.InterfaceIndex
+                $mapped=@($adapters|Where-Object {[uint32]$_.InterfaceIndex -eq $idx}|ForEach-Object InterfaceGuid|Sort-Object -Unique)
+                $servers=@($d.ServerAddresses|Where-Object {$_})
+                [pscustomobject]@{
+                  index=$idx;family=[string]$d.AddressFamily;guid_count=$mapped.Count;
+                  server_count=$servers.Count;dotnet_loopback=($idx -in $loopIndexes);
+                  only_legacy_ipv6_placeholders=($servers.Count -gt 0 -and @($servers|Where-Object {$_ -notin @('fec0:0:0:ffff::1','fec0:0:0:ffff::2','fec0:0:0:ffff::3')}).Count -eq 0)
+                }
+              })
+              [pscustomobject]@{mapped_adapter_count=$adapters.Count;rows=$rows}
             }
             $exe=Join-Path $env:RUNNER_TEMP 'VOLVE-CI-GuestDNS.test.exe'
             $report.dns_test_exe_sha256=(Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash
@@ -918,6 +946,9 @@ jobs:
                   Start-Sleep -Seconds 3
                   $current=Get-ScheduledTask -TaskName $task -TaskPath '\' -ErrorAction Stop
                   if((Test-Path -LiteralPath $exitFile) -and $current.State -eq 'Ready'){
+                    # Nonzero exit is already a failure. Preserve its log
+                    # without burning the entire success-event deadline.
+                    if([IO.File]::ReadAllText($exitFile).Trim() -ne '0'){break}
                     $proof=Get-OwnedManualTaskProof $task $cursor
                     if($proof.verified){break}
                   }
