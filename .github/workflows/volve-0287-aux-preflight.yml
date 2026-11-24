@@ -72,6 +72,10 @@ jobs:
           $out=Join-Path $env:RUNNER_TEMP 'VOLVE-CI-ActualMotor.exe'
           go build -tags volveci -trimpath -o $out .
           if($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $out -PathType Leaf)){throw 'Exact CI motor compilation failed'}
+          $wire=Join-Path $env:RUNNER_TEMP 'VOLVE-CI-ActualMotorProbe.test.exe'
+          go test -c -tags volveci -trimpath -o $wire .
+          if($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $wire -PathType Leaf)){throw 'Independent raw DNS observer compilation failed'}
+          Write-Host ('PASS: exact independent wire observer compiled SHA256='+((Get-FileHash -LiteralPath $wire -Algorithm SHA256).Hash))
           $script=Join-Path $env:GITHUB_WORKSPACE 'development\0.28.7\lab\ci_private_motor_integration.ps1'
           $tokens=$null;$errors=$null
           $null=[System.Management.Automation.Language.Parser]::ParseFile($script,[ref]$tokens,[ref]$errors)
