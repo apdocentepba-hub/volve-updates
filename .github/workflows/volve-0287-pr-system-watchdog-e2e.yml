@@ -13,7 +13,7 @@ permissions:
 jobs:
   signed-legacy-and-system-watchdog:
     runs-on: windows-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -100,16 +100,26 @@ jobs:
           foreach($testName in $required){
             if($census -cnotcontains $testName){throw ('Required DNS recovery test missing: '+$testName)}
           }
-          go test ./motorupdate -run $regex -count=1 -timeout 6m -v
-          if($LASTEXITCODE -ne 0){throw 'DNS-aware boot policy/native lease contract regression failed'}
+          # Each case owns a separate bounded process. The real NTFS/SYSTEM
+          # evidence checks took 266s + 87s on a slow hosted runner; a single
+          # six-minute suite deadline interrupted the final case.
+          foreach($testName in $required){
+            $started=[datetime]::UtcNow
+            go test ./motorupdate -run ('^'+$testName+'$') -count=1 -timeout 8m -v
+            $elapsed=[math]::Round(([datetime]::UtcNow-$started).TotalSeconds,1)
+            Write-Host ('VOLVE_REQUIRED_TEST_DURATION_SECONDS='+$testName+':'+$elapsed)
+            if($LASTEXITCODE -ne 0){throw ('DNS-aware boot regression failed: '+$testName)}
+          }
           Write-Host 'PASS: six named DNS-aware boot policy/NTFS/kernel lease tests; simulated DNS writer, no reboot proof.'
-          $fenceTests=@('TestResidentQuiescenceRequiresCompleteUnambiguousOSCensus','TestResidentQuiescenceCountsNamedMotorEvenWhenPathIsUnavailable','TestSignedOriginalSYSTEMStartRequiresSignedPendingTaskAndNeverCommits')
+          $fenceTests=@('TestResidentQuiescenceRequiresCompleteUnambiguousOSCensus','TestResidentQuiescenceCountsNamedMotorEvenWhenPathIsUnavailable','TestSignedOriginalSYSTEMStartRequiresSignedPendingTaskAndNeverCommits','TestPinnedBootHealthQueriesLiveTaskProcessAndBothDNS53Owners')
           $fenceRegex='^('+($fenceTests -join '|')+')$'
           $fenceCensus=@(go test ./cmd/volve-managed-watchdog -list $fenceRegex)
           if($LASTEXITCODE -ne 0){throw 'Watchdog fence test census failed'}
           foreach($testName in $fenceTests){if($fenceCensus -cnotcontains $testName){throw ('Required fence regression missing: '+$testName)}}
-          go test ./cmd/volve-managed-watchdog -run $fenceRegex -count=1 -timeout 3m -v
-          if($LASTEXITCODE -ne 0){throw 'Strict process census or original startup fence failed'}
+          foreach($testName in $fenceTests){
+            go test ./cmd/volve-managed-watchdog -run ('^'+$testName+'$') -count=1 -timeout 4m -v
+            if($LASTEXITCODE -ne 0){throw ('Strict process census/health regression failed: '+$testName)}
+          }
           $cancelledUpdaterTest='TestProtectedSignedCancelledUpdaterStillReacquiresBeforeHealth'
           $mutexCensus=@(go test ./motorupdate -list ('^'+$cancelledUpdaterTest+'$'))
           if($LASTEXITCODE -ne 0 -or -not ($mutexCensus -ccontains $cancelledUpdaterTest)){
