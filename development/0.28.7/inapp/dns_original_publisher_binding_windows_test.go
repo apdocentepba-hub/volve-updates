@@ -143,6 +143,15 @@ func prepareNativeSignedDNSRecoveryLabAt(t *testing.T,originals []DNSServerState
   t.Skip("real ACL/publisher/Win32 lock integration requires disposable Windows CI")
  }
  f:=makeSignedRecoveryFixtureAt(t,false,root)
+ // New DNS-changing transactions must bind the signed scope to the nonce
+ // before storing the permit; never reinterpret historical schema 1.
+ pending,err:=InspectResidentRecoveryJournal(ctx,f.journal,func(string)error{return nil})
+ if err!=nil||pending.Status!="recovery-required"{t.Fatalf("missing pending test intent: %v",err)}
+ permit:=f.pem
+ permit.Schema=2
+ permit.RecoveryScope=ResidentRecoveryScopeMotorAndDNS
+ permit.RecoveryIntentNonce=pending.Intent.Nonce
+ f=f.resign(t,permit)
  // Unlike earlier test doubles, EVERY persisted grant, journal and fallback
  // object is sealed using the exact native Windows SYSTEM/Admin SID policy.
  parent:=filepath.Join(f.root,"legacy-engine-recovery")
