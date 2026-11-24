@@ -124,3 +124,49 @@ func TestWindowsDNSAssignmentProvenanceNativeWindowsReadOnly(t *testing.T){
  t.Logf("READ ONLY native Windows DNS provenance: adapters=%d static_families=%d automatic_families=%d",
   evidence.AdapterCount,evidence.StaticFamilyCount,evidence.AutomaticFamilyCount)
 }
+
+
+func TestWindowsDNSAssignmentProvenanceRejectsMissingNullAndAliasedEvidence(t *testing.T){
+ base:=string(protectionSnapshotDNSJSON())
+ fields:=[]struct{key,value string}{
+  {"InterfaceGUID",`"{01234567-89ab-cdef-0123-456789abcdef}"`},
+  {"InterfaceIndex",`7`},
+  {"Family",`"IPv4"`},
+  {"RegistryKeyPresent",`true`},
+  {"NameServerPresent",`true`},
+  {"NameServerKind",`"String"`},
+  {"NameServerNonEmpty",`true`},
+  {"ProfileNameServerNonEmpty",`false`},
+  {"Mode",`"static"`},
+  {"Servers",`["1.1.1.1","8.8.8.8"]`},
+  {"EffectiveServers",`["1.1.1.1","8.8.8.8"]`},
+ }
+ for _,field:=range fields{
+  key:=`"`+field.key+`"`
+  pair:=key+":"+field.value
+  if !strings.Contains(base,pair){t.Fatalf("fixture missing %s",field.key)}
+  missing:=strings.Replace(base,pair+",","",1)
+  if missing==base{missing=strings.Replace(base,","+pair,"",1)}
+  variants:=map[string]string{
+   "missing":missing,
+   "null":strings.Replace(base,pair,key+":null",1),
+   "duplicate":strings.Replace(base,pair,pair+","+pair,1),
+   "case-alias":strings.Replace(base,pair,`"`+strings.ToLower(field.key)+`":`+field.value,1),
+  }
+  for name,raw:=range variants{
+   t.Run(field.key+"/"+name,func(t *testing.T){
+    if raw==base{t.Fatal("mutation did not change fixture")}
+    if evidence,err:=InspectWindowsDNSAssignmentProvenanceReadOnly(context.Background(),func(context.Context,string)([]byte,error){return []byte(raw),nil});err==nil||len(evidence.States)!=0||evidence.SHA256!=""{
+     t.Fatal("incomplete/ambiguous DNS provenance admitted")
+    }
+   })
+  }
+ }
+ for _,raw:=range []string{
+  strings.Replace(base,`"Servers":["1.1.1.1","8.8.8.8"]`,`"Servers":[null,"8.8.8.8"]`,1),
+  strings.Replace(base,`"EffectiveServers":["2606:4700:4700::1111"]`,`"EffectiveServers":[null]`,1),
+  strings.Replace(base,`"ProfileNameServerNonEmpty":false`,`"ProfileNameServerNonEmpty":false,"Unexpected":false`,1),
+ }{
+  if _,err:=InspectWindowsDNSAssignmentProvenanceReadOnly(context.Background(),func(context.Context,string)([]byte,error){return []byte(raw),nil});err==nil{t.Fatal("invalid DNS record accepted")}
+ }
+}
