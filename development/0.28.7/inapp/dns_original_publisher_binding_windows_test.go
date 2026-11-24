@@ -354,3 +354,95 @@ func TestNestedGuestDNSIsolationScriptParsesWithoutExecution(t *testing.T){
  out,err:=cmd.CombinedOutput()
  if err!=nil||strings.TrimSpace(string(out))!="VOLVE_GUARD_PARSE_OK"{t.Fatalf("Windows PowerShell guard parse failed: %v %s",err,out)}
 }
+
+
+// Two separate process entrypoints for the disposable private Hyper-V guest.
+// The host harness must independently prove Off -> new boot and the exact
+// AtStartup SYSTEM task instance before crediting any reboot result.
+// The test signing key is ephemeral. Only its public half is persisted.
+// Neither phase installs the actual VOLVE motor or proves connectivity.
+const nestedDNSRebootRoot = `C:\VOLVE-CI-PrivateDNS\reboot-recovery`
+
+func requireNestedDNSRebootPhase(t *testing.T,phase string)(context.Context,string){
+ t.Helper()
+ if os.Getenv("VOLVE_CI_DNS_REBOOT_PHASE")!=phase{t.Skip("explicit isolated DNS reboot phase required")}
+ if os.Getenv("VOLVE_CI_NESTED_GUEST_DNS")!="PRIVATE_GUEST_ONLY"||os.Getenv("GITHUB_ACTIONS")!="true"||os.Getenv("RUNNER_ENVIRONMENT")!="github-hosted"{t.Fatal("not isolated CI")}
+ if err:=VerifyWindowsCurrentSystemSIDReadOnly();err!=nil{t.Fatal(err)}
+ ctx,cancel:=context.WithTimeout(context.Background(),30*time.Minute)
+ t.Cleanup(cancel)
+ raw,err:=nestedGuestDNSIsolationReadOnly(ctx)
+ if err!=nil{t.Fatal(err)}
+ guid:=strings.TrimSpace(string(raw))
+ if len(guid)!=38{t.Fatal("unexpected private NIC identity")}
+ return ctx,guid
+}
+
+func nestedDNSRebootCensus(t *testing.T,ctx context.Context,guid string,fault bool)WindowsDNSAssignmentProvenance{
+ t.Helper()
+ census,err:=InspectWindowsDNSAssignmentProvenanceReadOnly(ctx,DefaultWindowsReadOnlyPowerShell)
+ if err!=nil||census.AdapterCount!=1||len(census.States)!=2{t.Fatalf("private DNS census rejected: %v",err)}
+ for _,state:=range census.States{
+  if state.InterfaceGUID!=guid{t.Fatal("private adapter identity changed")}
+  switch state.Family{
+  case DNSIPv4:
+   want:=[]string{"192.0.2.53","192.0.2.54"}
+   if fault{want=[]string{"127.0.0.1"}}
+   if state.Mode!=DNSStatic||!sameDNSAddresses(state.Servers,want){t.Fatal("unexpected IPv4 fixture DNS")}
+  case DNSIPv6:
+   if fault{
+    if state.Mode!=DNSStatic||!sameDNSAddresses(state.Servers,[]string{"::1"}){t.Fatal("IPv6 fault not retained")}
+   }else if state.Mode!=DNSAutomatic{t.Fatal("original automatic IPv6 not retained")}
+  default:t.Fatal("unexpected DNS family")
+  }
+ }
+ return census
+}
+
+func TestNestedGuestDNSRebootArmSYSTEM(t *testing.T){
+ ctx,guid:=requireNestedDNSRebootPhase(t,"ARM")
+ original:=nestedDNSRebootCensus(t,ctx,guid,false)
+ if err:=os.Mkdir(nestedDNSRebootRoot,0700);err!=nil{t.Fatal(err)}
+ f,parent,binding,signature,pin,_:=prepareNativeSignedDNSRecoveryLabAt(t,original.States,nestedDNSRebootRoot)
+ records,err:=ReadDNSOriginalBackupNativeWindows(ctx,parent,pin)
+ if err!=nil{t.Fatal(err)}
+ if err:=PersistSignedOriginalDNSEvidenceNativeWindows(ctx,f.root,f.pub,binding,signature);err!=nil{t.Fatal(err)}
+ if err:=verifySignedDNSBootRestoreCensus(ctx,records,DefaultWindowsReadOnlyPowerShell,true);err!=nil{t.Fatal(err)}
+ // Bind a public key to the pre-boot host measurement. No private signing
+ // key is written. The host must pass the same SHA256 to the recovery task.
+ keyPath:=filepath.Join(nestedDNSRebootRoot,"ci-reboot-publisher.pub")
+ if err:=residentCreate(keyPath,f.pub,func(p string)error{return sealDNSBackupLabNode(ctx,p)},func(p string)error{return nativeDNSOriginalBackupACL(ctx,p)});err!=nil{t.Fatal(err)}
+ keyHash:=sha256.Sum256(f.pub)
+ for _,record:=range records{
+  raw,err:=nestedGuestDNSIsolationReadOnly(ctx)
+  if err!=nil||strings.TrimSpace(string(raw))!=guid{t.Fatal("isolation changed before fault")}
+  idx,err:=FindWindowsAdapterIndex(ctx,guid,DefaultWindowsReadOnlyPowerShell)
+  if err!=nil{t.Fatal(err)}
+  commands,err:=PlanWindowsDNSRestore(record.Expected,idx)
+  if err!=nil{t.Fatal(err)}
+  for _,cmd:=range commands{if err:=runPinnedWindowsNativeDNS(ctx,cmd.Args);err!=nil{t.Fatal(err)}}
+ }
+ nestedDNSRebootCensus(t,ctx,guid,true)
+ t.Logf("VOLVE_DNS_REBOOT_PUBLIC_KEY_SHA256=%s",hex.EncodeToString(keyHash[:]))
+ t.Logf("VOLVE_DNS_REBOOT_ORIGINAL_SHA256=%s",original.SHA256)
+ t.Log("PASS VOLVE_DNS_REBOOT_ARMED_DUAL_STACK_FAULT_NO_RESTORE_YET")
+}
+
+func TestNestedGuestDNSRebootRecoverSYSTEM(t *testing.T){
+ ctx,guid:=requireNestedDNSRebootPhase(t,"RECOVER")
+ // Must observe the persisted dual-stack fault BEFORE the new process
+ // changes anything. A pre-boot restoration cannot satisfy this phase.
+ nestedDNSRebootCensus(t,ctx,guid,true)
+ keyPath:=filepath.Join(nestedDNSRebootRoot,"ci-reboot-publisher.pub")
+ for _,p:=range []string{nestedDNSRebootRoot,keyPath}{if err:=nativeDNSOriginalBackupACL(ctx,p);err!=nil{t.Fatal(err)}}
+ raw,err:=os.ReadFile(keyPath)
+ if err!=nil||len(raw)!=ed25519.PublicKeySize+1||raw[len(raw)-1]!='\n'{t.Fatal("invalid persisted CI public key")}
+ key:=ed25519.PublicKey(append([]byte(nil),raw[:ed25519.PublicKeySize]...))
+ hash:=sha256.Sum256(key)
+ if hex.EncodeToString(hash[:])!=os.Getenv("VOLVE_CI_DNS_REBOOT_PUBLIC_KEY_SHA256"){t.Fatal("host-pinned public key changed")}
+ if err:=restorePersistedSignedOriginalDNSAsSYSTEM(ctx,nestedDNSRebootRoot,key);err!=nil{t.Fatal(err)}
+ original:=nestedDNSRebootCensus(t,ctx,guid,false)
+ if original.SHA256!=os.Getenv("VOLVE_CI_DNS_REBOOT_ORIGINAL_SHA256"){t.Fatal("original host-pinned DNS fingerprint not restored")}
+ pending,err:=InspectResidentRecoveryJournal(ctx,filepath.Join(nestedDNSRebootRoot,"legacy-engine-recovery","motor-recovery-transaction"),func(p string)error{return nativeDNSOriginalBackupACL(ctx,p)})
+ if err!=nil||pending.Status!="recovery-required"{t.Fatal("DNS-only recovery cannot finalize motor journal")}
+ t.Log("PASS VOLVE_DNS_REBOOT_PERSISTED_SIGNED_DNS_RESTORED_NO_REAL_MOTOR_NO_CONNECTIVITY_PROOF")
+}
