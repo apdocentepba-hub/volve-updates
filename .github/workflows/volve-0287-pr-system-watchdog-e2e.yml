@@ -28,6 +28,21 @@ jobs:
           foreach($task in @('VOLVE-DNS-SERVER-0270','VOLVE-DNS-RESCUE-0270')){
             if(Get-ScheduledTask -TaskName $task -ErrorAction SilentlyContinue){throw 'Production VOLVE task present; refuse test'}
           }
+      - name: Record nested Windows VM prerequisites without changing the runner
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $hyperV = Get-WindowsOptionalFeature -Online -FeatureName Microsoft-Hyper-V -ErrorAction SilentlyContinue
+          $processors = @(Get-CimInstance Win32_Processor)
+          $report = [ordered]@{
+            hyperv_enabled = ($hyperV.State -eq 'Enabled')
+            new_vm_available = [bool](Get-Command New-VM -ErrorAction SilentlyContinue)
+            firmware_virtualization_reported = ($processors.VirtualizationFirmwareEnabled -contains $true)
+            virtualization_extensions_reported = ($processors.VMMonitorModeExtensions -contains $true)
+          }
+          $json = ConvertTo-Json -InputObject $report -Compress
+          Write-Host "VOLVE_NESTED_VM_PREREQUISITES=$json"
+          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value $json
       - name: Reconstruct SHA-256 pinned VOLVE base and reviewed 0.28.7 source
         shell: bash
         run: |
