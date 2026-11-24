@@ -409,6 +409,7 @@ jobs:
             recovery_proof_sha256=$null
             private_guest_dns_verified=$false
             private_peer_topology_verified=$false
+            private_peer_identity=$null
             private_peer_challenges=@()
             private_network_connectivity_verified=$false
             private_guest_dns_test_exit=$null
@@ -1039,13 +1040,15 @@ jobs:
             $peerExe=Join-Path $env:RUNNER_TEMP 'VOLVE-CI-PrivateDNSPeer.exe'
             $peerSHA=(Get-FileHash -LiteralPath $peerExe -Algorithm SHA256).Hash
             $peerSession=Start-VolvPrivateDNSPeer -Peer $peerVM -Client $vm -Switch $privateSwitch -Credential $credential -PeerExe $peerExe -ExpectedSHA $peerSHA
+            $pinnedPeerIdentity=Get-VolvPrivatePeerLiveIdentity -Session $peerSession -ExpectedSHA $peerSHA
+            $report.private_peer_identity=$pinnedPeerIdentity
             $report.private_peer_topology_verified=Assert-VolvPrivatePeerTopology -ClientId $vm.Id -PeerId $peerVM.Id -SwitchId $privateSwitch.Id
             $probeSource=Join-Path $env:GITHUB_WORKSPACE 'development\0.28.7\lab\private_dns_client_probe.ps1'
             $probeSHA=(Get-FileHash -LiteralPath $probeSource -Algorithm SHA256).Hash
             $probeGuest=Join-Path $guestDNS 'private_dns_client_probe.ps1'
             Copy-Item -LiteralPath $probeSource -Destination $probeGuest -ToSession $session -ErrorAction Stop
             foreach($transport in @('Default','TCP')){
-              $report.private_peer_challenges+=Assert-VolvPrivateDNSPeerChallenge -ClientSession $session -PeerSession $peerSession -ClientId $vm.Id -PeerId $peerVM.Id -SwitchId $privateSwitch.Id -ProbePath $probeGuest -ProbeSHA $probeSHA -Phase Original -Transport $transport
+              $report.private_peer_challenges+=Assert-VolvPrivateDNSPeerChallenge -ClientSession $session -PeerSession $peerSession -ClientId $vm.Id -PeerId $peerVM.Id -SwitchId $privateSwitch.Id -ProbePath $probeGuest -ProbeSHA $probeSHA -PeerSHA $peerSHA -PinnedPeerIdentity $pinnedPeerIdentity -Phase Original -Transport $transport
             }
             # Read-only forensic census: do not exclude unknown adapters.
             # Establish whether the unpaired DNS rows belong to an actual
@@ -1237,7 +1240,7 @@ jobs:
             $chainHash=(Get-FileHash -LiteralPath $chainSource -Algorithm SHA256).Hash
             Copy-Item -LiteralPath $chainSource -Destination (Join-Path $recoverDir 'reboot_event_chain.ps1') -ToSession $session -ErrorAction Stop
             foreach($transport in @('Default','TCP')){
-              $report.private_peer_challenges+=Assert-VolvPrivateDNSPeerChallenge -ClientSession $session -PeerSession $peerSession -ClientId $vm.Id -PeerId $peerVM.Id -SwitchId $privateSwitch.Id -ProbePath $probeGuest -ProbeSHA $probeSHA -Phase Fault -Transport $transport
+              $report.private_peer_challenges+=Assert-VolvPrivateDNSPeerChallenge -ClientSession $session -PeerSession $peerSession -ClientId $vm.Id -PeerId $peerVM.Id -SwitchId $privateSwitch.Id -ProbePath $probeGuest -ProbeSHA $probeSHA -PeerSHA $peerSHA -PinnedPeerIdentity $pinnedPeerIdentity -Phase Fault -Transport $transport
             }
             $report.stage='register_dedicated_system_dns_startup_recovery'
             $bootTask=Invoke-Command -Session $session -ArgumentList $recoverDir,$trial,$keyPin,$originalPin,$chainHash -ErrorAction Stop -ScriptBlock {
@@ -1345,7 +1348,7 @@ jobs:
             $report.dns_reboot_independent_readback=$true
             $report.stage='verify_private_network_after_dns_reboot'
             foreach($transport in @('Default','TCP')){
-              $report.private_peer_challenges+=Assert-VolvPrivateDNSPeerChallenge -ClientSession $session -PeerSession $peerSession -ClientId $vm.Id -PeerId $peerVM.Id -SwitchId $privateSwitch.Id -ProbePath $probeGuest -ProbeSHA $probeSHA -Phase Restored -Transport $transport
+              $report.private_peer_challenges+=Assert-VolvPrivateDNSPeerChallenge -ClientSession $session -PeerSession $peerSession -ClientId $vm.Id -PeerId $peerVM.Id -SwitchId $privateSwitch.Id -ProbePath $probeGuest -ProbeSHA $probeSHA -PeerSHA $peerSHA -PinnedPeerIdentity $pinnedPeerIdentity -Phase Restored -Transport $transport
             }
             if($report.private_peer_challenges.Count -ne 6 -or @($report.private_peer_challenges|ForEach-Object nonce|Sort-Object -Unique).Count -ne 6){throw 'Incomplete private connectivity challenge census'}
             $report.private_network_connectivity_verified=$true
@@ -1446,30 +1449,45 @@ jobs:
               }catch{$report.task_audit_error='Recovery task audit unavailable; no exemption'}
             }
           }finally{
+            # Attempt each owned resource independently, even after another
+            # cleanup fails. Never remove an unexpected VM/switch or a disk
+            # directory while an owned VM or mounted VHD may still exist.
+            $cleanupErrors=@()
+            try{if($session){Remove-PSSession $session -ErrorAction Stop}}catch{$cleanupErrors+=('client session: '+$_.Exception.Message)}
+            try{if($peerSession){Remove-PSSession $peerSession -ErrorAction Stop}}catch{$cleanupErrors+=('peer session: '+$_.Exception.Message)}
+            $diskSafe=$true
+            try{if($mounted){Dismount-VHD -Path $vhd -ErrorAction Stop}}catch{$diskSafe=$false;$cleanupErrors+=('mounted VHD: '+$_.Exception.Message)}
             try{
-              if($session){Remove-PSSession $session -ErrorAction SilentlyContinue}
-              if($mounted){Dismount-VHD -Path $vhd -ErrorAction Stop}
               if($vm){
                 $owned=Get-VM -Id $vm.Id -ErrorAction Stop
                 if($owned.Name -cne $name){throw 'Unexpected VM identity'}
                 if($owned.State -ne 'Off'){Stop-VM -VM $owned -TurnOff -Force -ErrorAction Stop}
                 Remove-VM -VM $owned -Force -ErrorAction Stop
               }
-              if($peerSession){Remove-PSSession $peerSession -ErrorAction SilentlyContinue}
+            }catch{$diskSafe=$false;$cleanupErrors+=('client VM: '+$_.Exception.Message)}
+            try{
               if($peerVM){
                 $ownedPeer=Get-VM -Id $peerVM.Id -ErrorAction Stop
                 if($ownedPeer.Name -cne ($name+'-PEER')){throw 'Unexpected peer VM identity'}
                 if($ownedPeer.State -ne 'Off'){Stop-VM -VM $ownedPeer -TurnOff -Force -ErrorAction Stop}
                 Remove-VM -VM $ownedPeer -Force -ErrorAction Stop
               }
+            }catch{$diskSafe=$false;$cleanupErrors+=('peer VM: '+$_.Exception.Message)}
+            try{
               if($privateSwitch){
                 $ownedSwitch=Get-VMSwitch -Id $privateSwitch.Id -ErrorAction Stop
                 if($ownedSwitch.Name -cne ($name+'-PRIVATE') -or [string]$ownedSwitch.SwitchType -cne 'Private'){throw 'Unexpected private switch identity'}
+                $attached=@(Get-VM -ErrorAction Stop|Get-VMNetworkAdapter -ErrorAction Stop|Where-Object {$_.SwitchName -ceq $ownedSwitch.Name})
+                if($attached.Count -ne 0){throw 'Private switch still has VM attachments'}
                 Remove-VMSwitch -VMSwitch $ownedSwitch -Force -ErrorAction Stop
               }
-              if(Test-Path -LiteralPath $dir){Remove-Item -LiteralPath $dir -Recurse -Force -ErrorAction Stop}
-              $report.cleanup_ok=$true
-            }catch{$report.cleanup_error=$_.Exception.Message}
+            }catch{$cleanupErrors+=('private switch: '+$_.Exception.Message)}
+            try{
+              if($diskSafe -and (Test-Path -LiteralPath $dir)){Remove-Item -LiteralPath $dir -Recurse -Force -ErrorAction Stop}
+              if(-not $diskSafe){throw 'Disk directory preserved because detach/removal is not proven'}
+            }catch{$cleanupErrors+=('guest disk: '+$_.Exception.Message)}
+            $report.cleanup_ok=($cleanupErrors.Count -eq 0)
+            if(-not $report.cleanup_ok){$report.cleanup_error=($cleanupErrors -join '; ')}
             $json=ConvertTo-Json -InputObject $report -Depth 8 -Compress
             Write-Host "VOLVE_WINDOWS_GUEST_REBOOT_RESULT=$json"
             Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value $json
