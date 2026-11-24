@@ -60,7 +60,15 @@ catch{
     $errorId=[string]$_.FullyQualifiedErrorId
     # Only the resolution failure is admissible. Command binding,
     # permissions and other local failures must never prove the fault.
-    if($errorId -notmatch '^(DNS_ERROR_RCODE_NAME_ERROR|DNS_ERROR_RCODE_SERVER_FAILURE|DNS_ERROR_RCODE_REFUSED|DNS_ERROR_NO_DNS_SERVERS|DNS_ERROR_NO_PACKET|DNS_ERROR_RECORD_DOES_NOT_EXIST|DNS_INFO_NO_RECORDS|ERROR_TIMEOUT|WSAETIMEDOUT|WSAHOST_NOT_FOUND|WSATRY_AGAIN)(,|$)'){throw}
+    # Windows may report WSAECONNRESET (10054) on a DNS socket
+    # directed to an absent localhost listener. Treat that as an admissible
+    # negative observation only during the deliberate fault phase. Do not
+    # match localized messages, arbitrary exceptions or all SocketExceptions.
+    $knownResolution=$errorId -cmatch '^(DNS_ERROR_RCODE_NAME_ERROR|DNS_ERROR_RCODE_SERVER_FAILURE|DNS_ERROR_RCODE_REFUSED|DNS_ERROR_NO_DNS_SERVERS|DNS_ERROR_NO_PACKET|DNS_ERROR_RECORD_DOES_NOT_EXIST|DNS_INFO_NO_RECORDS|ERROR_TIMEOUT|WSAETIMEDOUT|WSAHOST_NOT_FOUND|WSATRY_AGAIN)(,|$)'
+    $knownFaultReset=($Phase -ceq 'Fault' -and $errorId -cmatch '^(WSAECONNRESET|WSAECONNREFUSED|10054|10061)(,Microsoft\.DnsClient\.Commands\.ResolveDnsName|$)')
+    if(-not $knownResolution -and -not $knownFaultReset){
+        throw ('Unexpected resolver failure; error_id='+$errorId+'; exception_type='+$_.Exception.GetType().FullName)
+    }
 }
 $addresses=@($answers|Where-Object {
     $_.PSObject.Properties['IPAddress'] -and
@@ -74,6 +82,12 @@ if($null -eq $errorId){
 }
 if($Phase -ceq 'Fault'){
     if($resolved -or $null -eq $errorId){throw 'Fault did not prevent Windows resolution'}
+    # The deliberate loopback fault has no DNS service, not merely a
+    # server returning an unexpected response. Query the actual socket
+    # inventory without suppressing inventory/permission failures.
+    if(@(Get-NetUDPEndpoint -ErrorAction Stop|Where-Object {$_.LocalPort -eq 53}).Count -ne 0 -or
+       @(Get-NetTCPConnection -State Listen -ErrorAction Stop|Where-Object {$_.LocalPort -eq 53}).Count -ne 0){throw 'Unexpected DNS53 listener during fault'}
+
 }else{
     if(-not $resolved){throw ('Configured DNS failed to resolve private challenge: '+$errorId)}
 }
