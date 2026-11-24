@@ -78,6 +78,23 @@ function Start-VolvPrivateDNSPeer {
             foreach($protocol in @('UDP','TCP')){
                 New-NetFirewallRule -Name ('VOLVE-CI-PrivatePeer-'+$protocol) -DisplayName ('VOLVE CI private DNS '+$protocol) -Direction Inbound -Action Allow -Program $exe -Protocol $protocol -LocalPort 53 -LocalAddress @('192.0.2.53','192.0.2.54') -RemoteAddress '192.0.2.10' -InterfaceAlias 'VOLVE-CI-PRIVATE-DNS-PEER' -Profile Any -ErrorAction Stop|Out-Null
             }
+            # New-NetIPAddress can return before Duplicate Address Detection
+            # completes. Do not launch until both exact TEST-NET addresses
+            # are preferred; never retry a bind or alter other listeners.
+            $addressDeadline=[datetime]::UtcNow.AddSeconds(45)
+            $addressesReady=$false
+            do{
+                $adapter=@(Get-NetAdapter -Name 'VOLVE-CI-PRIVATE-DNS-PEER' -ErrorAction Stop)
+                if($adapter.Count -ne 1 -or $adapter[0].Status -ne 'Up'){throw 'Peer adapter unavailable before launch'}
+                $addresses=@(Get-NetIPAddress -InterfaceIndex $adapter[0].InterfaceIndex -AddressFamily IPv4 -ErrorAction Stop)
+                if(@($addresses|Where-Object {$_.AddressState -in @('Duplicate','Invalid')}).Count -ne 0){throw 'Peer address invalid or duplicate before launch'}
+                $addressesReady=($addresses.Count -eq 2 -and (($addresses.IPAddress|Sort-Object) -join ',') -ceq '192.0.2.53,192.0.2.54' -and @($addresses|Where-Object {$_.PrefixLength -ne 24 -or $_.AddressState -ne 'Preferred'}).Count -eq 0)
+                if($addressesReady){break}
+                Start-Sleep -Seconds 1
+            }while([datetime]::UtcNow -lt $addressDeadline)
+            if(-not $addressesReady){throw 'Peer exact IPv4 addresses not preferred before launch'}
+            if(@(Get-NetRoute -ErrorAction Stop|Where-Object {$_.DestinationPrefix -in @('0.0.0.0/0','::/0')}).Count -ne 0){throw 'Peer default route before launch'}
+            Write-Host 'CI PEER PRELAUNCH: both exact private IPv4 addresses preferred; no default route'
             $env:GITHUB_ACTIONS='true'
             $env:RUNNER_ENVIRONMENT='github-hosted'
             $env:VOLVE_CI_PRIVATE_DNS_PEER='PRIVATE_GUEST_ONLY'
@@ -86,7 +103,18 @@ function Start-VolvPrivateDNSPeer {
             $ready=$false
             $log=Join-Path $root 'peer.log'
             do{
-                if($p.HasExited){throw 'Private DNS peer exited early'}
+                if($p.HasExited){
+                    $p.WaitForExit()
+                    $stage='unavailable'
+                    try{
+                        $stderr=Join-Path $root 'peer.err'
+                        if((Get-Item -LiteralPath $stderr -ErrorAction Stop).Length -le 65536){
+                            $marks=@(Get-Content -LiteralPath $stderr -ErrorAction Stop|Where-Object {$_ -cmatch '^VOLVE_PRIVATE_PEER_START_FAILURE stage=(environment|evidence|udp-primary|udp-secondary|tcp-primary|tcp-secondary)$'})
+                            if($marks.Count -eq 1){$stage=$marks[0].Substring('VOLVE_PRIVATE_PEER_START_FAILURE stage='.Length)}
+                        }
+                    }catch{}
+                    throw ('Private DNS peer exited early; code='+$p.ExitCode+' stage='+$stage)
+                }
                 if(Test-Path -LiteralPath $log -PathType Leaf){
                     $stream=$null;$reader=$null
                     try{

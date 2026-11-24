@@ -17,6 +17,7 @@ on:
       - 'development/0.28.7/lab/ci_private_motor_integration.ps1'
       - 'development/0.28.7/lab/ci_task_scheduler_event_diagnostic.ps1'
       - 'development/0.28.7/lab/private_dns_peer_vm.ps1'
+      - 'development/0.28.7/lab/private_dns_peer/**'
       - 'development/0.28.7/lab/test_private_dns_peer_identity.ps1'
       - 'development/0.28.7/unifiedbundle/**'
       - 'development/0.28.7/inapp/ci_fresh_dns53_windows_test.go'
@@ -47,6 +48,13 @@ jobs:
           go test -count=1 ./...
           go vet ./...
           echo 'PASS: fast Go migration contract; NOT a production installer validation'
+      - name: Test isolated DNS peer wire contract without opening sockets
+        working-directory: development/0.28.7/lab/private_dns_peer
+        shell: bash
+        run: |
+          set -euo pipefail
+          go test -count=1 -v main.go main_test.go
+          go vet main.go main_test.go
       - name: Verify signed public package with bounded component hashing
         working-directory: development/0.28.7/unifiedbundle
         shell: bash

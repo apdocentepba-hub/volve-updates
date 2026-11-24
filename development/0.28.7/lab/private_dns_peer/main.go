@@ -96,22 +96,29 @@ func serveTCP(l net.Listener, evidence io.Writer) {
  }
 }
 
+// Only fixed stage labels reach the host's sanitized startup diagnostic.
+func failStartup(stage string,err error){
+ fmt.Fprintf(os.Stderr,"VOLVE_PRIVATE_PEER_START_FAILURE stage=%s\n",stage)
+ panic(err)
+}
 func main(){
  if os.Getenv("GITHUB_ACTIONS")!="true"||os.Getenv("RUNNER_ENVIRONMENT")!="github-hosted"||os.Getenv("VOLVE_CI_PRIVATE_DNS_PEER")!="PRIVATE_GUEST_ONLY"{
-  panic("refuse outside explicit private hosted CI peer")
+  failStartup("environment",fmt.Errorf("refuse outside explicit private hosted CI peer"))
  }
  // The guest controller supplies an ACL-protected working directory.
  // O_EXCL rejects stale evidence; Go's native file handle allows shared
  // read/write access, unlike the former PowerShell redirected log.
  evidence,err:=os.OpenFile("peer.log",os.O_WRONLY|os.O_CREATE|os.O_EXCL,0600)
- if err!=nil{panic(err)}
+ if err!=nil{failStartup("evidence",err)}
  defer evidence.Close()
  // Binding to these two exact TEST-NET addresses never opens a wildcard.
  // The host harness independently verifies switch, NIC and route isolation.
  for _,ip:=range []string{peerIP,secondaryIP}{
+  label:="primary"
+  if ip==secondaryIP{label="secondary"}
   endpoint:=net.JoinHostPort(ip,"53")
-  udp,err:=net.ListenPacket("udp4",endpoint);if err!=nil{panic(err)}
-  tcp,err:=net.Listen("tcp4",endpoint);if err!=nil{udp.Close();panic(err)}
+  udp,err:=net.ListenPacket("udp4",endpoint);if err!=nil{failStartup("udp-"+label,err)}
+  tcp,err:=net.Listen("tcp4",endpoint);if err!=nil{udp.Close();failStartup("tcp-"+label,err)}
   go serveUDP(udp,evidence)
   go serveTCP(tcp,evidence)
  }
