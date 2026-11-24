@@ -21,11 +21,18 @@ import (
 
 const maxMigrationPermitBytes = 4096
 
+// Explicit scope in schema 2. Schema 1 remains readable for existing
+// reviews and historical recovery evidence, but never proves absence of
+// DNS mutation in the new production-oriented boot dispatcher.
+const ResidentRecoveryScopeMotorOnly = "motor-only"
+const ResidentRecoveryScopeMotorAndDNS = "motor-and-original-dns"
+
 // LegacyMigrationPermit is only an authorization for a *specific* transition.
 // It does not assert a historic version for the previous executable.
 type LegacyMigrationPermit struct {
     Schema int `json:"schema"`
     Component string `json:"component"`
+    RecoveryScope string `json:"recovery_scope,omitempty"`
     FromTask string `json:"from_task"`
     FromArgs string `json:"from_args"`
     FromExecutable string `json:"from_executable"`
@@ -74,7 +81,8 @@ func parseSignedMigrationPermitAtRecovery(raw, signature []byte,key ed25519.Publ
     if err:=dec.Decode(&m);err!=nil{return LegacyMigrationPermit{},fmt.Errorf("migration permit schema invalid: %w",err)}
     var extra any
     if err:=dec.Decode(&extra);err!=io.EOF{return LegacyMigrationPermit{},errors.New("migration permit trailing bytes")}
-    if m.Schema!=1 || m.Component!="dns-engine-legacy-migration" ||
+    scopeOK:=(m.Schema==1 && m.RecoveryScope=="") || (m.Schema==2 && (m.RecoveryScope==ResidentRecoveryScopeMotorOnly || m.RecoveryScope==ResidentRecoveryScopeMotorAndDNS))
+    if !scopeOK || m.Component!="dns-engine-legacy-migration" ||
         m.FromTask!=legacySystemTask || m.FromArgs!=legacyServiceArg ||
         m.FromExecutable!=legacyServiceName ||
         !hexRe.MatchString(m.FromSHA256) || m.FromSize<1 || m.FromSize>legacyBackupMaxExe ||
@@ -94,6 +102,24 @@ func parseSignedMigrationPermitAtRecovery(raw, signature []byte,key ed25519.Publ
         return LegacyMigrationPermit{},errors.New("migration permit expired, premature or unreasonably long")
     }
     return m,nil
+}
+
+// VerifyExplicitResidentRecoveryScope authenticates the publisher's exact
+// signed recovery scope, even when every optional DNS file is missing.
+// It is only a read-only scope check. Caller must separately authenticate
+// the pending journal/backup, hold the shared mutex and verify native ACLs.
+func VerifyExplicitResidentRecoveryScope(ctx context.Context,raw,signature []byte,key ed25519.PublicKey,expected string)error{
+    if ctx==nil{return errors.New("recovery scope requires context")}
+    if err:=ctx.Err();err!=nil{return err}
+    if expected!=ResidentRecoveryScopeMotorOnly&&expected!=ResidentRecoveryScopeMotorAndDNS{return errors.New("unknown required recovery scope")}
+    permit,err:=parseSignedMigrationPermitAtRecovery(raw,signature,key,true)
+    if err!=nil{return err}
+    if permit.Schema!=2||permit.RecoveryScope!=expected{return errors.New("explicit publisher-signed recovery scope missing or incompatible")}
+    // Schema 2 has one canonical encoding; duplicate keys and aliases
+    // cannot redefine the signed scope differently in another parser.
+    canonical,err:=json.Marshal(permit)
+    if err!=nil||!bytes.Equal(raw,canonical){return errors.New("explicit recovery scope permit is not canonical")}
+    return ctx.Err()
 }
 
 // VerifySignedUnversionedLegacyMigration requires an explicit publisher
