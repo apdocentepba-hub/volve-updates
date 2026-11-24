@@ -33,6 +33,7 @@ type LegacyMigrationPermit struct {
     Schema int `json:"schema"`
     Component string `json:"component"`
     RecoveryScope string `json:"recovery_scope,omitempty"`
+    RecoveryIntentNonce string `json:"recovery_intent_nonce,omitempty"`
     FromTask string `json:"from_task"`
     FromArgs string `json:"from_args"`
     FromExecutable string `json:"from_executable"`
@@ -81,7 +82,7 @@ func parseSignedMigrationPermitAtRecovery(raw, signature []byte,key ed25519.Publ
     if err:=dec.Decode(&m);err!=nil{return LegacyMigrationPermit{},fmt.Errorf("migration permit schema invalid: %w",err)}
     var extra any
     if err:=dec.Decode(&extra);err!=io.EOF{return LegacyMigrationPermit{},errors.New("migration permit trailing bytes")}
-    scopeOK:=(m.Schema==1 && m.RecoveryScope=="") || (m.Schema==2 && (m.RecoveryScope==ResidentRecoveryScopeMotorOnly || m.RecoveryScope==ResidentRecoveryScopeMotorAndDNS))
+    scopeOK:=(m.Schema==1 && m.RecoveryScope=="" && m.RecoveryIntentNonce=="") || (m.Schema==2 && residentNonce.MatchString(m.RecoveryIntentNonce) && (m.RecoveryScope==ResidentRecoveryScopeMotorOnly || m.RecoveryScope==ResidentRecoveryScopeMotorAndDNS))
     if !scopeOK || m.Component!="dns-engine-legacy-migration" ||
         m.FromTask!=legacySystemTask || m.FromArgs!=legacyServiceArg ||
         m.FromExecutable!=legacyServiceName ||
@@ -90,6 +91,10 @@ func parseSignedMigrationPermitAtRecovery(raw, signature []byte,key ed25519.Publ
         !versionRe.MatchString(m.ToVersion) || !versionRe.MatchString(m.MinPanelVersion) ||
         !hexRe.MatchString(m.ToSHA256) || m.ToSize<1 || m.ToSize>legacyBackupMaxExe {
         return LegacyMigrationPermit{},errors.New("migration identity/versions not allowlisted")
+    }
+    if m.Schema==2 {
+        canonical,err:=json.Marshal(m)
+        if err!=nil||!bytes.Equal(raw,canonical){return LegacyMigrationPermit{},errors.New("scoped migration permit is not canonical JSON")}
     }
     issued,err:=time.Parse(time.RFC3339,m.IssuedUTC)
     if err!=nil{return LegacyMigrationPermit{},errors.New("permit issuance time invalid")}
@@ -108,13 +113,13 @@ func parseSignedMigrationPermitAtRecovery(raw, signature []byte,key ed25519.Publ
 // signed recovery scope, even when every optional DNS file is missing.
 // It is only a read-only scope check. Caller must separately authenticate
 // the pending journal/backup, hold the shared mutex and verify native ACLs.
-func VerifyExplicitResidentRecoveryScope(ctx context.Context,raw,signature []byte,key ed25519.PublicKey,expected string)error{
+func VerifyExplicitResidentRecoveryScope(ctx context.Context,raw,signature []byte,key ed25519.PublicKey,expected,expectedNonce string)error{
     if ctx==nil{return errors.New("recovery scope requires context")}
     if err:=ctx.Err();err!=nil{return err}
     if expected!=ResidentRecoveryScopeMotorOnly&&expected!=ResidentRecoveryScopeMotorAndDNS{return errors.New("unknown required recovery scope")}
     permit,err:=parseSignedMigrationPermitAtRecovery(raw,signature,key,true)
     if err!=nil{return err}
-    if permit.Schema!=2||permit.RecoveryScope!=expected{return errors.New("explicit publisher-signed recovery scope missing or incompatible")}
+    if permit.Schema!=2||permit.RecoveryScope!=expected||!residentNonce.MatchString(expectedNonce)||permit.RecoveryIntentNonce!=expectedNonce{return errors.New("explicit publisher-signed recovery scope or intent nonce missing or incompatible")}
     // Schema 2 has one canonical encoding; duplicate keys and aliases
     // cannot redefine the signed scope differently in another parser.
     canonical,err:=json.Marshal(permit)
