@@ -1,0 +1,69 @@
+# VOLVE CI only: observe the actual Windows-configured resolver on the
+# private guest. No adapter, cache, HOSTS, firewall, or task writes.
+# Caller MUST independently pin the private Hyper-V switch and challenge
+# nonce, then corroborate success/failure with the peer's wire-reply log.
+[CmdletBinding()]
+param(
+    [Parameter(Mandatory=$true)][ValidatePattern('^[a-f0-9]{32}$')][string]$Nonce,
+    [Parameter(Mandatory=$true)][ValidateSet('Original','Fault','Restored')][string]$Phase,
+    [Parameter(Mandatory=$true)][ValidateSet('Default','TCP')][string]$Transport
+)
+Set-StrictMode -Version Latest
+$ErrorActionPreference='Stop'
+if($env:GITHUB_ACTIONS -cne 'true' -or $env:RUNNER_ENVIRONMENT -cne 'github-hosted' -or
+   $env:VOLVE_CI_NESTED_GUEST_DNS -cne 'PRIVATE_GUEST_ONLY'){throw 'Private guest CI only'}
+$cs=Get-CimInstance Win32_ComputerSystem -ErrorAction Stop
+if(($cs.Manufacturer+' '+$cs.Model) -notmatch '(?i)virtual machine|hyper-v'){throw 'Not a Hyper-V guest'}
+$n=@(Get-NetAdapter -ErrorAction Stop)
+if($n.Count -ne 1 -or $n[0].Name -cne 'VOLVE-CI-PRIVATE-DNS' -or $n[0].Status -ne 'Up' -or
+    $n[0].InterfaceDescription -notmatch '^Microsoft Hyper-V Network Adapter( #[0-9]+)?$'){throw 'Unexpected private NIC'}
+if(@(Get-NetRoute -ErrorAction Stop|Where-Object {$_.DestinationPrefix -in @('0.0.0.0/0','::/0')}).Count -ne 0){throw 'Default route present'}
+if(Get-ScheduledTask -TaskName 'VOLVE-DNS-SERVER-0270' -ErrorAction SilentlyContinue){throw 'Installed motor present'}
+$idx=[uint32]$n[0].InterfaceIndex
+$ips=@(Get-NetIPAddress -InterfaceIndex $idx -AddressFamily IPv4 -ErrorAction Stop)
+if($ips.Count -ne 1 -or $ips[0].IPAddress -cne '192.0.2.10' -or $ips[0].PrefixLength -ne 24){throw 'Private client IP mismatch'}
+$dns=@(Get-DnsClientServerAddress -InterfaceIndex $idx -AddressFamily IPv4 -ErrorAction Stop)
+if($dns.Count -ne 1){throw 'Ambiguous IPv4 DNS client inventory'}
+$expected=if($Phase -ceq 'Fault'){'127.0.0.1'}else{'192.0.2.53,192.0.2.54'}
+if(($dns[0].ServerAddresses -join ',') -cne $expected){throw 'Configured DNS does not match selected phase'}
+$name=$Nonce+'.volve-ci.invalid'
+$arguments=@{Name=($name+'.');Type='A';DnsOnly=$true;NoHostsFile=$true;QuickTimeout=$true;ErrorAction='Stop'}
+if($Transport -ceq 'TCP'){$arguments.TcpOnly=$true}
+# Deliberately NO -Server. This must exercise the actual Windows
+# resolver configuration, not an application bypass of a broken DNS.
+$answers=@()
+$errorId=$null
+try{$answers=@(Resolve-DnsName @arguments)}
+catch{
+    $errorId=[string]$_.FullyQualifiedErrorId
+    # Only the resolution failure is admissible. Command binding,
+    # permissions and other local failures must never prove the fault.
+    if($errorId -notmatch '^(DNS_ERROR_[A-Z0-9_]+|ERROR_TIMEOUT|WSAETIMEDOUT|WSAHOST_NOT_FOUND|WSATRY_AGAIN)(,|$)'){throw}
+}
+$addresses=@($answers|Where-Object {
+    $_.PSObject.Properties['IPAddress'] -and
+    $_.PSObject.Properties['Type'] -and [string]$_.Type -eq 'A'
+})
+$resolved=$false
+if($null -eq $errorId){
+    if($addresses.Count -ne 1 -or [string]$addresses[0].IPAddress -cne '192.0.2.53' -or
+       ([string]$addresses[0].Name).TrimEnd('.') -cne $name){throw 'Unexpected DNS response; not an admissible fault or success'}
+    $resolved=$true
+}
+if($Phase -ceq 'Fault'){
+    if($resolved -or $null -eq $errorId){throw 'Fault did not prevent Windows resolution'}
+}else{
+    if(-not $resolved){throw ('Configured DNS failed to resolve private challenge: '+$errorId)}
+}
+# Read back the exact adapter identity and DNS list again, after the query.
+$after=@(Get-NetAdapter -ErrorAction Stop)
+$afterDNS=@(Get-DnsClientServerAddress -InterfaceIndex $idx -AddressFamily IPv4 -ErrorAction Stop)
+if($after.Count -ne 1 -or $after[0].InterfaceGuid -ne $n[0].InterfaceGuid -or
+   $after[0].InterfaceIndex -ne $idx -or $afterDNS.Count -ne 1 -or
+   ($afterDNS[0].ServerAddresses -join ',') -cne $expected){throw 'Adapter or DNS changed during challenge'}
+[pscustomobject]@{
+    phase=$Phase;transport=$Transport;nonce=$Nonce
+    resolved=$resolved;resolution_error=$errorId
+    requires_independent_peer_log=$true
+    internet_connectivity_proven=$false
+}
