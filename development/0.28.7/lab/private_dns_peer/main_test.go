@@ -3,6 +3,10 @@ package main
 import (
  "bytes"
  "encoding/binary"
+ "os"
+ "os/exec"
+ "path/filepath"
+ "runtime"
  "testing"
 )
 
@@ -39,4 +43,23 @@ func TestPrivateDNSChallengeRejectsUnrelatedOrMalformedQuestions(t *testing.T){
    if _,_,err:=challengeReply(q);err==nil{t.Fatal("unexpected DNS request admitted")}
   })
  }
+}
+
+func TestPrivateDNSPeerEvidenceReadableWhileWriterOpen(t *testing.T){
+ path:=filepath.Join(t.TempDir(),"peer.log")
+ w,err:=os.OpenFile(path,os.O_WRONLY|os.O_CREATE|os.O_EXCL,0600)
+ if err!=nil{t.Fatal(err)}
+ defer w.Close()
+ const marker="VOLVE_PRIVATE_PEER_READY two_ipv4_addresses udp_tcp53 NO_FORWARDING"
+ peerEvidence(w,"%s\n",marker)
+ got,err:=os.ReadFile(path)
+ if err!=nil||string(got)!=marker+"\n"{t.Fatalf("Go shared reader failed: %q %v",got,err)}
+ if runtime.GOOS!="windows"{return}
+ // Native PowerShell must be able to read the same evidence before the
+ // Go writer exits. This reproduces the prior actual guest sharing failure.
+ cmd:=exec.Command("powershell.exe","-NoProfile","-NonInteractive","-Command",
+  "$ErrorActionPreference='Stop';$s=[IO.File]::Open($env:VOLVE_TEST_PEER_LOG,[IO.FileMode]::Open,[IO.FileAccess]::Read,[IO.FileShare]::ReadWrite);try{$r=[IO.StreamReader]::new($s);try{[Console]::Write($r.ReadToEnd())}finally{$r.Dispose()}}finally{$s.Dispose()}")
+ cmd.Env=append(os.Environ(),"VOLVE_TEST_PEER_LOG="+path)
+ out,err:=cmd.CombinedOutput()
+ if err!=nil||string(out)!=marker+"\n"{t.Fatalf("native PowerShell shared reader failed: %q %v",out,err)}
 }
