@@ -173,3 +173,176 @@ jobs:
           if(-not $report.cleanup_ok){throw 'Nested VM cleanup failed; see recorded result'}
           if($report.error_message){throw ('Nested VM probe failed in '+$report.phase+': '+$report.error_message)}
           Write-Host 'PASS: Hyper-V started an empty isolated VM; NO guest OS boot or VOLVE installation proven.'
+
+  nested-windows-guest-reboot:
+    name: Windows Server evaluation guest boot and disk persistence (NO VOLVE INSTALL)
+    needs: nested-hyperv-start-probe
+    runs-on: windows-latest
+    timeout-minutes: 55
+    steps:
+      - name: Boot official evaluation guest twice with no network
+        shell: powershell
+        env:
+          CANDIDATE_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          $ErrorActionPreference='Stop'
+          if($env:GITHUB_ACTIONS -ne 'true' -or $env:RUNNER_ENVIRONMENT -ne 'github-hosted'){throw 'Hosted CI only'}
+          $hostVM=Get-CimInstance Win32_ComputerSystem
+          if(($hostVM.Manufacturer+' '+$hostVM.Model) -notmatch '(?i:virtual machine|vmware|hyper-v|kvm|qemu|virtualbox)'){throw 'Not a disposable VM'}
+          Import-Module Hyper-V -ErrorAction Stop
+          $name='VOLVE-CI-WINGUEST-'+[guid]::NewGuid().ToString('N')
+          $dir=Join-Path $env:RUNNER_TEMP $name
+          $vhd=Join-Path $dir 'evaluation.vhd'
+          $vm=$null
+          $mounted=$false
+          $session=$null
+          $report=[ordered]@{
+            candidate_head=$env:CANDIDATE_HEAD
+            runner_commit=$env:GITHUB_SHA
+            source='Microsoft Windows Server 2022 evaluation center VHD'
+            stage='download'
+            downloaded_sha256=$null
+            downloaded_bytes=$null
+            generation=$null
+            guest_boot_verified=$false
+            guest_os=$null
+            guest_boot_before=$null
+            guest_boot_after=$null
+            disk_persistence_verified=$false
+            network_adapters=$null
+            cleanup_ok=$false
+            error_message=$null
+          }
+          function Connect-Guest([guid]$id,[pscredential]$credential,[int]$seconds){
+            $until=[datetime]::UtcNow.AddSeconds($seconds)
+            do {
+              try {return New-PSSession -VMId $id -Credential $credential -ErrorAction Stop}
+              catch {Start-Sleep -Seconds 10}
+            } while([datetime]::UtcNow -lt $until)
+            throw 'PowerShell Direct did not become available before deadline'
+          }
+          try{
+            New-Item -ItemType Directory -Path $dir -ErrorAction Stop | Out-Null
+            $drive=[IO.DriveInfo]::new([IO.Path]::GetPathRoot($dir))
+            $budget=[int64]($drive.AvailableFreeSpace-6GB)
+            if($budget -lt 4GB){throw 'Insufficient disk space for official VHD plus safety margin'}
+            # Official Microsoft Evaluation Center direct download; never uploaded or redistributed.
+            & curl.exe --fail --location --proto '=https' --proto-redir '=https' --connect-timeout 30 --max-time 1200 --max-filesize $budget --silent --show-error --output $vhd 'https://go.microsoft.com/fwlink/p/?clcid=0x409&country=us&culture=en-us&linkid=2195166'
+            if($LASTEXITCODE -ne 0){throw ('Microsoft VHD download failed with curl exit '+$LASTEXITCODE)}
+            $report.downloaded_bytes=(Get-Item -LiteralPath $vhd).Length
+            $report.downloaded_sha256=(Get-FileHash -LiteralPath $vhd -Algorithm SHA256).Hash
+            Get-VHD -Path $vhd -ErrorAction Stop | Out-Null
+            $report.stage='prepare_offline_guest_answer_file'
+            $password='V!a7'+[guid]::NewGuid().ToString('N')
+            Write-Host ('::add-mask::'+$password)
+            $credential=[pscredential]::new('Administrator',(ConvertTo-SecureString $password -AsPlainText -Force))
+            $mountedDisk=Mount-VHD -Path $vhd -NoDriveLetter -PassThru -ErrorAction Stop
+            $mounted=$true
+            $disk=$mountedDisk | Get-Disk -ErrorAction Stop
+            if(@($disk).Count -ne 1 -or $disk.IsBoot -or $disk.IsSystem){throw 'Refuse unexpected mounted disk identity'}
+            if($disk.IsOffline){Set-Disk -Number $disk.Number -IsOffline $false -ErrorAction Stop}
+            if($disk.IsReadOnly){throw 'Downloaded guest disk is read-only'}
+            if($disk.PartitionStyle -eq 'GPT'){$report.generation=2}
+            elseif($disk.PartitionStyle -eq 'MBR'){$report.generation=1}
+            else{throw 'Unexpected guest partition layout'}
+            $roots=@()
+            foreach($part in @(Get-Partition -DiskNumber $disk.Number | Where-Object {$_.Size -gt 2GB})){
+              if(-not $part.DriveLetter){
+                Add-PartitionAccessPath -DiskNumber $disk.Number -PartitionNumber $part.PartitionNumber -AssignDriveLetter -ErrorAction Stop
+                $part=Get-Partition -DiskNumber $disk.Number -PartitionNumber $part.PartitionNumber
+              }
+              if(-not $part.DriveLetter){continue}
+              $root=([string]$part.DriveLetter)+':\'
+              if(Test-Path -LiteralPath (Join-Path $root 'Windows\System32\ntoskrnl.exe')){$roots+=@($root)}
+            }
+            if($roots.Count -ne 1){throw 'Expected exactly one offline Windows installation'}
+            $panther=Join-Path $roots[0] 'Windows\Panther\Unattend'
+            $answer=Join-Path $panther 'Unattend.xml'
+            if(Test-Path -LiteralPath $answer){throw 'Existing vendor answer file requires review; refuse overwrite'}
+            New-Item -ItemType Directory -Path $panther -Force | Out-Null
+            $xml=@"
+          <?xml version="1.0" encoding="utf-8"?>
+          <unattend xmlns="urn:schemas-microsoft-com:unattend">
+            <settings pass="oobeSystem">
+              <component name="Microsoft-Windows-Shell-Setup" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
+                <UserAccounts><AdministratorPassword><Value>$password</Value><PlainText>true</PlainText></AdministratorPassword></UserAccounts>
+                <AutoLogon><Password><Value>$password</Value><PlainText>true</PlainText></Password><Enabled>true</Enabled><LogonCount>1</LogonCount><Username>Administrator</Username></AutoLogon>
+                <OOBE><HideEULAPage>false</HideEULAPage><ProtectYourPC>3</ProtectYourPC></OOBE>
+              </component>
+            </settings>
+          </unattend>
+          "@
+            [xml]$parsed=$xml
+            Set-Content -LiteralPath $answer -Value $xml -Encoding UTF8 -ErrorAction Stop
+            Dismount-VHD -Path $vhd -ErrorAction Stop
+            $mounted=$false
+            $report.stage='start_windows_guest'
+            $vm=New-VM -Name $name -Generation $report.generation -MemoryStartupBytes 4GB -VHDPath $vhd -Path $dir -ErrorAction Stop
+            $vm | Set-VMProcessor -Count 2 -ErrorAction Stop
+            $vm | Set-VM -AutomaticCheckpointsEnabled $false -ErrorAction Stop
+            $vm | Get-VMNetworkAdapter | Remove-VMNetworkAdapter -Confirm:$false -ErrorAction Stop
+            $report.network_adapters=@($vm | Get-VMNetworkAdapter).Count
+            if($report.network_adapters -ne 0){throw 'Guest network isolation failed'}
+            Start-VM -VM $vm -ErrorAction Stop
+            $session=Connect-Guest $vm.Id $credential 600
+            $nonce=[guid]::NewGuid().ToString('N')
+            $before=Invoke-Command -Session $session -ArgumentList $nonce -ErrorAction Stop -ScriptBlock {
+              param($nonce)
+              $os=Get-CimInstance Win32_OperatingSystem
+              $path=Join-Path $env:ProgramData 'VOLVE-CI-reboot-marker.txt'
+              if(Test-Path -LiteralPath $path){throw 'Unexpected existing marker'}
+              [IO.File]::WriteAllText($path,$nonce)
+              [pscustomobject]@{os=$os.Caption;boot=$os.LastBootUpTime.ToUniversalTime().Ticks.ToString();marker=(Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash}
+            }
+            $report.guest_os=$before.os
+            $report.guest_boot_before=$before.boot
+            $report.guest_boot_verified=$true
+            $report.stage='restart_and_verify_guest_disk'
+            Invoke-Command -Session $session -ErrorAction Stop -ScriptBlock {
+              & shutdown.exe /r /t 5 /f
+              if($LASTEXITCODE -ne 0){throw 'Guest shutdown request failed'}
+            }
+            Remove-PSSession $session
+            $session=$null
+            Start-Sleep -Seconds 20
+            $until=[datetime]::UtcNow.AddMinutes(8)
+            do{
+              $session=Connect-Guest $vm.Id $credential 90
+              $after=Invoke-Command -Session $session -ErrorAction Stop -ScriptBlock {
+                $os=Get-CimInstance Win32_OperatingSystem
+                $path=Join-Path $env:ProgramData 'VOLVE-CI-reboot-marker.txt'
+                [pscustomobject]@{boot=$os.LastBootUpTime.ToUniversalTime().Ticks.ToString();marker=(Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash}
+              }
+              Remove-PSSession $session
+              $session=$null
+              if([long]$after.boot -gt [long]$before.boot){break}
+              Start-Sleep -Seconds 10
+            }while([datetime]::UtcNow -lt $until)
+            if([long]$after.boot -le [long]$before.boot){throw 'No real guest reboot demonstrated'}
+            if($after.marker -cne $before.marker){throw 'Guest disk marker did not persist'}
+            $report.guest_boot_after=$after.boot
+            $report.disk_persistence_verified=$true
+            $report.stage='guest_reboot_verified_only'
+          }catch{
+            $report.error_message=$_.Exception.Message
+          }finally{
+            try{
+              if($session){Remove-PSSession $session -ErrorAction SilentlyContinue}
+              if($mounted){Dismount-VHD -Path $vhd -ErrorAction Stop}
+              if($vm){
+                $owned=Get-VM -Id $vm.Id -ErrorAction Stop
+                if($owned.Name -cne $name){throw 'Unexpected VM identity'}
+                if($owned.State -ne 'Off'){Stop-VM -VM $owned -TurnOff -Force -ErrorAction Stop}
+                Remove-VM -VM $owned -Force -ErrorAction Stop
+              }
+              if(Test-Path -LiteralPath $dir){Remove-Item -LiteralPath $dir -Recurse -Force -ErrorAction Stop}
+              $report.cleanup_ok=$true
+            }catch{$report.cleanup_error=$_.Exception.Message}
+            $json=ConvertTo-Json -InputObject $report -Depth 4 -Compress
+            Write-Host "VOLVE_WINDOWS_GUEST_REBOOT_RESULT=$json"
+            Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value $json
+          }
+          if(-not $report.cleanup_ok){throw 'Guest cleanup failed'}
+          if($report.error_message){throw ('Guest test failed in '+$report.stage+': '+$report.error_message)}
+          if(-not $report.disk_persistence_verified){throw 'Guest persistence not demonstrated'}
+          Write-Host 'PASS: official Windows Server evaluation guest reboot and disk marker persistence; NO VOLVE installation or DNS recovery tested.'
