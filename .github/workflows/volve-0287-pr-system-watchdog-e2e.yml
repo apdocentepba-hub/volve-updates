@@ -381,10 +381,24 @@ jobs:
           <?xml version="1.0" encoding="utf-8"?>
           <unattend xmlns="urn:schemas-microsoft-com:unattend">
             <settings pass="oobeSystem">
+              <component name="Microsoft-Windows-International-Core" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
+                <InputLocale>en-US</InputLocale><SystemLocale>en-US</SystemLocale><UILanguage>en-US</UILanguage><UserLocale>en-US</UserLocale>
+              </component>
               <component name="Microsoft-Windows-Shell-Setup" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
                 <UserAccounts><AdministratorPassword><Value>$password</Value><PlainText>true</PlainText></AdministratorPassword></UserAccounts>
                 <AutoLogon><Password><Value>$password</Value><PlainText>true</PlainText></Password><Enabled>true</Enabled><LogonCount>1</LogonCount><Username>Administrator</Username></AutoLogon>
-                <OOBE><HideEULAPage>false</HideEULAPage><ProtectYourPC>3</ProtectYourPC></OOBE>
+                <!-- Microsoft documents unattended OOBE settings for
+                     pre-shipment system-builder testing. This image is a
+                     disposable evaluation lab only, never redistributed.
+                     No activation, licensing or setup registry overrides. -->
+                <OOBE>
+                  <HideEULAPage>true</HideEULAPage>
+                  <HideLocalAccountScreen>true</HideLocalAccountScreen>
+                  <HideOEMRegistrationScreen>true</HideOEMRegistrationScreen>
+                  <HideOnlineAccountScreens>true</HideOnlineAccountScreens>
+                  <HideWirelessSetupInOOBE>true</HideWirelessSetupInOOBE>
+                  <ProtectYourPC>3</ProtectYourPC>
+                </OOBE>
               </component>
             </settings>
           </unattend>
