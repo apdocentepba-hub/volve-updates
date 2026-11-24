@@ -5,6 +5,7 @@ import (
     "errors"
     "strings"
     "testing"
+    "time"
 )
 
 const activationTestGUID = "{12345678-1234-1234-1234-123456789abc}"
@@ -243,4 +244,36 @@ func TestProtectedDNSActivationReattestsAfterHealthBeforeCommit(t *testing.T){
             assertActivationTestState(t,b,true)
         })
     }
+}
+
+
+type activationRecoveryDeadlineGuard struct{
+    *activationTestGuard
+    deadline time.Time
+    remaining time.Duration
+}
+func(g *activationRecoveryDeadlineGuard) RecoverIndependently(ctx context.Context,pin string)error{
+    deadline,ok:=ctx.Deadline()
+    if !ok{return errors.New("independent recovery has no finite deadline")}
+    g.deadline=deadline
+    g.remaining=time.Until(deadline)
+    return g.activationTestGuard.RecoverIndependently(ctx,pin)
+}
+func TestProtectedDNSActivationRescueBudgetSurvivesCancelledInstaller(t *testing.T){
+    raw,pin,b,g:=prepareActivationTest(t)
+    ctx,cancel:=context.WithCancel(context.Background())
+    defer cancel()
+    b.cancel=cancel
+    guard:=&activationRecoveryDeadlineGuard{activationTestGuard:g}
+    if err:=activateVOLVEDNSWithRecovery(ctx,raw,pin,b,guard);err==nil{
+        t.Fatal("cancelled activation unexpectedly committed")
+    }
+    // No wall-clock sleep. Confirm the actual child context passed to
+    // the independent agent covers the measured real Windows restoration
+    // interval and still has a finite maximum.
+    if guard.deadline.IsZero()||guard.remaining<14*time.Minute||guard.remaining>15*time.Minute{
+        t.Fatalf("unsafe emergency recovery deadline: %s",guard.remaining)
+    }
+    if g.recoverCalls!=1||g.commitCalls!=0{t.Fatal("rescue not independently requested")}
+    assertActivationTestState(t,b,true)
 }
