@@ -34,6 +34,12 @@ func RecoverPendingResidentAfterBoot(
  seal, protect func(string)error, checks ResidentCompletionChecks,
  driver ResidentBootRecoveryDriver,
 )(string,error){
+ // A DNS-capable native driver must never be silently routed through
+ // the motor-only policy, even if a caller stores it in the base interface.
+ // Reject before acquiring a lease, inspecting or finalizing a journal.
+ if _,requiresDNS:=driver.(ResidentDNSBootRecoveryDriver);requiresDNS{
+  return "",errors.New("DNS-capable recovery driver requires the explicit original DNS policy")
+ }
  return recoverPendingResidentAfterBoot(ctx,journalDir,seal,protect,checks,driver,nil)
 }
 
