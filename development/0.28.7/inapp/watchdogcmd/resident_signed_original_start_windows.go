@@ -76,10 +76,9 @@ func startSignedRestoredOriginalTaskLockedWindows(
   "$h=[IO.File]::OpenRead($old);$a=[Security.Cryptography.SHA256]::Create();"+
   "try{$actual=[BitConverter]::ToString($a.ComputeHash($h)).Replace('-','').ToLowerInvariant()}finally{$h.Dispose();$a.Dispose()};"+
   "if($actual -cne $sha){throw 'original executable changed at startup boundary'};"+
-  "$prefix="+q(root+"\\")+";"+
+  "$known=@($old,"+q(filepath.Join(root,"VOLVE_DNS_Motor_0_28_7.exe"))+","+q(filepath.Join(root,"installed-engines","VOLVE_DNS_Motor_0_28_7.exe"))+");"+
   "$processes=@(Get-CimInstance Win32_Process -ErrorAction Stop|Where-Object{"+
-  "([string]$_.ExecutablePath).StartsWith($prefix,[StringComparison]::OrdinalIgnoreCase) -and "+
-  "([string]$_.Name -like 'VOLVE_DNS_*')});"+
+  "([string]$_.Name -like 'VOLVE_DNS_*') -or ($known -icontains ([string]$_.ExecutablePath))});"+
   "$udp=@(Get-NetUDPEndpoint -ErrorAction Stop|Where-Object{[int]$_.LocalPort -eq 53});"+
   "$tcp=@(Get-NetTCPConnection -State Listen -ErrorAction Stop|Where-Object{[int]$_.LocalPort -eq 53});"+
   "if($processes.Count -ne 0 -or $udp.Count -ne 0 -or $tcp.Count -ne 0){throw 'DNS port53/process restarted before protected original task start'};"+
