@@ -98,8 +98,14 @@ func activateVOLVEDNSWithRecovery(
     if err = guard.VerifyLiveProtection(ctx, independentlyPinnedSHA256); err != nil {
         return fmt.Errorf("DNS/Internet blocking health probe rejected activation: %w", err)
     }
+    // Health probes can take time. A successful probe is not proof the
+    // independent watchdog is still armed at the final commit boundary.
+    // Reattest recovery after health checks, and only then recensus DNS.
+    if err = guard.VerifyArmed(ctx, independentlyPinnedSHA256); err != nil {
+        return fmt.Errorf("recovery attestation lost before activation commit: %w", err)
+    }
     if err = verifyDNSActivationTransition(ctx, records, backend, len(records)); err != nil {
-        return fmt.Errorf("DNS changed during health checks: %w", err)
+        return fmt.Errorf("DNS changed during health checks or final recovery attestation: %w", err)
     }
     if err = ctx.Err(); err != nil { return err }
     if err = guard.CommitActive(ctx, independentlyPinnedSHA256); err != nil {
