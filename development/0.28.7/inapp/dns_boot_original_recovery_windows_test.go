@@ -223,3 +223,32 @@ func TestSignedWindowsDNSBootPersistedEvidenceRequiresActualSYSTEMEntrypoint(t *
   t.Fatalf("non-SYSTEM caller accepted into independent DNS boot recovery: %v",err)
  }
 }
+
+
+// No real DNS writes. Prove that a single full census retains the exact
+// allowed-prefix policy and that adapter identity drift is still rejected.
+func TestSignedWindowsDNSBootCensusConsolidatesWithoutLosingDriftChecks(t *testing.T){
+ for _,mode:=range []string{"expected","original","partial","foreign","identity-drift","extra-adapter"}{
+  t.Run(mode,func(t *testing.T){
+   f:=makeAutomaticDNSRecoveryFixture()
+   host:=f.host
+   if mode=="original"{for _,r:=range f.records{host.states[r.Original.Family]=copyWindowsActivationDNSState(r.Original)}}
+   if mode=="partial"{p:=copyWindowsActivationDNSState(f.records[0].Original);p.Servers=p.Servers[:1];host.states[DNSIPv4]=p}
+   if mode=="foreign"{p:=copyWindowsActivationDNSState(f.records[0].Original);p.Servers=[]string{"203.0.113.42"};host.states[DNSIPv4]=p}
+   adapterReads,sourceReads:=0,0
+   extra:=mode=="extra-adapter"
+   inspect:=func(ctx context.Context,query string)([]byte,error){
+    if query==windowsAdapterInventoryQuery{
+     adapterReads++
+     if mode=="identity-drift"&&adapterReads==2{host.index++}
+    }else if query==windowsDNSAssignmentSourceQuery{sourceReads++}
+    if extra{return windowsActivationInspectorWithExtraAdapter(host,&extra)(ctx,query)}
+    return host.inspect(ctx,query)
+   }
+   err:=verifySignedDNSBootRestoreCensus(context.Background(),f.records,inspect,mode=="original")
+   wantOK:=mode=="expected"||mode=="original"||mode=="partial"
+   if (err==nil)!=wantOK{t.Fatalf("unexpected census result: %v",err)}
+   if adapterReads!=2||sourceReads!=1{t.Fatalf("expected exactly two independent identity reads bracketing one provenance census; got %d/%d",adapterReads,sourceReads)}
+  })
+ }
+}
