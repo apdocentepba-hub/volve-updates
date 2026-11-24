@@ -517,6 +517,38 @@ jobs:
               $settings=New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit (New-TimeSpan -Minutes 2)
               Register-ScheduledTask -TaskName $name -TaskPath '\' -Action $action -Principal $principal -Settings $settings -ErrorAction Stop|Out-Null
               try{
+                function Get-OwnedManualTaskProof([string]$ownedName,[long]$cursor){
+                  $all=@(Get-WinEvent -LogName 'Microsoft-Windows-TaskScheduler/Operational' -MaxEvents 4096 -ErrorAction Stop)
+                  $records=@(foreach($event in $all){
+                    if([long]$event.RecordId -le $cursor -or $event.Id -notin @(110,100,201,102)){continue}
+                    $xml=[xml]$event.ToXml()
+                    $fields=@{}
+                    foreach($node in $xml.SelectNodes("//*[local-name()='EventData']/*[local-name()='Data']")){
+                      $fields[[string]$node.GetAttribute('Name')]=[string]$node.InnerText
+                    }
+                    if($fields['TaskName'] -cne ('\'+$ownedName)){continue}
+                    $instance=[guid]::Empty
+                    $instanceText=[string]$fields['InstanceId']
+                    if(-not $instanceText){$instanceText=[string]$fields['TaskInstanceId']}
+                    if(-not [guid]::TryParse($instanceText,[ref]$instance) -or $instance -eq [guid]::Empty){continue}
+                    [pscustomobject]@{id=[int]$event.Id;record=[long]$event.RecordId;instance=$instance.ToString('D');result=[string]$fields['ResultCode']}
+                  })
+                  foreach($trigger in @($records|Where-Object id -eq 110|Sort-Object record)){
+                    $last=[long]$trigger.record
+                    $ids=@($last)
+                    $ok=$true
+                    foreach($id in @(100,201,102)){
+                      $matches=@($records|Where-Object {$_.instance -ceq $trigger.instance -and $_.id -eq $id -and $_.record -gt $last}|Sort-Object record)
+                      if($matches.Count -ne 1){$ok=$false;break}
+                      $e=$matches[0]
+                      if(($id -eq 201 -or ($id -eq 102 -and $e.result)) -and $e.result -notin @('0','0x0','0x00000000')){$ok=$false;break}
+                      $last=$e.record;$ids+=@($last)
+                    }
+                    if($ok){return [pscustomobject]@{verified=$true;record_ids=$ids;instance=$trigger.instance}}
+                  }
+                  return [pscustomobject]@{verified=$false;record_ids=@();instance=$null}
+                }
+                $cursor=[long](Get-WinEvent -LogName 'Microsoft-Windows-TaskScheduler/Operational' -MaxEvents 1 -ErrorAction Stop).RecordId
                 $start=Get-Date
                 Start-ScheduledTask -TaskName $name -TaskPath '\' -ErrorAction Stop
                 $limit=[datetime]::UtcNow.AddSeconds(90)
@@ -524,8 +556,12 @@ jobs:
                   Start-Sleep -Seconds 2
                   $t=Get-ScheduledTask -TaskName $name -TaskPath '\' -ErrorAction Stop
                   $info=Get-ScheduledTaskInfo -TaskName $name -TaskPath '\' -ErrorAction Stop
-                  if((Test-Path -LiteralPath $out) -and $t.State -ne 'Running'){break}
+                  if((Test-Path -LiteralPath $out) -and $t.State -eq 'Ready'){
+                    $proof=Get-OwnedManualTaskProof $name $cursor
+                    if($proof.verified){break}
+                  }
                 }while([datetime]::UtcNow -lt $limit)
+                $proof=Get-OwnedManualTaskProof $name $cursor
                 $sidVerified=(Test-Path -LiteralPath $out) -and ((Get-Content -LiteralPath $out -Raw) -match '(?m),"S-1-5-18"\s*$')
                 $events=@(Get-WinEvent -FilterHashtable @{LogName='Microsoft-Windows-TaskScheduler/Operational';StartTime=$start.AddSeconds(-5)} -MaxEvents 1000 -ErrorAction SilentlyContinue|Where-Object {
                   $xml=[xml]$_.ToXml()
@@ -544,6 +580,9 @@ jobs:
                   engine_error_ids=@($engineErrors|Sort-Object -Unique);task_census=$counts;engine_process_count=$engineProcesses.Count;
                   scheduler_service=[string](Get-Service Schedule).Status;
                   last_run_after_request=($info.LastRunTime -ge $start.AddSeconds(-3));
+                  last_run_raw=$info.LastRunTime.ToString('o');
+                  request_raw=$start.ToString('o');
+                  correlated_event_chain=$proof;
                   task_enabled=[bool]$t.Settings.Enabled;
                   run_only_if_network=[bool]$t.Settings.RunOnlyIfNetworkAvailable;
                   run_only_if_idle=[bool]$t.Settings.RunOnlyIfIdle;
@@ -558,7 +597,7 @@ jobs:
               }
             }
             $report.scheduler_preflight=$probe
-            if(-not $probe.sid_verified -or $probe.last_result -ne 0 -or -not $probe.last_run_after_request -or $probe.state -ne 'Ready' -or 100 -notin $probe.event_ids -or 102 -notin $probe.event_ids){throw 'Guest Scheduler did not demonstrate a completed LocalSystem no-op; inspect setup, clock and engine diagnostics'} 
+            if(-not $probe.sid_verified -or $probe.last_result -ne 0 -or -not $probe.correlated_event_chain.verified -or $probe.state -ne 'Ready'){throw 'Guest Scheduler did not demonstrate a completed LocalSystem no-op; inspect setup, clock and engine diagnostics'} 
             $nonce=[guid]::NewGuid().ToString('N')
             $before=Invoke-Command -Session $session -ArgumentList $nonce -ErrorAction Stop -ScriptBlock {
               param($nonce)
@@ -755,11 +794,51 @@ jobs:
               if($LASTEXITCODE -ne 0){throw 'Task history unavailable'}
               Register-ScheduledTask -TaskName $task -TaskPath '\' -Principal $principal -Action $action -Settings $settings -ErrorAction Stop|Out-Null
               try{
+                function Get-OwnedManualTaskProof([string]$ownedName,[long]$cursor){
+                  $all=@(Get-WinEvent -LogName 'Microsoft-Windows-TaskScheduler/Operational' -MaxEvents 4096 -ErrorAction Stop)
+                  $records=@(foreach($event in $all){
+                    if([long]$event.RecordId -le $cursor -or $event.Id -notin @(110,100,201,102)){continue}
+                    $xml=[xml]$event.ToXml()
+                    $fields=@{}
+                    foreach($node in $xml.SelectNodes("//*[local-name()='EventData']/*[local-name()='Data']")){
+                      $fields[[string]$node.GetAttribute('Name')]=[string]$node.InnerText
+                    }
+                    if($fields['TaskName'] -cne ('\'+$ownedName)){continue}
+                    $instance=[guid]::Empty
+                    $instanceText=[string]$fields['InstanceId']
+                    if(-not $instanceText){$instanceText=[string]$fields['TaskInstanceId']}
+                    if(-not [guid]::TryParse($instanceText,[ref]$instance) -or $instance -eq [guid]::Empty){continue}
+                    [pscustomobject]@{id=[int]$event.Id;record=[long]$event.RecordId;instance=$instance.ToString('D');result=[string]$fields['ResultCode']}
+                  })
+                  foreach($trigger in @($records|Where-Object id -eq 110|Sort-Object record)){
+                    $last=[long]$trigger.record
+                    $ids=@($last)
+                    $ok=$true
+                    foreach($id in @(100,201,102)){
+                      $matches=@($records|Where-Object {$_.instance -ceq $trigger.instance -and $_.id -eq $id -and $_.record -gt $last}|Sort-Object record)
+                      if($matches.Count -ne 1){$ok=$false;break}
+                      $e=$matches[0]
+                      if(($id -eq 201 -or ($id -eq 102 -and $e.result)) -and $e.result -notin @('0','0x0','0x00000000')){$ok=$false;break}
+                      $last=$e.record;$ids+=@($last)
+                    }
+                    if($ok){return [pscustomobject]@{verified=$true;record_ids=$ids;instance=$trigger.instance}}
+                  }
+                  return [pscustomobject]@{verified=$false;record_ids=@();instance=$null}
+                }
+                $cursor=[long](Get-WinEvent -LogName 'Microsoft-Windows-TaskScheduler/Operational' -MaxEvents 1 -ErrorAction Stop).RecordId
                 $startedAt=Get-Date
                 Start-ScheduledTask -TaskName $task -TaskPath '\' -ErrorAction Stop
                 $exitFile=Join-Path $root 'exit.txt'
                 $until=[datetime]::UtcNow.AddMinutes(6)
-                while(-not (Test-Path -LiteralPath $exitFile) -and [datetime]::UtcNow -lt $until){Start-Sleep -Seconds 3}
+                do{
+                  Start-Sleep -Seconds 3
+                  $current=Get-ScheduledTask -TaskName $task -TaskPath '\' -ErrorAction Stop
+                  if((Test-Path -LiteralPath $exitFile) -and $current.State -eq 'Ready'){
+                    $proof=Get-OwnedManualTaskProof $task $cursor
+                    if($proof.verified){break}
+                  }
+                }while([datetime]::UtcNow -lt $until)
+                $proof=Get-OwnedManualTaskProof $task $cursor
                 $log=Join-Path $root 'test.log'
                 $output=if(Test-Path -LiteralPath $log){Get-Content -LiteralPath $log -Raw}else{''}
                 $code=if(Test-Path -LiteralPath $exitFile){[int]([IO.File]::ReadAllText($exitFile))}else{-999}
@@ -771,7 +850,7 @@ jobs:
                   $xml=[xml]$_.ToXml()
                   @($xml.SelectNodes("/*[local-name()='Event']/*[local-name()='EventData']/*[local-name()='Data'][@Name='TaskName']")|Where-Object {$_.InnerText -ceq ('\'+$task)}).Count -gt 0
                 }|ForEach-Object {[int]$_.Id})
-                [pscustomobject]@{exit=$code;log=$output;system_sid_verified=$sidVerified;last_result=[int64]$info.LastTaskResult;state=[string]$current.State;event_ids=@($events|Sort-Object -Unique)}
+                [pscustomobject]@{exit=$code;log=$output;system_sid_verified=$sidVerified;last_result=[int64]$info.LastTaskResult;state=[string]$current.State;event_ids=@($events|Sort-Object -Unique);correlated_event_chain=$proof}
               }finally{
                 $owned=Get-ScheduledTask -TaskName $task -TaskPath '\' -ErrorAction Stop
                 if($owned.Principal.UserId -notin @('SYSTEM','S-1-5-18')){throw 'Unexpected task identity'}
@@ -780,9 +859,9 @@ jobs:
               }
             }
             $report.private_guest_dns_test_exit=$test.exit
-            $report.private_guest_dns_scheduler=[ordered]@{system_sid_verified=$test.system_sid_verified;last_result=$test.last_result;state=$test.state;event_ids=$test.event_ids}
+            $report.private_guest_dns_scheduler=[ordered]@{system_sid_verified=$test.system_sid_verified;last_result=$test.last_result;state=$test.state;event_ids=$test.event_ids;correlated_event_chain=$test.correlated_event_chain}
             Write-Host $test.log
-            if(-not $test.system_sid_verified -or $test.exit -ne 0 -or $test.log -notmatch 'PASS VOLVE_NESTED_GUEST_REAL_SIGNED_SYSTEM_DNS_STATIC_IPV4_AUTOMATIC_IPV6' -or $test.log -notmatch '--- PASS: TestNestedGuestSignedOriginalDNSNativeSYSTEM'){throw 'Real native SYSTEM DNS recovery test did not pass'}
+            if(-not $test.system_sid_verified -or $test.exit -ne 0 -or $test.last_result -ne 0 -or $test.state -ne 'Ready' -or -not $test.correlated_event_chain.verified -or $test.log -notmatch 'PASS VOLVE_NESTED_GUEST_REAL_SIGNED_SYSTEM_DNS_STATIC_IPV4_AUTOMATIC_IPV6' -or $test.log -notmatch '--- PASS: TestNestedGuestSignedOriginalDNSNativeSYSTEM'){throw 'Real native SYSTEM DNS recovery test did not pass'}
             $report.private_guest_dns_verified=$true
             $report.stage='native_dns_slice_verified_only'
             }
