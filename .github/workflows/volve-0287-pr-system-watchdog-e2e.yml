@@ -217,7 +217,7 @@ jobs:
     name: Windows guest ${{ matrix.trial }} (NO VOLVE INSTALL)
     needs: nested-hyperv-start-probe
     runs-on: windows-latest
-    timeout-minutes: 85
+    timeout-minutes: 120
     strategy:
       fail-fast: false
       matrix:
@@ -335,6 +335,9 @@ jobs:
             private_guest_dns_test_exit=$null
             dns_test_exe_sha256=$null
             dns_reboot_verified=$false
+            dns_reboot_arm_verified=$false
+            dns_reboot_original_sha256=$null
+            dns_reboot_event_chain=$null
             network_connectivity_verified=$false
             network_adapters=$null
             scheduler_preflight=$null
@@ -931,10 +934,23 @@ jobs:
             $copied=Invoke-Command -Session $session -ArgumentList $guestExe -ErrorAction Stop -ScriptBlock {param($path);(Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash}
             if($copied -cne $report.dns_test_exe_sha256){throw 'Guest test binary hash mismatch'}
             $report.stage='native_signed_dns_recovery_under_real_system'
-            $test=Invoke-Command -Session $session -ArgumentList $guestDNS,$trial -ErrorAction Stop -ScriptBlock {
-              param($root,$id)
+            $armDir=Join-Path $guestDNS 'arm'
+            $recoverDir=Join-Path $guestDNS 'recover'
+            Invoke-Command -Session $session -ArgumentList $guestDNS,$armDir,$recoverDir,$report.dns_test_exe_sha256 -ErrorAction Stop -ScriptBlock {
+              param($root,$arm,$recover,$sha)
+              foreach($p in @($arm,$recover)){
+                New-Item -ItemType Directory -Path $p -ErrorAction Stop|Out-Null
+                $dest=Join-Path $p 'VOLVE-CI-GuestDNS.test.exe'
+                Copy-Item -LiteralPath (Join-Path $root 'VOLVE-CI-GuestDNS.test.exe') -Destination $dest -ErrorAction Stop
+                if((Get-FileHash -LiteralPath $dest -Algorithm SHA256).Hash -cne $sha){throw 'Durable phase executable mismatch'}
+              }
+            }
+            foreach($phase in @('SINGLE','ARM')){
+            $phaseDir=if($phase -ceq 'ARM'){$armDir}else{$guestDNS}
+            $test=Invoke-Command -Session $session -ArgumentList $phaseDir,$trial,$phase -ErrorAction Stop -ScriptBlock {
+              param($root,$id,$phase)
               $ErrorActionPreference='Stop'
-              $task='VOLVE-CI-GuestDNS-'+$id
+              $task='VOLVE-CI-GuestDNS-'+$phase+'-'+$id
               if(Get-ScheduledTask -TaskName $task -ErrorAction SilentlyContinue){throw 'Task collision'}
               $runner=Join-Path $root 'run-test.cmd'
               $script=@'
@@ -945,12 +961,15 @@ jobs:
           set "GITHUB_ACTIONS=true"
           set "RUNNER_ENVIRONMENT=github-hosted"
           set "VOLVE_CI_NESTED_GUEST_DNS=PRIVATE_GUEST_ONLY"
-          "%~dp0VOLVE-CI-GuestDNS.test.exe" "-test.run=^TestNestedGuestSignedOriginalDNSNativeSYSTEM$" -test.v -test.timeout=32m > "%~dp0test.log" 2>&1
+          set "VOLVE_CI_DNS_REBOOT_PHASE=__PHASE__"
+          "%~dp0VOLVE-CI-GuestDNS.test.exe" "-test.run=^__TEST__$" -test.v -test.timeout=32m > "%~dp0test.log" 2>&1
           set "RESULT=%ERRORLEVEL%"
           > "%~dp0exit.tmp" echo %RESULT%
           move /y "%~dp0exit.tmp" "%~dp0exit.txt" >nul
           exit /b %RESULT%
           '@
+              $testName=if($phase -ceq 'ARM'){'TestNestedGuestDNSRebootArmSYSTEM'}elseif($phase -ceq 'SINGLE'){'TestNestedGuestSignedOriginalDNSNativeSYSTEM'}else{throw 'Unknown DNS lab phase'}
+              $script=$script.Replace('__PHASE__',$phase).Replace('__TEST__',$testName)
               Set-Content -LiteralPath $runner -Value $script -Encoding ASCII -ErrorAction Stop
               $action=New-ScheduledTaskAction -Execute (Join-Path $env:WINDIR 'System32\cmd.exe') -Argument ('/d /c ""'+$runner+'""') -WorkingDirectory $root
               $principal=New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest
@@ -1047,12 +1066,120 @@ jobs:
                 Unregister-ScheduledTask -TaskName $task -TaskPath '\' -Confirm:$false -ErrorAction Stop
               }
             }
+            if($phase -ceq 'ARM'){
+              $arm=$test
+              Write-Host $arm.log
+              if(-not $arm.system_sid_verified -or $arm.exit -ne 0 -or $arm.last_result -ne 0 -or $arm.state -ne 'Ready' -or -not $arm.correlated_event_chain.verified -or $arm.log -notmatch 'PASS VOLVE_DNS_REBOOT_ARMED_DUAL_STACK_FAULT_NO_RESTORE_YET' -or $arm.log -notmatch '--- PASS: TestNestedGuestDNSRebootArmSYSTEM'){throw 'Durable DNS fault not proven'}
+              break
+            }
             $report.private_guest_dns_test_exit=$test.exit
             $report.private_guest_dns_scheduler=[ordered]@{system_sid_verified=$test.system_sid_verified;last_result=$test.last_result;state=$test.state;event_ids=$test.event_ids;correlated_event_chain=$test.correlated_event_chain}
             Write-Host $test.log
             if(-not $test.system_sid_verified -or $test.exit -ne 0 -or $test.last_result -ne 0 -or $test.state -ne 'Ready' -or -not $test.correlated_event_chain.verified -or $test.log -notmatch 'PASS VOLVE_NESTED_GUEST_REAL_SIGNED_SYSTEM_DNS_STATIC_IPV4_AUTOMATIC_IPV6' -or $test.log -notmatch '--- PASS: TestNestedGuestSignedOriginalDNSNativeSYSTEM'){throw 'Real native SYSTEM DNS recovery test did not pass'}
             $report.private_guest_dns_verified=$true
             $report.stage='native_dns_slice_verified_only'
+            }
+            $keyMatches=[regex]::Matches($arm.log,'VOLVE_DNS_REBOOT_PUBLIC_KEY_SHA256=([a-f0-9]{64})')
+            $originalMatches=[regex]::Matches($arm.log,'VOLVE_DNS_REBOOT_ORIGINAL_SHA256=([a-f0-9]{64})')
+            if($keyMatches.Count -ne 1 -or $originalMatches.Count -ne 1){throw 'Unique preboot DNS pins not proven'}
+            $keyPin=$keyMatches[0].Groups[1].Value
+            $originalPin=$originalMatches[0].Groups[1].Value
+            $report.dns_reboot_arm_verified=$true
+            $report.dns_reboot_original_sha256=$originalPin
+            $chainSource=Join-Path $env:GITHUB_WORKSPACE 'development\0.28.7\lab\reboot_event_chain.ps1'
+            $chainHash=(Get-FileHash -LiteralPath $chainSource -Algorithm SHA256).Hash
+            Copy-Item -LiteralPath $chainSource -Destination (Join-Path $recoverDir 'reboot_event_chain.ps1') -ToSession $session -ErrorAction Stop
+            $report.stage='register_dedicated_system_dns_startup_recovery'
+            $bootTask=Invoke-Command -Session $session -ArgumentList $recoverDir,$trial,$keyPin,$originalPin,$chainHash -ErrorAction Stop -ScriptBlock {
+              param($root,$id,$key,$original,$chainSHA)
+              $ErrorActionPreference='Stop'
+              if($key -cnotmatch '^[a-f0-9]{64}$' -or $original -cnotmatch '^[a-f0-9]{64}$'){throw 'Invalid host-pinned recovery evidence'}
+              if((Get-FileHash -LiteralPath (Join-Path $root 'reboot_event_chain.ps1') -Algorithm SHA256).Hash -cne $chainSHA){throw 'Boot verifier bytes changed'}
+              $task='VOLVE-CI-BootRecovery-'+$id
+              if(Get-ScheduledTask -TaskName $task -TaskPath '\' -ErrorAction SilentlyContinue){throw 'Startup task collision'}
+              $runner=Join-Path $root 'recover.cmd'
+              $script=@'
+          @echo off
+          setlocal
+          "%SystemRoot%\System32\whoami.exe" /user /fo csv /nh > "%~dp0started.txt" 2>&1
+          if errorlevel 1 exit /b 91
+          set "GITHUB_ACTIONS=true"
+          set "RUNNER_ENVIRONMENT=github-hosted"
+          set "VOLVE_CI_NESTED_GUEST_DNS=PRIVATE_GUEST_ONLY"
+          set "VOLVE_CI_DNS_REBOOT_PHASE=RECOVER"
+          set "VOLVE_CI_DNS_REBOOT_PUBLIC_KEY_SHA256=__KEY__"
+          set "VOLVE_CI_DNS_REBOOT_ORIGINAL_SHA256=__ORIGINAL__"
+          "%~dp0VOLVE-CI-GuestDNS.test.exe" "-test.run=^TestNestedGuestDNSRebootRecoverSYSTEM$" -test.v -test.timeout=32m > "%~dp0test.log" 2>&1
+          set "RESULT=%ERRORLEVEL%"
+          > "%~dp0exit.tmp" echo %RESULT%
+          move /y "%~dp0exit.tmp" "%~dp0exit.txt" >nul
+          exit /b %RESULT%
+          '@
+              $script=$script.Replace('__KEY__',$key).Replace('__ORIGINAL__',$original)
+              Set-Content -LiteralPath $runner -Value $script -Encoding ASCII -ErrorAction Stop
+              $action=New-ScheduledTaskAction -Execute (Join-Path $env:WINDIR 'System32\cmd.exe') -Argument ('/d /c ""'+$runner+'""') -WorkingDirectory $root
+              $principal=New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest
+              $settings=New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Minutes 34)
+              Register-ScheduledTask -TaskName $task -TaskPath '\' -Principal $principal -Action $action -Settings $settings -Trigger (New-ScheduledTaskTrigger -AtStartup) -ErrorAction Stop|Out-Null
+              $owned=Get-ScheduledTask -TaskName $task -TaskPath '\' -ErrorAction Stop
+              if($owned.Principal.UserId -notin @('SYSTEM','S-1-5-18') -or $owned.State -ne 'Ready' -or @($owned.Triggers).Count -ne 1 -or $owned.Triggers[0].CimClass.CimClassName -cne 'MSFT_TaskBootTrigger'){throw 'Startup task not armed as SYSTEM'}
+              if(Test-Path -LiteralPath (Join-Path $root 'started.txt')){throw 'Recovery started before boot'}
+              [pscustomobject]@{name=$task;boot=(Get-CimInstance Win32_OperatingSystem).LastBootUpTime.ToUniversalTime().Ticks.ToString();xml=(Export-ScheduledTask -TaskName $task -TaskPath '\' -ErrorAction Stop);runner_sha=(Get-FileHash -LiteralPath $runner -Algorithm SHA256).Hash;cursor=[long](Get-WinEvent -LogName 'Microsoft-Windows-TaskScheduler/Operational' -MaxEvents 1 -ErrorAction Stop).RecordId}
+            }
+            $report.guest_boot_before=$bootTask.boot
+            $report.stage='reboot_with_persisted_dns_fault'
+            Invoke-Command -Session $session -ErrorAction Stop -ScriptBlock {
+              & shutdown.exe /s /t 5 /f
+              if($LASTEXITCODE -ne 0){throw 'DNS guest graceful shutdown failed'}
+            }
+            Remove-PSSession $session
+            $session=$null
+            $until=[datetime]::UtcNow.AddMinutes(4)
+            while((Get-VM -Id $vm.Id -ErrorAction Stop).State -ne 'Off' -and [datetime]::UtcNow -lt $until){Start-Sleep -Seconds 3}
+            if((Get-VM -Id $vm.Id -ErrorAction Stop).State -ne 'Off'){throw 'DNS guest poweroff not observed'}
+            $report.guest_poweroff_observed=$true
+            Start-VM -VM $vm -ErrorAction Stop
+            $session=Connect-Guest $vm.Id $credential 360
+            $report.stage='verify_boot_triggered_signed_dns_restoration'
+            $recovery=Invoke-Command -Session $session -ArgumentList $recoverDir,$bootTask.name,$bootTask.boot,$bootTask.xml,$bootTask.runner_sha,$bootTask.cursor,$chainHash,$report.dns_test_exe_sha256 -ErrorAction Stop -ScriptBlock {
+              param($root,$task,$before,$xml,$runnerSHA,$cursor,$chainSHA,$exeSHA)
+              $ErrorActionPreference='Stop'
+              $boot=(Get-CimInstance Win32_OperatingSystem).LastBootUpTime.ToUniversalTime()
+              if($boot.Ticks -le [long]$before){throw 'DNS guest boot did not advance'}
+              $chain=Join-Path $root 'reboot_event_chain.ps1'
+              if((Get-FileHash -LiteralPath $chain -Algorithm SHA256).Hash -cne $chainSHA){throw 'Boot chain verifier changed'}
+              . $chain
+              $exit=Join-Path $root 'exit.txt'
+              $proof=$null
+              $until=[datetime]::UtcNow.AddMinutes(35)
+              do{
+                Start-Sleep -Seconds 3
+                $owned=Get-ScheduledTask -TaskName $task -TaskPath '\' -ErrorAction Stop
+                if((Test-Path -LiteralPath $exit) -and $owned.State -eq 'Ready'){
+                  if([IO.File]::ReadAllText($exit).Trim() -ne '0'){break}
+                  try{$proof=Get-VolvRealBootChain -TaskName ('\'+$task) -BootUTC $boot}catch{}
+                  if($null -ne $proof){break}
+                }
+              }while([datetime]::UtcNow -lt $until)
+              $log=Join-Path $root 'test.log'
+              $output=if(Test-Path -LiteralPath $log){[IO.File]::ReadAllText($log)}else{''}
+              $code=if(Test-Path -LiteralPath $exit){[int]([IO.File]::ReadAllText($exit))}else{-999}
+              $started=Join-Path $root 'started.txt'
+              $sid=(Test-Path -LiteralPath $started) -and ([IO.File]::ReadAllText($started) -match '(?m),"S-1-5-18"\s*$')
+              $owned=Get-ScheduledTask -TaskName $task -TaskPath '\' -ErrorAction Stop
+              $info=Get-ScheduledTaskInfo -TaskName $task -TaskPath '\' -ErrorAction Stop
+              $unchanged=Assert-VolvRestoredTaskXML -SavedXML $xml -RestoredXML (Export-ScheduledTask -TaskName $task -TaskPath '\' -ErrorAction Stop)
+              if((Get-FileHash -LiteralPath (Join-Path $root 'recover.cmd') -Algorithm SHA256).Hash -cne $runnerSHA -or (Get-FileHash -LiteralPath (Join-Path $root 'VOLVE-CI-GuestDNS.test.exe') -Algorithm SHA256).Hash -cne $exeSHA){throw 'Recovery executable or runner changed'}
+              $fresh=($null -ne $proof -and $proof.TriggerRecordId -gt [long]$cursor)
+              [pscustomobject]@{boot=$boot.Ticks.ToString();exit=$code;log=$output;sid=$sid;result=[int64]$info.LastTaskResult;state=[string]$owned.State;xml_unchanged=$unchanged;fresh=$fresh;chain=$proof}
+            }
+            Write-Host $recovery.log
+            if($recovery.exit -ne 0 -or -not $recovery.sid -or $recovery.result -ne 0 -or $recovery.state -ne 'Ready' -or -not $recovery.xml_unchanged -or -not $recovery.fresh -or $recovery.log -notmatch 'PASS VOLVE_DNS_REBOOT_PERSISTED_SIGNED_DNS_RESTORED_NO_REAL_MOTOR_NO_CONNECTIVITY_PROOF' -or $recovery.log -notmatch '--- PASS: TestNestedGuestDNSRebootRecoverSYSTEM'){throw 'Boot-triggered DNS recovery not proven'}
+            $report.guest_boot_after=$recovery.boot
+            $report.dns_reboot_event_chain=$recovery.chain
+            $report.disk_persistence_verified=$true
+            $report.dns_reboot_verified=$true
+            $report.stage='native_signed_dns_reboot_verified_no_motor_no_connectivity'
             }
           }catch{
             $report.error_message=$_.Exception.Message
@@ -1160,5 +1287,6 @@ jobs:
             Write-Host 'PASS: real guest reboot + strict SYSTEM task fixture recovery; NO DNS TEST NO INSTALL.'
           }else{
             if(-not $report.private_guest_dns_verified){throw 'Private guest signed native DNS test not proven'}
-            Write-Host 'PASS: real signed native SYSTEM DNS slice; NO DNS REBOOT, NO REAL MOTOR, NO CONNECTIVITY PROOF, NO INSTALL.'
+            if(-not $report.dns_reboot_verified -or -not $report.dns_reboot_arm_verified -or -not $report.guest_poweroff_observed -or -not $report.disk_persistence_verified){throw 'Signed DNS startup recovery not proven'}
+            Write-Host 'PASS: real signed native SYSTEM DNS slice plus actual boot-triggered DNS recovery; NO REAL MOTOR, NO CONNECTIVITY PROOF, NO INSTALL.'
           }
