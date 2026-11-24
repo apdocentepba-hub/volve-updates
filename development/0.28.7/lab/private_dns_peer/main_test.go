@@ -8,7 +8,7 @@ import (
 
 func challengeQuery() []byte {
  q:=[]byte{0xab,0xcd,1,0,0,1,0,0,0,0,0,0}
- for _,s:=range []string{"0123456789abcdef0123456789abcdef","volve-ci","invalid"}{q=append(q,byte(len(s)));q=append(q,[]byte(s)...)}
+ for _,s:=range []string{"0123456789abcdef0123456789abcdef","volve-ci","test"}{q=append(q,byte(len(s)));q=append(q,[]byte(s)...)}
  return append(q,0,0,1,0,1)
 }
 func TestPrivateDNSChallengeReply(t *testing.T){
