@@ -369,7 +369,15 @@ if($Mode -eq 'Verify') {
         throw 'NOT VERIFIED: startup watchdog definition changed since VM Prepare'
     }
     $taskInfo=Get-ScheduledTaskInfo -TaskName $bootTask -ErrorAction Stop
-    if($taskInfo.LastTaskResult -ne 0 -or $taskInfo.LastRunTime.ToUniversalTime() -lt $now.AddSeconds(-3)) {throw 'No successful watchdog execution associated with this boot'}
+    # Real guest evidence at 90d20e0: the exact 118/100/201/102
+    # chain completed after the current boot, but the provider's
+    # LastRunTime predates that boot. The independent event chain above,
+    # protected SYSTEM task XML and recovery receipt remain mandatory.
+    # Keep the provider time as a diagnostic, not the authoritative clock.
+    if($taskInfo.LastTaskResult -ne 0 -or [string]$watch.State -ne 'Ready') {throw 'Watchdog task did not finish successfully and return to Ready'}
+    $providerLastRunUTC=$taskInfo.LastRunTime.ToUniversalTime()
+    $providerLastRunAfterBoot=($providerLastRunUTC -ge $now.AddSeconds(-3))
+    if(-not $providerLastRunAfterBoot){Write-Warning 'Scheduler LastRunTime disagrees with the independently correlated current-boot event chain'}
     $task=Assert-LabTask $labTask $cmd
     if($task.Actions[0].Arguments -ne '/C exit 0') {throw 'Original harmless task arguments not recovered'}
     # The visible action alone does not prove that principal, triggers,
@@ -401,6 +409,8 @@ if($Mode -eq 'Verify') {
         schedulerEventIds=$bootChain.EventIds;
         schedulerEventRecordIds=$bootChain.RecordIds;
         watchdogLastTaskResult=[int]$taskInfo.LastTaskResult;
+        watchdogProviderLastRunUtc=$providerLastRunUTC.ToString('o');
+        watchdogProviderLastRunAfterBoot=[bool]$providerLastRunAfterBoot;
         recoveryJournalState=$status;
         restoredAction=$cmd;restoredArguments='/C exit 0';
         restoredTaskXMLMatchesProtectedSnapshot=$true;
