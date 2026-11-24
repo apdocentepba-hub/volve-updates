@@ -5,6 +5,10 @@ package motorupdate
 import (
  "context"
  "errors"
+ "os"
+ "os/exec"
+ "path/filepath"
+ "time"
  "strings"
  "testing"
 )
@@ -169,4 +173,41 @@ func TestWindowsDNSAssignmentProvenanceRejectsMissingNullAndAliasedEvidence(t *t
  }{
   if _,err:=InspectWindowsDNSAssignmentProvenanceReadOnly(context.Background(),func(context.Context,string)([]byte,error){return []byte(raw),nil});err==nil{t.Fatal("invalid DNS record accepted")}
  }
+}
+
+
+// Execute the exact PowerShell predicate, not a second Go implementation.
+// No Windows DNS, adapter, registry, or task operation is issued.
+func TestWindowsDNSUnmappedLoopbackPlaceholderGuard(t *testing.T){
+ script:=windowsDNSLoopbackPlaceholderGuard+`
+$ErrorActionPreference='Stop'
+$exact=@('fec0:0:0:ffff::1','fec0:0:0:ffff::2','fec0:0:0:ffff::3')
+function Assert-Guard([bool]$expected,[string]$family,[uint32]$index,[object[]]$servers,[uint32[]]$loopIndexes,[int]$mapped){
+ $actual=Test-VolvUnmappedLoopbackPlaceholders -family $family -index $index -servers $servers -loopbackIPv6Indexes $loopIndexes -mappedGUIDCount $mapped
+ if($actual -ne $expected){throw 'Unexpected loopback placeholder classification'}
+}
+Assert-Guard $true 'IPv6' 1 $exact @(1) 0
+Assert-Guard $true 'IPv6' 27 $exact @(27) 0
+Assert-Guard $false 'IPv6' 1 $exact @(1) 1
+Assert-Guard $false 'IPv6' 1 $exact @(1) 2
+Assert-Guard $false 'IPv4' 1 $exact @(1) 0
+Assert-Guard $false 'IPv6' 1 $exact @(2) 0
+Assert-Guard $false 'IPv6' 1 $exact @(1,2) 0
+Assert-Guard $false 'IPv6' 1 $exact @(1,1) 0
+Assert-Guard $false 'IPv6' 1 $exact @() 0
+Assert-Guard $false 'IPv6' 0 $exact @(0) 0
+Assert-Guard $false 'IPv6' 1 @('fec0:0:0:ffff::1') @(1) 0
+Assert-Guard $false 'IPv6' 1 @('fec0:0:0:ffff::1','fec0:0:0:ffff::2','::1') @(1) 0
+Assert-Guard $false 'IPv6' 1 @('fec0:0:0:ffff::1','fec0:0:0:ffff::2','2001:4860:4860::8888') @(1) 0
+Assert-Guard $false 'IPv6' 1 @('fec0:0:0:ffff::1','fec0:0:0:ffff::1','fec0:0:0:ffff::3') @(1) 0
+Write-Output 'VOLVE_LOOPBACK_PLACEHOLDER_GUARD_14_PASS'
+`
+ path:=filepath.Join(t.TempDir(),"loopback-guard.ps1")
+ if err:=os.WriteFile(path,[]byte(script),0600);err!=nil{t.Fatal(err)}
+ root:=os.Getenv("SystemRoot")
+ if !filepath.IsAbs(root){t.Fatal("Windows system root unavailable")}
+ ps:=filepath.Join(root,"System32","WindowsPowerShell","v1.0","powershell.exe")
+ ctx,cancel:=context.WithTimeout(context.Background(),30*time.Second);defer cancel()
+ raw,err:=exec.CommandContext(ctx,ps,"-NoLogo","-NoProfile","-NonInteractive","-File",path).CombinedOutput()
+ if err!=nil||strings.TrimSpace(string(raw))!="VOLVE_LOOPBACK_PLACEHOLDER_GUARD_14_PASS"{t.Fatalf("native loopback guard test failed: %v %s",err,raw)}
 }
