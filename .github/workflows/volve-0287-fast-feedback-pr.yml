@@ -178,6 +178,39 @@ jobs:
             }
           }
           Write-Host 'PASS: parsed 15 recovery laboratory scripts'
+      - name: Verify retained native process handle on actual Windows (NO NETWORK NO INSTALL)
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          if($env:GITHUB_ACTIONS -cne 'true' -or $env:RUNNER_ENVIRONMENT -cne 'github-hosted'){throw 'Hosted CI only'}
+          $p=$null
+          $handle=$null
+          # Anonymous-to-other-trials child: a bounded wait on an owned event.
+          # Explicitly retain the original Process/SafeHandle, never open by PID.
+          $eventName='Local\VOLVE-CI-Handle-'+[guid]::NewGuid().ToString('N')
+          $signal=[Threading.EventWaitHandle]::new($false,[Threading.EventResetMode]::ManualReset,$eventName)
+          try{
+            $child='$e=[Threading.EventWaitHandle]::OpenExisting('+"'"+$eventName+"'"+');try{if(-not $e.WaitOne(15000)){exit 3}}finally{$e.Dispose()}'
+            $encoded=[Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($child))
+            $powershell=Join-Path $PSHOME 'powershell.exe'
+            $p=Start-Process -FilePath $powershell -ArgumentList @('-NoProfile','-NonInteractive','-EncodedCommand',$encoded) -PassThru -ErrorAction Stop
+            $handle=$p.SafeHandle
+            if($null -eq $handle -or $handle.IsClosed -or $handle.IsInvalid -or $p.HasExited){throw 'Cannot retain real child handle'}
+            $pin=$handle.DangerousGetHandle()
+            if($pin -eq [IntPtr]::Zero -or -not [object]::ReferenceEquals($p.SafeHandle,$handle)){throw 'Original native handle not retained'}
+            $null=$signal.Set()
+            if(-not $p.WaitForExit(20000)){throw 'Owned bounded child did not exit'}
+            if($p.ExitCode -ne 0 -or -not $p.HasExited){throw 'Original process termination not observed'}
+            if($handle.IsClosed -or $handle.IsInvalid -or $handle.DangerousGetHandle() -ne $pin -or -not [object]::ReferenceEquals($p.SafeHandle,$handle)){throw 'Original process handle changed before disposal'}
+            Write-Host 'PASS: actual Windows retained SafeHandle survives child exit and HasExited detects original termination; NO NETWORK NO DNS NO INSTALL'
+          }finally{
+            $null=$signal.Set()
+            if($null -ne $p){
+              if(-not $p.WaitForExit(20000)){throw 'Owned bounded child did not finish during cleanup'}
+              $p.Dispose()
+            }
+            $signal.Dispose()
+          }
       - name: Execute synthetic-only recovery and security tests (NO REBOOT NO DNS)
         shell: powershell
         run: |
