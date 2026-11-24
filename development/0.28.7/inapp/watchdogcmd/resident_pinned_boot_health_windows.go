@@ -55,7 +55,7 @@ func newPinnedResidentBootHealthWindows(ctx context.Context,root string)(
 
 // VerifyRunningIdentity must be called by the boot policy under its existing
 // protected kernel mutex. It checks the PHYSICAL original binary, full SYSTEM
-// Scheduler action, live process owner SID and both loopback UDP53 owners.
+// Scheduler action, live process owner SID and all four loopback UDP/TCP53 owners.
 // It is not a replacement for the independently signed journal/grant audit.
 func(h *residentPinnedBootHealthWindows)VerifyRunningIdentity(
  ctx context.Context,intent motorupdate.ResidentRecoveryIntent,outcome string,
@@ -94,13 +94,19 @@ func(h *residentPinnedBootHealthWindows)VerifyRunningIdentity(
   "$handle=[IO.File]::OpenRead($old);$hasher=[Security.Cryptography.SHA256]::Create();"+
   "try{$now=[BitConverter]::ToString($hasher.ComputeHash($handle)).Replace('-','').ToLowerInvariant()}finally{$handle.Dispose();$hasher.Dispose()};"+
   "if($now -cne $sha){throw 'original bytes changed during health'};"+
-  "$p=@(Get-CimInstance Win32_Process -ErrorAction Stop|Where-Object{[string]$_.ExecutablePath -ieq $old});"+
-  "if($p.Count -ne 1){throw 'restored original has no unique running process'};"+
+  "$all=@(Get-CimInstance Win32_Process -ErrorAction Stop);"+
+  "$known=@($old,"+q(filepath.Join(h.root,"VOLVE_DNS_Motor_0_28_7.exe"))+","+q(filepath.Join(h.root,"installed-engines","VOLVE_DNS_Motor_0_28_7.exe"))+");"+
+  "$p=@($all|Where-Object{([string]$_.Name -like 'VOLVE_DNS_*') -or ($known -icontains ([string]$_.ExecutablePath))});"+
+  "if($p.Count -ne 1 -or [string]$p[0].ExecutablePath -ine $old){throw 'restored original is not the only exact running motor'};"+
   "$owner=Invoke-CimMethod -InputObject $p[0] -MethodName GetOwnerSid -ErrorAction Stop;"+
   "if($owner.ReturnValue -ne 0 -or $owner.Sid -ne 'S-1-5-18'){throw 'restored DNS process owner is not SYSTEM'};"+
   "foreach($ip in @('127.0.0.1','::1')){"+
   "$port=@(Get-NetUDPEndpoint -LocalAddress $ip -LocalPort 53 -ErrorAction Stop);"+
-  "if($port.Count -ne 1 -or $port[0].OwningProcess -ne $p[0].ProcessId){throw ('original DNS UDP53 owner mismatch: '+$ip)}};"+
+  "if($port.Count -ne 1 -or $port[0].OwningProcess -ne $p[0].ProcessId){throw ('original DNS UDP53 owner mismatch: '+$ip)};"+
+  "$tcp=@(Get-NetTCPConnection -State Listen -LocalAddress $ip -LocalPort 53 -ErrorAction Stop);"+
+  "if($tcp.Count -ne 1 -or $tcp[0].OwningProcess -ne $p[0].ProcessId){throw ('original DNS TCP53 owner mismatch: '+$ip)}};"+
+  "$again=@(Get-CimInstance Win32_Process -ErrorAction Stop|Where-Object{([string]$_.Name -like 'VOLVE_DNS_*') -or ($known -icontains ([string]$_.ExecutablePath))});"+
+  "if($again.Count -ne 1 -or $again[0].ProcessId -ne $p[0].ProcessId -or $again[0].CreationDate -ne $p[0].CreationDate -or [string]$again[0].ExecutablePath -ine $old){throw 'motor identity changed during socket owner audit'};"+
   "Write-Output 'VOLVE_ORIGINAL_SYSTEM_DNS53_IDENTITY_VERIFIED'"
  out,err:=h.queryWindows(ctx,script)
  if err!=nil||strings.TrimSpace(out)!="VOLVE_ORIGINAL_SYSTEM_DNS53_IDENTITY_VERIFIED"{
