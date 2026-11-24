@@ -99,4 +99,24 @@ jobs:
           $ErrorActionPreference='Stop'
           $path=Join-Path $env:GITHUB_WORKSPACE '.github\workflows\volve-0287-pr-system-watchdog-e2e.yml'
           $lines=[IO.File]::ReadAllLines($path)
-          $step=@(for($i=0;$i -lt $lines.Length;$i++){if($lines[$i] -ceq '
+          $step=@(for($i=0;$i -lt $lines.Length;$i++){if($lines[$i] -ceq '      - name: Boot official evaluation guest and execute selected isolated trial'){$i}})
+          if($step.Count -ne 1){throw 'Expected one guest orchestration step'}
+          $start=-1
+          for($i=$step[0]+1;$i -lt $lines.Length;$i++){
+            if($lines[$i] -ceq '        run: |'){$start=$i+1;break}
+            if($lines[$i] -match '^      - '){break}
+          }
+          if($start -lt 0){throw 'Guest script block not found'}
+          $body=@(for($i=$start;$i -lt $lines.Length;$i++){
+            if($lines[$i] -match '^      - '){break}
+            if([string]::IsNullOrWhiteSpace($lines[$i])){'';continue}
+            if(-not $lines[$i].StartsWith('          ')){throw 'Unexpected guest script indentation'}
+            $lines[$i].Substring(10)
+          })
+          $source=$body -join [Environment]::NewLine
+          $tokens=$null
+          $errors=$null
+          $ast=[System.Management.Automation.Language.Parser]::ParseInput($source,[ref]$tokens,[ref]$errors)
+          if(@($errors).Count -ne 0){throw ('Guest PowerShell syntax rejected: '+(($errors|ForEach-Object Message)-join '; '))}
+          if($null -eq $ast -or $body.Count -lt 100){throw 'Guest script AST absent or unexpectedly short'}
+          Write-Host ('PASS VOLVE_GUEST_ORCHESTRATION_NATIVE_PARSE lines='+$body.Count+'; NO EXECUTION')
