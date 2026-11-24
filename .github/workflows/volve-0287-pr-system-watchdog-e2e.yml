@@ -524,7 +524,9 @@ jobs:
               Register-ScheduledTask -TaskName $name -TaskPath '\' -Action $action -Principal $principal -Settings $settings -ErrorAction Stop|Out-Null
               try{
                 function Get-OwnedManualTaskProof([string]$ownedName,[long]$cursor){
-                  $all=@(Get-WinEvent -LogName 'Microsoft-Windows-TaskScheduler/Operational' -MaxEvents 4096 -ErrorAction Stop)
+                  $all=@()
+                  try{$all=@(Get-WinEvent -LogName 'Microsoft-Windows-TaskScheduler/Operational' -MaxEvents 4096 -ErrorAction Stop)}
+                  catch{if($_.FullyQualifiedErrorId -notmatch '^NoMatchingEventsFound(?:,|$)'){throw}}
                   $records=@(foreach($event in $all){
                     if([long]$event.RecordId -le $cursor -or $event.Id -notin @(110,100,201,102)){continue}
                     $xml=[xml]$event.ToXml()
@@ -554,7 +556,13 @@ jobs:
                   }
                   return [pscustomobject]@{verified=$false;record_ids=@();instance=$null}
                 }
-                $cursor=[long](Get-WinEvent -LogName 'Microsoft-Windows-TaskScheduler/Operational' -MaxEvents 1 -ErrorAction Stop).RecordId
+                # A newly enabled Operational log may legitimately be empty.
+                # Empty is a valid zero cursor, NEVER a successful event chain.
+                $cursor=[long]0
+                $logInfo=Get-WinEvent -ListLog 'Microsoft-Windows-TaskScheduler/Operational' -ErrorAction Stop
+                if(-not $logInfo.IsEnabled){throw 'Scheduler event journal disabled'}
+                try{$cursor=[long](Get-WinEvent -LogName 'Microsoft-Windows-TaskScheduler/Operational' -MaxEvents 1 -ErrorAction Stop).RecordId}
+                catch{if($_.FullyQualifiedErrorId -notmatch '^NoMatchingEventsFound(?:,|$)'){throw}}
                 $start=Get-Date
                 Start-ScheduledTask -TaskName $name -TaskPath '\' -ErrorAction Stop
                 $limit=[datetime]::UtcNow.AddSeconds(90)
@@ -863,7 +871,9 @@ jobs:
               Register-ScheduledTask -TaskName $task -TaskPath '\' -Principal $principal -Action $action -Settings $settings -ErrorAction Stop|Out-Null
               try{
                 function Get-OwnedManualTaskProof([string]$ownedName,[long]$cursor){
-                  $all=@(Get-WinEvent -LogName 'Microsoft-Windows-TaskScheduler/Operational' -MaxEvents 4096 -ErrorAction Stop)
+                  $all=@()
+                  try{$all=@(Get-WinEvent -LogName 'Microsoft-Windows-TaskScheduler/Operational' -MaxEvents 4096 -ErrorAction Stop)}
+                  catch{if($_.FullyQualifiedErrorId -notmatch '^NoMatchingEventsFound(?:,|$)'){throw}}
                   $records=@(foreach($event in $all){
                     if([long]$event.RecordId -le $cursor -or $event.Id -notin @(110,100,201,102)){continue}
                     $xml=[xml]$event.ToXml()
@@ -893,7 +903,13 @@ jobs:
                   }
                   return [pscustomobject]@{verified=$false;record_ids=@();instance=$null}
                 }
-                $cursor=[long](Get-WinEvent -LogName 'Microsoft-Windows-TaskScheduler/Operational' -MaxEvents 1 -ErrorAction Stop).RecordId
+                # A newly enabled Operational log may legitimately be empty.
+                # Empty is a valid zero cursor, NEVER a successful event chain.
+                $cursor=[long]0
+                $logInfo=Get-WinEvent -ListLog 'Microsoft-Windows-TaskScheduler/Operational' -ErrorAction Stop
+                if(-not $logInfo.IsEnabled){throw 'Scheduler event journal disabled'}
+                try{$cursor=[long](Get-WinEvent -LogName 'Microsoft-Windows-TaskScheduler/Operational' -MaxEvents 1 -ErrorAction Stop).RecordId}
+                catch{if($_.FullyQualifiedErrorId -notmatch '^NoMatchingEventsFound(?:,|$)'){throw}}
                 $startedAt=Get-Date
                 Start-ScheduledTask -TaskName $task -TaskPath '\' -ErrorAction Stop
                 $exitFile=Join-Path $root 'exit.txt'
