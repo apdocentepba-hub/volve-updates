@@ -175,15 +175,57 @@ jobs:
           Write-Host 'PASS: Hyper-V started an empty isolated VM; NO guest OS boot or VOLVE installation proven.'
 
   nested-windows-guest-reboot:
-    name: Windows Server evaluation guest boot and disk persistence (NO VOLVE INSTALL)
+    name: Windows guest real reboot and strict SYSTEM recovery kit (NO VOLVE INSTALL)
     needs: nested-hyperv-start-probe
     runs-on: windows-latest
-    timeout-minutes: 55
+    timeout-minutes: 65
     steps:
-      - name: Boot official evaluation guest twice with no network
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.x'
+      - name: Reconstruct hash-pinned VOLVE source; never publish a motor
+        shell: bash
+        run: |
+          python - <<'PY'
+          import hashlib, zipfile, shutil
+          from pathlib import Path
+          root=Path("development/0.28.7")
+          parts=sorted((root/"complete-source-parts").glob("part-*.bin"))
+          assert [p.name for p in parts]==[f"part-{i:02d}.bin" for i in range(10)]
+          data=b"".join(p.read_bytes() for p in parts)
+          assert hashlib.sha256(data).hexdigest()=="92b3536559151260375b17a64eedd009df8399e45460637208027b7ca0587ba5"
+          Path("source.zip").write_bytes(data)
+          Path("build").mkdir(exist_ok=True)
+          with zipfile.ZipFile("source.zip") as z:z.extractall("build")
+          for name,sha in [
+            ("VOLVE_0287_PRECHECK_RESCATE_OVERLAY_NO_INSTALAR.zip","fdfd31f21df81fe6da6075bfd442354297874576b6dc2c38f19bd35a681d95cd"),
+            ("VOLVE_0287_RECUPERACION_INTERRUPCION_FORZADA_NO_INSTALAR_v3.zip","773bd5eb5f1c4883021cc321856636354e964d3605dba9017e2fb5d1a7401b40"),
+          ]:
+            p=root/name
+            assert hashlib.sha256(p.read_bytes()).hexdigest()==sha
+            with zipfile.ZipFile(p) as z:z.extractall("build")
+          for p in (root/"journal").glob("*.go"):
+            shutil.copy2(p,Path("build/codigo/motorupdate")/p.name)
+          PY
+          go run development/0.28.7/inapp/apply_overlay.go build/codigo
+      - name: Build standalone VM-only journal helper
+        shell: powershell
+        working-directory: build/codigo
+        run: |
+          $ErrorActionPreference='Stop'
+          $out=Join-Path $env:RUNNER_TEMP 'volve-journal-lab.exe'
+          & go build -trimpath -o $out ./cmd/volve-journal-lab
+          if($LASTEXITCODE -ne 0){throw 'Could not compile the lab journal helper'}
+          if((Get-Item -LiteralPath $out).Length -lt 1048576){throw 'Unexpectedly short lab helper'}
+          Write-Host 'PASS: compiled lab journal helper; not a product executable'
+      - name: Boot official evaluation guest and verify strict SYSTEM recovery after real reboot
         shell: powershell
         env:
-          CANDIDATE_HEAD: ${{ github.event.pull_request.head.sha }}
+          CANDIDATE_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
           $ErrorActionPreference='Stop'
           if($env:GITHUB_ACTIONS -ne 'true' -or $env:RUNNER_ENVIRONMENT -ne 'github-hosted'){throw 'Hosted CI only'}
@@ -209,6 +251,11 @@ jobs:
             guest_boot_before=$null
             guest_boot_after=$null
             disk_persistence_verified=$false
+            recovery_kit_prepared=$false
+            recovery_kit_audit_passed=$false
+            recovery_kit_verified=$false
+            recovery_kit_cleanup_verified=$false
+            recovery_proof_sha256=$null
             network_adapters=$null
             cleanup_ok=$false
             error_message=$null
@@ -231,6 +278,7 @@ jobs:
             if($LASTEXITCODE -ne 0){throw ('Microsoft VHD download failed with curl exit '+$LASTEXITCODE)}
             $report.downloaded_bytes=(Get-Item -LiteralPath $vhd).Length
             $report.downloaded_sha256=(Get-FileHash -LiteralPath $vhd -Algorithm SHA256).Hash
+            if($report.downloaded_sha256 -cne '588355586A3B99F1D47CEE02F4861680A7E1BCB353582FBE7DA11E2988E7562F'){throw 'Official VHD bytes differ from the previously observed successful lab image; review before running'}
             Get-VHD -Path $vhd -ErrorAction Stop | Out-Null
             $report.stage='prepare_offline_guest_answer_file'
             $password='V!a7'+[guid]::NewGuid().ToString('N')
@@ -297,6 +345,43 @@ jobs:
             $report.guest_os=$before.os
             $report.guest_boot_before=$before.boot
             $report.guest_boot_verified=$true
+            $report.stage='prepare_strict_system_recovery_kit'
+            $trial=$env:GITHUB_RUN_ID+'321'
+            if($trial -cnotmatch '^[0-9]{14,18}$'){throw 'Unexpected trial identifier'}
+            $checkedOut=(& git rev-parse HEAD).Trim()
+            if($LASTEXITCODE -ne 0 -or $checkedOut -cne $env:CANDIDATE_HEAD){throw 'Candidate source checkout mismatch'}
+            $guestKit='C:\VOLVE-CI-RebootKit'
+            Invoke-Command -Session $session -ArgumentList $guestKit -ErrorAction Stop -ScriptBlock {
+              param($root)
+              if(Test-Path -LiteralPath $root){throw 'Existing kit directory'}
+              New-Item -ItemType Directory -Path $root -ErrorAction Stop | Out-Null
+            }
+            $source=Join-Path $env:GITHUB_WORKSPACE 'development/0.28.7/lab'
+            $files=@('boot_recovery_lab.ps1','reboot_event_chain.ps1','vm_cleanup_state_contract.ps1','vm_environment_baseline.ps1','vm_reboot_proof.ps1','VM_ROLLBACK_BOOT_PACK_README.md','volve-journal-lab.exe')
+            foreach($file in $files){
+              if($file -ceq 'volve-journal-lab.exe'){$src=Join-Path $env:RUNNER_TEMP $file}else{$src=Join-Path $source $file}
+              $sha=(Get-FileHash -LiteralPath $src -Algorithm SHA256).Hash
+              $dst=Join-Path $guestKit $file
+              Copy-Item -LiteralPath $src -Destination $dst -ToSession $session -ErrorAction Stop
+              $observed=Invoke-Command -Session $session -ArgumentList $dst -ErrorAction Stop -ScriptBlock {param($path);(Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash}
+              if($observed -cne $sha){throw ('Guest kit copy hash mismatch: '+$file)}
+            }
+            Invoke-Command -Session $session -ArgumentList $guestKit,$trial -ErrorAction Stop -ScriptBlock {
+              param($root,$id)
+              $ErrorActionPreference='Stop'
+              & wevtutil.exe sl Microsoft-Windows-TaskScheduler/Operational /e:true
+              if($LASTEXITCODE -ne 0){throw 'Cannot enable task history'}
+              $script=Join-Path $root 'vm_reboot_proof.ps1'
+              & $script -Mode Probe
+              & $script -Mode Prepare -RunId $id -LabScript (Join-Path $root 'boot_recovery_lab.ps1') -JournalExe (Join-Path $root 'volve-journal-lab.exe')
+            }
+            $report.recovery_kit_prepared=$true
+            Invoke-Command -Session $session -ArgumentList $guestKit,$trial -ErrorAction Stop -ScriptBlock {
+              param($root,$id)
+              $ErrorActionPreference='Stop'
+              & (Join-Path $root 'vm_reboot_proof.ps1') -Mode AuditPrepared -RunId $id
+            }
+            $report.recovery_kit_audit_passed=$true
             $report.stage='restart_and_verify_guest_disk'
             Invoke-Command -Session $session -ErrorAction Stop -ScriptBlock {
               & shutdown.exe /r /t 5 /f
@@ -322,7 +407,36 @@ jobs:
             if($after.marker -cne $before.marker){throw 'Guest disk marker did not persist'}
             $report.guest_boot_after=$after.boot
             $report.disk_persistence_verified=$true
-            $report.stage='guest_reboot_verified_only'
+            $report.stage='verify_system_watchdog_recovery_after_real_reboot'
+            $session=Connect-Guest $vm.Id $credential 120
+            Invoke-Command -Session $session -ArgumentList $guestKit,$trial -ErrorAction Stop -ScriptBlock {
+              param($root,$id)
+              $ErrorActionPreference='Stop'
+              $dir=Join-Path $env:ProgramData ('VOLVE-VM-RebootLab-'+$id)
+              $marker=Join-Path $dir ('VOLVE-CI-BOOT-'+$id+'\boot-recovery-success.marker')
+              $until=[datetime]::UtcNow.AddMinutes(3)
+              while(-not (Test-Path -LiteralPath $marker) -and [datetime]::UtcNow -lt $until){Start-Sleep -Seconds 5}
+              & (Join-Path $root 'vm_reboot_proof.ps1') -Mode Verify -RunId $id
+            }
+            $proof=Invoke-Command -Session $session -ArgumentList $trial -ErrorAction Stop -ScriptBlock {
+              param($id)
+              $path=Join-Path $env:ProgramData ('VOLVE-VM-RebootLab-'+$id+'\vm-proof-evidence.json')
+              $p=Get-Content -LiteralPath $path -Raw -ErrorAction Stop|ConvertFrom-Json
+              if($p.test -cne 'VOLVE-VM-REAL-REBOOT' -or $p.runId -cne $id -or $p.recoveryJournalState -cne 'NO_ROLLBACK:restored'){throw 'Unexpected recovery proof'}
+              [pscustomobject]@{sha=(Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash;events=($p.schedulerEventIds -join ',');journal=$p.recoveryJournalState}
+            }
+            $report.recovery_proof_sha256=$proof.sha
+            $report.recovery_event_ids=$proof.events
+            $report.recovery_journal_state=$proof.journal
+            $report.recovery_kit_verified=$true
+            $report.stage='cleanup_verified_recovery_kit'
+            Invoke-Command -Session $session -ArgumentList $guestKit,$trial -ErrorAction Stop -ScriptBlock {
+              param($root,$id)
+              $ErrorActionPreference='Stop'
+              & (Join-Path $root 'vm_reboot_proof.ps1') -Mode Cleanup -RunId $id
+            }
+            $report.recovery_kit_cleanup_verified=$true
+            $report.stage='guest_reboot_and_fixture_recovery_verified'
           }catch{
             $report.error_message=$_.Exception.Message
           }finally{
@@ -345,4 +459,5 @@ jobs:
           if(-not $report.cleanup_ok){throw 'Guest cleanup failed'}
           if($report.error_message){throw ('Guest test failed in '+$report.stage+': '+$report.error_message)}
           if(-not $report.disk_persistence_verified){throw 'Guest persistence not demonstrated'}
-          Write-Host 'PASS: official Windows Server evaluation guest reboot and disk marker persistence; NO VOLVE installation or DNS recovery tested.'
+          if(-not $report.recovery_kit_verified -or -not $report.recovery_kit_cleanup_verified){throw 'Strict SYSTEM recovery kit not fully verified'}
+          Write-Host 'PASS: real guest reboot and strict SYSTEM task fixture recovery with cleanup; NO VOLVE installation or DNS recovery tested.'
