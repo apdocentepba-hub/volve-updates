@@ -64,6 +64,7 @@ func PersistSignedOriginalDNSEvidenceNativeWindows(
  if err!=nil||pending.Status!="recovery-required"{
   return errors.New("no protected pending DNS recovery transaction")
  }
+ if err:=VerifyExplicitResidentRecoveryScope(ctx,grant.Permit,grant.Signature,key,ResidentRecoveryScopeMotorAndDNS,pending.Intent.Nonce);err!=nil{return nil,nil,err}
  binding,err:=VerifySignedDNSOriginalBinding(
   ctx,signedJSON,signedSignature,key,pending.Intent,grant.Permit)
  if err!=nil{return err}
