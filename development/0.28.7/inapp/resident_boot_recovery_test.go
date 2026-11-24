@@ -251,3 +251,71 @@ func TestBootRecoveryNeverWritesRestoredReceiptWhenOriginalChangesAfterRestore(t
   t.Fatalf("post-restore corrupted fallback consumed pending intent: %+v %v",pending,err)
  }
 }
+
+
+// Contract tests only: no OS mutations. The real native SYSTEM adapter must
+// implement the stopped-candidate proof and signed census separately.
+type bootDNSPolicyLab struct{
+ bootPolicyLab
+ dnsRestores,dnsChecks int
+ failDNSRestore bool
+ failDNSCheckAt int
+}
+func(l *bootDNSPolicyLab)RestoreOriginalDNS(context.Context,ResidentRecoveryIntent)error{
+ if l.lockCalls!=l.unlockCalls+1{return errors.New("DNS restore outside exclusive lease")}
+ l.dnsRestores++
+ if l.failDNSRestore{return errors.New("simulated DNS recovery failure")}
+ return nil
+}
+func(l *bootDNSPolicyLab)VerifyOriginalDNS(context.Context,ResidentRecoveryIntent)error{
+ if l.lockCalls!=l.unlockCalls+1{return errors.New("DNS readback outside exclusive lease")}
+ l.dnsChecks++
+ if l.dnsChecks==l.failDNSCheckAt{return errors.New("simulated original DNS mismatch")}
+ return nil
+}
+func TestDNSAwareBootRecoveryChecksOriginalEvenWhenMotorAlreadyRunning(t *testing.T){
+ dir:=armBootPolicyJournal(t)
+ lab:=&bootDNSPolicyLab{}
+ checks:=&bootIdentityLab{}
+ state,err:=RecoverPendingResidentAfterBootWithOriginalDNS(context.Background(),dir,residentLabACL,residentLabACL,checks,lab)
+ if err!=nil||state!="restored"||lab.restoreCalls!=0||lab.dnsRestores!=1||lab.dnsChecks!=2||lab.unlockCalls!=1{
+  t.Fatalf("DNS-only recovery skipped or unexpected motor switch: %s %v %+v",state,err,lab)
+ }
+ state,err=RecoverPendingResidentAfterBootWithOriginalDNS(context.Background(),dir,residentLabACL,residentLabACL,checks,lab)
+ if err!=nil||state!="restored"||lab.dnsRestores!=1||lab.dnsChecks!=2{t.Fatal("terminal receipt triggered DNS mutations")}
+}
+func TestDNSAwareBootRecoveryNeverFinalizesOnWrongOriginalDNS(t *testing.T){
+ for _,tc:=range []struct{name string;restoreFail bool;checkAt int;identityFail bool;networkFail bool;expectedDNSCalls int}{
+  {"restore-fails",true,0,false,false,1},
+  {"initial-readback-fails",false,1,false,false,1},
+  {"final-readback-fails-after-healthy-network",false,2,false,false,1},
+  {"motor-still-wrong",false,0,true,false,0},
+  {"network-fails",false,0,false,true,1},
+ }{
+  t.Run(tc.name,func(t *testing.T){
+   dir:=armBootPolicyJournal(t)
+   lab:=&bootDNSPolicyLab{failDNSRestore:tc.restoreFail,failDNSCheckAt:tc.checkAt}
+   checks:=&bootIdentityLab{failForever:tc.identityFail,networkFailure:tc.networkFail}
+   state,err:=RecoverPendingResidentAfterBootWithOriginalDNS(context.Background(),dir,residentLabACL,residentLabACL,checks,lab)
+   if err==nil||state!=""||lab.dnsRestores!=tc.expectedDNSCalls||lab.unlockCalls!=1{t.Fatalf("unsafe completion or restore: %s %v %+v",state,err,lab)}
+   journal,e:=InspectResidentRecoveryJournal(context.Background(),dir,residentLabACL)
+   if e!=nil||journal.Status!="recovery-required"{t.Fatalf("lost pending journal: %+v %v",journal,e)}
+   if _,e:=os.Lstat(filepath.Join(dir,ResidentResultFile));!os.IsNotExist(e){t.Fatal("failure created terminal receipt")}
+   // Retry after a recoverable fault. A new audit must prove both original
+   // DNS readbacks, not reuse the prior successful connectivity result.
+   lab.failDNSRestore=false
+   lab.failDNSCheckAt=0
+   checks.failForever=false
+   checks.networkFailure=false
+   state,err=RecoverPendingResidentAfterBootWithOriginalDNS(context.Background(),dir,residentLabACL,residentLabACL,checks,lab)
+   if err!=nil||state!="restored"||lab.unlockCalls!=2{t.Fatalf("safe retry failed: %s %v",state,err)}
+  })
+ }
+}
+func TestDNSAwareBootRecoveryRequiresExplicitDriverAndContext(t *testing.T){
+ dir:=armBootPolicyJournal(t)
+ checks:=&bootIdentityLab{}
+ if _,err:=RecoverPendingResidentAfterBootWithOriginalDNS(context.Background(),dir,residentLabACL,residentLabACL,checks,nil);err==nil{t.Fatal("missing DNS recovery driver accepted")}
+ lab:=&bootDNSPolicyLab{}
+ if _,err:=RecoverPendingResidentAfterBootWithOriginalDNS(nil,dir,residentLabACL,residentLabACL,checks,lab);err==nil||lab.lockCalls!=0{t.Fatal("missing context acquired privileged lease")}
+}
