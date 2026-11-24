@@ -460,3 +460,25 @@ func TestNestedGuestDNSRebootRecoverSYSTEM(t *testing.T){
  if err!=nil||pending.Status!="recovery-required"{t.Fatal("DNS-only recovery cannot finalize motor journal")}
  t.Log("PASS VOLVE_DNS_REBOOT_PERSISTED_SIGNED_DNS_RESTORED_NO_REAL_MOTOR_NO_CONNECTIVITY_PROOF")
 }
+
+
+// Independent post-boot observer. Unlike ARM and RECOVER, this test must
+// never call a privileged writer, change task state, or claim completion.
+// Run it from the host's PowerShell Direct session after the SYSTEM task
+// has exited, using the original digest pinned before shutdown.
+func TestNestedGuestDNSRebootVerifyReadOnly(t *testing.T){
+ if os.Getenv("VOLVE_CI_DNS_REBOOT_PHASE")!="VERIFY"{t.Skip("explicit private guest read-only observation required")}
+ if os.Getenv("VOLVE_CI_NESTED_GUEST_DNS")!="PRIVATE_GUEST_ONLY"||os.Getenv("GITHUB_ACTIONS")!="true"||os.Getenv("RUNNER_ENVIRONMENT")!="github-hosted"{t.Fatal("not isolated CI")}
+ ctx,cancel:=context.WithTimeout(context.Background(),2*time.Minute)
+ defer cancel()
+ raw,err:=nestedGuestDNSIsolationReadOnly(ctx)
+ if err!=nil{t.Fatal(err)}
+ guid:=strings.TrimSpace(string(raw))
+ if len(guid)!=38{t.Fatal("unexpected private NIC identity")}
+ want:=os.Getenv("VOLVE_CI_DNS_REBOOT_ORIGINAL_SHA256")
+ if len(want)!=64{t.Fatal("missing independently pinned original DNS digest")}
+ if _,err:=hex.DecodeString(want);err!=nil{t.Fatal("invalid original digest")}
+ got:=nestedDNSRebootCensus(t,ctx,guid,false)
+ if got.SHA256!=want{t.Fatal("post-task DNS readback does not match preboot digest")}
+ t.Log("PASS VOLVE_DNS_REBOOT_INDEPENDENT_READBACK_NO_WRITES")
+}
