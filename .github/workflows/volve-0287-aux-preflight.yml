@@ -96,7 +96,6 @@ jobs:
           $out=Join-Path $env:RUNNER_TEMP 'VOLVE-CI-PrivateSetup-NO-RELEASE.exe'
           go build -trimpath -o $out main_windows.go stage.go
           if($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $out -PathType Leaf)){throw 'Single staging EXE compilation failed'}
-          $unexpected=Join-Path $env:RUNNER_TEMP 'VOLVE-CI-Capsule-Refusal'
           $env:VOLVE_CI_NESTED_GUEST_DNS=''
           & $out --stage-private-ci ('A'*64) ('B'*64) ('C'*64)
           if($LASTEXITCODE -eq 0){throw 'Private capsule accepted execution outside private guest'}
