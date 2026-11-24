@@ -84,3 +84,40 @@ func TestProtectedPreflightHoldsRealMutexThroughoutSignedWindowsCensus(t *testin
  unlock()
  t.Logf("PASS VOLVE_PROTECTED_SIGNED_HOST_6_INVENTORIES route=%s NO_INSTALL_NO_DNS_TASK_WRITES",review.Route)
 }
+
+func TestReviewLeaseBoundary(t *testing.T) {
+ injected:=errors.New("partial acquisition failed")
+ for _,tc:=range []struct{
+  name string
+  withRelease, cancelBefore, cancelDuring bool
+  acquireError,errorExpected error
+  wantCalls,wantReleases int
+ }{
+  {"partial failure",true,false,false,injected,injected,1,1},
+  {"ordinary failure",false,false,false,injected,injected,1,0},
+  {"pre-canceled",true,true,false,nil,context.Canceled,0,0},
+  {"cancel during acquire",true,false,true,nil,context.Canceled,1,1},
+  {"cancel with partial failure",true,false,true,injected,injected,1,1},
+  {"success",true,false,false,nil,nil,1,1},
+ }{
+  t.Run(tc.name,func(t *testing.T){
+   ctx,cancel:=context.WithCancel(context.Background())
+   defer cancel()
+   if tc.cancelBefore{cancel()}
+   calls,releases:=0,0
+   release,err:=acquireReviewLease(ctx,func(context.Context)(func(),error){
+    calls++
+    if tc.cancelDuring{cancel()}
+    var unlock func()
+    if tc.withRelease{unlock=func(){releases++}}
+    return unlock,tc.acquireError
+   })
+   if !errors.Is(err,tc.errorExpected){t.Fatalf("unexpected error: %v",err)}
+   if err!=nil && release!=nil{t.Fatal("failed lease escaped")}
+   if err==nil{if release==nil{t.Fatal("missing release")};release()}
+   if calls!=tc.wantCalls||releases!=tc.wantReleases{t.Fatalf("calls=%d releases=%d",calls,releases)}
+  })
+ }
+ if release,err:=acquireReviewLease(context.Background(),func(context.Context)(func(),error){return nil,nil});err==nil||release!=nil{t.Fatal("missing release accepted")}
+ if _,err:=acquireReviewLease(nil,nil);err==nil{t.Fatal("invalid context accepted")}
+}

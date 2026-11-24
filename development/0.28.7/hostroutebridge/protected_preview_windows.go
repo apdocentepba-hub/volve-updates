@@ -18,6 +18,22 @@ import (
  motorupdate "volve-browser-protection/motorupdate"
 )
 
+// acquireReviewLease never returns a partially acquired mutex to the caller.
+// It preserves the native owner-thread release contract and refuses a
+// successful acquisition that races with context cancellation.
+func acquireReviewLease(ctx context.Context, acquire func(context.Context)(func(),error)) (func(),error) {
+ if ctx==nil||acquire==nil{return nil,errors.New("review lease requires context and acquisition callback")}
+ if err:=ctx.Err();err!=nil{return nil,err}
+ release,err:=acquire(ctx)
+ if err!=nil {
+  if release!=nil{release()}
+  return nil,err
+ }
+ if release==nil{return nil,errors.New("native transition lease did not provide a release callback")}
+ if err:=ctx.Err();err!=nil{release();return nil,err}
+ return release,nil
+}
+
 // InspectAndPlanUnderProtectedLeaseReadOnly is the precursor to a future
 // privileged transaction: acquire the real protected OS-wide mutex and
 // perform the full dual-signed package and six-inventory Windows inspection
@@ -38,9 +54,8 @@ func InspectAndPlanUnderProtectedLeaseReadOnly(
  var zeroPlan InstallerPlanReadOnly
  if ctx==nil{return zeroReview,zeroPlan,errors.New("protected host review needs a context")}
  if err:=ctx.Err();err!=nil{return zeroReview,zeroPlan,err}
- release,err:=motorupdate.AcquireProtectedResidentTransitionLease(ctx)
+ release,err:=acquireReviewLease(ctx,motorupdate.AcquireProtectedResidentTransitionLease)
  if err!=nil{return zeroReview,zeroPlan,fmt.Errorf("cannot obtain privileged SYSTEM/updater transition lease: %w",err)}
- if release==nil{return zeroReview,zeroPlan,errors.New("native transition lease did not provide a release callback")}
  defer release()
  review,plan,err:=InspectAndPlanWindowsHostReadOnly(
   ctx,signedEXE,publisherPublicKey,windowsSignerCertSHA256,

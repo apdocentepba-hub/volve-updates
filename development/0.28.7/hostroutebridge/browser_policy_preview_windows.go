@@ -97,20 +97,21 @@ func InspectAndPlanWithProtectionSnapshotUnderProtectedLeaseReadOnly(
  if ctx==nil{return emptyReview,emptyPlan,emptyPolicy,emptySnapshot,errors.New("missing Windows inspection context")}
  if err:=ctx.Err();err!=nil{return emptyReview,emptyPlan,emptyPolicy,emptySnapshot,err}
  if snapshotInspectors.Browser==nil{return emptyReview,emptyPlan,emptyPolicy,emptySnapshot,errors.New("fixed read-only browser policy inspector required")}
- release,err:=motorupdate.AcquireProtectedResidentTransitionLease(ctx)
+ release,err:=acquireReviewLease(ctx,motorupdate.AcquireProtectedResidentTransitionLease)
  if err!=nil{return emptyReview,emptyPlan,emptyPolicy,emptySnapshot,fmt.Errorf("protected SYSTEM/updater mutex denied: %w",err)}
- if release==nil{return emptyReview,emptyPlan,emptyPolicy,emptySnapshot,errors.New("protected OS mutex missing release callback")}
  defer release()
 
  beforeSnapshot,beforeBrowser,err:=motorupdate.InspectWindowsProtectionSnapshotReadOnly(
   ctx,"","",snapshotInspectors,
  )
  if err!=nil{return emptyReview,emptyPlan,emptyPolicy,emptySnapshot,fmt.Errorf("complete protection baseline before signed review failed: %w",err)}
+ if err:=ctx.Err();err!=nil{return emptyReview,emptyPlan,emptyPolicy,emptySnapshot,err}
  review,plan,err:=InspectAndPlanWindowsHostReadOnly(
   ctx,signedEXE,publisherPublicKey,windowsSignerCertSHA256,
   signedEXESHA256,installedRoot,readers,
  )
  if err!=nil{return emptyReview,emptyPlan,emptyPolicy,emptySnapshot,err}
+ if err:=ctx.Err();err!=nil{return emptyReview,emptyPlan,emptyPolicy,emptySnapshot,err}
  afterSnapshot,afterBrowser,err:=motorupdate.InspectWindowsProtectionSnapshotReadOnly(
   ctx,"","",snapshotInspectors,
  )
