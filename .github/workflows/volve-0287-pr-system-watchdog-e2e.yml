@@ -296,6 +296,21 @@ jobs:
           & go test -c -trimpath -o $out ./motorupdate
           if($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $out)){throw 'Could not compile exact motorupdate tests'}
           Write-Host 'PASS: candidate motorupdate test executable compiled; NO PRODUCT INSTALL'
+      - name: Compile and test private DNS peer and parse client probe
+        if: matrix.trial == 'native-dns'
+        shell: powershell
+        working-directory: development/0.28.7/lab
+        run: |
+          $ErrorActionPreference='Stop'
+          go test -count=1 -v private_dns_peer/main.go private_dns_peer/main_test.go
+          if($LASTEXITCODE -ne 0){throw 'Private DNS peer regression failed'}
+          $out=Join-Path $env:RUNNER_TEMP 'VOLVE-CI-PrivateDNSPeer.exe'
+          go build -trimpath -o $out private_dns_peer/main.go
+          if($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $out)){throw 'Private DNS peer compile failed'}
+          $tokens=$null;$errors=$null
+          $null=[System.Management.Automation.Language.Parser]::ParseFile((Join-Path (Get-Location) 'private_dns_client_probe.ps1'),[ref]$tokens,[ref]$errors)
+          if(@($errors).Count -ne 0){throw ('Private DNS client probe parse failed: '+($errors|Out-String))}
+          Write-Host ('PASS: private DNS peer compiled SHA256='+((Get-FileHash -LiteralPath $out -Algorithm SHA256).Hash)+'; CLIENT PARSED ONLY; NO NETWORK PROOF')
       - name: Parse exact candidate guest orchestration without executing it
         shell: powershell
         run: |
