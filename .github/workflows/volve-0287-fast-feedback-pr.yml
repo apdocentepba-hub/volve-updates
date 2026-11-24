@@ -18,6 +18,7 @@ on:
       - 'development/0.28.7/lab/ci_task_scheduler_event_diagnostic.ps1'
       - 'development/0.28.7/lab/private_dns_peer_vm.ps1'
       - 'development/0.28.7/lab/test_private_dns_peer_identity.ps1'
+      - 'development/0.28.7/unifiedbundle/**'
       - 'development/0.28.7/inapp/ci_fresh_dns53_windows_test.go'
   workflow_dispatch:
 permissions:
@@ -46,6 +47,13 @@ jobs:
           go test -count=1 ./...
           go vet ./...
           echo 'PASS: fast Go migration contract; NOT a production installer validation'
+      - name: Verify signed public package with bounded component hashing
+        working-directory: development/0.28.7/unifiedbundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          go test -count=1 -race -v ./...
+          go vet ./...
       - name: Verify installer progress and fail-closed recovery states
         working-directory: development/0.28.7/installer-wizard/installerprogress
         shell: bash

@@ -48,7 +48,7 @@ type Manifest struct {
 }
 
 // Verify requires an external, pinned publisher public key, not a key supplied
-// by the untrusted bundle. The exact signed manifest then pins all 8 inputs.
+// by the untrusted bundle. The exact signed manifest pins all seven public components.
 // Reverify after copying to protected installer staging; this is preflight only.
 func Verify(dir string, trusted ed25519.PublicKey) (*Manifest,error) {
  if len(trusted)!=ed25519.PublicKeySize{return nil,errors.New("missing trusted publisher public key")}
@@ -77,10 +77,9 @@ func Verify(dir string, trusted ed25519.PublicKey) (*Manifest,error) {
   if c.Size<=0||c.Size>maxComponent{return nil,fmt.Errorf("component %s size rejected",c.ID)}
   if len(c.SHA256)!=64||strings.ToLower(c.SHA256)!=c.SHA256{return nil,fmt.Errorf("component %s hash format rejected",c.ID)}
   if _,err:=hex.DecodeString(c.SHA256);err!=nil{return nil,err}
-  data,err:=readFile(filepath.Join(dir,expected),maxComponent)
+  digest,err:=hashExactComponent(filepath.Join(dir,expected),c.Size)
   if err!=nil{return nil,fmt.Errorf("component %s: %w",c.ID,err)}
-  digest:=sha256.Sum256(data)
-  if c.Size!=int64(len(data))||hex.EncodeToString(digest[:])!=c.SHA256{return nil,fmt.Errorf("component %s modified",c.ID)}
+  if digest!=c.SHA256{return nil,fmt.Errorf("component %s modified",c.ID)}
   allowed[expected]=true
  }
  entries,err:=os.ReadDir(dir)
@@ -89,7 +88,31 @@ func Verify(dir string, trusted ed25519.PublicKey) (*Manifest,error) {
  for _,entry:=range entries{
   if !allowed[entry.Name()]||!entry.Type().IsRegular(){return nil,fmt.Errorf("unexpected or linked entry %q",entry.Name())}
  }
+ finalRoot,err:=os.Lstat(dir)
+ if err!=nil||!finalRoot.IsDir()||finalRoot.Mode()&os.ModeSymlink!=0||!os.SameFile(info,finalRoot){return nil,errors.New("bundle root changed during verification")}
  return &m,nil
+}
+// hashExactComponent uses bounded streaming rather than loading up to 1 GiB
+// into RAM. The signed size is enforced both before and during hashing.
+// This is an integrity preflight, not a replacement for protected NTFS staging.
+func hashExactComponent(path string,expectedSize int64)(string,error){
+ if expectedSize<=0||expectedSize>maxComponent{return "",errors.New("invalid signed component size")}
+ before,err:=os.Lstat(path)
+ if err!=nil{return "",err}
+ if !before.Mode().IsRegular()||before.Size()!=expectedSize{return "",errors.New("component is not a regular file of the signed size")}
+ f,err:=os.Open(path)
+ if err!=nil{return "",err}
+ defer f.Close()
+ opened,err:=f.Stat()
+ if err!=nil||!opened.Mode().IsRegular()||!os.SameFile(before,opened)||opened.Size()!=expectedSize{return "",errors.New("component changed before hashing")}
+ digest:=sha256.New()
+ n,err:=io.CopyBuffer(digest,io.LimitReader(f,expectedSize+1),make([]byte,64*1024))
+ if err!=nil{return "",err}
+ after,err:=f.Stat()
+ if err!=nil||!os.SameFile(before,after)||n!=expectedSize||after.Size()!=expectedSize||!after.ModTime().Equal(before.ModTime()){return "",errors.New("component changed while hashing")}
+ current,err:=os.Lstat(path)
+ if err!=nil||!current.Mode().IsRegular()||!os.SameFile(before,current)||current.Size()!=expectedSize||!current.ModTime().Equal(before.ModTime()){return "",errors.New("component path changed while hashing")}
+ return hex.EncodeToString(digest.Sum(nil)),nil
 }
 func readFile(path string,limit int64)([]byte,error){
  before,err:=os.Lstat(path)
