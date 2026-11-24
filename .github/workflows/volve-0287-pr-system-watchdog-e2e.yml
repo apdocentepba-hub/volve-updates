@@ -271,6 +271,11 @@ jobs:
         working-directory: build/codigo
         run: |
           $ErrorActionPreference='Stop'
+          $name='TestNestedGuestDNSIsolationScriptParsesWithoutExecution'
+          $listed=@(go test ./motorupdate -list ('^'+$name+'$'))
+          if($LASTEXITCODE -ne 0 -or $listed -cnotcontains $name){throw 'Mandatory guest PowerShell syntax test is missing'}
+          go test ./motorupdate -run ('^'+$name+'$') -count=1 -timeout 1m -v
+          if($LASTEXITCODE -ne 0){throw 'Guest isolation guard failed native PowerShell parse; refuse expensive VM trial'}
           $out=Join-Path $env:RUNNER_TEMP 'VOLVE-CI-GuestDNS.test.exe'
           & go test -c -trimpath -o $out ./motorupdate
           if($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $out)){throw 'Could not compile exact motorupdate tests'}
