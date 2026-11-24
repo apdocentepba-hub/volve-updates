@@ -598,7 +598,10 @@ jobs:
                     }
                     if($ok){return [pscustomobject]@{verified=$true;record_ids=$ids;instance=$trigger.instance}}
                   }
-                  return [pscustomobject]@{verified=$false;record_ids=@();instance=$null}
+                  # Keep the exact owned event metadata on rejection so
+                  # that provider ordering/schema differences are observable.
+                  # No unrelated task name, command, account or raw XML.
+                  return [pscustomobject]@{verified=$false;record_ids=@();instance=$null;cursor=$cursor;observed=@($records|Sort-Object record|Select-Object -Last 32)}
                 }
                 # A newly enabled Operational log may legitimately be empty.
                 # Empty is a valid zero cursor, NEVER a successful event chain.
@@ -699,7 +702,7 @@ jobs:
               $ErrorActionPreference='Stop'
               . (Join-Path $root 'reboot_event_chain.ps1')
               . (Join-Path $root 'vm_environment_baseline.ps1')
-              foreach($name in @('VOLVE-CI-StartupMotor-'+$id,'VOLVE-CI-BootRecovery-'+$id)){
+              foreach($name in @(('VOLVE-CI-StartupMotor-'+$id),('VOLVE-CI-BootRecovery-'+$id))){
                 if(Get-ScheduledTask -TaskName $name -ErrorAction SilentlyContinue){throw 'Unexpected recovery task before control'}
               }
               $state=Get-VolvVMBaselineState -RunId $id
@@ -722,7 +725,7 @@ jobs:
               $ErrorActionPreference='Stop'
               . (Join-Path $root 'reboot_event_chain.ps1')
               . (Join-Path $root 'vm_environment_baseline.ps1')
-              foreach($name in @('VOLVE-CI-StartupMotor-'+$id,'VOLVE-CI-BootRecovery-'+$id)){
+              foreach($name in @(('VOLVE-CI-StartupMotor-'+$id),('VOLVE-CI-BootRecovery-'+$id))){
                 if(Get-ScheduledTask -TaskName $name -ErrorAction SilentlyContinue){throw 'Unexpected recovery task after control'}
               }
               [pscustomobject]@{boot=(Get-CimInstance Win32_OperatingSystem -ErrorAction Stop).LastBootUpTime.ToUniversalTime().Ticks.ToString();state=(Get-VolvVMBaselineState -RunId $id)}
@@ -976,7 +979,10 @@ jobs:
                     }
                     if($ok){return [pscustomobject]@{verified=$true;record_ids=$ids;instance=$trigger.instance}}
                   }
-                  return [pscustomobject]@{verified=$false;record_ids=@();instance=$null}
+                  # Keep the exact owned event metadata on rejection so
+                  # that provider ordering/schema differences are observable.
+                  # No unrelated task name, command, account or raw XML.
+                  return [pscustomobject]@{verified=$false;record_ids=@();instance=$null;cursor=$cursor;observed=@($records|Sort-Object record|Select-Object -Last 32)}
                 }
                 # A newly enabled Operational log may legitimately be empty.
                 # Empty is a valid zero cursor, NEVER a successful event chain.
