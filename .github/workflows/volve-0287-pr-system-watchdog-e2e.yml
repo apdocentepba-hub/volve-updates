@@ -486,11 +486,26 @@ jobs:
             New-Item -ItemType Directory -Path $dir -ErrorAction Stop | Out-Null
             $drive=[IO.DriveInfo]::new([IO.Path]::GetPathRoot($dir))
             $budget=[int64]($drive.AvailableFreeSpace-6GB)
-            if($budget -lt 4GB){throw 'Insufficient disk space for official VHD plus safety margin'}
+            $expectedImageBytes=[int64]10208214528
+            if($budget -lt $expectedImageBytes){throw 'Insufficient disk space for exact official VHD plus safety margin'}
             # Official Microsoft Evaluation Center direct download; never uploaded or redistributed.
-            & curl.exe --fail --location --proto '=https' --proto-redir '=https' --connect-timeout 30 --max-time 1200 --max-filesize $budget --silent --show-error --output $vhd 'https://go.microsoft.com/fwlink/p/?clcid=0x409&country=us&culture=en-us&linkid=2195166'
-            if($LASTEXITCODE -ne 0){throw ('Microsoft VHD download failed with curl exit '+$LASTEXITCODE)}
+            # At most two complete attempts for transient transport failures. A retry
+            # starts from byte zero; no partial image is mounted or trusted.
+            $downloadExit=-1
+            for($attempt=1;$attempt -le 2;$attempt++){
+              if(Test-Path -LiteralPath $vhd){throw 'Unexpected existing download destination'}
+              Write-Host ('Official VHD download attempt '+$attempt+' of 2')
+              & curl.exe --fail --location --proto '=https' --proto-redir '=https' --connect-timeout 30 --max-time 1200 --max-filesize $expectedImageBytes --silent --show-error --output $vhd 'https://go.microsoft.com/fwlink/p/?clcid=0x409&country=us&culture=en-us&linkid=2195166'
+              $downloadExit=$LASTEXITCODE
+              if(Test-Path -LiteralPath $vhd -PathType Leaf){$report.downloaded_bytes=(Get-Item -LiteralPath $vhd).Length}
+              if($downloadExit -eq 0){break}
+              if($attempt -eq 2 -or $downloadExit -notin @(6,7,18,28,52,55,56)){break}
+              if(Test-Path -LiteralPath $vhd -PathType Leaf){Remove-Item -LiteralPath $vhd -Force -ErrorAction Stop}
+              Start-Sleep -Seconds 5
+            }
+            if($downloadExit -ne 0){throw ('Microsoft VHD download failed with curl exit '+$downloadExit)}
             $report.downloaded_bytes=(Get-Item -LiteralPath $vhd).Length
+            if($report.downloaded_bytes -ne $expectedImageBytes){throw 'Official VHD length differs from pinned lab image'}
             $report.downloaded_sha256=(Get-FileHash -LiteralPath $vhd -Algorithm SHA256).Hash
             if($report.downloaded_sha256 -cne '588355586A3B99F1D47CEE02F4861680A7E1BCB353582FBE7DA11E2988E7562F'){throw 'Official VHD bytes differ from the previously observed successful lab image; review before running'}
             Get-VHD -Path $vhd -ErrorAction Stop | Out-Null
