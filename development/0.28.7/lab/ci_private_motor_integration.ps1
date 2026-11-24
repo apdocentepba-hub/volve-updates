@@ -82,12 +82,62 @@ try{
     $checks=4
     # Never specify -Server here. Unique reserved names avoid cache hits
     # and demonstrate use of the configured localhost resolver.
+    Write-Host 'PASS VOLVE_PRIVATE_MOTOR_RAW_WIRE_FOUR_TRANSPORTS_SYSTEM'
+    # Windows may retain transient socket state immediately after replacing
+    # a dead DNS endpoint with a live listener. Never count a socket error
+    # as success, never change DNS, and never bypass the configured resolver.
+    $resolverAttempts=@()
     foreach($transport in @('Default','TCP')){
-        $challenge=[guid]::NewGuid().ToString('N')+'.volve-motor-ci.test.'
-        $queryParams=@{Name=$challenge;Type='A';DnsOnly=$true;NoHostsFile=$true;QuickTimeout=$true;ErrorAction='Stop'}
-        if($transport -ceq 'TCP'){$queryParams.TcpOnly=$true}
-        $answers=@(Resolve-DnsName @queryParams|Where-Object {$_.PSObject.Properties['IPAddress'] -and [string]$_.Type -eq 'A'})
-        if($answers.Count -ne 1 -or $answers[0].IPAddress -cne '203.0.113.7' -or ([string]$answers[0].Name).TrimEnd('.') -cne $challenge.TrimEnd('.')){throw 'Configured Windows resolver did not reach actual motor'}
+        $resolved=$false
+        for($attempt=1;$attempt -le 3;$attempt++){
+            Assert-LoopbackAssignments
+            $challenge=[guid]::NewGuid().ToString('N')+'.volve-motor-ci.test.'
+            $queryParams=@{Name=$challenge;Type='A';DnsOnly=$true;NoHostsFile=$true;ErrorAction='Stop'}
+            if($transport -ceq 'TCP'){$queryParams.TcpOnly=$true}
+            try{
+                $answers=@(Resolve-DnsName @queryParams|Where-Object {$_.PSObject.Properties['IPAddress'] -and [string]$_.Type -eq 'A'})
+            }catch{
+                $id=[string]$_.FullyQualifiedErrorId
+                $transient=$id -cmatch '^(10054|10057|10061|10060|WSAECONNRESET|WSAENOTCONN|WSAECONNREFUSED|WSAETIMEDOUT|ERROR_TIMEOUT),Microsoft\.DnsClient\.Commands\.ResolveDnsName
+    Assert-LoopbackAssignments
+    $again=@(Get-CimInstance Win32_Process -Filter ('ProcessId='+$pidNumber) -ErrorAction Stop)
+    if($again.Count -ne 1 -or $again[0].CreationDate -ne $creation -or $again[0].ExecutablePath -ine $exe){throw 'Motor replaced during test'}
+    if((Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash -cne $MotorSHA -or (Get-FileHash -LiteralPath $catalog -Algorithm SHA256).Hash -cne $catalogPin){throw 'Motor/catalog changed during probe'}
+    $report=[ordered]@{actual_system_motor=$true;motor_sha256=$MotorSHA;catalog_sha256=$catalogPin;independent_wire_probe_sha256=$WireProbeSHA;independent_wire_probe_verified=$true;dual_stack_transport_checks=$checks;configured_resolver_default=$true;configured_resolver_tcp=$true;configured_resolver_attempts=$resolverAttempts;blocked_domains_verified=$true;synthetic_upstream_only=$true}
+}finally{
+    if($owned){
+        $registered=Get-ScheduledTask -TaskName $task -TaskPath '\' -ErrorAction Stop
+        if($registered.Principal.UserId -notin @('SYSTEM','S-1-5-18') -or @($registered.Actions).Count -ne 1 -or [string]$registered.Actions[0].Execute -ine $exe -or [string]$registered.Actions[0].Arguments -cne $argument){throw 'Refuse cleanup of unexpected task identity'}
+        Stop-ScheduledTask -TaskName $task -TaskPath '\' -ErrorAction Stop
+        $deadline=[datetime]::UtcNow.AddSeconds(30)
+        do{
+            $left=@(Get-CimInstance Win32_Process -ErrorAction Stop|Where-Object {$_.ExecutablePath -ieq $exe})
+            if($left.Count -eq 0){break}
+            Start-Sleep -Seconds 1
+        }while([datetime]::UtcNow -lt $deadline)
+        if($left.Count -ne 0){throw 'Actual motor did not stop'}
+        Unregister-ScheduledTask -TaskName $task -TaskPath '\' -Confirm:$false -ErrorAction Stop
+        Assert-FreeDNS53
+        Assert-LoopbackAssignments
+    }
+}
+if($null -eq $report){throw 'Actual motor verification incomplete'}
+$report.motor_stopped=$true
+[pscustomobject]$report
+
+                Write-Host ('CI configured resolver: transport='+$transport+' attempt='+$attempt+' error='+$id)
+                $resolverAttempts+=@([pscustomobject]@{transport=$transport;attempt=$attempt;success=$false;error_id=$id})
+                if(-not $transient -or $attempt -eq 3){throw}
+                Start-Sleep -Seconds 5
+                continue
+            }
+            if($answers.Count -ne 1 -or $answers[0].IPAddress -cne '203.0.113.7' -or ([string]$answers[0].Name).TrimEnd('.') -cne $challenge.TrimEnd('.')){throw 'Configured Windows resolver did not reach actual motor'}
+            $resolverAttempts+=@([pscustomobject]@{transport=$transport;attempt=$attempt;success=$true;error_id=$null})
+            Write-Host ('PASS VOLVE_CONFIGURED_RESOLVER_'+$transport+' attempt='+$attempt)
+            $resolved=$true
+            break
+        }
+        if(-not $resolved){throw ('Configured resolver not verified: '+$transport)}
     }
     Assert-LoopbackAssignments
     $again=@(Get-CimInstance Win32_Process -Filter ('ProcessId='+$pidNumber) -ErrorAction Stop)
