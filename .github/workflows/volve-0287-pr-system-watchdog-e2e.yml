@@ -903,6 +903,20 @@ jobs:
                     $xml=[xml]$_.ToXml()
                     @($xml.SelectNodes("/*[local-name()='Event']/*[local-name()='EventData']/*[local-name()='Data'][@Name='TaskName']")|Where-Object {$_.InnerText -ceq ('\'+$taskName)}).Count -gt 0
                   }|ForEach-Object {[int]$_.Id})
+                  # Strict environmental failure remains a failure. Record a
+                  # separately correlated, read-only fixture result to isolate
+                  # the watchdog mechanism from unrelated OS task drift.
+                  $chain=$null
+                  $chainError=$null
+                  try{$chain=Get-VolvRealBootChain -TaskName ('\'+$taskName) -BootUTC $boot.ToUniversalTime()}
+                  catch{$chainError=$_.Exception.Message}
+                  $xmlMatches=$false
+                  $xmlError=$null
+                  try{
+                    $saved=[IO.File]::ReadAllText((Join-Path $dir ('VOLVE-CI-BOOT-'+$id+'\old-task.xml')))
+                    $live=Export-ScheduledTask -TaskName ('VOLVE-CI-StartupMotor-'+$id) -TaskPath '\' -ErrorAction Stop
+                    $xmlMatches=Assert-VolvRestoredTaskXML -SavedXML $saved -RestoredXML $live
+                  }catch{$xmlError=$_.Exception.Message}
                   $journalStatus='unavailable'
                   $journal=Join-Path $dir ('VOLVE-CI-BOOT-'+$id+'\recovery.json')
                   $helper=Join-Path $dir 'volve-journal-lab.exe'
@@ -915,6 +929,10 @@ jobs:
                     watchdog_last_result=[int64]$info.LastTaskResult
                     watchdog_last_run_after_boot=($info.LastRunTime -ge $boot.AddSeconds(-5))
                     watchdog_event_ids=@($events|Sort-Object -Unique)
+                    watchdog_correlated_boot_chain=$chain
+                    watchdog_chain_error=$chainError
+                    fixture_original_xml_matches=$xmlMatches
+                    fixture_xml_error=$xmlError
                     recovery_journal_status=$journalStatus
                     before=@($old.taskRecords).Count;after=@($new.taskRecords).Count
                     added=@($added|ForEach-Object {& $classify $_})
@@ -946,7 +964,7 @@ jobs:
               if(Test-Path -LiteralPath $dir){Remove-Item -LiteralPath $dir -Recurse -Force -ErrorAction Stop}
               $report.cleanup_ok=$true
             }catch{$report.cleanup_error=$_.Exception.Message}
-            $json=ConvertTo-Json -InputObject $report -Depth 4 -Compress
+            $json=ConvertTo-Json -InputObject $report -Depth 8 -Compress
             Write-Host "VOLVE_WINDOWS_GUEST_REBOOT_RESULT=$json"
             Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value $json
           }
