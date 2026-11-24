@@ -142,3 +142,59 @@ func TestResidentQuiescenceUsesActualDisposableWindowsTaskAndPortInventory(t *te
   t.Fatalf("actual Windows foreign SYSTEM task action was accepted: %+v %v",rejected,rejectedErr)
  }
 }
+
+
+func TestResidentQuiescenceRequiresCompleteUnambiguousOSCensus(t *testing.T){
+ root:=filepath.Join(t.TempDir(),"VOLVE-LAB")
+ raw,err:=json.Marshal(quiescentFixture(root))
+ if err!=nil{t.Fatal(err)}
+ var all map[string]json.RawMessage
+ if err:=json.Unmarshal(raw,&all);err!=nil{t.Fatal(err)}
+ reject:=func(t *testing.T,body string){
+  t.Helper()
+  decision,err:=residentQuiescenceWithQuery(context.Background(),root,"0.28.7",
+   func(context.Context,string)(string,error){return body,nil})
+  if err==nil||decision.ReadyForFurtherChecks{t.Fatalf("incomplete/ambiguous census admitted: %+v %v",decision,err)}
+ }
+ for field:=range all{
+  t.Run("missing-"+field,func(t *testing.T){
+   var copy map[string]json.RawMessage
+   if err:=json.Unmarshal(raw,&copy);err!=nil{t.Fatal(err)}
+   delete(copy,field)
+   body,err:=json.Marshal(copy);if err!=nil{t.Fatal(err)}
+   reject(t,string(body))
+  })
+  t.Run("null-"+field,func(t *testing.T){
+   var copy map[string]json.RawMessage
+   if err:=json.Unmarshal(raw,&copy);err!=nil{t.Fatal(err)}
+   copy[field]=json.RawMessage("null")
+   body,err:=json.Marshal(copy);if err!=nil{t.Fatal(err)}
+   reject(t,string(body))
+  })
+  t.Run("duplicate-"+field,func(t *testing.T){
+   reject(t,string(raw[:len(raw)-1])+","+string(mustQuiescenceTestJSON(t,field))+":"+string(all[field])+"}")
+  })
+ }
+ reject(t,strings.Replace(string(raw),"\"MotorProcessCount\"","\"motorprocesscount\"",1))
+ reject(t,strings.Replace(string(raw),"\"MotorProcessCount\":0","\"MotorProcessCount\":\"0\"",1))
+ reject(t,string(raw)+"{}")
+}
+func mustQuiescenceTestJSON(t *testing.T,v string)[]byte{
+ t.Helper()
+ raw,err:=json.Marshal(v)
+ if err!=nil{t.Fatal(err)}
+ return raw
+}
+func TestResidentQuiescenceCountsNamedMotorEvenWhenPathIsUnavailable(t *testing.T){
+ root:=filepath.Join(t.TempDir(),"VOLVE-LAB")
+ o:=quiescentFixture(root)
+ o.MotorProcessCount=1
+ raw,err:=json.Marshal(o);if err!=nil{t.Fatal(err)}
+ decision,err:=residentQuiescenceWithQuery(context.Background(),root,"0.28.7",
+  func(_ context.Context,script string)(string,error){
+   if !strings.Contains(script,"([string]$_.Name -like 'VOLVE_DNS_*') -or"){t.Fatal("named process with inaccessible path not counted")}
+   return string(raw),nil
+  })
+ if err==nil||decision.ReadyForFurtherChecks{t.Fatal("named active process ignored")}
+ if _,err:=residentQuiescenceWithQuery(nil,root,"0.28.7",func(context.Context,string)(string,error){t.Fatal("nil context invoked query");return "",nil});err==nil{t.Fatal("nil context accepted")}
+}
