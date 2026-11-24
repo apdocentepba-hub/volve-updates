@@ -366,6 +366,9 @@ jobs:
             trial=$env:VOLVE_GUEST_TRIAL
             environment_drift=$null
             clean_boot_control=$null
+            clean_task_audit=@()
+            recovery_task_audit=@()
+            task_audit_error=$null
             runner_commit=$env:GITHUB_SHA
             source='Microsoft Windows Server 2022 evaluation center VHD'
             stage='download'
@@ -766,7 +769,7 @@ jobs:
               New-Item -ItemType Directory -Path $root -ErrorAction Stop | Out-Null
             }
             $source=Join-Path $env:GITHUB_WORKSPACE 'development/0.28.7/lab'
-            $files=@('boot_recovery_lab.ps1','reboot_event_chain.ps1','vm_cleanup_state_contract.ps1','vm_environment_baseline.ps1','vm_reboot_proof.ps1','VM_ROLLBACK_BOOT_PACK_README.md','volve-journal-lab.exe')
+            $files=@('boot_recovery_lab.ps1','reboot_event_chain.ps1','vm_cleanup_state_contract.ps1','vm_environment_baseline.ps1','vm_reboot_proof.ps1','VM_ROLLBACK_BOOT_PACK_README.md','volve-journal-lab.exe','ci_task_scheduler_event_diagnostic.ps1')
             foreach($file in $files){
               if($file -ceq 'volve-journal-lab.exe'){$src=Join-Path $env:RUNNER_TEMP $file}else{$src=Join-Path $source $file}
               $sha=(Get-FileHash -LiteralPath $src -Algorithm SHA256).Hash
@@ -778,6 +781,16 @@ jobs:
             # Negative control on the SAME isolated guest, before any
             # VOLVE task, journal, or network mutation. Preserve the full
             # comparison privately; export only counts and hash identifiers.
+            # Collect Security 4702 / 4688 evidence only in this disposable
+            # offline guest, before BOTH the clean and the recovery reboot.
+            # No exclusions, no modification of third-party tasks.
+            Invoke-Command -Session $session -ErrorAction Stop -ScriptBlock {
+              $ErrorActionPreference='Stop'
+              foreach($subcategory in @('{0CCE9227-69AE-11D9-BED3-505054503030}','{0CCE922B-69AE-11D9-BED3-505054503030}')){
+                & auditpol.exe /set "/subcategory:$subcategory" /success:enable|Out-Null
+                if($LASTEXITCODE -ne 0){throw 'Guest task/process audit enable failed'}
+              }
+            }
             $report.stage='clean_reboot_without_volve_control'
             $controlBefore=Invoke-Command -Session $session -ArgumentList $guestKit,$trial -ErrorAction Stop -ScriptBlock {
               param($root,$id)
@@ -831,6 +844,17 @@ jobs:
               dns_equal=(($controlBefore.state.dnsRecords -join '|') -ceq ($controlAfter.state.dnsRecords -join '|'));
               no_volve_recovery_tasks=$true;exemption_granted=$false
             }
+            try{
+              $report.clean_task_audit=@(Invoke-Command -Session $session -ArgumentList $guestKit,(($report.clean_boot_control.changed_ids -join ',')) -ErrorAction Stop -ScriptBlock {
+                param($root,$ids)
+                $env:GITHUB_ACTIONS='true'
+                $env:RUNNER_ENVIRONMENT='github-hosted'
+                foreach($identity in @($ids.Split(',')|Where-Object {$_ -cmatch '^[A-F0-9]{16}$'})){
+                  $result=@(& (Join-Path $root 'ci_task_scheduler_event_diagnostic.ps1') -Mode Investigate -IdentityId $identity -Minutes 5 6>&1)
+                  foreach($line in $result){if(([string]$line).StartsWith('CI TASK EVENT POSTMORTEM:')){[string]$line}}
+                }
+              })
+            }catch{$report.task_audit_error='Clean task audit unavailable; no exemption'}
             if(-not $report.clean_boot_control.hosts_equal -or -not $report.clean_boot_control.dns_equal){throw 'Clean reboot changed network baseline; refuse to arm recovery'}
             # Use the fresh control boot as the actual preparation boot.
             # No changes in the control are exempted from the later strict gate.
@@ -1364,6 +1388,7 @@ jobs:
                     added=@($added|ForEach-Object {& $classify $_})
                     removed=@($removed|ForEach-Object {& $classify $_})
                     changed=@($changed|ForEach-Object {Get-VolvVMBaselineTaskDriftHint -ExpectedRecord $left[$_] -ActualRecord $right[$_]})
+                    changed_ids=@($changed|ForEach-Object {(Get-VolvVMBaselineSha -Value $_).Substring(0,16)})
                     hosts_equal=($old.hostsSha256 -ceq $new.hostsSha256)
                     dns_equal=(($old.dnsRecords -join '|') -ceq ($new.dnsRecords -join '|'))
                     recovery_marker_present=(Test-Path -LiteralPath $marker)
@@ -1371,6 +1396,19 @@ jobs:
                   }
                 }
               }catch{$report.environment_diagnostic_error=$_.Exception.Message}
+              try{
+                if($report.environment_drift){
+                  $report.recovery_task_audit=@(Invoke-Command -Session $session -ArgumentList $guestKit,($report.environment_drift.changed_ids -join ',') -ErrorAction Stop -ScriptBlock {
+                    param($root,$ids)
+                    $env:GITHUB_ACTIONS='true'
+                    $env:RUNNER_ENVIRONMENT='github-hosted'
+                    foreach($identity in @($ids.Split(',')|Where-Object {$_ -cmatch '^[A-F0-9]{16}$'})){
+                      $result=@(& (Join-Path $root 'ci_task_scheduler_event_diagnostic.ps1') -Mode Investigate -IdentityId $identity -Minutes 5 6>&1)
+                      foreach($line in $result){if(([string]$line).StartsWith('CI TASK EVENT POSTMORTEM:')){[string]$line}}
+                    }
+                  })
+                }
+              }catch{$report.task_audit_error='Recovery task audit unavailable; no exemption'}
             }
           }finally{
             try{
