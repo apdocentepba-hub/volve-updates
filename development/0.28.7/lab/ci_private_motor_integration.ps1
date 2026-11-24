@@ -4,6 +4,8 @@
 [CmdletBinding()]
 param([Parameter(Mandatory=$true)][string]$MotorExe,
       [Parameter(Mandatory=$true)][ValidatePattern('^[A-F0-9]{64}$')][string]$MotorSHA,
+      [Parameter(Mandatory=$true)][string]$WireProbeExe,
+      [Parameter(Mandatory=$true)][ValidatePattern('^[A-F0-9]{64}$')][string]$WireProbeSHA,
       [Parameter(Mandatory=$true)][ValidatePattern('^[0-9]{6,20}$')][string]$Trial)
 Set-StrictMode -Version Latest
 $ErrorActionPreference='Stop'
@@ -18,6 +20,8 @@ $root='C:\VOLVE-CI-FreshDNS53-'+$Trial
 $task='VOLVE-CI-IntegratedMotor-'+$Trial
 $exe='C:\VOLVE-CI-PrivateDNS\VOLVE-CI-ActualMotor.exe'
 if($MotorExe -ine $exe -or (Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash -cne $MotorSHA){throw 'Motor path or executable hash mismatch'}
+$probe='C:\VOLVE-CI-PrivateDNS\VOLVE-CI-ActualMotorProbe.test.exe'
+if($WireProbeExe -ine $probe -or (Get-FileHash -LiteralPath $probe -Algorithm SHA256).Hash -cne $WireProbeSHA){throw 'Independent wire probe hash or path mismatch'}
 if((Test-Path -LiteralPath $root) -or (Get-ScheduledTask -TaskName $task -ErrorAction SilentlyContinue)){throw 'Fresh fixture collision'}
 function Assert-LoopbackAssignments {
     $v4=@(Get-DnsClientServerAddress -InterfaceIndex $nic[0].InterfaceIndex -AddressFamily IPv4 -ErrorAction Stop)
@@ -65,24 +69,17 @@ try{
     $owner=Invoke-CimMethod -InputObject $p[0] -MethodName GetOwnerSid -ErrorAction Stop
     if($owner.ReturnValue -ne 0 -or $owner.Sid -cne 'S-1-5-18'){throw 'Motor not actually LocalSystem'}
     $creation=$p[0].CreationDate
-    $checks=0
-    foreach($address in @('127.0.0.1','::1')){
-        foreach($transport in @('Default','TCP')){
-            $queryParams=@{Server=$address;Name='example.org.';Type='A';DnsOnly=$true;NoHostsFile=$true;QuickTimeout=$true;ErrorAction='Stop'}
-            if($transport -ceq 'TCP'){$queryParams.TcpOnly=$true}
-            $answers=@(Resolve-DnsName @queryParams|Where-Object {$_.PSObject.Properties['IPAddress'] -and [string]$_.Type -eq 'A'})
-            if($answers.Count -ne 1 -or $answers[0].IPAddress -cne '203.0.113.7'){throw 'Actual motor failed allowed domain'}
-            foreach($blocked in @('stake.com.','betwarrior.bet.ar.')){
-                $queryParams.Name=$blocked
-                $denied=$false
-                try{$null=Resolve-DnsName @queryParams}catch{
-                    if([string]$_.FullyQualifiedErrorId -cmatch '^DNS_ERROR_RCODE_NAME_ERROR(,|$)'){$denied=$true}else{throw}
-                }
-                if(-not $denied){throw 'Real motor failed to reject blocked domain with NXDOMAIN'}
-            }
-            $checks++
-        }
+    # Use the already exercised independent raw DNS wire client, not
+    # Resolve-DnsName's potentially cached per-server result, for the
+    # four direct transport/address-family blocking and allow checks.
+    $env:VOLVE_CI_FRESH_DNS53_PROBE='GITHUB-HOSTED-VM-ONLY'
+    $proof=@(& $probe '-test.run=^TestCIFreshResidentSYSTEMPort53$' '-test.v' '-test.timeout=1m' 2>&1)
+    $proofExit=$LASTEXITCODE
+    if($proofExit -ne 0 -or @($proof|Where-Object {[string]$_ -match '^--- PASS: TestCIFreshResidentSYSTEMPort53 '}).Count -ne 1 -or @($proof|Where-Object {[string]$_ -match 'actually forwards an allowed A record'}).Count -ne 1){
+        throw ('Independent raw wire DNS proof failed: '+($proof -join [Environment]::NewLine))
     }
+    if((Get-FileHash -LiteralPath $probe -Algorithm SHA256).Hash -cne $WireProbeSHA){throw 'Wire probe changed during execution'}
+    $checks=4
     # Never specify -Server here. Unique reserved names avoid cache hits
     # and demonstrate use of the configured localhost resolver.
     foreach($transport in @('Default','TCP')){
@@ -96,7 +93,7 @@ try{
     $again=@(Get-CimInstance Win32_Process -Filter ('ProcessId='+$pidNumber) -ErrorAction Stop)
     if($again.Count -ne 1 -or $again[0].CreationDate -ne $creation -or $again[0].ExecutablePath -ine $exe){throw 'Motor replaced during test'}
     if((Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash -cne $MotorSHA -or (Get-FileHash -LiteralPath $catalog -Algorithm SHA256).Hash -cne $catalogPin){throw 'Motor/catalog changed during probe'}
-    $report=[ordered]@{actual_system_motor=$true;motor_sha256=$MotorSHA;catalog_sha256=$catalogPin;dual_stack_transport_checks=$checks;configured_resolver_default=$true;configured_resolver_tcp=$true;blocked_domains_verified=$true;synthetic_upstream_only=$true}
+    $report=[ordered]@{actual_system_motor=$true;motor_sha256=$MotorSHA;catalog_sha256=$catalogPin;independent_wire_probe_sha256=$WireProbeSHA;independent_wire_probe_verified=$true;dual_stack_transport_checks=$checks;configured_resolver_default=$true;configured_resolver_tcp=$true;blocked_domains_verified=$true;synthetic_upstream_only=$true}
 }finally{
     if($owned){
         $registered=Get-ScheduledTask -TaskName $task -TaskPath '\' -ErrorAction Stop
