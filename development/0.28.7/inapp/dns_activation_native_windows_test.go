@@ -38,6 +38,7 @@ func (h *windowsActivationMemoryHost)inspect(ctx context.Context,query string)([
    row:=windowsDNSAssignmentRecord{
     InterfaceGUID:activationTestGUID,InterfaceIndex:h.index,
     Family:string(fam),RegistryKeyPresent:true,
+    Servers:[]string{},EffectiveServers:[]string{},
    }
    if state.Mode==DNSStatic{
     row.Mode="static"
@@ -277,7 +278,7 @@ func windowsActivationInspectorWithExtraAdapter(
      InterfaceGUID:activationUnexpectedAdapterGUID,
      InterfaceIndex:88,Family:string(family),
      RegistryKeyPresent:true,NameServerKind:"Missing",
-     Mode:"automatic",EffectiveServers:effective,
+     Mode:"automatic",Servers:[]string{},EffectiveServers:effective,
     })
    }
    return json.Marshal(records)
