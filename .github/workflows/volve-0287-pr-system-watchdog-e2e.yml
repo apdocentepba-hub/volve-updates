@@ -274,7 +274,7 @@ jobs:
           $ErrorActionPreference='Stop'
           # Explicit census: the fast migration workflow does not run these
           # Windows-only decoder tests. Do not credit a zero-match Go filter.
-          $dnsTests=@('TestWindowsDNSAssignmentProvenanceSeparatesStaticAndAutomatic','TestWindowsDNSAssignmentProvenanceRejectsUnknownOrConflictingSource','TestWindowsDNSAssignmentProvenanceRejectsDuplicateOrIncompleteFamilies','TestWindowsDNSAssignmentFingerprintIgnoresAutomaticLeaseAddressButPreservesStaticOrder','TestWindowsDNSAssignmentProvenanceRejectsCancellationAndMutableQueries','TestWindowsDNSAssignmentProvenanceRejectsMissingNullAndAliasedEvidence','TestWindowsDNSUnmappedLoopbackPlaceholderGuard')
+          $dnsTests=@('TestWindowsDNSAssignmentProvenanceSeparatesStaticAndAutomatic','TestWindowsDNSAssignmentProvenanceRejectsUnknownOrConflictingSource','TestWindowsDNSAssignmentProvenanceRejectsDuplicateOrIncompleteFamilies','TestWindowsDNSAssignmentFingerprintIgnoresAutomaticLeaseAddressButPreservesStaticOrder','TestWindowsDNSAssignmentProvenanceRejectsCancellationAndMutableQueries','TestWindowsDNSAssignmentProvenanceRejectsMissingNullAndAliasedEvidence','TestWindowsDNSUnmappedLoopbackPlaceholderGuard','TestSignedWindowsDNSBootCensusConsolidatesWithoutLosingDriftChecks')
           $dnsRegex='^('+($dnsTests -join '|')+')$'
           $dnsListed=@(go test ./motorupdate -list $dnsRegex)
           if($LASTEXITCODE -ne 0){throw 'DNS provenance test census failed'}
