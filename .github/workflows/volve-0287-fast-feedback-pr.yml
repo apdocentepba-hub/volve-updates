@@ -16,6 +16,7 @@ on:
       - 'development/0.28.7/installer-wizard/installerprogress/**'
       - 'development/0.28.7/lab/ci_private_motor_integration.ps1'
       - 'development/0.28.7/lab/ci_task_scheduler_event_diagnostic.ps1'
+      - 'development/0.28.7/lab/private_dns_peer_vm.ps1'
       - 'development/0.28.7/inapp/ci_fresh_dns53_windows_test.go'
   workflow_dispatch:
 permissions:
@@ -143,7 +144,8 @@ jobs:
             'test_vm_environment_baseline.ps1',
             'ci_task_scheduler_event_diagnostic.ps1',
             'ci_private_motor_integration.ps1',
-            'private_dns_client_probe.ps1'
+            'private_dns_client_probe.ps1',
+            'private_dns_peer_vm.ps1'
           )
           foreach($name in $names){
             $file=Join-Path $root $name
@@ -157,7 +159,7 @@ jobs:
               throw ('PowerShell syntax validation failed for '+$name)
             }
           }
-          Write-Host 'PASS: parsed 13 recovery laboratory scripts'
+          Write-Host 'PASS: parsed 14 recovery laboratory scripts'
       - name: Execute synthetic-only recovery and security tests (NO REBOOT NO DNS)
         shell: powershell
         run: |

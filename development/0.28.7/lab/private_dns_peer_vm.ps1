@@ -144,7 +144,21 @@ function Get-VolvPrivatePeerLiveIdentity {
         }
         $again=@(Get-CimInstance Win32_Process -Filter ('ProcessId='+$id) -ErrorAction Stop)
         if($again.Count -ne 1 -or $again[0].CreationDate -ne $p[0].CreationDate -or $again[0].ExecutablePath -ine $exe){throw 'Peer process replaced during socket audit'}
+        # Event 12 is a separately recorded kernel startup, not a live
+        # wall-clock calculation. Hash the complete event without leaking XML.
+        $bootEvent=Get-WinEvent -FilterHashtable @{LogName='System';ProviderName='Microsoft-Windows-Kernel-General';Id=12} -MaxEvents 1 -ErrorAction Stop
+        if($null -eq $bootEvent -or $bootEvent.RecordId -le 0){throw 'Peer kernel startup event unavailable'}
+        $hasher=[Security.Cryptography.SHA256]::Create()
+        try{$bootEventHash=([BitConverter]::ToString($hasher.ComputeHash([Text.Encoding]::UTF8.GetBytes($bootEvent.ToXml())))).Replace('-','')}
+        finally{$hasher.Dispose()}
+        # System uptime is independently reported in seconds. Missing counters
+        # fail closed rather than attributing WMI clock drift to a safe cause.
+        $perf=Get-CimInstance Win32_PerfFormattedData_PerfOS_System -ErrorAction Stop
+        if($null -eq $perf.SystemUpTime -or [uint64]$perf.SystemUpTime -eq 0){throw 'Peer uptime unavailable'}
         [pscustomobject]@{
+            boot_event_record=[string]$bootEvent.RecordId
+            boot_event_sha256=$bootEventHash
+            uptime_seconds=[string]$perf.SystemUpTime
             process_id=$id
             created_ticks=$p[0].CreationDate.ToUniversalTime().Ticks.ToString()
             boot_ticks=(Get-CimInstance Win32_OperatingSystem -ErrorAction Stop).LastBootUpTime.ToUniversalTime().Ticks.ToString()
@@ -156,6 +170,17 @@ function Get-VolvPrivatePeerLiveIdentity {
 function Assert-VolvPrivatePeerSameIdentity {
     param([object]$Session,[string]$ExpectedSHA,[object]$PinnedIdentity)
     $current=Get-VolvPrivatePeerLiveIdentity -Session $Session -ExpectedSHA $ExpectedSHA
+    # New independent evidence is mandatory, not an exemption for a WMI
+    # timestamp mismatch. Retain the original exact boot_ticks gate until
+    # the actual reason for drift is established in this disposable guest.
+    if($null -eq $PinnedIdentity){throw 'Peer continuity unproven: missing pin'}
+    foreach($field in @('boot_event_record','boot_event_sha256')){
+        if([string]::IsNullOrEmpty([string]$PinnedIdentity.$field) -or [string]$current.$field -cne [string]$PinnedIdentity.$field){throw ('Peer continuity unproven: '+$field)}
+    }
+    if([string]$PinnedIdentity.uptime_seconds -cnotmatch '^[1-9][0-9]*$' -or [string]$current.uptime_seconds -cnotmatch '^[1-9][0-9]*$' -or [uint64]$current.uptime_seconds -lt [uint64]$PinnedIdentity.uptime_seconds){throw 'Peer continuity unproven: uptime'}
+    if([string]$current.boot_ticks -cne [string]$PinnedIdentity.boot_ticks){
+        Write-Host ('CI PEER BOOT CLOCK DRIFT: pinned='+$PinnedIdentity.boot_ticks+' current='+$current.boot_ticks+' kernel_event_record='+$current.boot_event_record+' kernel_event_unchanged=true uptime_before='+$PinnedIdentity.uptime_seconds+' uptime_now='+$current.uptime_seconds+'; original_gate=FAILED')
+    }
     foreach($field in @('process_id','created_ticks','boot_ticks','adapter_guid','executable_sha256')){
         if($null -eq $PinnedIdentity -or [string]::IsNullOrEmpty([string]$PinnedIdentity.$field) -or [string]$current.$field -cne [string]$PinnedIdentity.$field){throw ('Peer continuity unproven: '+$field)}
     }
