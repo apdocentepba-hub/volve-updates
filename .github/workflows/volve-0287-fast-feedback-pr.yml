@@ -15,6 +15,7 @@ on:
       - '.github/workflows/volve-0287-fast-feedback-pr.yml'
       - 'development/0.28.7/installer-wizard/installerprogress/**'
       - 'development/0.28.7/lab/ci_private_motor_integration.ps1'
+      - 'development/0.28.7/lab/ci_task_scheduler_event_diagnostic.ps1'
       - 'development/0.28.7/inapp/ci_fresh_dns53_windows_test.go'
   workflow_dispatch:
 permissions:

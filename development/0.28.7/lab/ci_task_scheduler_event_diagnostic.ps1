@@ -148,12 +148,41 @@ function ConvertTo-VolvCIPidDecimal {
     return ([int64]::Parse($clean,[Globalization.CultureInfo]::InvariantCulture)).ToString([Globalization.CultureInfo]::InvariantCulture)
 }
 
+# Current on-disk signer is a separate investigative observation, not proof
+# that those bytes ran at the event time. Never emit paths or certificate data.
+# Only called from the already-attested disposable CI investigation.
+function Get-VolvCICurrentWindowsImageClass {
+    param([string]$Image)
+    try {
+        if([string]::IsNullOrWhiteSpace($Image) -or $Image -cnotmatch '^[A-Za-z]:\\' -or [IO.Path]::GetExtension($Image) -ine '.exe'){return 'unknown'}
+        $root=[IO.Path]::GetFullPath($env:WINDIR).TrimEnd('\')+'\'
+        $full=[IO.Path]::GetFullPath($Image)
+        if(-not $full.StartsWith($root,[StringComparison]::OrdinalIgnoreCase)){return 'outside_windows'}
+        if(-not [string]::Equals($full,$Image,[StringComparison]::OrdinalIgnoreCase)){return 'unknown'}
+        $file=Get-Item -LiteralPath $full -ErrorAction Stop
+        if($file.PSIsContainer -or ($file.Attributes -band [IO.FileAttributes]::ReparsePoint)){return 'unknown'}
+        # Do not follow reparse points anywhere under the Windows directory.
+        $parent=$file.Directory
+        while($null -ne $parent){
+            if($parent.Attributes -band [IO.FileAttributes]::ReparsePoint){return 'unknown'}
+            if([string]::Equals($parent.FullName.TrimEnd('\'),$root.TrimEnd('\'),[StringComparison]::OrdinalIgnoreCase)){break}
+            $parent=$parent.Parent
+        }
+        if($null -eq $parent){return 'unknown'}
+        $signature=Get-AuthenticodeSignature -LiteralPath $full -ErrorAction Stop
+        if($signature.Status -ne 'Valid' -or $null -eq $signature.SignerCertificate){return 'windows_signature_unverified'}
+        if($signature.SignerCertificate.Subject -match '(?:^|,\s*)O=Microsoft Corporation(?:,|$)'){return 'windows_microsoft_signed_current_file'}
+        return 'windows_other_signed_current_file'
+    }catch{return 'unknown'}
+}
+
 function Get-VolvCIProcessCreationCorrelation {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory=$true)][string]$TaskIdentity,
         [Parameter(Mandatory=$true)][AllowEmptyCollection()][string[]]$UpdateEventXML,
-        [Parameter(Mandatory=$true)][AllowEmptyCollection()][string[]]$CreationEventXML
+        [Parameter(Mandatory=$true)][AllowEmptyCollection()][string[]]$CreationEventXML,
+        [switch]$InspectCurrentImage
     )
     function Read-CIEvent([string]$Raw) {
         $doc=[System.Xml.XmlDocument]::new()
@@ -193,9 +222,9 @@ function Get-VolvCIProcessCreationCorrelation {
         # usable candidate. Never emit the executable field to CI output.
         $exe=Read-OnlyField $event 'NewProcessName'
         if($null -eq $clientProcessNumber -or [string]::IsNullOrWhiteSpace($exe)){continue}
-        $births+=([pscustomobject]@{pid=$clientProcessNumber;when=$event.when;imageId=(Get-VolvCITaskPseudonym -Identity $exe.ToLowerInvariant())})
+        $births+=([pscustomobject]@{pid=$clientProcessNumber;when=$event.when;imageId=(Get-VolvCITaskPseudonym -Identity $exe.ToLowerInvariant()); image=$exe})
     }
-    $counts=[ordered]@{taskUpdateEvents=0;creationCandidate=0;creationMissing=0;creationAmbiguous=0;invalidUpdateEvidence=0;candidateImageIds=@()}
+    $counts=[ordered]@{taskUpdateEvents=0;creationCandidate=0;creationMissing=0;creationAmbiguous=0;invalidUpdateEvidence=0;candidateImageIds=@();currentImageClasses=@()}
     foreach($raw in $UpdateEventXML){
         $event=Read-CIEvent $raw
         if($event.event -cne '4702' -or
@@ -212,7 +241,14 @@ function Get-VolvCIProcessCreationCorrelation {
             $_.pid -ceq $clientProcessNumber -and $_.when -le $event.when -and
             $_.when -ge $event.when.AddMinutes(-30)
         })
-        if($matches.Count -eq 1){$counts.creationCandidate++;$counts.candidateImageIds=@(($counts.candidateImageIds+@($matches[0].imageId))|Sort-Object -Unique)}
+        if($matches.Count -eq 1){
+            $counts.creationCandidate++
+            $counts.candidateImageIds=@(($counts.candidateImageIds+@($matches[0].imageId))|Sort-Object -Unique)
+            if($InspectCurrentImage){
+                $class=Get-VolvCICurrentWindowsImageClass -Image $matches[0].image
+                $counts.currentImageClasses=@(($counts.currentImageClasses+@($matches[0].imageId+':'+$class))|Sort-Object -Unique)
+            }
+        }
         elseif($matches.Count -gt 1){$counts.creationAmbiguous++}
         else{$counts.creationMissing++}
     }
@@ -321,6 +357,9 @@ if($Mode -ceq 'Test'){
     if(($match|ConvertTo-Json -Compress) -match 'PRIVATE|SecretProgram|0x1F4|500'){
         throw 'NOT VERIFIED: sensitive process evidence escaped the aggregate correlation'
     }
+    if($match.currentImageClasses.Count -ne 0){throw 'Synthetic correlation must not inspect real executable files'}
+    if((Get-VolvCICurrentWindowsImageClass -Image 'relative.exe') -cne 'unknown'){throw 'Relative image path accepted'}
+    if((Get-VolvCICurrentWindowsImageClass -Image 'C:\\PRIVATE\\SecretProgram.exe') -cne 'outside_windows'){throw 'Non-Windows image path accepted'}
     if($match.candidateImageIds.Count -ne 1 -or $match.candidateImageIds[0] -cnotmatch '^[0-9A-F]{16}$'){throw 'NOT VERIFIED: pseudonymous candidate image missing'}
     if($ambiguous.candidateImageIds.Count -ne 0 -or $miss.candidateImageIds.Count -ne 0){throw 'NOT VERIFIED: unknown image falsely identified'}
     $differentBirth=$birth4688.Replace('SecretProgram.exe','AnotherProgram.exe')
@@ -395,7 +434,7 @@ try {
 # Optional process creation audit is not enabled here: this is READ-ONLY.
 # A timestamp/PID match alone is an investigative lead, not actor proof.
 $creationAudit='unavailable'
-$processCandidates=[pscustomobject]@{taskUpdateEvents=0;creationCandidate=0;creationMissing=0;creationAmbiguous=0;invalidUpdateEvidence=0;candidateImageIds=@()}
+$processCandidates=[pscustomobject]@{taskUpdateEvents=0;creationCandidate=0;creationMissing=0;creationAmbiguous=0;invalidUpdateEvidence=0;candidateImageIds=@();currentImageClasses=@()}
 if($securityStatus -ceq 'available'){
     try {
         $creationEvents=@(Get-WinEvent -FilterHashtable @{
@@ -406,7 +445,7 @@ if($securityStatus -ceq 'available'){
             $securityEvents | ForEach-Object {$_.ToXml()}
         ) -CreationEventXML @(
             $creationEvents | ForEach-Object {$_.ToXml()}
-        )
+        ) -InspectCurrentImage
         $creationAudit='available'
     } catch {
         $creationAudit='unavailable'
@@ -429,5 +468,6 @@ Write-Host ('CI TASK EVENT POSTMORTEM: identityId='+$IdentityId.ToUpperInvariant
     '; pidBirthAbsent='+$processCandidates.creationMissing+
     '; pidBirthAmbiguous='+$processCandidates.creationAmbiguous+
     '; candidateImageIds='+($processCandidates.candidateImageIds -join ',')+
+    '; currentImageClasses='+($processCandidates.currentImageClasses -join ',')+
     '; cursorScoped='+($AfterSecurityRecordId -gt 0 -and $AfterSchedulerRecordId -gt 0)+
     '; processAttribution=UNPROVEN; originalBaseline=FAILED')
