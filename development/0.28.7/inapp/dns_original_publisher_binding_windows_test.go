@@ -254,13 +254,21 @@ func TestNestedGuestSignedOriginalDNSNativeSYSTEM(t *testing.T){
  if os.Getenv("VOLVE_CI_NESTED_GUEST_DNS")!="PRIVATE_GUEST_ONLY"{t.Skip("explicit private nested guest required")}
  if os.Getenv("GITHUB_ACTIONS")!="true"||os.Getenv("RUNNER_ENVIRONMENT")!="github-hosted"{t.Fatal("not isolated CI")}
  if err:=VerifyWindowsCurrentSystemSIDReadOnly();err!=nil{t.Fatal(err)}
- ctx,cancel:=context.WithTimeout(context.Background(),3*time.Minute)
+ // Native NTFS/PowerShell verification is intentionally expensive: the
+ // durable-driver CI test alone previously took over four minutes.
+ // Use one finite deadline for this isolated guest, not shorter per-stage
+ // deadlines that can strand a partially exercised lab fixture.
+ ctx,cancel:=context.WithTimeout(context.Background(),12*time.Minute)
  defer cancel()
+ start:=time.Now()
+ stage:=func(name string){t.Logf("VOLVE_GUEST_DNS_STAGE=%s elapsed_ms=%d",name,time.Since(start).Milliseconds())}
+ stage("isolation")
 
  raw,err:=nestedGuestDNSIsolationReadOnly(ctx)
  if err!=nil{t.Fatalf("guest isolation guard: %v",err)}
  guid:=strings.TrimSpace(string(raw))
  if len(guid)!=38{t.Fatal("invalid pinned guest NIC identity")}
+ stage("original-census")
  census,err:=InspectWindowsDNSAssignmentProvenanceReadOnly(ctx,DefaultWindowsReadOnlyPowerShell)
  if err!=nil{t.Fatalf("actual guest DNS provenance refused: %v",err)}
  if census.AdapterCount!=1||len(census.States)!=2||census.StaticFamilyCount!=1||census.AutomaticFamilyCount!=1{t.Fatal("expected exactly one static/one automatic DNS family")}
@@ -269,11 +277,14 @@ func TestNestedGuestSignedOriginalDNSNativeSYSTEM(t *testing.T){
   if state.Family==DNSIPv4&&(!sameDNSAddresses(state.Servers,[]string{"192.0.2.53","192.0.2.54"})||state.Mode!=DNSStatic){t.Fatal("unexpected original IPv4 lab DNS")}
   if state.Family==DNSIPv6&&state.Mode!=DNSAutomatic{t.Fatal("unexpected original IPv6 lab DNS")}
  }
+ stage("seal-original")
  f,parent,binding,signature,pin,_:=prepareNativeSignedDNSRecoveryLabWithOriginals(t,census.States)
  records,err:=ReadDNSOriginalBackupNativeWindows(ctx,parent,pin)
  if err!=nil{t.Fatal(err)}
+ stage("persist-binding")
  if err:=PersistSignedOriginalDNSEvidenceNativeWindows(ctx,f.root,f.pub,binding,signature);err!=nil{t.Fatal(err)}
  if err:=verifySignedDNSBootRestoreCensus(ctx,records,DefaultWindowsReadOnlyPowerShell,true);err!=nil{t.Fatal(err)}
+ stage("fault-injection")
  // Fault injection is confined to the one positively identified guest NIC.
  // The native restoration entry must use its real signed evidence, NTFS ACL,
  // LocalSystem token, full census and Win32 mutex; never an injected writer.
@@ -286,6 +297,7 @@ func TestNestedGuestSignedOriginalDNSNativeSYSTEM(t *testing.T){
   if err!=nil{t.Fatal(err)}
   for _,cmd:=range cmds{if err:=runPinnedWindowsNativeDNS(ctx,cmd.Args);err!=nil{t.Fatal(err)}}
  }
+ stage("verify-fault")
  broken,err:=InspectWindowsDNSAssignmentProvenanceReadOnly(ctx,DefaultWindowsReadOnlyPowerShell)
  if err!=nil{t.Fatal(err)}
  if broken.AdapterCount!=1||broken.StaticFamilyCount!=2||len(broken.States)!=2{t.Fatal("dual-stack loopback fault not proven")}
@@ -294,14 +306,17 @@ func TestNestedGuestSignedOriginalDNSNativeSYSTEM(t *testing.T){
   for _,state:=range broken.States{if sameDNSState(state,record.Expected){found=true}}
   if !found{t.Fatal("expected actual loopback DNS state missing")}
  }
+ stage("native-system-restore")
  if err:=restorePersistedSignedOriginalDNSAsSYSTEM(ctx,f.root,f.pub);err!=nil{t.Fatalf("real native SYSTEM restoration: %v",err)}
  if err:=verifySignedDNSBootRestoreCensus(ctx,records,DefaultWindowsReadOnlyPowerShell,true);err!=nil{t.Fatal(err)}
  after,err:=InspectWindowsDNSAssignmentProvenanceReadOnly(ctx,DefaultWindowsReadOnlyPowerShell)
  if err!=nil||after.SHA256!=census.SHA256{t.Fatal("original DNS provenance digest mismatch")}
+ stage("idempotence")
  if err:=restorePersistedSignedOriginalDNSAsSYSTEM(ctx,f.root,f.pub);err!=nil{t.Fatalf("idempotent restoration: %v",err)}
  if err:=verifySignedDNSBootRestoreCensus(ctx,records,DefaultWindowsReadOnlyPowerShell,true);err!=nil{t.Fatal(err)}
  pending,err:=InspectResidentRecoveryJournal(ctx,f.journal,func(p string)error{return nativeDNSOriginalBackupACL(ctx,p)})
  if err!=nil||pending.Status!="recovery-required"{t.Fatal("DNS-only recovery must not finalize motor transaction")}
+ stage("verified")
  t.Log("PASS VOLVE_NESTED_GUEST_REAL_SIGNED_SYSTEM_DNS_STATIC_IPV4_AUTOMATIC_IPV6 NO_REAL_MOTOR NO_REBOOT_DNS NO_CONNECTIVITY_PROOF")
 }
 
