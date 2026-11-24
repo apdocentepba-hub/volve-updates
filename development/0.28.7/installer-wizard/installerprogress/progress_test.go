@@ -1,0 +1,9 @@
+package installerprogress
+import "testing"
+func advance(t *testing.T,s *State,n int){t.Helper();for _,stage:=range order[:n]{if err:=s.Confirm(stage);err!=nil{t.Fatal(err)}}}
+func TestComplete(t *testing.T){s:=New();for i,stage:=range order{if err:=s.Confirm(stage);err!=nil{t.Fatal(err)};v:=s.View();if v.Percent!=(i+1)*100/len(order){t.Fatal(v)};if i<6&&v.Status!="running"{t.Fatal(v)}};if s.View().Status!="completed"||s.Confirm(CommitVerified)==nil||s.Fail()==nil{t.Fatal(s.View())}}
+func TestOutOfOrder(t *testing.T){s:=New();if s.Confirm(MotorVerified)==nil||s.View().Percent!=0{t.Fatal(s.View())};advance(t,s,1);if s.Confirm(Preflight)==nil||s.View().Percent!=14{t.Fatal(s.View())}}
+func TestReboot(t *testing.T){s:=New();if s.RequireReboot()==nil||s.ConfirmReboot()==nil{t.Fatal("premature reboot")};advance(t,s,5);if s.RequireReboot()!=nil||s.Confirm(ConnectivityVerified)==nil||!s.View().RebootRequired{t.Fatal(s.View())};if s.ConfirmReboot()!=nil||s.Confirm(ConnectivityVerified)!=nil||s.Confirm(CommitVerified)!=nil{t.Fatal(s.View())}}
+func TestFailureBeforeActivation(t *testing.T){for i:=0;i<3;i++{s:=New();advance(t,s,i);if s.Fail()!=nil||s.View().Status!="failed_before_activation"||s.ConfirmRecovery()==nil||s.Confirm(order[i])==nil{t.Fatal(s.View())}}}
+func TestRecovery(t *testing.T){for i:=3;i<7;i++{for _,success:=range []bool{true,false}{s:=New();advance(t,s,i);if s.Fail()!=nil||s.View().Status!="recovery_required"||s.Confirm(order[i])==nil{t.Fatal(s.View())};if success{if s.ConfirmRecovery()!=nil||s.View().Status!="recovered_not_installed"{t.Fatal(s.View())}}else{if s.RecoveryFailed()!=nil||s.View().Status!="recovery_failed"{t.Fatal(s.View())}};if s.View().Percent==100||s.Confirm(order[i])==nil{t.Fatal(s.View())}}}}
+func TestZeroValue(t *testing.T){var s State;if s.Confirm(Preflight)==nil||s.Fail()==nil||s.ConfirmReboot()==nil{t.Fatal("uninitialized accepted")}}
