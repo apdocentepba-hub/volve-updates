@@ -81,12 +81,25 @@ function Start-VolvPrivateDNSPeer {
             $env:GITHUB_ACTIONS='true'
             $env:RUNNER_ENVIRONMENT='github-hosted'
             $env:VOLVE_CI_PRIVATE_DNS_PEER='PRIVATE_GUEST_ONLY'
-            $p=Start-Process -FilePath $exe -WorkingDirectory $root -RedirectStandardOutput (Join-Path $root 'peer.log') -RedirectStandardError (Join-Path $root 'peer.err') -PassThru -ErrorAction Stop
+            $p=Start-Process -FilePath $exe -WorkingDirectory $root -RedirectStandardOutput (Join-Path $root 'peer.stdout') -RedirectStandardError (Join-Path $root 'peer.err') -PassThru -ErrorAction Stop
             $until=[datetime]::UtcNow.AddSeconds(30)
+            $ready=$false
+            $log=Join-Path $root 'peer.log'
             do{
                 if($p.HasExited){throw 'Private DNS peer exited early'}
-                $log=Join-Path $root 'peer.log'
-                if((Test-Path -LiteralPath $log) -and [IO.File]::ReadAllText($log).Contains('VOLVE_PRIVATE_PEER_READY')){break}
+                if(Test-Path -LiteralPath $log -PathType Leaf){
+                    $stream=$null;$reader=$null
+                    try{
+                        $stream=[IO.File]::Open($log,[IO.FileMode]::Open,[IO.FileAccess]::Read,[IO.FileShare]::ReadWrite)
+                        $reader=[IO.StreamReader]::new($stream)
+                        $ready=@($reader.ReadToEnd().Split("`n")|ForEach-Object {$_.TrimEnd("`r")}|Where-Object {$_ -ceq 'VOLVE_PRIVATE_PEER_READY two_ipv4_addresses udp_tcp53 NO_FORWARDING'}).Count -eq 1
+                    }catch [IO.IOException]{
+                        $ready=$false
+                    }finally{
+                        if($null -ne $reader){$reader.Dispose()}elseif($null -ne $stream){$stream.Dispose()}
+                    }
+                    if($ready){break}
+                }
                 Start-Sleep -Seconds 1
             }while([datetime]::UtcNow -lt $until)
             $tcp=@(Get-NetTCPConnection -State Listen -LocalPort 53 -ErrorAction Stop|Where-Object {$_.OwningProcess -eq $p.Id})
@@ -95,7 +108,7 @@ function Start-VolvPrivateDNSPeer {
                 if(@($tcp|Where-Object {$_.LocalAddress -ceq $address}).Count -ne 1 -or @($udp|Where-Object {$_.LocalAddress -ceq $address}).Count -ne 1){throw 'Peer address listener mismatch'}
             }
             if($tcp.Count -ne 2 -or $udp.Count -ne 2){throw 'Unexpected additional peer DNS listeners'}
-            if($p.HasExited -or -not [IO.File]::ReadAllText((Join-Path $root 'peer.log')).Contains('VOLVE_PRIVATE_PEER_READY')){throw 'Peer readiness not proven'}
+            if($p.HasExited -or -not $ready){throw 'Peer readiness not proven'}
         }
         return $session
     }catch{
@@ -125,7 +138,14 @@ function Assert-VolvPrivateDNSPeerChallenge {
         $log='C:\VOLVE-CI-PrivateDNSPeer\peer.log'
         $deadline=[datetime]::UtcNow.AddSeconds(3)
         do{
-            $lines=@(Get-Content -LiteralPath $log -ErrorAction Stop)
+            $stream=$null;$reader=$null
+            try{
+                $stream=[IO.File]::Open($log,[IO.FileMode]::Open,[IO.FileAccess]::Read,[IO.FileShare]::ReadWrite)
+                $reader=[IO.StreamReader]::new($stream)
+                $lines=@($reader.ReadToEnd().Split("`n")|ForEach-Object {$_.TrimEnd("`r")})
+            }finally{
+                if($null -ne $reader){$reader.Dispose()}elseif($null -ne $stream){$stream.Dispose()}
+            }
             $received=@($lines|Where-Object {$_ -cmatch ('^VOLVE_PRIVATE_PEER_RECEIVED transport=(udp|tcp) nonce='+$nonce+'$')})
             $replies=@($lines|Where-Object {$_ -cmatch ('^VOLVE_PRIVATE_PEER_REPLY transport=(udp|tcp) nonce='+$nonce+'$')})
             $udp=@($replies|Where-Object {$_ -cmatch 'transport=udp'}).Count
