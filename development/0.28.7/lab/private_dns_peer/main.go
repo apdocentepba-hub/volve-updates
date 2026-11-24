@@ -34,7 +34,7 @@ func challengeReply(q []byte) ([]byte,string,error) {
   if n>63||i+n>len(q)||len(labels)>=3{return bad()}
   labels=append(labels,strings.ToLower(string(q[i:i+n])));i+=n
  }
- if len(labels)!=3||labels[1]!="volve-ci"||labels[2]!="invalid"||len(labels[0])!=32{return bad()}
+ if len(labels)!=3||labels[1]!="volve-ci"||labels[2]!="test"||len(labels[0])!=32{return bad()}
  if _,err:=hex.DecodeString(labels[0]);err!=nil{return bad()}
  if i+4>len(q)||binary.BigEndian.Uint16(q[i:i+2])!=1||binary.BigEndian.Uint16(q[i+2:i+4])!=1{return bad()}
  end:=i+4
@@ -66,6 +66,7 @@ func serveUDP(c net.PacketConn) {
   n,a,err:=c.ReadFrom(buf);if err!=nil{return}
   if !allowedClient(a){continue}
   reply,nonce,err:=challengeReply(buf[:n]);if err!=nil{continue}
+  fmt.Printf("VOLVE_PRIVATE_PEER_RECEIVED transport=udp nonce=%s\n",nonce)
   if _,err=c.WriteTo(reply,a);err==nil{fmt.Printf("VOLVE_PRIVATE_PEER_REPLY transport=udp nonce=%s\n",nonce)}
  }
 }
@@ -82,6 +83,7 @@ func serveTCP(l net.Listener) {
    n:=int(binary.BigEndian.Uint16(size[:]));if n<18||n>4096{return}
    q:=make([]byte,n);if _,err:=io.ReadFull(c,q);err!=nil{return}
    reply,nonce,err:=challengeReply(q);if err!=nil{return}
+   fmt.Printf("VOLVE_PRIVATE_PEER_RECEIVED transport=tcp nonce=%s\n",nonce)
    binary.BigEndian.PutUint16(size[:],uint16(len(reply)))
    packet:=append(size[:],reply...)
    if n,err:=c.Write(packet);err==nil&&n==len(packet){fmt.Printf("VOLVE_PRIVATE_PEER_REPLY transport=tcp nonce=%s\n",nonce)}
