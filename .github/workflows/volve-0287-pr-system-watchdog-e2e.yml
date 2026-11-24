@@ -386,6 +386,8 @@ jobs:
             environment_drift=$null
             clean_boot_control=$null
             clean_task_audit=@()
+            clean_audit_cursor=$null
+            recovery_audit_cursor=$null
             recovery_task_audit=@()
             task_audit_error=$null
             runner_commit=$env:GITHUB_SHA
@@ -811,6 +813,13 @@ jobs:
               }
             }
             $report.stage='clean_reboot_without_volve_control'
+            $cleanAuditCursor=Invoke-Command -Session $session -ErrorAction Stop -ScriptBlock {
+              $security=Get-WinEvent -LogName Security -MaxEvents 1 -ErrorAction Stop
+              $scheduler=Get-WinEvent -LogName Microsoft-Windows-TaskScheduler/Operational -MaxEvents 1 -ErrorAction Stop
+              if($security.RecordId -le 0 -or $scheduler.RecordId -le 0){throw 'Audit cursors unavailable'}
+              [pscustomobject]@{security=[long]$security.RecordId;scheduler=[long]$scheduler.RecordId}
+            }
+            $report.clean_audit_cursor=$cleanAuditCursor
             $controlBefore=Invoke-Command -Session $session -ArgumentList $guestKit,$trial -ErrorAction Stop -ScriptBlock {
               param($root,$id)
               $ErrorActionPreference='Stop'
@@ -864,12 +873,12 @@ jobs:
               no_volve_recovery_tasks=$true;exemption_granted=$false
             }
             try{
-              $report.clean_task_audit=@(Invoke-Command -Session $session -ArgumentList $guestKit,(($report.clean_boot_control.changed_ids -join ',')) -ErrorAction Stop -ScriptBlock {
-                param($root,$ids)
+              $report.clean_task_audit=@(Invoke-Command -Session $session -ArgumentList $guestKit,(($report.clean_boot_control.changed_ids -join ',')),$cleanAuditCursor.security,$cleanAuditCursor.scheduler -ErrorAction Stop -ScriptBlock {
+                param($root,$ids,$securityCursor,$schedulerCursor)
                 $env:GITHUB_ACTIONS='true'
                 $env:RUNNER_ENVIRONMENT='github-hosted'
                 foreach($identity in @($ids.Split(',')|Where-Object {$_ -cmatch '^[A-F0-9]{16}$'})){
-                  $result=@(& (Join-Path $root 'ci_task_scheduler_event_diagnostic.ps1') -Mode Investigate -IdentityId $identity -Minutes 5 6>&1)
+                  $result=@(& (Join-Path $root 'ci_task_scheduler_event_diagnostic.ps1') -Mode Investigate -IdentityId $identity -Minutes 15 -AfterSecurityRecordId $securityCursor -AfterSchedulerRecordId $schedulerCursor 6>&1)
                   foreach($line in $result){if(([string]$line).StartsWith('CI TASK EVENT POSTMORTEM:')){[string]$line}}
                 }
               })
@@ -897,6 +906,13 @@ jobs:
             }
             $report.recovery_kit_audit_passed=$true
             $report.stage='restart_and_verify_guest_disk'
+            $recoveryAuditCursor=Invoke-Command -Session $session -ErrorAction Stop -ScriptBlock {
+              $security=Get-WinEvent -LogName Security -MaxEvents 1 -ErrorAction Stop
+              $scheduler=Get-WinEvent -LogName Microsoft-Windows-TaskScheduler/Operational -MaxEvents 1 -ErrorAction Stop
+              if($security.RecordId -le 0 -or $scheduler.RecordId -le 0){throw 'Audit cursors unavailable'}
+              [pscustomobject]@{security=[long]$security.RecordId;scheduler=[long]$scheduler.RecordId}
+            }
+            $report.recovery_audit_cursor=$recoveryAuditCursor
             # The previous guest-initiated /r returned success twice without
             # a new observable boot. Require a clean shutdown, independently
             # observe the VM Off state, then start exactly the owned VM.
@@ -1417,12 +1433,12 @@ jobs:
               }catch{$report.environment_diagnostic_error=$_.Exception.Message}
               try{
                 if($report.environment_drift){
-                  $report.recovery_task_audit=@(Invoke-Command -Session $session -ArgumentList $guestKit,($report.environment_drift.changed_ids -join ',') -ErrorAction Stop -ScriptBlock {
-                    param($root,$ids)
+                  $report.recovery_task_audit=@(Invoke-Command -Session $session -ArgumentList $guestKit,($report.environment_drift.changed_ids -join ','),$recoveryAuditCursor.security,$recoveryAuditCursor.scheduler -ErrorAction Stop -ScriptBlock {
+                    param($root,$ids,$securityCursor,$schedulerCursor)
                     $env:GITHUB_ACTIONS='true'
                     $env:RUNNER_ENVIRONMENT='github-hosted'
                     foreach($identity in @($ids.Split(',')|Where-Object {$_ -cmatch '^[A-F0-9]{16}$'})){
-                      $result=@(& (Join-Path $root 'ci_task_scheduler_event_diagnostic.ps1') -Mode Investigate -IdentityId $identity -Minutes 5 6>&1)
+                      $result=@(& (Join-Path $root 'ci_task_scheduler_event_diagnostic.ps1') -Mode Investigate -IdentityId $identity -Minutes 15 -AfterSecurityRecordId $securityCursor -AfterSchedulerRecordId $schedulerCursor 6>&1)
                       foreach($line in $result){if(([string]$line).StartsWith('CI TASK EVENT POSTMORTEM:')){[string]$line}}
                     }
                   })
