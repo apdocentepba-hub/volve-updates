@@ -20,7 +20,28 @@ import (
  "strings"
 )
 
-const windowsDNSAssignmentSourceQuery = `$ErrorActionPreference='Stop';$ProgressPreference='SilentlyContinue';
+// The real Server 2022 guest exposes an unmapped software loopback IPv6
+// row with exactly the three legacy resolver placeholders. They are not a
+// configurable adapter target. Only that positively identified row is
+// outside the signed adapter restoration set. An arbitrary unmapped DNS
+// server, mapped adapter, duplicate loopback identity or partial placeholder
+// list is NEVER eligible for this exception.
+const windowsDNSLoopbackPlaceholderGuard = `
+function Test-VolvUnmappedLoopbackPlaceholders([string]$family,[uint32]$index,[object[]]$servers,[uint32[]]$loopbackIPv6Indexes,[int]$mappedGUIDCount){
+ if($mappedGUIDCount -ne 0 -or $family -cne 'IPv6' -or $index -eq 0){return $false}
+ if(@($loopbackIPv6Indexes).Count -ne 1 -or $loopbackIPv6Indexes[0] -ne $index){return $false}
+ if(@($servers).Count -ne 3){return $false}
+ return ([string]$servers[0] -ieq 'fec0:0:0:ffff::1' -and [string]$servers[1] -ieq 'fec0:0:0:ffff::2' -and [string]$servers[2] -ieq 'fec0:0:0:ffff::3')
+}
+`
+
+const windowsDNSAssignmentSourceQuery = `$ErrorActionPreference='Stop';$ProgressPreference='SilentlyContinue';` + windowsDNSLoopbackPlaceholderGuard + `
+$loopbackIPv6Indexes=@(foreach($n in [Net.NetworkInformation.NetworkInterface]::GetAllNetworkInterfaces()){
+ if($n.NetworkInterfaceType -ne [Net.NetworkInformation.NetworkInterfaceType]::Loopback){continue}
+ if($n.Supports([Net.NetworkInformation.NetworkInterfaceComponent]::IPv6)){
+  [uint32]$n.GetIPProperties().GetIPv6Properties().Index
+ }
+});
 $adapters=@(Get-NetAdapter -IncludeHidden -ErrorAction Stop | Where-Object {$_.InterfaceGuid -and $_.InterfaceIndex -gt 0});
 $dnsRows=@(Get-DnsClientServerAddress -ErrorAction Stop);
 $items=@(foreach($d in $dnsRows){
@@ -31,7 +52,9 @@ $items=@(foreach($d in $dnsRows){
  };
  $adapterGUIDs=@($adapters | Where-Object {[uint32]$_.InterfaceIndex -eq [uint32]$d.InterfaceIndex} | ForEach-Object {[string]$_.InterfaceGuid} | Sort-Object -Unique);
  if($adapterGUIDs.Count -eq 0){
-  if(@($d.ServerAddresses).Count -eq 0){continue}
+  $unmappedServers=@($d.ServerAddresses)
+  if($unmappedServers.Count -eq 0){continue}
+  if(Test-VolvUnmappedLoopbackPlaceholders -family $family -index ([uint32]$d.InterfaceIndex) -servers $unmappedServers -loopbackIPv6Indexes $loopbackIPv6Indexes -mappedGUIDCount $adapterGUIDs.Count){continue}
   throw 'DNS servers exist on an interface without a unique adapter GUID'
  };
  if($adapterGUIDs.Count -ne 1){throw 'DNS interface index maps to conflicting adapter GUIDs'};
