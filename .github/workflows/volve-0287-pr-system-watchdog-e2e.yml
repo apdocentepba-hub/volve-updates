@@ -315,6 +315,20 @@ jobs:
           & go test -c -trimpath -o $out ./motorupdate
           if($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $out)){throw 'Could not compile exact motorupdate tests'}
           Write-Host 'PASS: candidate motorupdate test executable compiled; NO PRODUCT INSTALL'
+      - name: Compile exact CI-tagged motor for private guest integration
+        if: matrix.trial == 'native-dns'
+        shell: powershell
+        working-directory: build/codigo
+        run: |
+          $ErrorActionPreference='Stop'
+          $out=Join-Path $env:RUNNER_TEMP 'VOLVE-CI-ActualMotor.exe'
+          go build -tags volveci -trimpath -o $out .
+          if($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $out -PathType Leaf)){throw 'Exact CI motor compilation failed'}
+          $script=Join-Path $env:GITHUB_WORKSPACE 'development\0.28.7\lab\ci_private_motor_integration.ps1'
+          $tokens=$null;$errors=$null
+          $null=[System.Management.Automation.Language.Parser]::ParseFile($script,[ref]$tokens,[ref]$errors)
+          if(@($errors).Count -ne 0){throw ('Integrated motor script syntax failed: '+($errors|Out-String))}
+          Write-Host ('PASS: exact CI-tagged motor compiled SHA256='+((Get-FileHash -LiteralPath $out -Algorithm SHA256).Hash)+'; NO INSTALL')
       - name: Compile and test private DNS peer and parse client probe
         if: matrix.trial == 'native-dns'
         shell: powershell
@@ -410,6 +424,7 @@ jobs:
             private_guest_dns_verified=$false
             private_peer_topology_verified=$false
             private_peer_identity=$null
+            private_actual_motor_integration=$null
             private_peer_challenges=@()
             private_network_connectivity_verified=$false
             private_guest_dns_test_exit=$null
@@ -1239,6 +1254,25 @@ jobs:
             $chainSource=Join-Path $env:GITHUB_WORKSPACE 'development\0.28.7\lab\reboot_event_chain.ps1'
             $chainHash=(Get-FileHash -LiteralPath $chainSource -Algorithm SHA256).Hash
             Copy-Item -LiteralPath $chainSource -Destination (Join-Path $recoverDir 'reboot_event_chain.ps1') -ToSession $session -ErrorAction Stop
+            $report.stage='actual_system_motor_on_armed_dns_then_stop'
+            $motorSource=Join-Path $env:RUNNER_TEMP 'VOLVE-CI-ActualMotor.exe'
+            $motorSHA=(Get-FileHash -LiteralPath $motorSource -Algorithm SHA256).Hash
+            $motorGuest=Join-Path $guestDNS 'VOLVE-CI-ActualMotor.exe'
+            $integrationSource=Join-Path $env:GITHUB_WORKSPACE 'development\0.28.7\lab\ci_private_motor_integration.ps1'
+            $integrationSHA=(Get-FileHash -LiteralPath $integrationSource -Algorithm SHA256).Hash
+            $integrationGuest=Join-Path $guestDNS 'ci_private_motor_integration.ps1'
+            Copy-Item -LiteralPath $motorSource -Destination $motorGuest -ToSession $session -ErrorAction Stop
+            Copy-Item -LiteralPath $integrationSource -Destination $integrationGuest -ToSession $session -ErrorAction Stop
+            $report.private_actual_motor_integration=Invoke-Command -Session $session -ArgumentList $integrationGuest,$integrationSHA,$motorGuest,$motorSHA,$trial -ErrorAction Stop -ScriptBlock {
+              param($path,$sha,$motor,$motorPin,$id)
+              if((Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash -cne $sha){throw 'Integration script hash mismatch'}
+              $env:GITHUB_ACTIONS='true'
+              $env:RUNNER_ENVIRONMENT='github-hosted'
+              $env:VOLVE_CI_NESTED_GUEST_DNS='PRIVATE_GUEST_ONLY'
+              & $path -MotorExe $motor -MotorSHA $motorPin -Trial $id
+            }
+            if(-not $report.private_actual_motor_integration.actual_system_motor -or -not $report.private_actual_motor_integration.motor_stopped -or $report.private_actual_motor_integration.dual_stack_transport_checks -ne 4 -or -not $report.private_actual_motor_integration.configured_resolver_default -or -not $report.private_actual_motor_integration.configured_resolver_tcp -or -not $report.private_actual_motor_integration.blocked_domains_verified){throw 'Actual motor activation/failure integration not proven'}
+            $report.stage='verify_dns_fault_after_actual_motor_stop'
             foreach($transport in @('Default','TCP')){
               $report.private_peer_challenges+=Assert-VolvPrivateDNSPeerChallenge -ClientSession $session -PeerSession $peerSession -ClientId $vm.Id -PeerId $peerVM.Id -SwitchId $privateSwitch.Id -ProbePath $probeGuest -ProbeSHA $probeSHA -PeerSHA $peerSHA -PinnedPeerIdentity $pinnedPeerIdentity -Phase Fault -Transport $transport
             }
@@ -1356,7 +1390,7 @@ jobs:
             $report.dns_reboot_event_chain=$recovery.chain
             $report.disk_persistence_verified=$true
             $report.dns_reboot_verified=$true
-            $report.stage='native_signed_dns_reboot_and_private_connectivity_verified_no_motor_no_internet'
+            $report.stage='native_signed_dns_reboot_and_private_connectivity_after_real_motor_stop_no_internet'
             }
           }catch{
             $report.error_message=$_.Exception.Message
@@ -1502,5 +1536,6 @@ jobs:
             if(-not $report.private_guest_dns_verified){throw 'Private guest signed native DNS test not proven'}
             if(-not $report.dns_reboot_verified -or -not $report.dns_reboot_independent_readback -or -not $report.dns_reboot_arm_verified -or -not $report.guest_poweroff_observed -or -not $report.disk_persistence_verified){throw 'Signed DNS startup recovery not proven'}
             if(-not $report.private_network_connectivity_verified -or -not $report.private_peer_topology_verified){throw 'Private connectivity not proven'}
-            Write-Host 'PASS: signed native DNS reboot recovery and isolated UDP/TCP resolver connectivity; NO REAL MOTOR, NO INTERNET PROOF, NO INSTALL.'
+            if(-not $report.private_actual_motor_integration.motor_stopped){throw 'Integrated motor failure missing'}
+            Write-Host 'PASS: actual CI-tagged SYSTEM motor stopped, signed DNS restored after reboot, isolated UDP/TCP connectivity; NO INTERNET PROOF, NO PRODUCT INSTALL.'
           }
