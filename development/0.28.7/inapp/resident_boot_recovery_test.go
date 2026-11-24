@@ -319,3 +319,19 @@ func TestDNSAwareBootRecoveryRequiresExplicitDriverAndContext(t *testing.T){
  lab:=&bootDNSPolicyLab{}
  if _,err:=RecoverPendingResidentAfterBootWithOriginalDNS(nil,dir,residentLabACL,residentLabACL,checks,lab);err==nil||lab.lockCalls!=0{t.Fatal("missing context acquired privileged lease")}
 }
+
+
+func TestDNSAwareBootRecoveryRejectsMotorOnlyDispatch(t *testing.T){
+ dir:=armBootPolicyJournal(t)
+ lab:=&bootDNSPolicyLab{}
+ var base ResidentBootRecoveryDriver=lab
+ checks:=&bootIdentityLab{}
+ state,err:=RecoverPendingResidentAfterBoot(context.Background(),dir,residentLabACL,residentLabACL,checks,base)
+ if err==nil||state!=""||lab.lockCalls!=0||lab.verifyCalls!=0||lab.restoreCalls!=0||lab.dnsRestores!=0||lab.dnsChecks!=0||checks.checks!=0{
+  t.Fatalf("DNS-capable driver incorrectly entered motor-only recovery: %s %v %+v",state,err,lab)
+ }
+ pending,err:=InspectResidentRecoveryJournal(context.Background(),dir,residentLabACL)
+ if err!=nil||pending.Status!="recovery-required"{t.Fatalf("wrong entrypoint consumed pending recovery: %+v %v",pending,err)}
+ state,err=RecoverPendingResidentAfterBootWithOriginalDNS(context.Background(),dir,residentLabACL,residentLabACL,checks,lab)
+ if err!=nil||state!="restored"||lab.dnsRestores!=1||lab.dnsChecks!=2||lab.unlockCalls!=1{t.Fatalf("correct dispatch failed: %s %v %+v",state,err,lab)}
+}
