@@ -292,6 +292,12 @@ jobs:
             $listed=@(go test ./motorupdate -list ('^'+$phaseTest+'$'))
             if($LASTEXITCODE -ne 0 -or $listed -cnotcontains $phaseTest){throw ('Missing mandatory reboot phase: '+$phaseTest)}
           }
+          # Require the new late-watchdog regression before the guest trial.
+          $activationRegex='^TestProtectedDNSActivation'
+          $listed=@(go test ./motorupdate -list $activationRegex)
+          if($LASTEXITCODE -ne 0 -or $listed -cnotcontains 'TestProtectedDNSActivationReattestsAfterHealthBeforeCommit'){throw 'Mandatory final activation regression missing'}
+          go test ./motorupdate -run $activationRegex -count=1 -timeout 2m -v
+          if($LASTEXITCODE -ne 0){throw 'Activation transaction regression failed'}
           $out=Join-Path $env:RUNNER_TEMP 'VOLVE-CI-GuestDNS.test.exe'
           & go test -c -trimpath -o $out ./motorupdate
           if($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $out)){throw 'Could not compile exact motorupdate tests'}
