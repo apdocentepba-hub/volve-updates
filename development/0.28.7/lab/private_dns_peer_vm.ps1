@@ -117,13 +117,57 @@ function Start-VolvPrivateDNSPeer {
     }
 }
 
+# Independently re-attest the same continuously running peer. A stale
+# readiness marker or another process on port 53 is not network evidence.
+function Get-VolvPrivatePeerLiveIdentity {
+    param([object]$Session,[string]$ExpectedSHA)
+    if($ExpectedSHA -cnotmatch '^[A-F0-9]{64}$'){throw 'Missing exact peer executable pin'}
+    Invoke-Command -Session $Session -ArgumentList $ExpectedSHA -ErrorAction Stop -ScriptBlock {
+        param($sha)
+        $ErrorActionPreference='Stop'
+        Set-StrictMode -Version Latest
+        $exe='C:\VOLVE-CI-PrivateDNSPeer\VOLVE-CI-PrivateDNSPeer.exe'
+        if((Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash -cne $sha){throw 'Peer executable no longer matches original hash'}
+        $n=@(Get-NetAdapter -ErrorAction Stop)
+        if($n.Count -ne 1 -or $n[0].Name -cne 'VOLVE-CI-PRIVATE-DNS-PEER' -or $n[0].Status -ne 'Up' -or $n[0].InterfaceDescription -notmatch '^Microsoft Hyper-V Network Adapter( #[0-9]+)?$'){throw 'Peer adapter changed'}
+        if(@(Get-NetRoute -ErrorAction Stop|Where-Object {$_.DestinationPrefix -in @('0.0.0.0/0','::/0')}).Count -ne 0){throw 'Peer default route appeared'}
+        $ips=@(Get-NetIPAddress -InterfaceIndex $n[0].InterfaceIndex -AddressFamily IPv4 -ErrorAction Stop)
+        if($ips.Count -ne 2 -or (($ips.IPAddress|Sort-Object) -join ',') -cne '192.0.2.53,192.0.2.54' -or @($ips|Where-Object {$_.PrefixLength -ne 24 -or $_.AddressState -ne 'Preferred'}).Count -ne 0){throw 'Peer IPv4 identity drift'}
+        $p=@(Get-CimInstance Win32_Process -ErrorAction Stop|Where-Object {$_.ExecutablePath -ieq $exe -or $_.Name -ieq 'VOLVE-CI-PrivateDNSPeer.exe'})
+        if($p.Count -ne 1 -or $p[0].ExecutablePath -ine $exe){throw 'Peer process identity ambiguous'}
+        $id=[uint32]$p[0].ProcessId
+        $tcp=@(Get-NetTCPConnection -State Listen -ErrorAction Stop|Where-Object {$_.LocalPort -eq 53 -and $_.OwningProcess -eq $id})
+        $udp=@(Get-NetUDPEndpoint -ErrorAction Stop|Where-Object {$_.LocalPort -eq 53 -and $_.OwningProcess -eq $id})
+        if($tcp.Count -ne 2 -or $udp.Count -ne 2){throw 'Peer listener count changed'}
+        foreach($ip in @('192.0.2.53','192.0.2.54')){
+            if(@($tcp|Where-Object {$_.LocalAddress -ceq $ip}).Count -ne 1 -or @($udp|Where-Object {$_.LocalAddress -ceq $ip}).Count -ne 1){throw 'Peer listener identity changed'}
+        }
+        $again=@(Get-CimInstance Win32_Process -Filter ('ProcessId='+$id) -ErrorAction Stop)
+        if($again.Count -ne 1 -or $again[0].CreationDate -ne $p[0].CreationDate -or $again[0].ExecutablePath -ine $exe){throw 'Peer process replaced during socket audit'}
+        [pscustomobject]@{
+            process_id=$id
+            created_ticks=$p[0].CreationDate.ToUniversalTime().Ticks.ToString()
+            boot_ticks=(Get-CimInstance Win32_OperatingSystem -ErrorAction Stop).LastBootUpTime.ToUniversalTime().Ticks.ToString()
+            adapter_guid=$n[0].InterfaceGuid.ToString()
+            executable_sha256=$sha
+        }
+    }
+}
+function Assert-VolvPrivatePeerSameIdentity {
+    param([object]$Session,[string]$ExpectedSHA,[object]$PinnedIdentity)
+    $current=Get-VolvPrivatePeerLiveIdentity -Session $Session -ExpectedSHA $ExpectedSHA
+    foreach($field in @('process_id','created_ticks','boot_ticks','adapter_guid','executable_sha256')){
+        if($null -eq $PinnedIdentity -or [string]::IsNullOrEmpty([string]$PinnedIdentity.$field) -or [string]$current.$field -cne [string]$PinnedIdentity.$field){throw ('Peer continuity unproven: '+$field)}
+    }
+}
 function Assert-VolvPrivateDNSPeerChallenge {
     param([object]$ClientSession,[object]$PeerSession,[guid]$ClientId,[guid]$PeerId,[guid]$SwitchId,
-          [string]$ProbePath,[string]$ProbeSHA,[ValidateSet('Original','Fault','Restored')][string]$Phase,
+          [string]$ProbePath,[string]$ProbeSHA,[string]$PeerSHA,[object]$PinnedPeerIdentity,[ValidateSet('Original','Fault','Restored')][string]$Phase,
           [ValidateSet('Default','TCP')][string]$Transport)
     Set-StrictMode -Version Latest
     $ErrorActionPreference='Stop'
     if(-not (Assert-VolvPrivatePeerTopology -ClientId $ClientId -PeerId $PeerId -SwitchId $SwitchId)){throw 'Private topology not verified'}
+    Assert-VolvPrivatePeerSameIdentity -Session $PeerSession -ExpectedSHA $PeerSHA -PinnedIdentity $PinnedPeerIdentity
     $nonce=[guid]::NewGuid().ToString('N')
     $observation=Invoke-Command -Session $ClientSession -ArgumentList $ProbePath,$ProbeSHA,$nonce,$Phase,$Transport -ErrorAction Stop -ScriptBlock {
         param($path,$sha,$nonce,$phase,$transport)
@@ -164,5 +208,7 @@ function Assert-VolvPrivateDNSPeerChallenge {
         if($Transport -ceq 'TCP' -and ($wire.tcp -lt 1 -or $wire.received_tcp -lt $wire.tcp)){throw 'No independently observed TCP DNS reply'}
         if($Transport -ceq 'Default' -and ($wire.udp -lt 1 -or $wire.received_udp -lt $wire.udp)){throw 'No independently observed UDP DNS reply'}
     }
-    [pscustomobject]@{phase=$Phase;transport=$Transport;nonce=$nonce;resolved=$observation.resolved;resolution_error=$observation.resolution_error;peer_udp=$wire.udp;peer_tcp=$wire.tcp;peer_received=$wire.received;direct_private_tcp_before_and_after=$true;private_network_only=$true}
+    if(-not (Assert-VolvPrivatePeerTopology -ClientId $ClientId -PeerId $PeerId -SwitchId $SwitchId)){throw 'Private topology changed during probe'}
+    Assert-VolvPrivatePeerSameIdentity -Session $PeerSession -ExpectedSHA $PeerSHA -PinnedIdentity $PinnedPeerIdentity
+    [pscustomobject]@{peer_continuity_verified=$true;phase=$Phase;transport=$Transport;nonce=$nonce;resolved=$observation.resolved;resolution_error=$observation.resolution_error;peer_udp=$wire.udp;peer_tcp=$wire.tcp;peer_received=$wire.received;direct_private_tcp_before_and_after=$true;private_network_only=$true}
 }
