@@ -111,11 +111,17 @@ func InspectWindowsDNSAssignmentProvenanceReadOnly(
  if err!=nil{return empty,fmt.Errorf("Windows DNS assignment source unavailable: %w",err)}
  if len(raw)<2||len(raw)>1<<20{return empty,errors.New("Windows DNS assignment inventory empty or oversized")}
  dec:=json.NewDecoder(bytes.NewReader(raw));dec.DisallowUnknownFields()
- var records []windowsDNSAssignmentRecord
- if err:=dec.Decode(&records);err!=nil{return empty,fmt.Errorf("invalid Windows DNS assignment JSON: %w",err)}
+ var rows []json.RawMessage
+ if err:=dec.Decode(&rows);err!=nil{return empty,fmt.Errorf("invalid Windows DNS assignment JSON: %w",err)}
  var trailing any
  if err:=dec.Decode(&trailing);err!=io.EOF{return empty,errors.New("unexpected trailing DNS assignment JSON")}
- if len(records)==0||len(records)>2048{return empty,errors.New("DNS assignment inventory has impossible interface count")}
+ if len(rows)==0||len(rows)>2048{return empty,errors.New("DNS assignment inventory has impossible interface count")}
+ records:=make([]windowsDNSAssignmentRecord,0,len(rows))
+ for _,row:=range rows{
+  record,err:=decodeCompleteWindowsDNSAssignmentRecord(row)
+  if err!=nil{return empty,fmt.Errorf("incomplete or ambiguous Windows DNS assignment evidence: %w",err)}
+  records=append(records,record)
+ }
  states:=make([]DNSServerState,0,len(records))
  seen:=map[string]bool{}
  guidIndexes:=map[string]uint32{}
@@ -193,4 +199,49 @@ func InspectWindowsDNSAssignmentProvenanceReadOnly(
   AdapterCount:len(families),StaticFamilyCount:staticCount,
   AutomaticFamilyCount:automaticCount,
  },nil
+}
+
+
+// Every provenance field must be explicitly observed. Go's ordinary struct
+// decoder silently converts missing/null booleans to false, accepts case
+// aliases and overwrites duplicate keys. That could mistake missing registry
+// evidence for an automatic DNS assignment. Reject ambiguity before any
+// restoration plan is built.
+func decodeCompleteWindowsDNSAssignmentRecord(raw []byte)(windowsDNSAssignmentRecord,error){
+ var record windowsDNSAssignmentRecord
+ required:=map[string]bool{
+  "InterfaceGUID":false,"InterfaceIndex":false,"Family":false,
+  "RegistryKeyPresent":false,"NameServerPresent":false,"NameServerKind":false,
+  "NameServerNonEmpty":false,"ProfileNameServerNonEmpty":false,"Mode":false,
+  "Servers":false,"EffectiveServers":false,
+ }
+ dec:=json.NewDecoder(bytes.NewReader(raw))
+ first,err:=dec.Token()
+ if err!=nil||first!=json.Delim('{'){return record,errors.New("DNS row is not an object")}
+ for dec.More(){
+  token,err:=dec.Token()
+  if err!=nil{return record,err}
+  key,ok:=token.(string)
+  seen,known:=required[key]
+  if !ok||!known||seen{return record,errors.New("unknown or duplicate DNS field")}
+  var value json.RawMessage
+  if err:=dec.Decode(&value);err!=nil{return record,err}
+  if bytes.Equal(bytes.TrimSpace(value),[]byte("null")){return record,errors.New("null DNS field")}
+  // The Windows query emits arrays even when no static or effective servers
+  // exist. Reject null entries, which Go otherwise decodes as empty strings.
+  if key=="Servers"||key=="EffectiveServers"{
+   var entries []json.RawMessage
+   if err:=json.Unmarshal(value,&entries);err!=nil||entries==nil{return record,errors.New("DNS server list is not an array")}
+   for _,entry:=range entries{
+    if bytes.Equal(bytes.TrimSpace(entry),[]byte("null")){return record,errors.New("null DNS server")}
+   }
+  }
+  required[key]=true
+ }
+ last,err:=dec.Token()
+ if err!=nil||last!=json.Delim('}'){return record,errors.New("incomplete DNS row")}
+ if _,err:=dec.Token();err!=io.EOF{return record,errors.New("trailing DNS row content")}
+ for _,seen:=range required{if !seen{return record,errors.New("missing required DNS field")}}
+ if err:=json.Unmarshal(raw,&record);err!=nil{return record,err}
+ return record,nil
 }
