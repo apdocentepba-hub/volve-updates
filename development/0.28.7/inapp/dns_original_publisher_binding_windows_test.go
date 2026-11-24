@@ -133,11 +133,16 @@ func prepareNativeSignedDNSRecoveryLab(t *testing.T)(signedRecoveryFixture,strin
 
 func prepareNativeSignedDNSRecoveryLabWithOriginals(t *testing.T,originals []DNSServerState)(signedRecoveryFixture,string,[]byte,[]byte,string,context.Context){
  t.Helper()
+ return prepareNativeSignedDNSRecoveryLabAt(t,originals,t.TempDir())
+}
+
+func prepareNativeSignedDNSRecoveryLabAt(t *testing.T,originals []DNSServerState,root string)(signedRecoveryFixture,string,[]byte,[]byte,string,context.Context){
+ t.Helper()
  ctx:=context.Background()
- f:=makeSignedRecoveryFixture(t,false)
  if os.Getenv("GITHUB_ACTIONS")!="true"||os.Getenv("RUNNER_ENVIRONMENT")!="github-hosted"{
   t.Skip("real ACL/publisher/Win32 lock integration requires disposable Windows CI")
  }
+ f:=makeSignedRecoveryFixtureAt(t,false,root)
  // Unlike earlier test doubles, EVERY persisted grant, journal and fallback
  // object is sealed using the exact native Windows SYSTEM/Admin SID policy.
  parent:=filepath.Join(f.root,"legacy-engine-recovery")
