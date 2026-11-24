@@ -180,8 +180,26 @@ func verifySignedDNSBootRestoreCensus(
 )error{
  if ctx==nil||inspect==nil{return errors.New("DNS census verification unavailable")}
  if err:=ctx.Err();err!=nil{return err}
+ // One fresh GUID census before and after one complete source census.
+ // Previously each family repeated all three PowerShell calls, even though
+ // the provenance result already contains every family. No observations
+ // survive this function or cross a native DNS mutation.
+ readBindings:=func()(map[string]uint32,error){
+  raw,err:=inspect(ctx,windowsAdapterInventoryQuery)
+  if err!=nil{return nil,err}
+  adapters,err:=parseWindowsAdapterInventory(raw)
+  if err!=nil{return nil,err}
+  result:=make(map[string]uint32,len(adapters))
+  for _,a:=range adapters{result[a.InterfaceGUID]=a.InterfaceIndex}
+  return result,nil
+ }
+ before,err:=readBindings()
+ if err!=nil{return err}
  evidence,err:=InspectWindowsDNSAssignmentProvenanceReadOnly(ctx,inspect)
  if err!=nil{return err}
+ after,err:=readBindings()
+ if err!=nil{return err}
+ if !reflect.DeepEqual(before,after){return errors.New("Windows adapter identities changed during signed DNS census")}
  if len(evidence.States)!=len(records){
   return errors.New("original recovery journal does not cover full live Windows adapter/family census")
  }
@@ -198,11 +216,11 @@ func verifySignedDNSBootRestoreCensus(
   if requireOriginal&&!sameDNSState(state,record.Original){
    return errors.New("readback still differs from exact protected original DNS")
   }
- }
- for _,record:=range records{
-  if _,_,err:=observeWindowsDNSRestoreStage(ctx,record,inspect);err!=nil{
+  index,ok:=before[strings.ToLower(state.InterfaceGUID)]
+  if !ok||index==0{return errors.New("signed DNS adapter missing or ambiguous in independent GUID census")}
+  if _,_,err:=classifyWindowsDNSRestoreStage(record,state,index);err!=nil{
    return fmt.Errorf("untrusted live adapter restore stage: %w",err)
   }
  }
- return nil
+ return ctx.Err()
 }
