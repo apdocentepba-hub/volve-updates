@@ -76,9 +76,22 @@ if($Mode -eq 'stage'){
  $pwsh=Join-Path $env:WINDIR 'System32\WindowsPowerShell\v1.0\powershell.exe'
  $args='-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "'+$script+'" -Mode recover -TaskName "'+$TaskName+'" -WatchdogName "'+$WatchdogName+'" -Workspace "'+$Workspace+'" -JournalExe "'+$JournalExe+'"'
  $wdTrigger=New-ScheduledTaskTrigger -AtStartup
- Register-ScheduledTask -TaskName $WatchdogName -Action (New-ScheduledTaskAction -Execute $pwsh -Argument $args) -Trigger $wdTrigger -User SYSTEM -RunLevel Highest | Out-Null
- $wd=Get-ScheduledTask -TaskName $WatchdogName
+ # Recovery must not depend on AC power, an idle session or Internet.
+ # Keep one bounded instance; never relax the signed snapshot or boot proof.
+ $wdSettings=New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Minutes 5)
+ Register-ScheduledTask -TaskName $WatchdogName -TaskPath '\' -Action (New-ScheduledTaskAction -Execute $pwsh -Argument $args -WorkingDirectory $PSScriptRoot) -Trigger $wdTrigger -Settings $wdSettings -User SYSTEM -RunLevel Highest -ErrorAction Stop | Out-Null
+ $wd=Get-ScheduledTask -TaskName $WatchdogName -TaskPath '\' -ErrorAction Stop
  if($wd.Principal.UserId -notin @('SYSTEM','S-1-5-18') -or @($wd.Triggers).Count -ne 1 -or $wd.Triggers[0].CimClass.CimClassName -ne 'MSFT_TaskBootTrigger'){throw 'Boot watchdog not configured to run as SYSTEM on boot'}
+ if(-not $wd.Settings.Enabled -or -not $wd.Triggers[0].Enabled -or
+    $wd.Settings.DisallowStartIfOnBatteries -or $wd.Settings.StopIfGoingOnBatteries -or
+    $wd.Settings.RunOnlyIfIdle -or $wd.Settings.RunOnlyIfNetworkAvailable -or
+    -not $wd.Settings.StartWhenAvailable -or
+    [string]$wd.Settings.MultipleInstances -ne 'IgnoreNew' -or
+    [string]$wd.Settings.ExecutionTimeLimit -ne 'PT5M' -or
+    [string]$wd.Actions[0].WorkingDirectory -cne $PSScriptRoot){
+  throw 'Boot watchdog persisted settings do not allow bounded offline recovery'
+ }
+ Write-Host 'PASS: persisted startup task permits bounded SYSTEM recovery without AC, network or idle prerequisites.'
  if($env:VOLVE_CI_ABORT_BEFORE_CANDIDATE -eq '1'){
   # Disposable CI-only fault injection. Do not touch the candidate; leave the
   # pending journal and boot-triggered watchdog to exercise pre-switch rescue.
