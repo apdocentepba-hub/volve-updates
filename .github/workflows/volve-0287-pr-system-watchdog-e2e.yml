@@ -103,6 +103,13 @@ jobs:
           go test ./motorupdate -run $regex -count=1 -timeout 6m -v
           if($LASTEXITCODE -ne 0){throw 'DNS-aware boot policy/native lease contract regression failed'}
           Write-Host 'PASS: six named DNS-aware boot policy/NTFS/kernel lease tests; simulated DNS writer, no reboot proof.'
+          $fenceTests=@('TestResidentQuiescenceRequiresCompleteUnambiguousOSCensus','TestResidentQuiescenceCountsNamedMotorEvenWhenPathIsUnavailable','TestSignedOriginalSYSTEMStartRequiresSignedPendingTaskAndNeverCommits')
+          $fenceRegex='^('+($fenceTests -join '|')+')$'
+          $fenceCensus=@(go test ./cmd/volve-managed-watchdog -list $fenceRegex)
+          if($LASTEXITCODE -ne 0){throw 'Watchdog fence test census failed'}
+          foreach($testName in $fenceTests){if($fenceCensus -cnotcontains $testName){throw ('Required fence regression missing: '+$testName)}}
+          go test ./cmd/volve-managed-watchdog -run $fenceRegex -count=1 -timeout 3m -v
+          if($LASTEXITCODE -ne 0){throw 'Strict process census or original startup fence failed'}
           $cancelledUpdaterTest='TestProtectedSignedCancelledUpdaterStillReacquiresBeforeHealth'
           $mutexCensus=@(go test ./motorupdate -list ('^'+$cancelledUpdaterTest+'$'))
           if($LASTEXITCODE -ne 0 -or -not ($mutexCensus -ccontains $cancelledUpdaterTest)){
@@ -306,6 +313,7 @@ jobs:
             network_adapters=$null
             scheduler_preflight=$null
             guest_readiness=$null
+            guest_setup_ready=$false
             guest_clock_skew_seconds=$null
             private_guest_dns_scheduler=$null
             cleanup_ok=$false
@@ -397,6 +405,29 @@ jobs:
             $report.guest_os=$guestIdentity.caption
             $report.guest_boot_before=$guestIdentity.bootUtcTicks
             $report.guest_boot_verified=$true
+            # PowerShell Direct can authenticate before Windows setup has
+            # finished. Never falsify registry setup flags to unblock tasks.
+            # Wait for the actual supported image completion state.
+            $report.stage='wait_for_completed_guest_setup'
+            $report.guest_readiness=Invoke-Command -Session $session -ErrorAction Stop -ScriptBlock {
+              $ErrorActionPreference='Stop'
+              $deadline=[datetime]::UtcNow.AddMinutes(6)
+              do {
+                $setup=Get-ItemProperty -LiteralPath 'HKLM:\SYSTEM\Setup'
+                $image=Get-ItemProperty -LiteralPath 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Setup\State'
+                $flags=[ordered]@{}
+                foreach($key in @('SystemSetupInProgress','OOBEInProgress','SetupType')){
+                  $prop=$setup.PSObject.Properties[$key]
+                  $flags[$key]=if($null -ne $prop){[int]$prop.Value}else{$null}
+                }
+                $ready=$image.ImageState -ceq 'IMAGE_STATE_COMPLETE' -and $null -ne $flags.SystemSetupInProgress -and $flags.SystemSetupInProgress -eq 0 -and $null -ne $flags.OOBEInProgress -and $flags.OOBEInProgress -eq 0 -and $null -ne $flags.SetupType -and $flags.SetupType -eq 0
+                if($ready){break}
+                Start-Sleep -Seconds 10
+              }while([datetime]::UtcNow -lt $deadline)
+              [pscustomobject]@{ready=[bool]$ready;setup=$flags;image_state=[string]$image.ImageState}
+            }
+            $report.guest_setup_ready=[bool]$report.guest_readiness.ready
+            if(-not $report.guest_setup_ready){throw 'Guest setup did not reach IMAGE_STATE_COMPLETE; no scheduler or DNS verdict'}
             # First boot of an evaluation image can register additional
             # Windows tasks. Give setup an independent clean boot BEFORE
             # taking the strict baseline; do not delete or exempt any task.
@@ -479,11 +510,14 @@ jobs:
                 # Observe global scheduler error IDs too: engine startup
                 # errors may not contain a TaskName field. No raw XML, task
                 # names or command lines are exported.
+                $taskCensus=@(Get-ScheduledTask -ErrorAction Stop)
+                $counts=[ordered]@{running=@($taskCensus|Where-Object State -eq 'Running').Count;queued=@($taskCensus|Where-Object State -eq 'Queued').Count;total=$taskCensus.Count}
+                $engineProcesses=@(Get-CimInstance Win32_Process -Filter "Name='taskeng.exe' OR Name='taskhostw.exe'" -ErrorAction Stop)
                 $engineErrors=@(Get-WinEvent -FilterHashtable @{LogName='Microsoft-Windows-TaskScheduler/Operational';StartTime=$start.AddSeconds(-5);Id=@(101,103,131,202,203,311,322,323,324)} -MaxEvents 100 -ErrorAction SilentlyContinue|ForEach-Object {[int]$_.Id})
                 [pscustomobject]@{
                   sid_verified=$sidVerified;last_result=[int64]$info.LastTaskResult;
                   state=[string]$t.State;event_ids=@($events|Sort-Object -Unique);
-                  engine_error_ids=@($engineErrors|Sort-Object -Unique);
+                  engine_error_ids=@($engineErrors|Sort-Object -Unique);task_census=$counts;engine_process_count=$engineProcesses.Count;
                   scheduler_service=[string](Get-Service Schedule).Status;
                   last_run_after_request=($info.LastRunTime -ge $start.AddSeconds(-3));
                   task_enabled=[bool]$t.Settings.Enabled;
