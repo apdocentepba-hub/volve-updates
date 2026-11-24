@@ -26,6 +26,28 @@ $dns=@(Get-DnsClientServerAddress -InterfaceIndex $idx -AddressFamily IPv4 -Erro
 if($dns.Count -ne 1){throw 'Ambiguous IPv4 DNS client inventory'}
 $expected=if($Phase -ceq 'Fault'){'127.0.0.1'}else{'192.0.2.53,192.0.2.54'}
 if(($dns[0].ServerAddresses -join ',') -cne $expected){throw 'Configured DNS does not match selected phase'}
+# Control observation: a failed DNS query must not be caused by loss
+# of the private physical network, dead peer or blocked TCP port.
+# No query is sent by these direct IP connections. They are not counted
+# as successful name resolution, and do not modify the Windows resolver.
+function Assert-PrivatePeerTCPReachable {
+    foreach($address in @('192.0.2.53','192.0.2.54')){
+        $client=[Net.Sockets.TcpClient]::new([Net.Sockets.AddressFamily]::InterNetwork)
+        $pending=$null
+        try{
+            $client.Client.Bind([Net.IPEndPoint]::new([Net.IPAddress]::Parse('192.0.2.10'),0))
+            $pending=$client.BeginConnect([Net.IPAddress]::Parse($address),53,$null,$null)
+            if(-not $pending.AsyncWaitHandle.WaitOne(2500,$false)){throw 'Private peer TCP control timed out'}
+            $client.EndConnect($pending)
+            if(-not $client.Connected -or $client.Client.RemoteEndPoint.Address.ToString() -cne $address -or
+               $client.Client.LocalEndPoint.Address.ToString() -cne '192.0.2.10'){throw 'Private peer TCP control identity mismatch'}
+        }finally{
+            if($null -ne $pending){$pending.AsyncWaitHandle.Dispose()}
+            $client.Dispose()
+        }
+    }
+}
+Assert-PrivatePeerTCPReachable
 $name=$Nonce+'.volve-ci.test'
 $arguments=@{Name=($name+'.');Type='A';DnsOnly=$true;NoHostsFile=$true;QuickTimeout=$true;ErrorAction='Stop'}
 if($Transport -ceq 'TCP'){$arguments.TcpOnly=$true}
@@ -55,6 +77,7 @@ if($Phase -ceq 'Fault'){
 }else{
     if(-not $resolved){throw ('Configured DNS failed to resolve private challenge: '+$errorId)}
 }
+Assert-PrivatePeerTCPReachable
 # Read back the exact adapter identity and DNS list again, after the query.
 $after=@(Get-NetAdapter -ErrorAction Stop)
 $afterDNS=@(Get-DnsClientServerAddress -InterfaceIndex $idx -AddressFamily IPv4 -ErrorAction Stop)
@@ -64,6 +87,7 @@ if($after.Count -ne 1 -or $after[0].InterfaceGuid -ne $n[0].InterfaceGuid -or
 [pscustomobject]@{
     phase=$Phase;transport=$Transport;nonce=$Nonce
     resolved=$resolved;resolution_error=$errorId
+    direct_private_tcp_before_and_after=$true
     requires_independent_peer_log=$true
     internet_connectivity_proven=$false
 }
