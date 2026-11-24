@@ -331,6 +331,8 @@ jobs:
             guest_readiness=$null
             guest_setup_ready=$false
             guest_clock_skew_seconds=$null
+            guest_clock_stability=$null
+            scheduler_probe_attempts=@()
             private_guest_dns_scheduler=$null
             private_guest_dns_inventory=$null
             cleanup_ok=$false
@@ -392,6 +394,7 @@ jobs:
                 <InputLocale>en-US</InputLocale><SystemLocale>en-US</SystemLocale><UILanguage>en-US</UILanguage><UserLocale>en-US</UserLocale>
               </component>
               <component name="Microsoft-Windows-Shell-Setup" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
+                <TimeZone>UTC</TimeZone>
                 <UserAccounts><AdministratorPassword><Value>$password</Value><PlainText>true</PlainText></AdministratorPassword></UserAccounts>
                 <AutoLogon><Password><Value>$password</Value><PlainText>true</PlainText></Password><Enabled>true</Enabled><LogonCount>1</LogonCount><Username>Administrator</Username></AutoLogon>
                 <!-- Microsoft documents unattended OOBE settings for
@@ -502,10 +505,41 @@ jobs:
             $midpoint=$sent.AddTicks([long](($received.Ticks-$sent.Ticks)/2))
             $report.guest_clock_skew_seconds=[math]::Round(([long]$readiness.guest_utc_ticks-$midpoint.Ticks)/10000000,1)
             $report.guest_readiness=$readiness
+            # The evaluation VHD can step its UTC clock during startup.
+            # Require three successive bounded, synchronized observations
+            # before registering the owned task. No changes to host clock,
+            # time service, production machine or Scheduler security.
+            $report.stage='verify_guest_clock_stable'
+            $clockDeadline=[datetime]::UtcNow.AddMinutes(3)
+            $samples=@()
+            $previousGuest=[long]0
+            $previousHost=[long]0
+            do{
+              $sent=[datetime]::UtcNow
+              $sample=Invoke-Command -Session $session -ErrorAction Stop -ScriptBlock {
+                [pscustomobject]@{ticks=[datetime]::UtcNow.Ticks.ToString();zone=[TimeZoneInfo]::Local.Id}
+              }
+              $received=[datetime]::UtcNow
+              $hostTicks=$sent.AddTicks([long](($received.Ticks-$sent.Ticks)/2)).Ticks
+              $guestTicks=[long]$sample.ticks
+              $skew=($guestTicks-$hostTicks)/10000000.0
+              $deltaOK=($previousGuest -eq 0 -or ($guestTicks -gt $previousGuest -and [math]::Abs((($guestTicks-$previousGuest)-($hostTicks-$previousHost))/10000000.0) -le 3))
+              if($sample.zone -ceq 'UTC' -and [math]::Abs($skew) -le 5 -and $deltaOK -and ($received-$sent).TotalSeconds -le 5){
+                $samples+=@([math]::Round($skew,2))
+              }else{$samples=@()}
+              $previousGuest=$guestTicks
+              $previousHost=$hostTicks
+              if($samples.Count -ge 3){break}
+              Start-Sleep -Seconds 5
+            }while([datetime]::UtcNow -lt $clockDeadline)
+            $report.guest_clock_stability=[ordered]@{zone=$sample.zone;samples=$samples;verified=($samples.Count -ge 3)}
+            if(-not $report.guest_clock_stability.verified){throw 'Guest UTC clock not stable; refusing recovery and DNS mutation'}
             # Prove Task Scheduler can execute an owned no-op as actual
             # LocalSystem before arming any recovery or injecting DNS faults.
             $report.stage='system_scheduler_preflight'
-            $probe=Invoke-Command -Session $session -ArgumentList $trial -ErrorAction Stop -ScriptBlock {
+            for($attempt=1;$attempt -le 3;$attempt++){
+            $probeId=$trial+'-'+[guid]::NewGuid().ToString('N')
+            $probe=Invoke-Command -Session $session -ArgumentList $probeId -ErrorAction Stop -ScriptBlock {
               param($id)
               $ErrorActionPreference='Stop'
               $name='VOLVE-CI-SYSTEMProbe-'+$id
@@ -611,7 +645,11 @@ jobs:
                 Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction Stop
               }
             }
+            $report.scheduler_probe_attempts+=@([ordered]@{attempt=$attempt;sid_verified=$probe.sid_verified;result=$probe.last_result;state=$probe.state;correlated=$probe.correlated_event_chain.verified})
             $report.scheduler_preflight=$probe
+            if($probe.sid_verified -and $probe.last_result -eq 0 -and $probe.correlated_event_chain.verified -and $probe.state -eq 'Ready'){break}
+            if($attempt -lt 3){Start-Sleep -Seconds 10}
+            }
             if(-not $probe.sid_verified -or $probe.last_result -ne 0 -or -not $probe.correlated_event_chain.verified -or $probe.state -ne 'Ready'){throw 'Guest Scheduler did not demonstrate a completed LocalSystem no-op; inspect setup, clock and engine diagnostics'} 
             $nonce=[guid]::NewGuid().ToString('N')
             $before=Invoke-Command -Session $session -ArgumentList $nonce -ErrorAction Stop -ScriptBlock {
