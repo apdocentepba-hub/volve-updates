@@ -228,7 +228,7 @@ func TestSignedWindowsDNSBootPersistedEvidenceRequiresActualSYSTEMEntrypoint(t *
 // No real DNS writes. Prove that a single full census retains the exact
 // allowed-prefix policy and that adapter identity drift is still rejected.
 func TestSignedWindowsDNSBootCensusConsolidatesWithoutLosingDriftChecks(t *testing.T){
- for _,mode:=range []string{"expected","original","partial","foreign","identity-drift","extra-adapter"}{
+ for _,mode:=range []string{"expected","original","partial","foreign","identity-drift","source-index-drift","extra-adapter"}{
   t.Run(mode,func(t *testing.T){
    host:=windowsActivationHostFixture()
    records:=[]DNSRestoreRecord{
@@ -245,7 +245,15 @@ func TestSignedWindowsDNSBootCensusConsolidatesWithoutLosingDriftChecks(t *testi
     if query==windowsAdapterInventoryQuery{
      adapterReads++
      if mode=="identity-drift"&&adapterReads==2{host.index++}
-    }else if query==windowsDNSAssignmentSourceQuery{sourceReads++}
+    }else if query==windowsDNSAssignmentSourceQuery{
+     sourceReads++
+     if mode=="source-index-drift"{
+      host.index++
+      raw,err:=host.inspect(ctx,query)
+      host.index--
+      return raw,err
+     }
+    }
     if extra{return windowsActivationInspectorWithExtraAdapter(host,&extra)(ctx,query)}
     return host.inspect(ctx,query)
    }
