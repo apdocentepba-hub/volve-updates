@@ -66,7 +66,12 @@ catch{
     # match localized messages, arbitrary exceptions or all SocketExceptions.
     $knownResolution=$errorId -cmatch '^(DNS_ERROR_RCODE_NAME_ERROR|DNS_ERROR_RCODE_SERVER_FAILURE|DNS_ERROR_RCODE_REFUSED|DNS_ERROR_NO_DNS_SERVERS|DNS_ERROR_NO_PACKET|DNS_ERROR_RECORD_DOES_NOT_EXIST|DNS_INFO_NO_RECORDS|ERROR_TIMEOUT|WSAETIMEDOUT|WSAHOST_NOT_FOUND|WSATRY_AGAIN)(,|$)'
     $knownFaultReset=($Phase -ceq 'Fault' -and $errorId -cmatch '^(WSAECONNRESET|WSAECONNREFUSED|10054|10061)(,Microsoft\.DnsClient\.Commands\.ResolveDnsName|$)')
-    if(-not $knownResolution -and -not $knownFaultReset){
+    # Exact native TCP observation in run 45475233420/job 138733829057:
+    # 10057 (WSAENOTCONN). Accept only for this deliberately disconnected
+    # DNS-over-TCP fault, still requiring no local listener, intact private
+    # TCP controls, exact DNS assignment and no matching peer wire evidence.
+    $knownTCPNotConnected=($Phase -ceq 'Fault' -and $Transport -ceq 'TCP' -and $errorId -cmatch '^(WSAENOTCONN|10057),Microsoft\.DnsClient\.Commands\.ResolveDnsName$')
+    if(-not $knownResolution -and -not $knownFaultReset -and -not $knownTCPNotConnected){
         throw ('Unexpected resolver failure; error_id='+$errorId+'; exception_type='+$_.Exception.GetType().FullName)
     }
 }
