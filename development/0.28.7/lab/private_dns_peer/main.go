@@ -60,17 +60,22 @@ func allowedClient(a net.Addr) bool {
  return err==nil&&host==clientIP
 }
 
-func serveUDP(c net.PacketConn) {
+// Own the evidence file rather than relying on PowerShell's exclusive
+// standard-output redirection handle. Each event is one checked write.
+func peerEvidence(w io.Writer, format string, args ...any) {
+ if _,err:=fmt.Fprintf(w,format,args...);err!=nil{panic("private DNS evidence write failed: "+err.Error())}
+}
+func serveUDP(c net.PacketConn, evidence io.Writer) {
  buf:=make([]byte,4096)
  for {
   n,a,err:=c.ReadFrom(buf);if err!=nil{return}
   if !allowedClient(a){continue}
   reply,nonce,err:=challengeReply(buf[:n]);if err!=nil{continue}
-  fmt.Printf("VOLVE_PRIVATE_PEER_RECEIVED transport=udp nonce=%s\n",nonce)
-  if _,err=c.WriteTo(reply,a);err==nil{fmt.Printf("VOLVE_PRIVATE_PEER_REPLY transport=udp nonce=%s\n",nonce)}
+  peerEvidence(evidence,"VOLVE_PRIVATE_PEER_RECEIVED transport=udp nonce=%s\n",nonce)
+  if _,err=c.WriteTo(reply,a);err==nil{peerEvidence(evidence,"VOLVE_PRIVATE_PEER_REPLY transport=udp nonce=%s\n",nonce)}
  }
 }
-func serveTCP(l net.Listener) {
+func serveTCP(l net.Listener, evidence io.Writer) {
  for {
   c,err:=l.Accept();if err!=nil{return}
   // Serial, bounded connection handling is sufficient for one lab client.
@@ -83,10 +88,10 @@ func serveTCP(l net.Listener) {
    n:=int(binary.BigEndian.Uint16(size[:]));if n<18||n>4096{return}
    q:=make([]byte,n);if _,err:=io.ReadFull(c,q);err!=nil{return}
    reply,nonce,err:=challengeReply(q);if err!=nil{return}
-   fmt.Printf("VOLVE_PRIVATE_PEER_RECEIVED transport=tcp nonce=%s\n",nonce)
+   peerEvidence(evidence,"VOLVE_PRIVATE_PEER_RECEIVED transport=tcp nonce=%s\n",nonce)
    binary.BigEndian.PutUint16(size[:],uint16(len(reply)))
    packet:=append(size[:],reply...)
-   if n,err:=c.Write(packet);err==nil&&n==len(packet){fmt.Printf("VOLVE_PRIVATE_PEER_REPLY transport=tcp nonce=%s\n",nonce)}
+   if n,err:=c.Write(packet);err==nil&&n==len(packet){peerEvidence(evidence,"VOLVE_PRIVATE_PEER_REPLY transport=tcp nonce=%s\n",nonce)}
   }()
  }
 }
@@ -95,16 +100,22 @@ func main(){
  if os.Getenv("GITHUB_ACTIONS")!="true"||os.Getenv("RUNNER_ENVIRONMENT")!="github-hosted"||os.Getenv("VOLVE_CI_PRIVATE_DNS_PEER")!="PRIVATE_GUEST_ONLY"{
   panic("refuse outside explicit private hosted CI peer")
  }
+ // The guest controller supplies an ACL-protected working directory.
+ // O_EXCL rejects stale evidence; Go's native file handle allows shared
+ // read/write access, unlike the former PowerShell redirected log.
+ evidence,err:=os.OpenFile("peer.log",os.O_WRONLY|os.O_CREATE|os.O_EXCL,0600)
+ if err!=nil{panic(err)}
+ defer evidence.Close()
  // Binding to these two exact TEST-NET addresses never opens a wildcard.
  // The host harness independently verifies switch, NIC and route isolation.
  for _,ip:=range []string{peerIP,secondaryIP}{
   endpoint:=net.JoinHostPort(ip,"53")
   udp,err:=net.ListenPacket("udp4",endpoint);if err!=nil{panic(err)}
   tcp,err:=net.Listen("tcp4",endpoint);if err!=nil{udp.Close();panic(err)}
-  go serveUDP(udp)
-  go serveTCP(tcp)
+  go serveUDP(udp,evidence)
+  go serveTCP(tcp,evidence)
  }
- fmt.Println("VOLVE_PRIVATE_PEER_READY two_ipv4_addresses udp_tcp53 NO_FORWARDING")
+ peerEvidence(evidence,"VOLVE_PRIVATE_PEER_READY two_ipv4_addresses udp_tcp53 NO_FORWARDING\n")
  // Hard upper bound; a test VM is destroyed by the host regardless of result.
  <-time.After(2*time.Hour)
 }
