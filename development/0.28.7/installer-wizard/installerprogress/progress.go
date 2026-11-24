@@ -1,10 +1,14 @@
-// Package installerprogress translates verified controller outcomes into UI state.
-// It does not authenticate a controller or authorize any system operation.
+// Package installerprogress translates independently verified controller outcomes
+// into UI state. It neither authenticates a controller nor authorizes a system operation.
 package installerprogress
 
-import "errors"
+import (
+ "errors"
+ "sync"
+)
 
 type Stage string
+
 const (
  Preflight Stage = "preflight"
  PackageVerified Stage = "package_verified"
@@ -13,47 +17,98 @@ const (
  MotorVerified Stage = "motor_verified"
  ConnectivityVerified Stage = "connectivity_verified"
  CommitVerified Stage = "commit_verified"
+ PostBootVerified Stage = "post_boot_verified"
 )
-var order = [...]Stage{Preflight, PackageVerified, BackupVerified, WatchdogVerified, MotorVerified, ConnectivityVerified, CommitVerified}
-type State struct { next int; status string; pendingReboot bool }
-type View struct { Percent int; Status string; Next Stage; RebootRequired bool }
+
+var order = [...]Stage{Preflight, PackageVerified, BackupVerified, WatchdogVerified, MotorVerified, ConnectivityVerified, CommitVerified, PostBootVerified}
+
+// State must not be copied after first use. UI readers and controller events
+// share one synchronized state, not independent progress counters.
+type State struct {
+ mu sync.Mutex
+ next int
+ status string
+ rebootRequested bool
+}
+type View struct {
+ Percent int
+ Status string
+ Next Stage
+ RebootRequired bool
+}
 func New() *State { return &State{status:"running"} }
-// Confirm is called only by the future authenticated controller adapter after
-// a successful independent check, not from installer UI or arbitrary JSON.
+
+// Confirm is called only by the future authenticated controller adapter
+// after a successful independent check. The last stage is deliberately
+// unavailable here: a durable activation receipt is NOT a post-boot proof.
 func (s *State) Confirm(stage Stage) error {
- if s.status != "running" || s.pendingReboot || s.next >= len(order) || order[s.next] != stage { return errors.New("unexpected stage or terminal state") }
+ s.mu.Lock()
+ defer s.mu.Unlock()
+ if s.status != "running" || s.next >= len(order)-1 || order[s.next] != stage {
+  return errors.New("unexpected stage or terminal state")
+ }
  s.next++
- if s.next == len(order) { s.status="completed" }
+ if s.next == len(order)-1 { s.status="awaiting_reboot" }
  return nil
 }
-// RequireReboot is only applicable after the motor is independently verified.
+
+// RequireReboot records a request after durable commit, not completion.
+// The independent controller must actually initiate/observe the restart.
 func (s *State) RequireReboot() error {
- if s.status != "running" || s.pendingReboot || s.next != 5 { return errors.New("unexpected reboot request") }
- s.pendingReboot=true; return nil
+ s.mu.Lock()
+ defer s.mu.Unlock()
+ if s.status != "awaiting_reboot" || s.rebootRequested {
+  return errors.New("unexpected or duplicate reboot request")
+ }
+ s.rebootRequested=true
+ return nil
 }
-// ConfirmReboot does not perform or prove reboot; caller must verify evidence.
+
+// ConfirmReboot must be called only after authenticating a new boot and
+// verifying the durable receipt, live protection and independent recovery.
+// An acknowledgment, a timeout, or a successful pre-boot probe is insufficient.
 func (s *State) ConfirmReboot() error {
- if s.status != "running" || !s.pendingReboot { return errors.New("no pending reboot") }
- s.pendingReboot=false; return nil
+ s.mu.Lock()
+ defer s.mu.Unlock()
+ if s.status != "awaiting_reboot" || !s.rebootRequested || s.next != len(order)-1 {
+  return errors.New("post-boot confirmation not expected")
+ }
+ s.next++
+ s.status="completed"
+ s.rebootRequested=false
+ return nil
 }
-// Fail stops forward progress. Once backup is verified, retain a distinct
-// recovery-required state; the UI must not say protection was installed.
+
+// Failure after a durable commit but before post-boot verification is
+// still a recovery-required state. Never report protection installed.
 func (s *State) Fail() error {
- if s.status != "running" { return errors.New("unexpected failure transition") }
- s.pendingReboot=false
+ s.mu.Lock()
+ defer s.mu.Unlock()
+ if s.status != "running" && s.status != "awaiting_reboot" {
+  return errors.New("unexpected failure transition")
+ }
+ s.rebootRequested=false
  if s.next>=3 { s.status="recovery_required" } else { s.status="failed_before_activation" }
  return nil
 }
 func (s *State) ConfirmRecovery() error {
+ s.mu.Lock()
+ defer s.mu.Unlock()
  if s.status != "recovery_required" { return errors.New("no pending recovery") }
- s.status="recovered_not_installed"; return nil
+ s.status="recovered_not_installed"
+ return nil
 }
 func (s *State) RecoveryFailed() error {
+ s.mu.Lock()
+ defer s.mu.Unlock()
  if s.status != "recovery_required" { return errors.New("no pending recovery") }
- s.status="recovery_failed"; return nil
+ s.status="recovery_failed"
+ return nil
 }
 func (s *State) View() View {
- v:=View{Percent:s.next*100/len(order), Status:s.status, RebootRequired:s.pendingReboot}
- if s.status=="running" && s.next<len(order) { v.Next=order[s.next] }
+ s.mu.Lock()
+ defer s.mu.Unlock()
+ v:=View{Percent:s.next*100/len(order),Status:s.status,RebootRequired:s.status=="awaiting_reboot"}
+ if s.status=="running" || s.status=="awaiting_reboot" { v.Next=order[s.next] }
  return v
 }
