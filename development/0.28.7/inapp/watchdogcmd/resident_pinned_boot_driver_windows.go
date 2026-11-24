@@ -73,7 +73,16 @@ func newPinnedResidentBootRecoveryDriverWindows(
  // Never let this motor-only entry finalize a transaction that has
  // staged DNS evidence. The separate DNS-aware driver remains disabled
  // until the actual candidate fence and reboot/network tests pass.
- return motorupdate.NewProtectedResidentBootDriver(&motorOnlyPinnedBootOps{root:root,original:ops})
+ verifyScope:=func(ctx context.Context,intent motorupdate.ResidentRecoveryIntent)error{
+  grant,err:=motorupdate.LoadResidentDurablePublisherGrant(ctx,root,ed25519.PublicKey(key),acl,acl,acl)
+  if err!=nil{return err}
+  pending,err:=motorupdate.InspectResidentRecoveryJournal(ctx,grant.JournalDir,acl)
+  if err!=nil||pending.Status!="recovery-required"||pending.Intent!=intent{
+   return errors.New("signed recovery scope not bound to current pending intent")
+  }
+  return motorupdate.VerifyExplicitResidentRecoveryScope(ctx,grant.Permit,grant.Signature,ed25519.PublicKey(key),motorupdate.ResidentRecoveryScopeMotorOnly)
+ }
+ return motorupdate.NewProtectedResidentBootDriver(&motorOnlyPinnedBootOps{root:root,original:ops,verifyScope:verifyScope})
 }
 
 
@@ -86,6 +95,7 @@ func newPinnedResidentBootRecoveryDriverWindows(
 type motorOnlyPinnedBootOps struct {
  root string
  original motorupdate.ResidentOriginalRecoveryOps
+ verifyScope func(context.Context,motorupdate.ResidentRecoveryIntent)error
 }
 
 func rejectDNSStagingForMotorOnlyBoot(ctx context.Context,root string)error{
@@ -108,15 +118,20 @@ func rejectDNSStagingForMotorOnlyBoot(ctx context.Context,root string)error{
  return ctx.Err()
 }
 
+func(o *motorOnlyPinnedBootOps)verifyMotorOnlyScope(ctx context.Context,intent motorupdate.ResidentRecoveryIntent)error{
+ if o==nil||o.verifyScope==nil{return errors.New("explicit signed motor-only recovery scope verifier missing")}
+ if err:=rejectDNSStagingForMotorOnlyBoot(ctx,o.root);err!=nil{return err}
+ return o.verifyScope(ctx,intent)
+}
 func(o *motorOnlyPinnedBootOps)VerifySealedOriginal(ctx context.Context,intent motorupdate.ResidentRecoveryIntent)error{
  if o==nil||o.original==nil{return errors.New("missing motor-only original verifier")}
- if err:=rejectDNSStagingForMotorOnlyBoot(ctx,o.root);err!=nil{return err}
+ if err:=o.verifyMotorOnlyScope(ctx,intent);err!=nil{return err}
  if err:=o.original.VerifySealedOriginal(ctx,intent);err!=nil{return err}
- return rejectDNSStagingForMotorOnlyBoot(ctx,o.root)
+ return o.verifyMotorOnlyScope(ctx,intent)
 }
 func(o *motorOnlyPinnedBootOps)RestoreOriginal(ctx context.Context,intent motorupdate.ResidentRecoveryIntent)error{
  if o==nil||o.original==nil{return errors.New("missing motor-only original restorer")}
- if err:=rejectDNSStagingForMotorOnlyBoot(ctx,o.root);err!=nil{return err}
+ if err:=o.verifyMotorOnlyScope(ctx,intent);err!=nil{return err}
  if err:=o.original.RestoreOriginal(ctx,intent);err!=nil{return err}
- return rejectDNSStagingForMotorOnlyBoot(ctx,o.root)
+ return o.verifyMotorOnlyScope(ctx,intent)
 }
