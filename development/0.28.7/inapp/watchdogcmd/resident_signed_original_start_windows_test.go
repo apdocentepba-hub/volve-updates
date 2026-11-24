@@ -44,6 +44,7 @@ func TestSignedOriginalSYSTEMStartRequiresSignedPendingTaskAndNeverCommits(t *te
     "Start-ScheduledTask","VOLVE-DNS-SERVER-0270","S-1-5-18","--dns-service",
     "MSFT_TaskBootTrigger","$t.State -ne 'Ready'","Get-NetUDPEndpoint",
     "Get-NetTCPConnection","Win32_Process","Get-CimInstance",
+    "([string]$_.Name -like 'VOLVE_DNS_*') -or","$known -icontains",
     "[IO.File]::OpenRead($old)","[Security.Cryptography.SHA256]::Create()",
     "finally{$h.Dispose();$a.Dispose()}","$actual -cne $sha",
     "VOLVE_SIGNED_ORIGINAL_START_REQUESTED",
