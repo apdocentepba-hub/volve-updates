@@ -9,6 +9,11 @@ on:
       - 'development/0.28.7/taskrecoverygate/**'
       - 'development/0.28.7/lab/**'
       - 'development/0.28.7/installer-wizard/**'
+  push:
+    branches: [work/0287-installer-progress-20261124]
+    paths:
+      - '.github/workflows/volve-0287-fast-feedback-pr.yml'
+      - 'development/0.28.7/installer-wizard/installerprogress/**'
   workflow_dispatch:
 permissions:
   contents: read
@@ -36,6 +41,14 @@ jobs:
           go test -count=1 ./...
           go vet ./...
           echo 'PASS: fast Go migration contract; NOT a production installer validation'
+      - name: Verify installer progress and fail-closed recovery states
+        working-directory: development/0.28.7/installer-wizard/installerprogress
+        shell: bash
+        run: |
+          set -euo pipefail
+          go test -count=1 -race -cover -v progress.go progress_test.go
+          go vet progress.go progress_test.go
+          echo 'PASS: installer UI state contract; NO installation or connectivity proof'
   windows-synthetic-contract:
     name: Fast Windows syntax and security contracts
     runs-on: windows-2022
@@ -58,7 +71,9 @@ jobs:
             'test_vm_cleanup_scheduler_roundtrip.ps1',
             'vm_environment_baseline.ps1',
             'test_vm_environment_baseline.ps1',
-            'ci_task_scheduler_event_diagnostic.ps1'
+            'ci_task_scheduler_event_diagnostic.ps1',
+            'ci_private_motor_integration.ps1',
+            'private_dns_client_probe.ps1'
           )
           foreach($name in $names){
             $file=Join-Path $root $name
@@ -72,7 +87,7 @@ jobs:
               throw ('PowerShell syntax validation failed for '+$name)
             }
           }
-          Write-Host 'PASS: parsed 11 recovery laboratory scripts'
+          Write-Host 'PASS: parsed 13 recovery laboratory scripts'
       - name: Execute synthetic-only recovery and security tests (NO REBOOT NO DNS)
         shell: powershell
         run: |
