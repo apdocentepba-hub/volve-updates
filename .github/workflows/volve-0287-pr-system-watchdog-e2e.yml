@@ -4,8 +4,9 @@ on:
     branches: [feature/motor-updater-0287-pilot, work/0287-dns-cname-chain-guard-20261113]
     paths:
       - '.github/workflows/volve-0287-pr-system-watchdog-e2e.yml'
-      - 'development/0.28.7/inapp/signed_legacy_windows_task_lab_test.go'
-      - 'development/0.28.7/inapp/apply_overlay.go'
+      - 'development/0.28.7/inapp/**'
+      - 'development/0.28.7/lab/**'
+      - 'development/0.28.7/journal/**'
   workflow_dispatch:
 permissions:
   contents: read
