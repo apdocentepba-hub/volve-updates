@@ -230,11 +230,15 @@ func TestSignedWindowsDNSBootPersistedEvidenceRequiresActualSYSTEMEntrypoint(t *
 func TestSignedWindowsDNSBootCensusConsolidatesWithoutLosingDriftChecks(t *testing.T){
  for _,mode:=range []string{"expected","original","partial","foreign","identity-drift","extra-adapter"}{
   t.Run(mode,func(t *testing.T){
-   f:=makeAutomaticDNSRecoveryFixture()
-   host:=f.host
-   if mode=="original"{for _,r:=range f.records{host.states[r.Original.Family]=copyWindowsActivationDNSState(r.Original)}}
-   if mode=="partial"{p:=copyWindowsActivationDNSState(f.records[0].Original);p.Servers=p.Servers[:1];host.states[DNSIPv4]=p}
-   if mode=="foreign"{p:=copyWindowsActivationDNSState(f.records[0].Original);p.Servers=[]string{"203.0.113.42"};host.states[DNSIPv4]=p}
+   host:=windowsActivationHostFixture()
+   records:=[]DNSRestoreRecord{
+    {Original:copyWindowsActivationDNSState(host.states[DNSIPv4]),Expected:DNSServerState{InterfaceGUID:activationTestGUID,Family:DNSIPv4,Mode:DNSStatic,Servers:[]string{"127.0.0.1"}}},
+    {Original:copyWindowsActivationDNSState(host.states[DNSIPv6]),Expected:DNSServerState{InterfaceGUID:activationTestGUID,Family:DNSIPv6,Mode:DNSStatic,Servers:[]string{"::1"}}},
+   }
+   for _,r:=range records{host.states[r.Original.Family]=copyWindowsActivationDNSState(r.Expected)}
+   if mode=="original"{for _,r:=range records{host.states[r.Original.Family]=copyWindowsActivationDNSState(r.Original)}}
+   if mode=="partial"{p:=copyWindowsActivationDNSState(records[0].Original);p.Servers=p.Servers[:1];host.states[DNSIPv4]=p}
+   if mode=="foreign"{p:=copyWindowsActivationDNSState(records[0].Original);p.Servers=[]string{"203.0.113.42"};host.states[DNSIPv4]=p}
    adapterReads,sourceReads:=0,0
    extra:=mode=="extra-adapter"
    inspect:=func(ctx context.Context,query string)([]byte,error){
@@ -245,7 +249,7 @@ func TestSignedWindowsDNSBootCensusConsolidatesWithoutLosingDriftChecks(t *testi
     if extra{return windowsActivationInspectorWithExtraAdapter(host,&extra)(ctx,query)}
     return host.inspect(ctx,query)
    }
-   err:=verifySignedDNSBootRestoreCensus(context.Background(),f.records,inspect,mode=="original")
+   err:=verifySignedDNSBootRestoreCensus(context.Background(),records,inspect,mode=="original")
    wantOK:=mode=="expected"||mode=="original"||mode=="partial"
    if (err==nil)!=wantOK{t.Fatalf("unexpected census result: %v",err)}
    if adapterReads!=2||sourceReads!=1{t.Fatalf("expected exactly two independent identity reads bracketing one provenance census; got %d/%d",adapterReads,sourceReads)}
