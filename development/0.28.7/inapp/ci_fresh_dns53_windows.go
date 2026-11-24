@@ -152,7 +152,15 @@ func ciFreshAllowedUpstreamResponse(query []byte)([]byte,error){
  reply:=append([]byte(nil),query[:offset]...)
  reply[2],reply[3]=0x81,0x80 // standard response, recursive available
  for i:=6;i<12;i++{reply[i]=0} // no unaudited answers, authority or OPT
- if strings.Join(labels,".")=="example.org" && qtype==1 && qclass==1 {
+ // A unique reserved .test name permits a cache-independent observation
+ // through the real Windows configured resolver in the nested guest.
+ // No external DNS lookup or production behavior is added.
+ domain:=strings.Join(labels,".")
+ allowedChallenge:=len(labels)==3 && len(labels[0])==32 && labels[1]=="volve-motor-ci" && labels[2]=="test"
+ if allowedChallenge{
+  for _,c:=range labels[0]{if !(c>='a'&&c<='f'||c>='0'&&c<='9'){allowedChallenge=false;break}}
+ }
+ if (domain=="example.org" || allowedChallenge) && qtype==1 && qclass==1 {
   reply[7]=1 // one actual A record, not merely NOERROR
   reply=append(reply,0xC0,0x0C,0,1,0,1,0,0,0,60,0,4,203,0,113,7)
  }
