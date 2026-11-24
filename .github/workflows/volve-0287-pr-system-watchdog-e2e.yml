@@ -324,6 +324,10 @@ jobs:
           $out=Join-Path $env:RUNNER_TEMP 'VOLVE-CI-ActualMotor.exe'
           go build -tags volveci -trimpath -o $out .
           if($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $out -PathType Leaf)){throw 'Exact CI motor compilation failed'}
+          $wire=Join-Path $env:RUNNER_TEMP 'VOLVE-CI-ActualMotorProbe.test.exe'
+          go test -c -tags volveci -trimpath -o $wire .
+          if($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $wire -PathType Leaf)){throw 'Independent raw DNS observer compilation failed'}
+          Write-Host ('PASS: exact independent wire observer compiled SHA256='+((Get-FileHash -LiteralPath $wire -Algorithm SHA256).Hash))
           $script=Join-Path $env:GITHUB_WORKSPACE 'development\0.28.7\lab\ci_private_motor_integration.ps1'
           $tokens=$null;$errors=$null
           $null=[System.Management.Automation.Language.Parser]::ParseFile($script,[ref]$tokens,[ref]$errors)
@@ -1262,16 +1266,20 @@ jobs:
             $integrationSHA=(Get-FileHash -LiteralPath $integrationSource -Algorithm SHA256).Hash
             $integrationGuest=Join-Path $guestDNS 'ci_private_motor_integration.ps1'
             Copy-Item -LiteralPath $motorSource -Destination $motorGuest -ToSession $session -ErrorAction Stop
+            $wireSource=Join-Path $env:RUNNER_TEMP 'VOLVE-CI-ActualMotorProbe.test.exe'
+            $wireSHA=(Get-FileHash -LiteralPath $wireSource -Algorithm SHA256).Hash
+            $wireGuest=Join-Path $guestDNS 'VOLVE-CI-ActualMotorProbe.test.exe'
+            Copy-Item -LiteralPath $wireSource -Destination $wireGuest -ToSession $session -ErrorAction Stop
             Copy-Item -LiteralPath $integrationSource -Destination $integrationGuest -ToSession $session -ErrorAction Stop
-            $report.private_actual_motor_integration=Invoke-Command -Session $session -ArgumentList $integrationGuest,$integrationSHA,$motorGuest,$motorSHA,$trial -ErrorAction Stop -ScriptBlock {
-              param($path,$sha,$motor,$motorPin,$id)
+            $report.private_actual_motor_integration=Invoke-Command -Session $session -ArgumentList $integrationGuest,$integrationSHA,$motorGuest,$motorSHA,$wireGuest,$wireSHA,$trial -ErrorAction Stop -ScriptBlock {
+              param($path,$sha,$motor,$motorPin,$wire,$wirePin,$id)
               if((Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash -cne $sha){throw 'Integration script hash mismatch'}
               $env:GITHUB_ACTIONS='true'
               $env:RUNNER_ENVIRONMENT='github-hosted'
               $env:VOLVE_CI_NESTED_GUEST_DNS='PRIVATE_GUEST_ONLY'
-              & $path -MotorExe $motor -MotorSHA $motorPin -Trial $id
+              & $path -MotorExe $motor -MotorSHA $motorPin -WireProbeExe $wire -WireProbeSHA $wirePin -Trial $id
             }
-            if(-not $report.private_actual_motor_integration.actual_system_motor -or -not $report.private_actual_motor_integration.motor_stopped -or $report.private_actual_motor_integration.dual_stack_transport_checks -ne 4 -or -not $report.private_actual_motor_integration.configured_resolver_default -or -not $report.private_actual_motor_integration.configured_resolver_tcp -or -not $report.private_actual_motor_integration.blocked_domains_verified){throw 'Actual motor activation/failure integration not proven'}
+            if(-not $report.private_actual_motor_integration.actual_system_motor -or -not $report.private_actual_motor_integration.motor_stopped -or -not $report.private_actual_motor_integration.independent_wire_probe_verified -or $report.private_actual_motor_integration.independent_wire_probe_sha256 -cne $wireSHA -or $report.private_actual_motor_integration.dual_stack_transport_checks -ne 4 -or -not $report.private_actual_motor_integration.configured_resolver_default -or -not $report.private_actual_motor_integration.configured_resolver_tcp -or -not $report.private_actual_motor_integration.blocked_domains_verified){throw 'Actual motor activation/failure integration not proven'}
             $report.stage='verify_dns_fault_after_actual_motor_stop'
             foreach($transport in @('Default','TCP')){
               $report.private_peer_challenges+=Assert-VolvPrivateDNSPeerChallenge -ClientSession $session -PeerSession $peerSession -ClientId $vm.Id -PeerId $peerVM.Id -SwitchId $privateSwitch.Id -ProbePath $probeGuest -ProbeSHA $probeSHA -PeerSHA $peerSHA -PinnedPeerIdentity $pinnedPeerIdentity -Phase Fault -Transport $transport
