@@ -87,7 +87,7 @@ func residentQuiescenceWithQuery(ctx context.Context,root,version string,
   "$r="+q(root)+";"+
   "$t=Get-ScheduledTask -TaskName 'VOLVE-DNS-SERVER-0270' -TaskPath '\\' -ErrorAction Stop;"+
   "if(@($t).Count -ne 1){throw 'Ambiguous DNS task'};"+
-  "$known=@((Join-Path $r '"+residentLegacyPlaceholder()+"'),(Join-Path $r 'VOLVE_DNS_Motor_0_28_7.exe'),(Join-Path $r 'installed-engines\\VOLVE_DNS_Motor_0_28_7.exe'));"+
+  "$known=@((Join-Path $r '"+residentLegacyExe+"'),(Join-Path $r 'VOLVE_DNS_Motor_0_28_7.exe'),(Join-Path $r 'installed-engines\\VOLVE_DNS_Motor_0_28_7.exe'));"+
   "$all=@(Get-CimInstance Win32_Process -ErrorAction Stop);"+
   // Name-only matches are conservatively counted even when Windows hides
   // ExecutablePath. Never interpret an inaccessible process as stopped.
