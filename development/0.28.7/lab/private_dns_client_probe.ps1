@@ -26,7 +26,7 @@ $dns=@(Get-DnsClientServerAddress -InterfaceIndex $idx -AddressFamily IPv4 -Erro
 if($dns.Count -ne 1){throw 'Ambiguous IPv4 DNS client inventory'}
 $expected=if($Phase -ceq 'Fault'){'127.0.0.1'}else{'192.0.2.53,192.0.2.54'}
 if(($dns[0].ServerAddresses -join ',') -cne $expected){throw 'Configured DNS does not match selected phase'}
-$name=$Nonce+'.volve-ci.invalid'
+$name=$Nonce+'.volve-ci.test'
 $arguments=@{Name=($name+'.');Type='A';DnsOnly=$true;NoHostsFile=$true;QuickTimeout=$true;ErrorAction='Stop'}
 if($Transport -ceq 'TCP'){$arguments.TcpOnly=$true}
 # Deliberately NO -Server. This must exercise the actual Windows
@@ -38,7 +38,7 @@ catch{
     $errorId=[string]$_.FullyQualifiedErrorId
     # Only the resolution failure is admissible. Command binding,
     # permissions and other local failures must never prove the fault.
-    if($errorId -notmatch '^(DNS_ERROR_[A-Z0-9_]+|ERROR_TIMEOUT|WSAETIMEDOUT|WSAHOST_NOT_FOUND|WSATRY_AGAIN)(,|$)'){throw}
+    if($errorId -notmatch '^(DNS_ERROR_RCODE_NAME_ERROR|DNS_ERROR_RCODE_SERVER_FAILURE|DNS_ERROR_RCODE_REFUSED|DNS_ERROR_NO_DNS_SERVERS|DNS_ERROR_NO_PACKET|DNS_ERROR_RECORD_DOES_NOT_EXIST|DNS_INFO_NO_RECORDS|ERROR_TIMEOUT|WSAETIMEDOUT|WSAHOST_NOT_FOUND|WSATRY_AGAIN)(,|$)'){throw}
 }
 $addresses=@($answers|Where-Object {
     $_.PSObject.Properties['IPAddress'] -and
