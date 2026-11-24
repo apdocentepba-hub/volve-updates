@@ -303,6 +303,7 @@ jobs:
             candidate_head=$env:CANDIDATE_HEAD
             trial=$env:VOLVE_GUEST_TRIAL
             environment_drift=$null
+            clean_boot_control=$null
             runner_commit=$env:GITHUB_SHA
             source='Microsoft Windows Server 2022 evaluation center VHD'
             stage='download'
@@ -616,7 +617,7 @@ jobs:
             $report.guest_boot_before=$before.boot
             $report.guest_boot_verified=$true
             if($env:VOLVE_GUEST_TRIAL -ceq 'strict-reboot'){
-            $report.stage='prepare_strict_system_recovery_kit'
+            $report.stage='copy_hash_pinned_recovery_kit'
             $guestKit='C:\VOLVE-CI-RebootKit'
             Invoke-Command -Session $session -ArgumentList $guestKit -ErrorAction Stop -ScriptBlock {
               param($root)
@@ -633,6 +634,68 @@ jobs:
               $observed=Invoke-Command -Session $session -ArgumentList $dst -ErrorAction Stop -ScriptBlock {param($path);(Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash}
               if($observed -cne $sha){throw ('Guest kit copy hash mismatch: '+$file)}
             }
+            # Negative control on the SAME isolated guest, before any
+            # VOLVE task, journal, or network mutation. Preserve the full
+            # comparison privately; export only counts and hash identifiers.
+            $report.stage='clean_reboot_without_volve_control'
+            $controlBefore=Invoke-Command -Session $session -ArgumentList $guestKit,$trial -ErrorAction Stop -ScriptBlock {
+              param($root,$id)
+              $ErrorActionPreference='Stop'
+              . (Join-Path $root 'reboot_event_chain.ps1')
+              . (Join-Path $root 'vm_environment_baseline.ps1')
+              foreach($name in @('VOLVE-CI-StartupMotor-'+$id,'VOLVE-CI-BootRecovery-'+$id)){
+                if(Get-ScheduledTask -TaskName $name -ErrorAction SilentlyContinue){throw 'Unexpected recovery task before control'}
+              }
+              $state=Get-VolvVMBaselineState -RunId $id
+              [pscustomobject]@{boot=(Get-CimInstance Win32_OperatingSystem -ErrorAction Stop).LastBootUpTime.ToUniversalTime().Ticks.ToString();state=$state}
+            }
+            Invoke-Command -Session $session -ErrorAction Stop -ScriptBlock {
+              & shutdown.exe /s /t 5 /f
+              if($LASTEXITCODE -ne 0){throw 'Control shutdown failed'}
+            }
+            Remove-PSSession $session
+            $session=$null
+            $limit=[datetime]::UtcNow.AddMinutes(4)
+            while((Get-VM -Id $vm.Id -ErrorAction Stop).State -ne 'Off' -and [datetime]::UtcNow -lt $limit){Start-Sleep -Seconds 3}
+            if((Get-VM -Id $vm.Id -ErrorAction Stop).State -ne 'Off'){throw 'Control guest graceful shutdown not observed'}
+            Start-VM -VM $vm -ErrorAction Stop
+            $session=Connect-Guest $vm.Id $credential 360
+            Start-Sleep -Seconds 60
+            $controlAfter=Invoke-Command -Session $session -ArgumentList $guestKit,$trial -ErrorAction Stop -ScriptBlock {
+              param($root,$id)
+              $ErrorActionPreference='Stop'
+              . (Join-Path $root 'reboot_event_chain.ps1')
+              . (Join-Path $root 'vm_environment_baseline.ps1')
+              foreach($name in @('VOLVE-CI-StartupMotor-'+$id,'VOLVE-CI-BootRecovery-'+$id)){
+                if(Get-ScheduledTask -TaskName $name -ErrorAction SilentlyContinue){throw 'Unexpected recovery task after control'}
+              }
+              [pscustomobject]@{boot=(Get-CimInstance Win32_OperatingSystem -ErrorAction Stop).LastBootUpTime.ToUniversalTime().Ticks.ToString();state=(Get-VolvVMBaselineState -RunId $id)}
+            }
+            if([long]$controlAfter.boot -le [long]$controlBefore.boot){throw 'Clean control reboot not verified'}
+            # Compare complete records in host memory without emitting them.
+            $left=@{};$right=@{}
+            foreach($record in $controlBefore.state.taskRecords){$left[$record.Split('|')[0]]=$record}
+            foreach($record in $controlAfter.state.taskRecords){$right[$record.Split('|')[0]]=$record}
+            $added=@($right.Keys|Where-Object {-not $left.ContainsKey($_)})
+            $removed=@($left.Keys|Where-Object {-not $right.ContainsKey($_)})
+            $changed=@($left.Keys|Where-Object {$right.ContainsKey($_) -and $left[$_] -cne $right[$_]})
+            $hashName={param([string]$value) $h=[Security.Cryptography.SHA256]::Create();try{([BitConverter]::ToString($h.ComputeHash([Text.Encoding]::UTF8.GetBytes($value)))).Replace('-','').Substring(0,16)}finally{$h.Dispose()}}
+            $report.clean_boot_control=[ordered]@{
+              boot_before=$controlBefore.boot;boot_after=$controlAfter.boot;
+              before_count=$left.Count;after_count=$right.Count;
+              added_ids=@($added|ForEach-Object {& $hashName $_});
+              removed_ids=@($removed|ForEach-Object {& $hashName $_});
+              changed_ids=@($changed|ForEach-Object {& $hashName $_});
+              hosts_equal=($controlBefore.state.hostsSha256 -ceq $controlAfter.state.hostsSha256);
+              dns_equal=(($controlBefore.state.dnsRecords -join '|') -ceq ($controlAfter.state.dnsRecords -join '|'));
+              no_volve_recovery_tasks=$true;exemption_granted=$false
+            }
+            if(-not $report.clean_boot_control.hosts_equal -or -not $report.clean_boot_control.dns_equal){throw 'Clean reboot changed network baseline; refuse to arm recovery'}
+            # Use the fresh control boot as the actual preparation boot.
+            # No changes in the control are exempted from the later strict gate.
+            $before.boot=$controlAfter.boot
+            $report.guest_boot_before=$controlAfter.boot
+            $report.stage='prepare_strict_system_recovery_kit'
             Invoke-Command -Session $session -ArgumentList $guestKit,$trial -ErrorAction Stop -ScriptBlock {
               param($root,$id)
               $ErrorActionPreference='Stop'
