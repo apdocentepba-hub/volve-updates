@@ -192,7 +192,8 @@ func TestResidentQuiescenceCountsNamedMotorEvenWhenPathIsUnavailable(t *testing.
  raw,err:=json.Marshal(o);if err!=nil{t.Fatal(err)}
  decision,err:=residentQuiescenceWithQuery(context.Background(),root,"0.28.7",
   func(_ context.Context,script string)(string,error){
-   if !strings.Contains(script,"([string]$_.Name -like 'VOLVE_DNS_*') -or"){t.Fatal("named process with inaccessible path not counted")}
+   if !strings.Contains(script,"([string]$_.Name -like 'VOLVE_DNS_*') -or")||!strings.Contains(script,"$known -icontains"){t.Fatal("exact path or inaccessible named motor not counted")}
+   if strings.Contains(script,"StartsWith($prefix"){t.Fatal("watchdog would count itself if installed under the same root")}
    return string(raw),nil
   })
  if err==nil||decision.ReadyForFurtherChecks{t.Fatal("named active process ignored")}
