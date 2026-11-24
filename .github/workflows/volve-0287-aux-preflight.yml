@@ -81,6 +81,27 @@ jobs:
           $null=[System.Management.Automation.Language.Parser]::ParseFile($script,[ref]$tokens,[ref]$errors)
           if(@($errors).Count -ne 0){throw ('Integrated motor script syntax failed: '+($errors|Out-String))}
           Write-Host ('PASS: exact CI-tagged motor compiled SHA256='+((Get-FileHash -LiteralPath $out -Algorithm SHA256).Hash)+'; NO INSTALL')
+      - name: Build one exact private staging EXE with three embedded components
+        shell: powershell
+        working-directory: development/0.28.7/lab/private_installer_capsule
+        run: |
+          $ErrorActionPreference='Stop'
+          go test -count=1 -v stage.go stage_test.go
+          if($LASTEXITCODE -ne 0){throw 'Capsule staging regression failed'}
+          if(Test-Path -LiteralPath payload){throw 'Unexpected pre-existing capsule payload'}
+          New-Item -ItemType Directory -Path payload -ErrorAction Stop|Out-Null
+          Copy-Item -LiteralPath (Join-Path $env:RUNNER_TEMP 'VOLVE-CI-ActualMotor.exe') -Destination payload -ErrorAction Stop
+          Copy-Item -LiteralPath (Join-Path $env:RUNNER_TEMP 'VOLVE-CI-ActualMotorProbe.test.exe') -Destination payload -ErrorAction Stop
+          Copy-Item -LiteralPath (Join-Path $env:GITHUB_WORKSPACE 'development\0.28.7\lab\ci_private_motor_integration.ps1') -Destination payload -ErrorAction Stop
+          $out=Join-Path $env:RUNNER_TEMP 'VOLVE-CI-PrivateSetup-NO-RELEASE.exe'
+          go build -trimpath -o $out main_windows.go stage.go
+          if($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $out -PathType Leaf)){throw 'Single staging EXE compilation failed'}
+          $unexpected=Join-Path $env:RUNNER_TEMP 'VOLVE-CI-Capsule-Refusal'
+          $env:VOLVE_CI_NESTED_GUEST_DNS=''
+          & $out --stage-private-ci ('A'*64) ('B'*64) ('C'*64)
+          if($LASTEXITCODE -eq 0){throw 'Private capsule accepted execution outside private guest'}
+          Write-Host ('PASS: single exact private staging EXE compiled SHA256='+((Get-FileHash -LiteralPath $out -Algorithm SHA256).Hash)+'; NO INSTALL')
+          exit 0
       - name: Compile and test private DNS peer and parse client probe
         shell: powershell
         working-directory: development/0.28.7/lab
