@@ -5,7 +5,9 @@
 param(
     [Parameter(Mandatory=$true)][ValidateSet('Test','Investigate')][string]$Mode,
     [ValidatePattern('^[A-Fa-f0-9]{16}$')][string]$IdentityId='4023F1322DB1C44E',
-    [ValidateRange(1,90)][int]$Minutes=45
+    [ValidateRange(1,90)][int]$Minutes=45,
+    [long]$AfterSecurityRecordId=0,
+    [long]$AfterSchedulerRecordId=0
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference='Stop'
@@ -191,9 +193,9 @@ function Get-VolvCIProcessCreationCorrelation {
         # usable candidate. Never emit the executable field to CI output.
         $exe=Read-OnlyField $event 'NewProcessName'
         if($null -eq $clientProcessNumber -or [string]::IsNullOrWhiteSpace($exe)){continue}
-        $births+=([pscustomobject]@{pid=$clientProcessNumber;when=$event.when})
+        $births+=([pscustomobject]@{pid=$clientProcessNumber;when=$event.when;imageId=(Get-VolvCITaskPseudonym -Identity $exe.ToLowerInvariant())})
     }
-    $counts=[ordered]@{taskUpdateEvents=0;creationCandidate=0;creationMissing=0;creationAmbiguous=0;invalidUpdateEvidence=0}
+    $counts=[ordered]@{taskUpdateEvents=0;creationCandidate=0;creationMissing=0;creationAmbiguous=0;invalidUpdateEvidence=0;candidateImageIds=@()}
     foreach($raw in $UpdateEventXML){
         $event=Read-CIEvent $raw
         if($event.event -cne '4702' -or
@@ -210,7 +212,7 @@ function Get-VolvCIProcessCreationCorrelation {
             $_.pid -ceq $clientProcessNumber -and $_.when -le $event.when -and
             $_.when -ge $event.when.AddMinutes(-30)
         })
-        if($matches.Count -eq 1){$counts.creationCandidate++}
+        if($matches.Count -eq 1){$counts.creationCandidate++;$counts.candidateImageIds=@(($counts.candidateImageIds+@($matches[0].imageId))|Sort-Object -Unique)}
         elseif($matches.Count -gt 1){$counts.creationAmbiguous++}
         else{$counts.creationMissing++}
     }
@@ -319,6 +321,11 @@ if($Mode -ceq 'Test'){
     if(($match|ConvertTo-Json -Compress) -match 'PRIVATE|SecretProgram|0x1F4|500'){
         throw 'NOT VERIFIED: sensitive process evidence escaped the aggregate correlation'
     }
+    if($match.candidateImageIds.Count -ne 1 -or $match.candidateImageIds[0] -cnotmatch '^[0-9A-F]{16}$'){throw 'NOT VERIFIED: pseudonymous candidate image missing'}
+    if($ambiguous.candidateImageIds.Count -ne 0 -or $miss.candidateImageIds.Count -ne 0){throw 'NOT VERIFIED: unknown image falsely identified'}
+    $differentBirth=$birth4688.Replace('SecretProgram.exe','AnotherProgram.exe')
+    $otherImage=Get-VolvCIProcessCreationCorrelation -TaskIdentity $fixture -UpdateEventXML @($valid4702) -CreationEventXML @($differentBirth)
+    if($otherImage.candidateImageIds[0] -ceq $match.candidateImageIds[0]){throw 'NOT VERIFIED: distinct image candidates share identity'}
     Write-Host 'PASS: SECURITY_4702_4688_CORRELATION synthetic time/PID candidate, missing/ambiguous/future/stale/reused PID rejection; process identity remains UNPROVEN'
     Write-Host 'PASS: SECURITY_4702_READ_ONLY classifies valid/missing/invalid PID fields, refuses duplicate PID, wrong provider, wrong task, malformed XML and never outputs private event data'
     Write-Host 'PASS: CI_TASK_EVENT_DIAGNOSTIC matches synthetic events 106/140/141, classifies actor accounts, and rejects wrong task, unlisted ID and malformed XML'
@@ -348,6 +355,7 @@ $identityClass='unattributed'
 if([string]::Equals($fullIdentity,$expectedSPP,[StringComparison]::Ordinal)){
     $identityClass='windows-software-protection-service-restart'
 }
+if($AfterSecurityRecordId -lt 0 -or $AfterSchedulerRecordId -lt 0){throw 'Invalid event cursor'}
 $eventXml=@()
 try {
     $events=@(Get-WinEvent -FilterHashtable @{
@@ -355,7 +363,7 @@ try {
         Id=@(106,140,141)
         StartTime=(Get-Date).AddMinutes(-$Minutes)
     } -MaxEvents 2000 -ErrorAction Stop)
-    $eventXml=@($events | ForEach-Object {$_.ToXml()})
+    $eventXml=@($events | Where-Object {$_.RecordId -gt $AfterSchedulerRecordId} | ForEach-Object {$_.ToXml()})
 } catch {
     # Event history may be disabled or empty; never turn a missing event into
     # evidence of safety, nor reveal exception messages with raw identities.
@@ -373,6 +381,7 @@ try {
         Id=4702
         StartTime=(Get-Date).AddMinutes(-$Minutes)
     } -MaxEvents 2000 -ErrorAction Stop)
+    $securityEvents=@($securityEvents|Where-Object {$_.RecordId -gt $AfterSecurityRecordId})
     $securitySummary=Get-VolvCISecurity4702Summary -TaskIdentity $fullIdentity -EventXML @(
         $securityEvents | ForEach-Object {$_.ToXml()}
     )
@@ -386,12 +395,13 @@ try {
 # Optional process creation audit is not enabled here: this is READ-ONLY.
 # A timestamp/PID match alone is an investigative lead, not actor proof.
 $creationAudit='unavailable'
-$processCandidates=[pscustomobject]@{taskUpdateEvents=0;creationCandidate=0;creationMissing=0;creationAmbiguous=0;invalidUpdateEvidence=0}
+$processCandidates=[pscustomobject]@{taskUpdateEvents=0;creationCandidate=0;creationMissing=0;creationAmbiguous=0;invalidUpdateEvidence=0;candidateImageIds=@()}
 if($securityStatus -ceq 'available'){
     try {
         $creationEvents=@(Get-WinEvent -FilterHashtable @{
             LogName='Security';Id=4688;StartTime=(Get-Date).AddMinutes(-$Minutes)
         } -MaxEvents 2000 -ErrorAction Stop)
+        $creationEvents=@($creationEvents|Where-Object {$_.RecordId -gt $AfterSecurityRecordId})
         $processCandidates=Get-VolvCIProcessCreationCorrelation -TaskIdentity $fullIdentity -UpdateEventXML @(
             $securityEvents | ForEach-Object {$_.ToXml()}
         ) -CreationEventXML @(
@@ -418,4 +428,6 @@ Write-Host ('CI TASK EVENT POSTMORTEM: identityId='+$IdentityId.ToUpperInvariant
     '; pidTemporalCandidate='+$processCandidates.creationCandidate+
     '; pidBirthAbsent='+$processCandidates.creationMissing+
     '; pidBirthAmbiguous='+$processCandidates.creationAmbiguous+
+    '; candidateImageIds='+($processCandidates.candidateImageIds -join ',')+
+    '; cursorScoped='+($AfterSecurityRecordId -gt 0 -and $AfterSchedulerRecordId -gt 0)+
     '; processAttribution=UNPROVEN; originalBaseline=FAILED')
