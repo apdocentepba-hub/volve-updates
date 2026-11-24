@@ -205,3 +205,38 @@ func TestSignedBridgeDoesNotIssueProofWhenFinalPreflightCancelled(t *testing.T){
   t.Fatalf("cancellation during second live inspection issued proof: %+v, calls=%d, err=%v",proof,calls,err)
  }
 }
+
+func TestExplicitResidentRecoveryScope(t *testing.T){
+ ctx:=context.Background()
+ for _,variant:=range []string{"legacy-unscoped","motor-only","motor-and-dns","unknown","forged","duplicate","expired-recovery"}{
+  t.Run(variant,func(t *testing.T){
+   f:=newSignedBridge(t)
+   expected:=ResidentRecoveryScopeMotorOnly
+   allowed:=false
+   if variant!="legacy-unscoped" {
+    f.permit.Schema=2
+    f.permit.RecoveryScope=ResidentRecoveryScopeMotorOnly
+   }
+   switch variant{
+   case "motor-only":allowed=true
+   case "motor-and-dns":f.permit.RecoveryScope=ResidentRecoveryScopeMotorAndDNS
+   case "unknown":f.permit.RecoveryScope="any"
+   case "expired-recovery":
+    f.permit.IssuedUTC=time.Now().UTC().Add(-2*time.Hour).Format(time.RFC3339)
+    f.permit.ExpiresUTC=time.Now().UTC().Add(-time.Hour).Format(time.RFC3339)
+    allowed=true
+   }
+   f.resign(t)
+   if variant=="forged"{f.raw=append(f.raw,' ')}
+   if variant=="duplicate"{
+    f.raw=append(f.raw[:len(f.raw)-1],[]byte(`,"recovery_scope":"motor-only"}`)...)
+    f.sig=[]byte(base64.StdEncoding.EncodeToString(ed25519.Sign(f.priv,f.raw)))
+   }
+   err:=VerifyExplicitResidentRecoveryScope(ctx,f.raw,f.sig,f.pub,expected)
+   if (err==nil)!=allowed{t.Fatalf("scope acceptance mismatch: %v",err)}
+   if variant=="motor-and-dns" {
+    if err:=VerifyExplicitResidentRecoveryScope(ctx,f.raw,f.sig,f.pub,ResidentRecoveryScopeMotorAndDNS);err!=nil{t.Fatal(err)}
+   }
+  })
+ }
+}
