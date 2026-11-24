@@ -34,6 +34,42 @@ func RecoverPendingResidentAfterBoot(
  seal, protect func(string)error, checks ResidentCompletionChecks,
  driver ResidentBootRecoveryDriver,
 )(string,error){
+ return recoverPendingResidentAfterBoot(ctx,journalDir,seal,protect,checks,driver,nil)
+}
+
+// ResidentDNSBootRecoveryDriver is the stricter opt-in contract for a
+// transaction that changed adapter DNS assignments. All methods execute
+// under the SAME exclusive recovery lease. RestoreOriginalDNS must first
+// authenticate the durable publisher binding, original full adapter census
+// and independently establish that the failed candidate cannot write DNS.
+// It must be idempotent even when the original motor is already running.
+// VerifyOriginalDNS must reopen that signed evidence and read actual OS DNS
+// assignment modes and server lists; a working resolver is not sufficient.
+// No production driver or installer is authorized by this interface.
+type ResidentDNSBootRecoveryDriver interface {
+ ResidentBootRecoveryDriver
+ RestoreOriginalDNS(context.Context,ResidentRecoveryIntent) error
+ VerifyOriginalDNS(context.Context,ResidentRecoveryIntent) error
+}
+
+// RecoverPendingResidentAfterBootWithOriginalDNS is mandatory for future
+// DNS-changing transactions. Do not fall back to the older motor-only API
+// if this path fails. This policy never performs Windows writes itself.
+func RecoverPendingResidentAfterBootWithOriginalDNS(
+ ctx context.Context,journalDir string,
+ seal,protect func(string)error,checks ResidentCompletionChecks,
+ driver ResidentDNSBootRecoveryDriver,
+)(string,error){
+ if driver==nil{return "",errors.New("DNS-changing boot recovery requires explicit original DNS driver")}
+ return recoverPendingResidentAfterBoot(ctx,journalDir,seal,protect,checks,driver,driver)
+}
+
+func recoverPendingResidentAfterBoot(
+ ctx context.Context,journalDir string,
+ seal,protect func(string)error,checks ResidentCompletionChecks,
+ driver ResidentBootRecoveryDriver,dns ResidentDNSBootRecoveryDriver,
+)(string,error){
+ if ctx==nil{return "",errors.New("boot recovery context required")}
  if driver==nil||checks==nil||seal==nil||protect==nil {
   return "",errors.New("boot recovery missing trusted driver, probes or NTFS services")
  }
@@ -71,6 +107,23 @@ func RecoverPendingResidentAfterBoot(
    return "",fmt.Errorf("independent original motor restore failed: %w",err)
   }
  }
+ // In DNS-changing transactions, a healthy original motor does NOT imply
+ // the network adapter assignments are original. Revalidate motor identity
+ // and pending journal before the separately authorized DNS-only operation.
+ if dns!=nil{
+  if err:=checks.VerifyRunningIdentity(ctx,state.Intent,"restored");err!=nil{
+   return "",fmt.Errorf("original motor identity unverified before DNS recovery: %w",err)
+  }
+  current,err:=InspectResidentRecoveryJournal(ctx,journalDir,protect)
+  if err!=nil||current!=state{return "",errors.New("recovery journal changed before original DNS restoration")}
+  if err:=ctx.Err();err!=nil{return "",err}
+  if err:=dns.RestoreOriginalDNS(ctx,state.Intent);err!=nil{
+   return "",fmt.Errorf("independent original DNS restoration failed: %w",err)
+  }
+  if err:=dns.VerifyOriginalDNS(ctx,state.Intent);err!=nil{
+   return "",fmt.Errorf("original DNS assignment not independently verified: %w",err)
+  }
+ }
  // Do NOT finalize on a successful Windows task registration. The
  // original protected recovery asset must still exist, unchanged and sealed
  // AFTER DNS and Internet health probes, not only before RestoreOriginal.
@@ -81,6 +134,14 @@ func RecoverPendingResidentAfterBoot(
  if audited!=state.Intent{return "",errors.New("recovery intent changed during health audit")}
  if err:=driver.VerifySealedOriginal(ctx,state.Intent);err!=nil{
   return "",fmt.Errorf("original recovery snapshot changed during health checks: %w",err)
+ }
+ // Repeat the exact original DNS census AFTER all health probes and sealed
+ // motor evidence checks. A healthy Internet connection via another resolver
+ // cannot justify consuming the pending recovery journal.
+ if dns!=nil{
+  if err:=dns.VerifyOriginalDNS(ctx,state.Intent);err!=nil{
+   return "",fmt.Errorf("original DNS assignment changed during health verification: %w",err)
+  }
  }
  finalState,err:=InspectResidentRecoveryJournal(ctx,journalDir,protect)
  if err!=nil||finalState.Status!="recovery-required"||finalState.Intent!=state.Intent{
