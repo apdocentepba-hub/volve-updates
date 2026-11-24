@@ -32,7 +32,7 @@ Assert-FreeDNS53
 New-Item -ItemType Directory -Path $root -ErrorAction Stop|Out-Null
 & icacls.exe $root '/inheritance:r' '/grant:r' '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F'|Out-Null
 if($LASTEXITCODE -ne 0){throw 'Cannot seal motor fixture'}
-& $exe --ci-prepare-full-catalog $root VOLVE-CI-GITHUB-HOSTED-VM-DNS53-ONLY
+& $exe --ci-prepare-full-catalog $root VOLVE-CI-GITHUB-HOSTED-VM-DNS53-ONLY | Out-Null
 if($LASTEXITCODE -ne 0){throw 'Actual motor catalog preparation failed'}
 $catalog=Join-Path $root 'catalog\feeds\hagezi_gambling_full.txt'
 $catalogPin=(Get-FileHash -LiteralPath $catalog -Algorithm SHA256).Hash
@@ -68,14 +68,14 @@ try{
     $checks=0
     foreach($address in @('127.0.0.1','::1')){
         foreach($transport in @('Default','TCP')){
-            $args=@{Server=$address;Name='example.org.';Type='A';DnsOnly=$true;NoHostsFile=$true;QuickTimeout=$true;ErrorAction='Stop'}
-            if($transport -ceq 'TCP'){$args.TcpOnly=$true}
-            $answers=@(Resolve-DnsName @args|Where-Object {$_.PSObject.Properties['IPAddress'] -and [string]$_.Type -eq 'A'})
+            $queryParams=@{Server=$address;Name='example.org.';Type='A';DnsOnly=$true;NoHostsFile=$true;QuickTimeout=$true;ErrorAction='Stop'}
+            if($transport -ceq 'TCP'){$queryParams.TcpOnly=$true}
+            $answers=@(Resolve-DnsName @queryParams|Where-Object {$_.PSObject.Properties['IPAddress'] -and [string]$_.Type -eq 'A'})
             if($answers.Count -ne 1 -or $answers[0].IPAddress -cne '203.0.113.7'){throw 'Actual motor failed allowed domain'}
             foreach($blocked in @('stake.com.','betwarrior.bet.ar.')){
-                $args.Name=$blocked
+                $queryParams.Name=$blocked
                 $denied=$false
-                try{$null=Resolve-DnsName @args}catch{
+                try{$null=Resolve-DnsName @queryParams}catch{
                     if([string]$_.FullyQualifiedErrorId -cmatch '^DNS_ERROR_RCODE_NAME_ERROR(,|$)'){$denied=$true}else{throw}
                 }
                 if(-not $denied){throw 'Real motor failed to reject blocked domain with NXDOMAIN'}
@@ -87,9 +87,9 @@ try{
     # and demonstrate use of the configured localhost resolver.
     foreach($transport in @('Default','TCP')){
         $challenge=[guid]::NewGuid().ToString('N')+'.volve-motor-ci.test.'
-        $args=@{Name=$challenge;Type='A';DnsOnly=$true;NoHostsFile=$true;QuickTimeout=$true;ErrorAction='Stop'}
-        if($transport -ceq 'TCP'){$args.TcpOnly=$true}
-        $answers=@(Resolve-DnsName @args|Where-Object {$_.PSObject.Properties['IPAddress'] -and [string]$_.Type -eq 'A'})
+        $queryParams=@{Name=$challenge;Type='A';DnsOnly=$true;NoHostsFile=$true;QuickTimeout=$true;ErrorAction='Stop'}
+        if($transport -ceq 'TCP'){$queryParams.TcpOnly=$true}
+        $answers=@(Resolve-DnsName @queryParams|Where-Object {$_.PSObject.Properties['IPAddress'] -and [string]$_.Type -eq 'A'})
         if($answers.Count -ne 1 -or $answers[0].IPAddress -cne '203.0.113.7' -or ([string]$answers[0].Name).TrimEnd('.') -cne $challenge.TrimEnd('.')){throw 'Configured Windows resolver did not reach actual motor'}
     }
     Assert-LoopbackAssignments
