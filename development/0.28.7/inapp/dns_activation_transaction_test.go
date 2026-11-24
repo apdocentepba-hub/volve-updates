@@ -210,3 +210,37 @@ func TestProtectedDNSActivationIndependentRecoveryMustProveOriginalReadback(t *t
     }
     if b.writes!=1{t.Fatalf("unexpected DNS writes after failure: %d",b.writes)}
 }
+
+
+// Exercise failure at the final commit boundary rather than at the first
+// admission or native write. The recovery agent may disappear while an
+// otherwise successful health check is in progress.
+type activationLateDriftGuard struct {
+    *activationTestGuard
+    variant string
+}
+func(g *activationLateDriftGuard) VerifyArmed(ctx context.Context,pin string)error{
+    if err:=g.activationTestGuard.VerifyArmed(ctx,pin);err!=nil{return err}
+    if g.healthCalls>0 {
+        switch g.variant {
+        case "watchdog-lost":
+            return errors.New("independent recovery task lost after healthy probe")
+        case "dns-changed":
+            g.backend.current[activationKey(activationTestGUID,DNSIPv6)]=copyActivationState(g.originals[1])
+        }
+    }
+    return nil
+}
+func TestProtectedDNSActivationReattestsAfterHealthBeforeCommit(t *testing.T){
+    for _,variant:=range []string{"watchdog-lost","dns-changed"} {
+        t.Run(variant,func(t *testing.T){
+            raw,pin,b,g:=prepareActivationTest(t)
+            guard:=&activationLateDriftGuard{activationTestGuard:g,variant:variant}
+            err:=activateVOLVEDNSWithRecovery(context.Background(),raw,pin,b,guard)
+            if err==nil||b.writes!=2||g.healthCalls!=1||g.commitCalls!=0||g.recoverCalls!=1{
+                t.Fatalf("unsafe final activation verdict: %v; writes=%d health=%d commit=%d recovery=%d",err,b.writes,g.healthCalls,g.commitCalls,g.recoverCalls)
+            }
+            assertActivationTestState(t,b,true)
+        })
+    }
+}
