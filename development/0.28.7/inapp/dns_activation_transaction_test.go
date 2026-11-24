@@ -277,3 +277,68 @@ func TestProtectedDNSActivationRescueBudgetSurvivesCancelledInstaller(t *testing
     if g.recoverCalls!=1||g.commitCalls!=0{t.Fatal("rescue not independently requested")}
     assertActivationTestState(t,b,true)
 }
+
+
+// These fixtures deliberately panic in a dependency, not in the transaction.
+// Every post-write panic must request independent restoration, and neither
+// panic messages nor an unverified recovery may escape as success.
+type activationPanicBackend struct {
+    *activationTestBackend
+    panicOnWrite int
+    panicOnRead bool
+}
+func(b *activationPanicBackend) Apply(ctx context.Context,next DNSServerState)error{
+    err:=b.activationTestBackend.Apply(ctx,next)
+    if b.panicOnWrite==b.writes{panic("PRIVATE PANIC FIXTURE")}
+    return err
+}
+func(b *activationPanicBackend) Read(ctx context.Context,guid string,family DNSAddressFamily)(DNSServerState,error){
+    if b.panicOnRead{panic("PRIVATE READBACK FIXTURE")}
+    return b.activationTestBackend.Read(ctx,guid,family)
+}
+type activationPanicGuard struct{
+    *activationTestGuard
+    panicAt string
+    wrapped *activationPanicBackend
+}
+func(g *activationPanicGuard) VerifyArmed(ctx context.Context,pin string)error{
+    if g.panicAt=="preflight"{panic("PRIVATE PREFLIGHT FIXTURE")}
+    return g.activationTestGuard.VerifyArmed(ctx,pin)
+}
+func(g *activationPanicGuard) VerifyLiveProtection(ctx context.Context,pin string)error{
+    if g.panicAt=="health"{panic("PRIVATE HEALTH FIXTURE")}
+    return g.activationTestGuard.VerifyLiveProtection(ctx,pin)
+}
+func(g *activationPanicGuard) CommitActive(ctx context.Context,pin string)error{
+    if g.panicAt=="commit"{panic("PRIVATE COMMIT FIXTURE")}
+    return g.activationTestGuard.CommitActive(ctx,pin)
+}
+func(g *activationPanicGuard) RecoverIndependently(ctx context.Context,pin string)error{
+    if g.panicAt=="rescue"{g.recoverCalls++;panic("PRIVATE RESCUE FIXTURE")}
+    err:=g.activationTestGuard.RecoverIndependently(ctx,pin)
+    if g.panicAt=="readback"{g.wrapped.panicOnRead=true}
+    return err
+}
+func TestProtectedDNSActivationPanicRequestsIndependentRecovery(t *testing.T){
+    for _,stage:=range []string{"preflight","first-write","second-write","health","commit","rescue","readback"}{
+        t.Run(stage,func(t *testing.T){
+            raw,pin,b,g:=prepareActivationTest(t)
+            backend:=&activationPanicBackend{activationTestBackend:b}
+            guard:=&activationPanicGuard{activationTestGuard:g,panicAt:stage,wrapped:backend}
+            switch stage{
+            case "first-write":backend.panicOnWrite=1
+            case "second-write":backend.panicOnWrite=2
+            case "rescue","readback":b.failOn=1
+            }
+            err:=activateVOLVEDNSWithRecovery(context.Background(),raw,pin,backend,guard)
+            if err==nil||strings.Contains(err.Error(),"PRIVATE"){t.Fatalf("unsafe panic result: %v",err)}
+            if stage=="preflight"{
+                if b.writes!=0||g.recoverCalls!=0{t.Fatal("preflight panic mutated state")}
+            }else if g.recoverCalls!=1{t.Fatalf("panic did not request independent recovery: %v",err)}
+            if g.commitCalls!=0{t.Fatal("panic transaction reported commit")}
+            if stage=="rescue"||stage=="readback"{
+                if !strings.Contains(err.Error(),"CRITICAL")||!strings.Contains(err.Error(),"pending"){t.Fatalf("unverified recovery: %v",err)}
+            }else{assertActivationTestState(t,b,true)}
+        })
+    }
+}

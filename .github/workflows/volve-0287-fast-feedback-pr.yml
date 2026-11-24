@@ -87,6 +87,15 @@ jobs:
             shutil.copy2(p,Path("build/codigo/motorupdate")/p.name)
           PY
           go run development/0.28.7/inapp/apply_overlay.go build/codigo
+      - name: Exercise protected DNS activation panic and recovery regressions (NO NATIVE WRITES)
+        shell: powershell
+        working-directory: build/codigo
+        run: |
+          $ErrorActionPreference='Stop'
+          $listed=@(go test ./motorupdate -list '^TestProtectedDNSActivationPanicRequestsIndependentRecovery$')
+          if($LASTEXITCODE -ne 0 -or $listed -cnotcontains 'TestProtectedDNSActivationPanicRequestsIndependentRecovery'){throw 'New panic regression missing'}
+          go test ./motorupdate -run '^TestProtectedDNSActivation' -count=1 -v -timeout 2m
+          if($LASTEXITCODE -ne 0){throw 'Protected activation regression failed'}
       - name: Compile and enumerate exact candidate DNS diagnostic
         shell: powershell
         working-directory: build/codigo

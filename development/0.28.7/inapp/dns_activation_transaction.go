@@ -56,18 +56,23 @@ func activateVOLVEDNSWithRecovery(
     if err := ctx.Err(); err != nil { return err }
     records, err := VerifyDNSOriginalJournal(ctx, originalJournal, independentlyPinnedSHA256)
     if err != nil { return fmt.Errorf("original DNS backup not independently authenticated: %w", err) }
-    if err := guard.VerifyArmed(ctx, independentlyPinnedSHA256); err != nil {
-        return fmt.Errorf("independent recovery not armed before DNS activation: %w", err)
-    }
-
-    // No writes until ALL adapter GUID / IPv4 / IPv6 original states match.
-    if err := verifyDNSActivationTransition(ctx, records, backend, 0); err != nil {
-        return fmt.Errorf("DNS activation all-family preflight refused: %w", err)
-    }
-
     writeAttempted := false
     defer func() {
+        // A dependency may panic after mutating DNS, before returning an
+        // error. Never let that skip the same independent recovery path.
+        // Do not expose the panic value (may contain sensitive OS evidence).
+        if recover() != nil {
+            err = errors.Join(err, errors.New("DNS activation interrupted by unexpected controller panic"))
+        }
         if err == nil || !writeAttempted { return }
+        // A panic in the independent recovery agent or its readback must
+        // never be reported as restoration. Leave the protected journal
+        // pending so the independently armed watchdog remains responsible.
+        defer func() {
+            if recover() != nil {
+                err = errors.Join(err, errors.New("CRITICAL: independent DNS recovery or readback interrupted by panic; protected journal must remain pending"))
+            }
+        }()
         // A canceled/expired installer context MUST NOT suppress independent
         // rescue. The watchdog must use its own guarded authorization/timeout.
         recoveryCtx, cancel := context.WithTimeout(context.Background(), dnsActivationEmergencyRecoveryTimeout)
@@ -82,6 +87,16 @@ func activateVOLVEDNSWithRecovery(
             err = errors.Join(err, fmt.Errorf("CRITICAL: independent recovery acknowledged completion but original DNS readback failed: %w", readbackErr))
         }
     }()
+
+    if err := guard.VerifyArmed(ctx, independentlyPinnedSHA256); err != nil {
+        return fmt.Errorf("independent recovery not armed before DNS activation: %w", err)
+    }
+
+    // No writes until ALL adapter GUID / IPv4 / IPv6 original states match.
+    if err := verifyDNSActivationTransition(ctx, records, backend, 0); err != nil {
+        return fmt.Errorf("DNS activation all-family preflight refused: %w", err)
+    }
+
 
     for i, record := range records {
         if err = ctx.Err(); err != nil { return err }
