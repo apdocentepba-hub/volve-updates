@@ -80,7 +80,7 @@ func newPinnedResidentBootRecoveryDriverWindows(
   if err!=nil||pending.Status!="recovery-required"||pending.Intent!=intent{
    return errors.New("signed recovery scope not bound to current pending intent")
   }
-  return motorupdate.VerifyExplicitResidentRecoveryScope(ctx,grant.Permit,grant.Signature,ed25519.PublicKey(key),motorupdate.ResidentRecoveryScopeMotorOnly)
+  return motorupdate.VerifyExplicitResidentRecoveryScope(ctx,grant.Permit,grant.Signature,ed25519.PublicKey(key),motorupdate.ResidentRecoveryScopeMotorOnly,intent.Nonce)
  }
  return motorupdate.NewProtectedResidentBootDriver(&motorOnlyPinnedBootOps{root:root,original:ops,verifyScope:verifyScope})
 }
