@@ -111,7 +111,7 @@ jobs:
             if($LASTEXITCODE -ne 0){throw ('DNS-aware boot regression failed: '+$testName)}
           }
           Write-Host 'PASS: six named DNS-aware boot policy/NTFS/kernel lease tests; simulated DNS writer, no reboot proof.'
-          $fenceTests=@('TestResidentQuiescenceRequiresCompleteUnambiguousOSCensus','TestResidentQuiescenceCountsNamedMotorEvenWhenPathIsUnavailable','TestSignedOriginalSYSTEMStartRequiresSignedPendingTaskAndNeverCommits','TestPinnedBootHealthQueriesLiveTaskProcessAndBothDNS53Owners')
+          $fenceTests=@('TestResidentQuiescenceRequiresCompleteUnambiguousOSCensus','TestResidentQuiescenceCountsNamedMotorEvenWhenPathIsUnavailable','TestSignedOriginalSYSTEMStartRequiresSignedPendingTaskAndNeverCommits','TestPinnedBootHealthQueriesLiveTaskProcessAndBothDNS53Owners','TestMotorOnlyPinnedBootRefusesCompleteOrPartialDNSEvidence','TestMotorOnlyPinnedBootRechecksEvidenceAfterDelegation','TestMotorOnlyPinnedBootFailsClosedOnMissingAncestryOrContext')
           $fenceRegex='^('+($fenceTests -join '|')+')$'
           $fenceCensus=@(go test ./cmd/volve-managed-watchdog -list $fenceRegex)
           if($LASTEXITCODE -ne 0){throw 'Watchdog fence test census failed'}
