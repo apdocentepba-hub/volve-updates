@@ -136,6 +136,7 @@ function Assert-VolvPrivateDNSPeerChallenge {
         [pscustomobject]@{udp=$udp;tcp=$tcp;received=$received.Count;received_udp=@($received|Where-Object {$_ -cmatch 'transport=udp'}).Count;received_tcp=@($received|Where-Object {$_ -cmatch 'transport=tcp'}).Count}
     }
     if($observation.nonce -cne $nonce -or $observation.phase -cne $Phase -or $observation.transport -cne $Transport){throw 'Client challenge mismatch'}
+    if($observation.direct_private_tcp_before_and_after -ne $true){throw 'Private peer liveness control absent'}
     if($Phase -ceq 'Fault'){
         if($observation.resolved -or $wire.received -ne 0 -or $wire.udp -ne 0 -or $wire.tcp -ne 0){throw 'Fault did not isolate configured DNS from peer'}
     }else{
@@ -143,5 +144,5 @@ function Assert-VolvPrivateDNSPeerChallenge {
         if($Transport -ceq 'TCP' -and ($wire.tcp -lt 1 -or $wire.received_tcp -lt $wire.tcp)){throw 'No independently observed TCP DNS reply'}
         if($Transport -ceq 'Default' -and ($wire.udp -lt 1 -or $wire.received_udp -lt $wire.udp)){throw 'No independently observed UDP DNS reply'}
     }
-    [pscustomobject]@{phase=$Phase;transport=$Transport;nonce=$nonce;resolved=$observation.resolved;peer_udp=$wire.udp;peer_tcp=$wire.tcp;peer_received=$wire.received;private_network_only=$true}
+    [pscustomobject]@{phase=$Phase;transport=$Transport;nonce=$nonce;resolved=$observation.resolved;peer_udp=$wire.udp;peer_tcp=$wire.tcp;peer_received=$wire.received;direct_private_tcp_before_and_after=$true;private_network_only=$true}
 }
