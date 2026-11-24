@@ -126,11 +126,35 @@ try{
     $nativeTCP=($nativeExit -eq 0 -and @($nativeProof|Where-Object {[string]$_ -match '^--- PASS: TestCIConfiguredNativeTCPDNS '}).Count -eq 1 -and @($nativeProof|Where-Object {[string]$_ -match 'PASS VOLVE_NATIVE_DNSQUERY_CONFIGURED_TCP'}).Count -eq 1)
     Write-Host ('CI NATIVE TCP DNS diagnostic: verified='+$nativeTCP+' exit='+$nativeExit)
     foreach($line in $nativeProof){Write-Host ([string]$line)}
+    # Explicit-server probes are diagnostic ONLY. They do not establish
+    # that the Windows-configured resolver chooses or reaches that server.
+    # No retry, cache flush, adapter change or external network is involved.
+    $explicitTCP=@()
+    if($tcpKnownFailure){
+        foreach($server in @('127.0.0.1','::1')){
+            Assert-LoopbackAssignments
+            $challenge=[guid]::NewGuid().ToString('N')+'.volve-motor-ci.test.'
+            $entry=[ordered]@{server=$server;verified=$false;error_id=$null;outcome='not_verified'}
+            try{
+                $records=@(Resolve-DnsName -Name $challenge -Type A -Server $server -TcpOnly -DnsOnly -NoHostsFile -QuickTimeout -ErrorAction Stop |
+                    Where-Object {$_.PSObject.Properties['IPAddress'] -and [string]$_.Type -eq 'A'})
+                if($records.Count -eq 1 -and [string]$records[0].IPAddress -ceq '203.0.113.7' -and ([string]$records[0].Name).TrimEnd('.') -ceq $challenge.TrimEnd('.')){
+                    $entry.verified=$true
+                    $entry.outcome='expected_a_record'
+                }else{$entry.outcome='unexpected_answer'}
+            }catch{
+                $entry.error_id=[string]$_.FullyQualifiedErrorId
+                $entry.outcome='query_failed'
+            }
+            $explicitTCP+=@([pscustomobject]$entry)
+            Write-Host ('CI EXPLICIT TCP diagnostic: '+($entry|ConvertTo-Json -Compress))
+        }
+    }
     Assert-LoopbackAssignments
     $again=@(Get-CimInstance Win32_Process -Filter ('ProcessId='+$pidNumber) -ErrorAction Stop)
     if($again.Count -ne 1 -or $again[0].CreationDate -ne $creation -or $again[0].ExecutablePath -ine $exe){throw 'Motor replaced during test'}
     if((Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash -cne $MotorSHA -or (Get-FileHash -LiteralPath $catalog -Algorithm SHA256).Hash -cne $catalogPin){throw 'Motor/catalog changed during probe'}
-    $report=[ordered]@{actual_system_motor=$true;motor_sha256=$MotorSHA;catalog_sha256=$catalogPin;independent_wire_probe_sha256=$WireProbeSHA;independent_wire_probe_verified=$true;dual_stack_transport_checks=$checks;configured_resolver_default=$true;configured_resolver_tcp=(-not $tcpKnownFailure);configured_tcp_known_failure=$tcpKnownFailure;native_tcp_diagnostic_verified=$nativeTCP;native_tcp_diagnostic_exit=$nativeExit;configured_resolver_attempts=$resolverAttempts;blocked_domains_verified=$true;synthetic_upstream_only=$true}
+    $report=[ordered]@{actual_system_motor=$true;motor_sha256=$MotorSHA;catalog_sha256=$catalogPin;independent_wire_probe_sha256=$WireProbeSHA;independent_wire_probe_verified=$true;dual_stack_transport_checks=$checks;configured_resolver_default=$true;configured_resolver_tcp=(-not $tcpKnownFailure);configured_tcp_known_failure=$tcpKnownFailure;native_tcp_diagnostic_verified=$nativeTCP;native_tcp_diagnostic_exit=$nativeExit;explicit_tcp_diagnostic=$explicitTCP;configured_resolver_attempts=$resolverAttempts;blocked_domains_verified=$true;synthetic_upstream_only=$true}
 }finally{
     if($owned){
         $registered=Get-ScheduledTask -TaskName $task -TaskPath '\' -ErrorAction Stop
