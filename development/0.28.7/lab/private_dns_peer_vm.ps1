@@ -164,5 +164,5 @@ function Assert-VolvPrivateDNSPeerChallenge {
         if($Transport -ceq 'TCP' -and ($wire.tcp -lt 1 -or $wire.received_tcp -lt $wire.tcp)){throw 'No independently observed TCP DNS reply'}
         if($Transport -ceq 'Default' -and ($wire.udp -lt 1 -or $wire.received_udp -lt $wire.udp)){throw 'No independently observed UDP DNS reply'}
     }
-    [pscustomobject]@{phase=$Phase;transport=$Transport;nonce=$nonce;resolved=$observation.resolved;peer_udp=$wire.udp;peer_tcp=$wire.tcp;peer_received=$wire.received;direct_private_tcp_before_and_after=$true;private_network_only=$true}
+    [pscustomobject]@{phase=$Phase;transport=$Transport;nonce=$nonce;resolved=$observation.resolved;resolution_error=$observation.resolution_error;peer_udp=$wire.udp;peer_tcp=$wire.tcp;peer_received=$wire.received;direct_private_tcp_before_and_after=$true;private_network_only=$true}
 }
