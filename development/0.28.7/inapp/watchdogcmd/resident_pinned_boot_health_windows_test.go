@@ -91,7 +91,11 @@ func TestPinnedBootHealthQueriesLiveTaskProcessAndBothDNS53Owners(t *testing.T){
     "WindowsIdentity", "S-1-5-18","Get-ScheduledTask",
     "VOLVE-DNS-SERVER-0270","$t.State -ne 'Running'",
     "--dns-service","[IO.File]::OpenRead($old)","[Security.Cryptography.SHA256]::Create()","Win32_Process","GetOwnerSid",
-    "Get-NetUDPEndpoint","127.0.0.1","::1","OwningProcess",
+    "Get-NetUDPEndpoint","Get-NetTCPConnection -State Listen","127.0.0.1","::1","OwningProcess",
+    "original DNS TCP53 owner mismatch","original DNS UDP53 owner mismatch",
+    "$tcp[0].OwningProcess -ne $p[0].ProcessId","$port[0].OwningProcess -ne $p[0].ProcessId",
+    "($known -icontains ([string]$_.ExecutablePath))","([string]$_.Name -like 'VOLVE_DNS_*') -or",
+    "$again[0].CreationDate -ne $p[0].CreationDate",
     "VOLVE_ORIGINAL_SYSTEM_DNS53_IDENTITY_VERIFIED",
    }
    for _,token:=range required{
