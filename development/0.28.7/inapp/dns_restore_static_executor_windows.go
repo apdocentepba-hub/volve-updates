@@ -52,11 +52,17 @@ func observeWindowsDNSRestoreStage(
     if err!=nil||checked!=index{
         return 0,0,errors.New("Windows adapter identity changed during DNS restore")
     }
+    return classifyWindowsDNSRestoreStage(r,*current,index)
+}
+
+// Pure classification shared by per-command readback and the full signed
+// census. No OS state is cached across operations.
+func classifyWindowsDNSRestoreStage(r DNSRestoreRecord,current DNSServerState,index uint32)(uint32,int,error){
     cmds,err:=PlanWindowsDNSRestore(r.Original,index)
     if err!=nil{return 0,0,err}
     if r.Original.Mode==DNSAutomatic{
-        if sameDNSState(*current,r.Original){return index,len(cmds),nil}
-        if sameDNSState(*current,r.Expected){return index,0,nil}
+        if sameDNSState(current,r.Original){return index,len(cmds),nil}
+        if sameDNSState(current,r.Expected){return index,0,nil}
         return 0,0,errors.New("automatic DNS source is neither original nor exact VOLVE localhost; external change refused")
     }
     if current.Mode!=DNSStatic{return 0,0,errors.New("static DNS source changed to automatic or unknown mode")}
@@ -64,9 +70,9 @@ func observeWindowsDNSRestoreStage(
     // multi-server restore without replacing any unrelated DNS value.
     for n:=len(r.Original.Servers);n>0;n--{
         prefix:=DNSServerState{InterfaceGUID:r.Original.InterfaceGUID,Family:r.Original.Family,Mode:DNSStatic,Servers:r.Original.Servers[:n]}
-        if sameDNSState(*current,prefix){return index,n,nil}
+        if sameDNSState(current,prefix){return index,n,nil}
     }
-    if sameDNSState(*current,r.Expected){return index,0,nil}
+    if sameDNSState(current,r.Expected){return index,0,nil}
     return 0,0,errors.New("unexpected DNS assignment source; external change or unsafe partial restore")
 }
 
