@@ -167,9 +167,24 @@ function Get-VolvPrivatePeerLiveIdentity {
         }
     }
 }
-function Assert-VolvPrivatePeerSameIdentity {
-    param([object]$Session,[string]$ExpectedSHA,[object]$PinnedIdentity)
-    $current=Get-VolvPrivatePeerLiveIdentity -Session $Session -ExpectedSHA $ExpectedSHA
+function Assert-VolvPrivatePeerIdentityEvidence {
+    param([object]$PinnedIdentity,[object]$current)
+    Set-StrictMode -Version Latest
+    if($null -eq $PinnedIdentity -or $null -eq $current){throw 'Peer continuity unproven: missing evidence'}
+    foreach($identity in @($PinnedIdentity,$current)){
+        foreach($field in @('boot_event_record','boot_event_sha256','uptime_seconds','process_id','created_ticks','boot_ticks','adapter_guid','executable_sha256')){
+            if($null -eq $identity.PSObject.Properties[$field] -or [string]::IsNullOrWhiteSpace([string]$identity.$field)){throw ('Peer continuity unproven: missing '+$field)}
+        }
+        foreach($field in @('boot_event_record','uptime_seconds','process_id','created_ticks','boot_ticks')){
+            $parsed=[uint64]0
+            if([string]$identity.$field -cnotmatch '^[1-9][0-9]*$' -or -not [uint64]::TryParse([string]$identity.$field,[ref]$parsed)){throw ('Peer continuity unproven: invalid '+$field)}
+        }
+        foreach($field in @('boot_event_sha256','executable_sha256')){
+            if([string]$identity.$field -cnotmatch '^[A-F0-9]{64}$'){throw ('Peer continuity unproven: invalid '+$field)}
+        }
+        $adapter=[guid]::Empty
+        if(-not [guid]::TryParse([string]$identity.adapter_guid,[ref]$adapter) -or $adapter -eq [guid]::Empty){throw 'Peer continuity unproven: invalid adapter GUID'}
+    }
     # New independent evidence is mandatory, not an exemption for a WMI
     # timestamp mismatch. Retain the original exact boot_ticks gate until
     # the actual reason for drift is established in this disposable guest.
@@ -184,6 +199,11 @@ function Assert-VolvPrivatePeerSameIdentity {
     foreach($field in @('process_id','created_ticks','boot_ticks','adapter_guid','executable_sha256')){
         if($null -eq $PinnedIdentity -or [string]::IsNullOrEmpty([string]$PinnedIdentity.$field) -or [string]$current.$field -cne [string]$PinnedIdentity.$field){throw ('Peer continuity unproven: '+$field)}
     }
+}
+function Assert-VolvPrivatePeerSameIdentity {
+    param([object]$Session,[string]$ExpectedSHA,[object]$PinnedIdentity)
+    $current=Get-VolvPrivatePeerLiveIdentity -Session $Session -ExpectedSHA $ExpectedSHA
+    Assert-VolvPrivatePeerIdentityEvidence -PinnedIdentity $PinnedIdentity -current $current
 }
 function Assert-VolvPrivateDNSPeerChallenge {
     param([object]$ClientSession,[object]$PeerSession,[guid]$ClientId,[guid]$PeerId,[guid]$SwitchId,
