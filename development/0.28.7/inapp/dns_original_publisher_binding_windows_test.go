@@ -370,11 +370,25 @@ func requireNestedDNSRebootPhase(t *testing.T,phase string)(context.Context,stri
  if err:=VerifyWindowsCurrentSystemSIDReadOnly();err!=nil{t.Fatal(err)}
  ctx,cancel:=context.WithTimeout(context.Background(),30*time.Minute)
  t.Cleanup(cancel)
- raw,err:=nestedGuestDNSIsolationReadOnly(ctx)
- if err!=nil{t.Fatal(err)}
- guid:=strings.TrimSpace(string(raw))
- if len(guid)!=38{t.Fatal("unexpected private NIC identity")}
- return ctx,guid
+ // Boot-triggered tasks may begin before the private NIC has reached Up.
+ // Wait only in the post-boot phase, repeating the entire isolation guard.
+ // No signed evidence is opened and no DNS mutation can occur until it
+ // succeeds; no default route, foreign NIC or installed motor is accepted.
+ deadline:=time.Now()
+ if phase=="RECOVER"{deadline=deadline.Add(2*time.Minute)}
+ for {
+  raw,err:=nestedGuestDNSIsolationReadOnly(ctx)
+  if err==nil{
+   guid:=strings.TrimSpace(string(raw))
+   if len(guid)!=38{t.Fatal("unexpected private NIC identity")}
+   return ctx,guid
+  }
+  if ctx.Err()!=nil||!time.Now().Before(deadline){t.Fatalf("private guest isolation not established: %v",err)}
+  select{
+  case <-ctx.Done():t.Fatal(ctx.Err())
+  case <-time.After(3*time.Second):
+  }
+ }
 }
 
 func nestedDNSRebootCensus(t *testing.T,ctx context.Context,guid string,fault bool)WindowsDNSAssignmentProvenance{
