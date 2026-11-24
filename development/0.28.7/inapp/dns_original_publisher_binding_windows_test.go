@@ -222,7 +222,11 @@ func TestNativeSignedDNSOriginalReadOnlyReviewRejectsOtherWin32Lease(t *testing.
 }
 
 
-// Real native DNS recovery slice for a nested, disconnected CI guest. The
+
+// The production inventory reader deliberately refuses arbitrary queries.
+// Keep the extra isolation check in this test-only fixed-command helper.
+func nestedGuestDNSIsolationReadOnly(ctx context.Context)([]byte,error){
+ const guard=`$ErrorActionPreference='Stop'; $cs=Get-CimInstance Win32_ComputerSystem; if(($cs.Manufacturer+' '+$cs.Model) -notmatch '(?i)virtual machine|hyper-v'){throw 'Not a guest'}; $n=@(Get-NetAdapter -ErrorAction Stop); if($n.Count -ne 1 -or $n[0].Name -cne 'VOLVE-CI-PRIVATE-DNS' -or $n[0].Status -ne 'Up' -or $n[0].InterfaceDescription -notmatch '^Microsoft Hyper-V Network Adapter( #[0-9]+)? for a nested, disconnected CI guest. The
 // controller must attach one PRIVATE Hyper-V switch (no host or uplink).
 // Never enable this test on a user machine. It is not a product installer,
 // real publisher key, motor-stop proof, connectivity proof or reboot test.
@@ -233,8 +237,8 @@ func TestNestedGuestSignedOriginalDNSNativeSYSTEM(t *testing.T){
  if err:=VerifyWindowsCurrentSystemSIDReadOnly();err!=nil{t.Fatal(err)}
  ctx,cancel:=context.WithTimeout(context.Background(),3*time.Minute)
  defer cancel()
- const guard=`$ErrorActionPreference='Stop'; $cs=Get-CimInstance Win32_ComputerSystem; if(($cs.Manufacturer+' '+$cs.Model) -notmatch '(?i)virtual machine|hyper-v'){throw 'Not a guest'}; $n=@(Get-NetAdapter -ErrorAction Stop); if($n.Count -ne 1 -or $n[0].Name -cne 'VOLVE-CI-PRIVATE-DNS' -or $n[0].Status -ne 'Up' -or $n[0].InterfaceDescription -notmatch '^Microsoft Hyper-V Network Adapter( #[0-9]+)?$'){throw 'Expected one dedicated private Hyper-V guest NIC'}; if(@(Get-NetRoute -ErrorAction Stop|Where-Object {$_.DestinationPrefix -in @('0.0.0.0/0','::/0')}).Count -ne 0){throw 'Default route exists'}; if(Get-ScheduledTask -TaskName 'VOLVE-DNS-SERVER-0270' -ErrorAction SilentlyContinue){throw 'Installed motor exists'}; $g='{'+([string]$n[0].InterfaceGuid).Trim('{}').ToLowerInvariant()+'}'; Write-Output $g`
- raw,err:=DefaultWindowsReadOnlyPowerShell(ctx,guard)
+
+ raw,err:=nestedGuestDNSIsolationReadOnly(ctx)
  if err!=nil{t.Fatalf("guest isolation guard: %v",err)}
  guid:=strings.TrimSpace(string(raw))
  if len(guid)!=38{t.Fatal("invalid pinned guest NIC identity")}
@@ -255,7 +259,83 @@ func TestNestedGuestSignedOriginalDNSNativeSYSTEM(t *testing.T){
  // The native restoration entry must use its real signed evidence, NTFS ACL,
  // LocalSystem token, full census and Win32 mutex; never an injected writer.
  for _,record:=range records{
-  observed,err:=DefaultWindowsReadOnlyPowerShell(ctx,guard)
+  observed,err:=nestedGuestDNSIsolationReadOnly(ctx)
+  if err!=nil||strings.TrimSpace(string(observed))!=guid{t.Fatal("guest isolation changed before fault injection")}
+  idx,err:=FindWindowsAdapterIndex(ctx,guid,DefaultWindowsReadOnlyPowerShell)
+  if err!=nil{t.Fatal(err)}
+  cmds,err:=PlanWindowsDNSRestore(record.Expected,idx)
+  if err!=nil{t.Fatal(err)}
+  for _,cmd:=range cmds{if err:=runPinnedWindowsNativeDNS(ctx,cmd.Args);err!=nil{t.Fatal(err)}}
+ }
+ broken,err:=InspectWindowsDNSAssignmentProvenanceReadOnly(ctx,DefaultWindowsReadOnlyPowerShell)
+ if err!=nil{t.Fatal(err)}
+ if broken.AdapterCount!=1||broken.StaticFamilyCount!=2||len(broken.States)!=2{t.Fatal("dual-stack loopback fault not proven")}
+ for _,record:=range records{
+  found:=false
+  for _,state:=range broken.States{if sameDNSState(state,record.Expected){found=true}}
+  if !found{t.Fatal("expected actual loopback DNS state missing")}
+ }
+ if err:=restorePersistedSignedOriginalDNSAsSYSTEM(ctx,f.root,f.pub);err!=nil{t.Fatalf("real native SYSTEM restoration: %v",err)}
+ if err:=verifySignedDNSBootRestoreCensus(ctx,records,DefaultWindowsReadOnlyPowerShell,true);err!=nil{t.Fatal(err)}
+ after,err:=InspectWindowsDNSAssignmentProvenanceReadOnly(ctx,DefaultWindowsReadOnlyPowerShell)
+ if err!=nil||after.SHA256!=census.SHA256{t.Fatal("original DNS provenance digest mismatch")}
+ if err:=restorePersistedSignedOriginalDNSAsSYSTEM(ctx,f.root,f.pub);err!=nil{t.Fatalf("idempotent restoration: %v",err)}
+ if err:=verifySignedDNSBootRestoreCensus(ctx,records,DefaultWindowsReadOnlyPowerShell,true);err!=nil{t.Fatal(err)}
+ pending,err:=InspectResidentRecoveryJournal(ctx,f.journal,func(p string)error{return nativeDNSOriginalBackupACL(ctx,p)})
+ if err!=nil||pending.Status!="recovery-required"{t.Fatal("DNS-only recovery must not finalize motor transaction")}
+ t.Log("PASS VOLVE_NESTED_GUEST_REAL_SIGNED_SYSTEM_DNS_STATIC_IPV4_AUTOMATIC_IPV6 NO_REAL_MOTOR NO_REBOOT_DNS NO_CONNECTIVITY_PROOF")
+}
+){throw 'Expected one dedicated private Hyper-V guest NIC'}; if(@(Get-NetRoute -ErrorAction Stop|Where-Object {$_.DestinationPrefix -in @('0.0.0.0/0','::/0')}).Count -ne 0){throw 'Default route exists'}; if(Get-ScheduledTask -TaskName 'VOLVE-DNS-SERVER-0270' -ErrorAction SilentlyContinue){throw 'Installed motor exists'}; $g='{'+([string]$n[0].InterfaceGuid).Trim('{}').ToLowerInvariant()+'}'; Write-Output $g`
+ if _,err:=DefaultWindowsReadOnlyPowerShell(ctx,guard);err==nil{
+  return nil,errors.New("production inventory unexpectedly accepts lab-only command")
+ }
+ if err:=ctx.Err();err!=nil{return nil,err}
+ root:=os.Getenv("SystemRoot")
+ if !filepath.IsAbs(root)||strings.HasPrefix(root,`\\`){
+  return nil,errors.New("trusted Windows SystemRoot unavailable")
+ }
+ exe:=filepath.Join(root,"System32","WindowsPowerShell","v1.0","powershell.exe")
+ info,err:=os.Lstat(exe)
+ if err!=nil||!info.Mode().IsRegular()||info.Mode()&os.ModeSymlink!=0{
+  return nil,errors.New("pinned lab PowerShell executable unavailable")
+ }
+ return exec.CommandContext(ctx,exe,"-NoLogo","-NoProfile","-NonInteractive","-Command",guard).Output()
+}
+
+// Real native DNS recovery slice for a nested, disconnected CI guest. The
+// controller must attach one PRIVATE Hyper-V switch (no host or uplink).
+// Never enable this test on a user machine. It is not a product installer,
+// real publisher key, motor-stop proof, connectivity proof or reboot test.
+func TestNestedGuestSignedOriginalDNSNativeSYSTEM(t *testing.T){
+ t.Helper()
+ if os.Getenv("VOLVE_CI_NESTED_GUEST_DNS")!="PRIVATE_GUEST_ONLY"{t.Skip("explicit private nested guest required")}
+ if os.Getenv("GITHUB_ACTIONS")!="true"||os.Getenv("RUNNER_ENVIRONMENT")!="github-hosted"{t.Fatal("not isolated CI")}
+ if err:=VerifyWindowsCurrentSystemSIDReadOnly();err!=nil{t.Fatal(err)}
+ ctx,cancel:=context.WithTimeout(context.Background(),3*time.Minute)
+ defer cancel()
+
+ raw,err:=nestedGuestDNSIsolationReadOnly(ctx)
+ if err!=nil{t.Fatalf("guest isolation guard: %v",err)}
+ guid:=strings.TrimSpace(string(raw))
+ if len(guid)!=38{t.Fatal("invalid pinned guest NIC identity")}
+ census,err:=InspectWindowsDNSAssignmentProvenanceReadOnly(ctx,DefaultWindowsReadOnlyPowerShell)
+ if err!=nil{t.Fatalf("actual guest DNS provenance refused: %v",err)}
+ if census.AdapterCount!=1||len(census.States)!=2||census.StaticFamilyCount!=1||census.AutomaticFamilyCount!=1{t.Fatal("expected exactly one static/one automatic DNS family")}
+ for _,state:=range census.States{
+  if state.InterfaceGUID!=guid{t.Fatal("foreign guest DNS adapter")}
+  if state.Family==DNSIPv4&&(!sameDNSAddresses(state.Servers,[]string{"192.0.2.53","192.0.2.54"})||state.Mode!=DNSStatic){t.Fatal("unexpected original IPv4 lab DNS")}
+  if state.Family==DNSIPv6&&state.Mode!=DNSAutomatic{t.Fatal("unexpected original IPv6 lab DNS")}
+ }
+ f,parent,binding,signature,pin,_:=prepareNativeSignedDNSRecoveryLabWithOriginals(t,census.States)
+ records,err:=ReadDNSOriginalBackupNativeWindows(ctx,parent,pin)
+ if err!=nil{t.Fatal(err)}
+ if err:=PersistSignedOriginalDNSEvidenceNativeWindows(ctx,f.root,f.pub,binding,signature);err!=nil{t.Fatal(err)}
+ if err:=verifySignedDNSBootRestoreCensus(ctx,records,DefaultWindowsReadOnlyPowerShell,true);err!=nil{t.Fatal(err)}
+ // Fault injection is confined to the one positively identified guest NIC.
+ // The native restoration entry must use its real signed evidence, NTFS ACL,
+ // LocalSystem token, full census and Win32 mutex; never an injected writer.
+ for _,record:=range records{
+  observed,err:=nestedGuestDNSIsolationReadOnly(ctx)
   if err!=nil||strings.TrimSpace(string(observed))!=guid{t.Fatal("guest isolation changed before fault injection")}
   idx,err:=FindWindowsAdapterIndex(ctx,guid,DefaultWindowsReadOnlyPowerShell)
   if err!=nil{t.Fatal(err)}
