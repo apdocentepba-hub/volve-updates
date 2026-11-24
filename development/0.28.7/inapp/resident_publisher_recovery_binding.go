@@ -65,6 +65,7 @@ func VerifyResidentPublisherRecoveryBinding(
  if state.Status!="recovery-required"{
   return zero,fmt.Errorf("publisher recovery authorization only valid for pending transaction, got %s",state.Status)
  }
+ if permit.Schema==2&&permit.RecoveryIntentNonce!=state.Intent.Nonce{return zero,errors.New("scoped publisher permit belongs to a different pending recovery nonce")}
  sealed,err:=VerifyUnversionedLegacyRecovery(backupDir,protectBackup)
  if err!=nil{return zero,fmt.Errorf("protected original cannot be verified: %w",err)}
  if state.Intent.Task!=permit.FromTask||
