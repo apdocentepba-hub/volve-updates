@@ -288,7 +288,7 @@ jobs:
           if($LASTEXITCODE -ne 0){throw 'Guest isolation guard failed native PowerShell parse; refuse expensive VM trial'}
           # Verify both reboot phases exist in the compiled source before a
           # lengthy nested guest trial. They MUST remain inactive on the host.
-          foreach($phaseTest in @('TestNestedGuestDNSRebootArmSYSTEM','TestNestedGuestDNSRebootRecoverSYSTEM')){
+          foreach($phaseTest in @('TestNestedGuestDNSRebootArmSYSTEM','TestNestedGuestDNSRebootRecoverSYSTEM','TestNestedGuestDNSRebootVerifyReadOnly')){
             $listed=@(go test ./motorupdate -list ('^'+$phaseTest+'$'))
             if($LASTEXITCODE -ne 0 -or $listed -cnotcontains $phaseTest){throw ('Missing mandatory reboot phase: '+$phaseTest)}
           }
@@ -342,6 +342,7 @@ jobs:
             dns_test_exe_sha256=$null
             dns_reboot_verified=$false
             dns_reboot_arm_verified=$false
+            dns_reboot_independent_readback=$false
             dns_reboot_original_sha256=$null
             dns_reboot_event_chain=$null
             network_connectivity_verified=$false
@@ -1182,6 +1183,24 @@ jobs:
             }
             Write-Host $recovery.log
             if($recovery.exit -ne 0 -or -not $recovery.sid -or $recovery.result -ne 0 -or $recovery.state -ne 'Ready' -or -not $recovery.xml_unchanged -or -not $recovery.fresh -or $recovery.log -notmatch 'PASS VOLVE_DNS_REBOOT_PERSISTED_SIGNED_DNS_RESTORED_NO_REAL_MOTOR_NO_CONNECTIVITY_PROOF' -or $recovery.log -notmatch '--- PASS: TestNestedGuestDNSRebootRecoverSYSTEM'){throw 'Boot-triggered DNS recovery not proven'}
+            $report.stage='independent_postboot_dns_readback'
+            $observation=Invoke-Command -Session $session -ArgumentList $recoverDir,$originalPin,$report.dns_test_exe_sha256 -ErrorAction Stop -ScriptBlock {
+              param($root,$pin,$sha)
+              $ErrorActionPreference='Stop'
+              $exe=Join-Path $root 'VOLVE-CI-GuestDNS.test.exe'
+              if((Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash -cne $sha){throw 'Observer executable mismatch'}
+              $env:GITHUB_ACTIONS='true'
+              $env:RUNNER_ENVIRONMENT='github-hosted'
+              $env:VOLVE_CI_NESTED_GUEST_DNS='PRIVATE_GUEST_ONLY'
+              $env:VOLVE_CI_DNS_REBOOT_PHASE='VERIFY'
+              $env:VOLVE_CI_DNS_REBOOT_ORIGINAL_SHA256=$pin
+              $output=@(& $exe '-test.run=^TestNestedGuestDNSRebootVerifyReadOnly$' '-test.v' '-test.timeout=3m' 2>&1)
+              $code=$LASTEXITCODE
+              [pscustomobject]@{exit=$code;log=($output -join [Environment]::NewLine)}
+            }
+            Write-Host $observation.log
+            if($observation.exit -ne 0 -or $observation.log -notmatch 'PASS VOLVE_DNS_REBOOT_INDEPENDENT_READBACK_NO_WRITES' -or $observation.log -notmatch '--- PASS: TestNestedGuestDNSRebootVerifyReadOnly'){throw 'Independent postboot DNS readback failed'}
+            $report.dns_reboot_independent_readback=$true
             $report.guest_boot_after=$recovery.boot
             $report.dns_reboot_event_chain=$recovery.chain
             $report.disk_persistence_verified=$true
@@ -1294,6 +1313,6 @@ jobs:
             Write-Host 'PASS: real guest reboot + strict SYSTEM task fixture recovery; NO DNS TEST NO INSTALL.'
           }else{
             if(-not $report.private_guest_dns_verified){throw 'Private guest signed native DNS test not proven'}
-            if(-not $report.dns_reboot_verified -or -not $report.dns_reboot_arm_verified -or -not $report.guest_poweroff_observed -or -not $report.disk_persistence_verified){throw 'Signed DNS startup recovery not proven'}
+            if(-not $report.dns_reboot_verified -or -not $report.dns_reboot_independent_readback -or -not $report.dns_reboot_arm_verified -or -not $report.guest_poweroff_observed -or -not $report.disk_persistence_verified){throw 'Signed DNS startup recovery not proven'}
             Write-Host 'PASS: real signed native SYSTEM DNS slice plus actual boot-triggered DNS recovery; NO REAL MOTOR, NO CONNECTIVITY PROOF, NO INSTALL.'
           }
