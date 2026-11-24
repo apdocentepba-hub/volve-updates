@@ -155,7 +155,14 @@ function Get-VolvPrivatePeerLiveIdentity {
         # fail closed rather than attributing WMI clock drift to a safe cause.
         $perf=Get-CimInstance Win32_PerfFormattedData_PerfOS_System -ErrorAction Stop
         if($null -eq $perf.SystemUpTime -or [uint64]$perf.SystemUpTime -eq 0){throw 'Peer uptime unavailable'}
+        # Cursor is independent of wall-clock time (which may move backward).
+        $systemCursor='0'
+        try{
+            $latest=Get-WinEvent -LogName System -MaxEvents 1 -ErrorAction Stop
+            if($latest.RecordId -gt 0){$systemCursor=[string]$latest.RecordId}
+        }catch{}
         [pscustomobject]@{
+            system_record_cursor=$systemCursor
             boot_event_record=[string]$bootEvent.RecordId
             boot_event_sha256=$bootEventHash
             uptime_seconds=[string]$perf.SystemUpTime
@@ -203,6 +210,42 @@ function Assert-VolvPrivatePeerIdentityEvidence {
 function Assert-VolvPrivatePeerSameIdentity {
     param([object]$Session,[string]$ExpectedSHA,[object]$PinnedIdentity)
     $current=Get-VolvPrivatePeerLiveIdentity -Session $Session -ExpectedSHA $ExpectedSHA
+    # Diagnostic only: Microsoft documents Kernel-General event 1 for time
+    # changes by W32Time and Hyper-V time synchronization. Compare event record
+    # IDs, not wall-clock ranges. No clocks, services, or guest settings changed.
+    if($null -ne $PinnedIdentity -and [string]$current.boot_ticks -cne [string]$PinnedIdentity.boot_ticks){
+        try{
+            $lo=[uint64]$PinnedIdentity.system_record_cursor
+            $hi=[uint64]$current.system_record_cursor
+            if($lo -eq 0 -or $hi -lt $lo){throw 'clock event cursor unavailable'}
+            if($hi -gt $lo){
+                $diag=Invoke-Command -Session $Session -ArgumentList $lo,$hi -ErrorAction Stop -ScriptBlock {
+                    param([uint64]$lo,[uint64]$hi)
+                    $ErrorActionPreference='Stop'
+                    $xpath="*[System[Provider[@Name='Microsoft-Windows-Kernel-General'] and (EventID=1) and (EventRecordID > $lo) and (EventRecordID <= $hi)]]"
+                    $ev=@(Get-WinEvent -LogName System -FilterXPath $xpath -MaxEvents 129 -ErrorAction Stop)
+                    if($ev.Count -gt 128){throw 'clock event sample truncated'}
+                    $parsed=0
+                    $delta=[decimal]0
+                    foreach($e in $ev){
+                        $xml=[xml]$e.ToXml()
+                        $fields=@($xml.Event.EventData.Data)
+                        $old=@($fields|Where-Object {$_.Name -ceq 'OldTime'})
+                        $new=@($fields|Where-Object {$_.Name -ceq 'NewTime'})
+                        if($old.Count -ne 1 -or $new.Count -ne 1){continue}
+                        try{
+                            $o=[DateTimeOffset]::Parse([string]$old[0].'#text',[Globalization.CultureInfo]::InvariantCulture)
+                            $n=[DateTimeOffset]::Parse([string]$new[0].'#text',[Globalization.CultureInfo]::InvariantCulture)
+                            $delta+=([decimal]$n.UtcDateTime.Ticks-[decimal]$o.UtcDateTime.Ticks)
+                            $parsed++
+                        }catch{}
+                    }
+                    [pscustomobject]@{count=$ev.Count;parsed=$parsed;net_ticks=[string]$delta}
+                }
+                Write-Host ('CI PEER CLOCK EVENTS: count='+$diag.count+' parsed='+$diag.parsed+' net_ticks='+$diag.net_ticks+'; causal_attribution=UNPROVEN')
+            }else{Write-Host 'CI PEER CLOCK EVENTS: unchanged system cursor; causal_attribution=UNPROVEN'}
+        }catch{Write-Host 'CI PEER CLOCK EVENTS: unavailable or empty; causal_attribution=UNPROVEN'}
+    }
     Assert-VolvPrivatePeerIdentityEvidence -PinnedIdentity $PinnedIdentity -current $current
 }
 function Assert-VolvPrivateDNSPeerChallenge {
