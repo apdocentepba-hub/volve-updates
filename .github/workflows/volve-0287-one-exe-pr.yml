@@ -20,7 +20,7 @@ concurrency:
 jobs:
   verify-windows-exe:
     runs-on: windows-latest
-    timeout-minutes: 25
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@v4
       - name: Fail-fast PowerShell parse gate for real-motor NSIS lab
@@ -365,14 +365,20 @@ jobs:
           if($LASTEXITCODE -ne 0){throw 'Windows six-inventory source overlay failed'}
           if(-not (Test-Path -LiteralPath 'build/codigo/go.mod' -PathType Leaf)){throw 'Signed source reconstruction did not produce native module'}
       - name: Prepare NSIS compiler before early real motor handoff
-        timeout-minutes: 3
+        timeout-minutes: 8
         shell: pwsh
         run: |
           $ErrorActionPreference='Stop'
           $nsis=@('C:\Program Files (x86)\NSIS\makensis.exe','C:\Program Files\NSIS\makensis.exe') | Where-Object {Test-Path -LiteralPath $_ -PathType Leaf} | Select-Object -First 1
           if(-not $nsis){
-            choco install nsis --yes --no-progress --limit-output
-            if($LASTEXITCODE -ne 0){throw 'CI cannot provision NSIS compiler'}
+            $installed=$false
+            foreach($attempt in 1..3){
+              choco install nsis --yes --no-progress --limit-output --execution-timeout=90
+              if($LASTEXITCODE -eq 0){$installed=$true;break}
+              Write-Warning ('NSIS package provisioning attempt '+$attempt+' failed; exit='+$LASTEXITCODE)
+              if($attempt -lt 3){Start-Sleep -Seconds (10*$attempt)}
+            }
+            if(-not $installed){throw 'CI cannot provision NSIS compiler after bounded retries; no build bypass'}
             $nsis=@('C:\Program Files (x86)\NSIS\makensis.exe','C:\Program Files\NSIS\makensis.exe') | Where-Object {Test-Path -LiteralPath $_ -PathType Leaf} | Select-Object -First 1
           }
           if(-not $nsis){throw 'CI NSIS compiler still missing after provision'}
