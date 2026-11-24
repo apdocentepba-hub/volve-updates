@@ -1,4 +1,4 @@
-name: VOLVE 0.28.7 signed migration + SYSTEM watchdog lab (NO REAL REBOOT, NO RELEASE)
+name: VOLVE 0.28.7 signed migration + isolated guest recovery labs (NO RELEASE)
 on:
   pull_request:
     branches: [feature/motor-updater-0287-pilot, work/0287-dns-cname-chain-guard-20261113]
@@ -175,10 +175,14 @@ jobs:
           Write-Host 'PASS: Hyper-V started an empty isolated VM; NO guest OS boot or VOLVE installation proven.'
 
   nested-windows-guest-reboot:
-    name: Windows guest real reboot and strict SYSTEM recovery kit (NO VOLVE INSTALL)
+    name: Windows guest ${{ matrix.trial }} (NO VOLVE INSTALL)
     needs: nested-hyperv-start-probe
     runs-on: windows-latest
     timeout-minutes: 75
+    strategy:
+      fail-fast: false
+      matrix:
+        trial: [strict-reboot, native-dns]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -213,6 +217,7 @@ jobs:
           PY
           go run development/0.28.7/inapp/apply_overlay.go build/codigo
       - name: Build standalone VM-only journal helper
+        if: matrix.trial == 'strict-reboot'
         shell: powershell
         working-directory: build/codigo
         run: |
@@ -223,6 +228,7 @@ jobs:
           if((Get-Item -LiteralPath $out).Length -lt 1048576){throw 'Unexpectedly short lab helper'}
           Write-Host 'PASS: compiled lab journal helper; not a product executable'
       - name: Compile exact candidate motorupdate test binary for private guest
+        if: matrix.trial == 'native-dns'
         shell: powershell
         working-directory: build/codigo
         run: |
@@ -235,11 +241,13 @@ jobs:
         shell: powershell
         env:
           CANDIDATE_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+          VOLVE_GUEST_TRIAL: ${{ matrix.trial }}
         run: |
           $ErrorActionPreference='Stop'
           if($env:GITHUB_ACTIONS -ne 'true' -or $env:RUNNER_ENVIRONMENT -ne 'github-hosted'){throw 'Hosted CI only'}
           $hostVM=Get-CimInstance Win32_ComputerSystem
           if(($hostVM.Manufacturer+' '+$hostVM.Model) -notmatch '(?i:virtual machine|vmware|hyper-v|kvm|qemu|virtualbox)'){throw 'Not a disposable VM'}
+          if($env:VOLVE_GUEST_TRIAL -cnotin @('strict-reboot','native-dns')){throw 'Unknown lab trial'}
           Import-Module Hyper-V -ErrorAction Stop
           $name='VOLVE-CI-WINGUEST-'+[guid]::NewGuid().ToString('N')
           $dir=Join-Path $env:RUNNER_TEMP $name
@@ -250,6 +258,8 @@ jobs:
           $session=$null
           $report=[ordered]@{
             candidate_head=$env:CANDIDATE_HEAD
+            trial=$env:VOLVE_GUEST_TRIAL
+            environment_drift=$null
             runner_commit=$env:GITHUB_SHA
             source='Microsoft Windows Server 2022 evaluation center VHD'
             stage='download'
@@ -348,6 +358,29 @@ jobs:
             if($report.network_adapters -ne 0){throw 'Guest network isolation failed'}
             Start-VM -VM $vm -ErrorAction Stop
             $session=Connect-Guest $vm.Id $credential 600
+            $trial=$env:GITHUB_RUN_ID+'321'
+            if($trial -cnotmatch '^[0-9]{14,18}$'){throw 'Unexpected trial identifier'}
+            $checkedOut=(& git rev-parse HEAD).Trim()
+            if($LASTEXITCODE -ne 0 -or $checkedOut -cne $env:CANDIDATE_HEAD){throw 'Candidate source checkout mismatch'}
+            # First boot of an evaluation image can register additional
+            # Windows tasks. Give setup an independent clean boot BEFORE
+            # taking the strict baseline; do not delete or exempt any task.
+            if($env:VOLVE_GUEST_TRIAL -ceq 'strict-reboot'){
+              $report.stage='warmup_clean_guest_boot'
+              Invoke-Command -Session $session -ErrorAction Stop -ScriptBlock {
+                $ErrorActionPreference='Stop'
+                & shutdown.exe /s /t 5 /f
+                if($LASTEXITCODE -ne 0){throw 'Guest warmup shutdown failed'}
+              }
+              Remove-PSSession $session
+              $session=$null
+              $limit=[datetime]::UtcNow.AddMinutes(4)
+              while((Get-VM -Id $vm.Id -ErrorAction Stop).State -ne 'Off' -and [datetime]::UtcNow -lt $limit){Start-Sleep -Seconds 3}
+              if((Get-VM -Id $vm.Id -ErrorAction Stop).State -ne 'Off'){throw 'Warmup shutdown not observed'}
+              Start-VM -VM $vm -ErrorAction Stop
+              $session=Connect-Guest $vm.Id $credential 360
+              Start-Sleep -Seconds 60
+            }
             $nonce=[guid]::NewGuid().ToString('N')
             $before=Invoke-Command -Session $session -ArgumentList $nonce -ErrorAction Stop -ScriptBlock {
               param($nonce)
@@ -360,11 +393,8 @@ jobs:
             $report.guest_os=$before.os
             $report.guest_boot_before=$before.boot
             $report.guest_boot_verified=$true
+            if($env:VOLVE_GUEST_TRIAL -ceq 'strict-reboot'){
             $report.stage='prepare_strict_system_recovery_kit'
-            $trial=$env:GITHUB_RUN_ID+'321'
-            if($trial -cnotmatch '^[0-9]{14,18}$'){throw 'Unexpected trial identifier'}
-            $checkedOut=(& git rev-parse HEAD).Trim()
-            if($LASTEXITCODE -ne 0 -or $checkedOut -cne $env:CANDIDATE_HEAD){throw 'Candidate source checkout mismatch'}
             $guestKit='C:\VOLVE-CI-RebootKit'
             Invoke-Command -Session $session -ArgumentList $guestKit -ErrorAction Stop -ScriptBlock {
               param($root)
@@ -452,8 +482,9 @@ jobs:
             }
             $report.recovery_kit_cleanup_verified=$true
             $report.stage='guest_reboot_and_fixture_recovery_verified'
-            # The strict reboot kit remains an independent prerequisite. Only
-            # after its successful Cleanup do we attach a private guest NIC.
+            }else{
+            # Different disposable VM: no strict kit is run or credited here.
+            # Failure in one matrix leg cannot conceal the other result.
             $report.stage='prepare_private_guest_dns_network'
             Invoke-Command -Session $session -ErrorAction Stop -ScriptBlock {
               & shutdown.exe /s /t 5 /f
@@ -552,9 +583,44 @@ jobs:
             Write-Host $test.log
             if($test.exit -ne 0 -or $test.log -notmatch 'PASS VOLVE_NESTED_GUEST_REAL_SIGNED_SYSTEM_DNS_STATIC_IPV4_AUTOMATIC_IPV6' -or $test.log -notmatch '--- PASS: TestNestedGuestSignedOriginalDNSNativeSYSTEM'){throw 'Real native SYSTEM DNS recovery test did not pass'}
             $report.private_guest_dns_verified=$true
-            $report.stage='guest_fixture_reboot_and_native_dns_slice_verified'
+            $report.stage='native_dns_slice_verified_only'
+            }
           }catch{
             $report.error_message=$_.Exception.Message
+            # Preserve a REDACTED, read-only census diff before destruction.
+            # This is forensic evidence only, never approval or exemption.
+            if($env:VOLVE_GUEST_TRIAL -ceq 'strict-reboot' -and $report.recovery_kit_prepared -and $session){
+              try{
+                $report.environment_drift=Invoke-Command -Session $session -ArgumentList $trial -ErrorAction Stop -ScriptBlock {
+                  param($id)
+                  $ErrorActionPreference='Stop'
+                  $dir=Join-Path $env:ProgramData ('VOLVE-VM-RebootLab-'+$id)
+                  . (Join-Path $dir 'reboot_event_chain.ps1')
+                  . (Join-Path $dir 'vm_environment_baseline.ps1')
+                  $old=Get-Content -LiteralPath (Join-Path $dir 'vm-environment-baseline.json') -Raw|ConvertFrom-Json
+                  $new=Get-VolvVMBaselineState -RunId $id
+                  $left=@{};$right=@{}
+                  foreach($r in $old.taskRecords){$left[$r.Split('|')[0]]=$r}
+                  foreach($r in $new.taskRecords){$right[$r.Split('|')[0]]=$r}
+                  $added=@($right.Keys|Where-Object {-not $left.ContainsKey($_)}|Sort-Object)
+                  $removed=@($left.Keys|Where-Object {-not $right.ContainsKey($_)}|Sort-Object)
+                  $changed=@($left.Keys|Where-Object {$right.ContainsKey($_) -and $left[$_] -cne $right[$_]}|Sort-Object)
+                  $classify={param($name) [pscustomobject]@{id=(Get-VolvVMBaselineSha -Value $name).Substring(0,16);scope=$(if($name.StartsWith('\Microsoft\Windows\',[StringComparison]::OrdinalIgnoreCase)){'microsoft-windows'}else{'other'})}}
+                  $marker=Join-Path $dir ('VOLVE-CI-BOOT-'+$id+'\boot-recovery-success.marker')
+                  $failed=Join-Path $dir ('VOLVE-CI-BOOT-'+$id+'\boot-recovery-failed.marker')
+                  [pscustomobject]@{
+                    before=@($old.taskRecords).Count;after=@($new.taskRecords).Count
+                    added=@($added|ForEach-Object {& $classify $_})
+                    removed=@($removed|ForEach-Object {& $classify $_})
+                    changed=@($changed|ForEach-Object {Get-VolvVMBaselineTaskDriftHint -ExpectedRecord $left[$_] -ActualRecord $right[$_]})
+                    hosts_equal=($old.hostsSha256 -ceq $new.hostsSha256)
+                    dns_equal=(($old.dnsRecords -join '|') -ceq ($new.dnsRecords -join '|'))
+                    recovery_marker_present=(Test-Path -LiteralPath $marker)
+                    failure_marker_present=(Test-Path -LiteralPath $failed)
+                  }
+                }
+              }catch{$report.environment_diagnostic_error=$_.Exception.Message}
+            }
           }finally{
             try{
               if($session){Remove-PSSession $session -ErrorAction SilentlyContinue}
@@ -579,7 +645,11 @@ jobs:
           }
           if(-not $report.cleanup_ok){throw 'Guest cleanup failed'}
           if($report.error_message){throw ('Guest test failed in '+$report.stage+': '+$report.error_message)}
-          if(-not $report.disk_persistence_verified){throw 'Guest persistence not demonstrated'}
-          if(-not $report.recovery_kit_verified -or -not $report.recovery_kit_cleanup_verified){throw 'Strict SYSTEM recovery kit not fully verified'}
-          if(-not $report.private_guest_dns_verified){throw 'Private guest signed native DNS test not proven'}
-          Write-Host 'PASS: guest reboot + strict task fixture recovery + real signed SYSTEM native DNS slice; NO DNS REBOOT, NO REAL MOTOR, NO CONNECTIVITY PROOF, NO INSTALL.'
+          if($env:VOLVE_GUEST_TRIAL -ceq 'strict-reboot'){
+            if(-not $report.disk_persistence_verified){throw 'Guest persistence not demonstrated'}
+            if(-not $report.recovery_kit_verified -or -not $report.recovery_kit_cleanup_verified){throw 'Strict SYSTEM recovery kit not fully verified'}
+            Write-Host 'PASS: real guest reboot + strict SYSTEM task fixture recovery; NO DNS TEST NO INSTALL.'
+          }else{
+            if(-not $report.private_guest_dns_verified){throw 'Private guest signed native DNS test not proven'}
+            Write-Host 'PASS: real signed native SYSTEM DNS slice; NO DNS REBOOT, NO REAL MOTOR, NO CONNECTIVITY PROOF, NO INSTALL.'
+          }
