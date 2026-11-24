@@ -1,8 +1,9 @@
 # VOLVE hosted CI only. Two disposable guests, one Hyper-V private switch.
 # No public network, host NIC, NAT, recursive DNS or production installation.
-Set-StrictMode -Version Latest
+# Dot-sourcing this helper must not alter the caller's StrictMode.
 function Assert-VolvPrivatePeerTopology {
     param([guid]$ClientId,[guid]$PeerId,[guid]$SwitchId)
+    Set-StrictMode -Version Latest
     if($env:GITHUB_ACTIONS -cne 'true' -or $env:RUNNER_ENVIRONMENT -cne 'github-hosted'){throw 'Hosted CI only'}
     if($ClientId -eq $PeerId -or $ClientId -eq [guid]::Empty -or $PeerId -eq [guid]::Empty){throw 'Invalid distinct guest identities'}
     $sw=Get-VMSwitch -Id $SwitchId -ErrorAction Stop
@@ -26,6 +27,7 @@ function Assert-VolvPrivatePeerTopology {
 function Start-VolvPrivateDNSPeer {
     param([object]$Peer,[object]$Client,[object]$Switch,[pscredential]$Credential,
           [string]$PeerExe,[string]$ExpectedSHA)
+    Set-StrictMode -Version Latest
     $ErrorActionPreference='Stop'
     if(-not (Assert-VolvPrivatePeerTopology -ClientId $Client.Id -PeerId $Peer.Id -SwitchId $Switch.Id)){throw 'Private topology not verified'}
     if((Get-FileHash -LiteralPath $PeerExe -Algorithm SHA256).Hash -cne $ExpectedSHA){throw 'Peer executable changed'}
@@ -89,9 +91,10 @@ function Start-VolvPrivateDNSPeer {
             }while([datetime]::UtcNow -lt $until)
             $tcp=@(Get-NetTCPConnection -State Listen -LocalPort 53 -ErrorAction Stop|Where-Object {$_.OwningProcess -eq $p.Id})
             $udp=@(Get-NetUDPEndpoint -LocalPort 53 -ErrorAction Stop|Where-Object {$_.OwningProcess -eq $p.Id})
-            foreach($list in @(@($tcp),@($udp))){
-                if($list.Count -ne 2 -or @($list|Where-Object {$_.LocalAddress -notin @('192.0.2.53','192.0.2.54')}).Count -ne 0){throw 'Peer listener census mismatch'}
+            foreach($address in @('192.0.2.53','192.0.2.54')){
+                if(@($tcp|Where-Object {$_.LocalAddress -ceq $address}).Count -ne 1 -or @($udp|Where-Object {$_.LocalAddress -ceq $address}).Count -ne 1){throw 'Peer address listener mismatch'}
             }
+            if($tcp.Count -ne 2 -or $udp.Count -ne 2){throw 'Unexpected additional peer DNS listeners'}
             if($p.HasExited -or -not [IO.File]::ReadAllText((Join-Path $root 'peer.log')).Contains('VOLVE_PRIVATE_PEER_READY')){throw 'Peer readiness not proven'}
         }
         return $session
@@ -105,6 +108,7 @@ function Assert-VolvPrivateDNSPeerChallenge {
     param([object]$ClientSession,[object]$PeerSession,[guid]$ClientId,[guid]$PeerId,[guid]$SwitchId,
           [string]$ProbePath,[string]$ProbeSHA,[ValidateSet('Original','Fault','Restored')][string]$Phase,
           [ValidateSet('Default','TCP')][string]$Transport)
+    Set-StrictMode -Version Latest
     $ErrorActionPreference='Stop'
     if(-not (Assert-VolvPrivatePeerTopology -ClientId $ClientId -PeerId $PeerId -SwitchId $SwitchId)){throw 'Private topology not verified'}
     $nonce=[guid]::NewGuid().ToString('N')
@@ -116,19 +120,28 @@ function Assert-VolvPrivateDNSPeerChallenge {
         $env:VOLVE_CI_NESTED_GUEST_DNS='PRIVATE_GUEST_ONLY'
         & $path -Nonce $nonce -Phase $phase -Transport $transport
     }
-    $wire=Invoke-Command -Session $PeerSession -ArgumentList $nonce -ErrorAction Stop -ScriptBlock {
-        param($nonce)
+    $wire=Invoke-Command -Session $PeerSession -ArgumentList $nonce,$Phase,$Transport -ErrorAction Stop -ScriptBlock {
+        param($nonce,$phase,$transport)
         $log='C:\VOLVE-CI-PrivateDNSPeer\peer.log'
-        $matches=@(Get-Content -LiteralPath $log -ErrorAction Stop|Where-Object {$_ -cmatch ('^VOLVE_PRIVATE_PEER_REPLY transport=(udp|tcp) nonce='+$nonce+'$')})
-        [pscustomobject]@{udp=@($matches|Where-Object {$_ -cmatch 'transport=udp'}).Count;tcp=@($matches|Where-Object {$_ -cmatch 'transport=tcp'}).Count}
+        $deadline=[datetime]::UtcNow.AddSeconds(3)
+        do{
+            $lines=@(Get-Content -LiteralPath $log -ErrorAction Stop)
+            $received=@($lines|Where-Object {$_ -cmatch ('^VOLVE_PRIVATE_PEER_RECEIVED transport=(udp|tcp) nonce='+$nonce+'$')})
+            $replies=@($lines|Where-Object {$_ -cmatch ('^VOLVE_PRIVATE_PEER_REPLY transport=(udp|tcp) nonce='+$nonce+'$')})
+            $udp=@($replies|Where-Object {$_ -cmatch 'transport=udp'}).Count
+            $tcp=@($replies|Where-Object {$_ -cmatch 'transport=tcp'}).Count
+            if($phase -cne 'Fault' -and (($transport -ceq 'TCP' -and $tcp -gt 0) -or ($transport -ceq 'Default' -and $udp -gt 0))){break}
+            Start-Sleep -Milliseconds 150
+        }while([datetime]::UtcNow -lt $deadline)
+        [pscustomobject]@{udp=$udp;tcp=$tcp;received=$received.Count;received_udp=@($received|Where-Object {$_ -cmatch 'transport=udp'}).Count;received_tcp=@($received|Where-Object {$_ -cmatch 'transport=tcp'}).Count}
     }
     if($observation.nonce -cne $nonce -or $observation.phase -cne $Phase -or $observation.transport -cne $Transport){throw 'Client challenge mismatch'}
     if($Phase -ceq 'Fault'){
-        if($observation.resolved -or $wire.udp -ne 0 -or $wire.tcp -ne 0){throw 'Fault did not isolate configured DNS from peer'}
+        if($observation.resolved -or $wire.received -ne 0 -or $wire.udp -ne 0 -or $wire.tcp -ne 0){throw 'Fault did not isolate configured DNS from peer'}
     }else{
         if(-not $observation.resolved){throw 'Client resolver failed'}
-        if($Transport -ceq 'TCP' -and $wire.tcp -lt 1){throw 'No independently observed TCP DNS reply'}
-        if($Transport -ceq 'Default' -and $wire.udp -lt 1){throw 'No independently observed UDP DNS reply'}
+        if($Transport -ceq 'TCP' -and ($wire.tcp -lt 1 -or $wire.received_tcp -lt $wire.tcp)){throw 'No independently observed TCP DNS reply'}
+        if($Transport -ceq 'Default' -and ($wire.udp -lt 1 -or $wire.received_udp -lt $wire.udp)){throw 'No independently observed UDP DNS reply'}
     }
-    [pscustomobject]@{phase=$Phase;transport=$Transport;nonce=$nonce;resolved=$observation.resolved;peer_udp=$wire.udp;peer_tcp=$wire.tcp;private_network_only=$true}
+    [pscustomobject]@{phase=$Phase;transport=$Transport;nonce=$nonce;resolved=$observation.resolved;peer_udp=$wire.udp;peer_tcp=$wire.tcp;peer_received=$wire.received;private_network_only=$true}
 }
