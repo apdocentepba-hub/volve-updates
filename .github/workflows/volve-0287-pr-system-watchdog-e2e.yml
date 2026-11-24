@@ -298,6 +298,19 @@ jobs:
           if($LASTEXITCODE -ne 0 -or $listed -cnotcontains 'TestProtectedDNSActivationReattestsAfterHealthBeforeCommit'){throw 'Mandatory final activation regression missing'}
           go test ./motorupdate -run $activationRegex -count=1 -timeout 2m -v
           if($LASTEXITCODE -ne 0){throw 'Activation transaction regression failed'}
+          $scopeRegex='^(TestExplicitResidentRecoveryScope|TestScopedResidentPublisherRecoveryBindsExactPendingJournal|TestProtectedDNSActivationRescueBudgetSurvivesCancelledInstaller)$'
+          $listed=@(go test ./motorupdate -list $scopeRegex)
+          if($LASTEXITCODE -ne 0){throw 'Scoped recovery test census failed'}
+          foreach($required in @('TestExplicitResidentRecoveryScope','TestScopedResidentPublisherRecoveryBindsExactPendingJournal','TestProtectedDNSActivationRescueBudgetSurvivesCancelledInstaller')){
+            if($listed -cnotcontains $required){throw ('Missing mandatory scope test '+$required)}
+          }
+          go test ./motorupdate -run $scopeRegex -count=1 -timeout 2m -v
+          if($LASTEXITCODE -ne 0){throw 'Scoped recovery regression failed'}
+          $watchdogRegex='^TestMotorOnlyPinnedBoot'
+          $listed=@(go test ./cmd/volve-managed-watchdog -list $watchdogRegex)
+          if($LASTEXITCODE -ne 0 -or $listed -cnotcontains 'TestMotorOnlyPinnedBootRejectsUnprovenScopeEvenWithNoDNSArtifacts'){throw 'Missing watchdog scope negative test'}
+          go test ./cmd/volve-managed-watchdog -run $watchdogRegex -count=1 -timeout 2m -v
+          if($LASTEXITCODE -ne 0){throw 'Motor-only signed scope regression failed'}
           $out=Join-Path $env:RUNNER_TEMP 'VOLVE-CI-GuestDNS.test.exe'
           & go test -c -trimpath -o $out ./motorupdate
           if($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $out)){throw 'Could not compile exact motorupdate tests'}
