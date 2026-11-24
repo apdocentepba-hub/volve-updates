@@ -81,7 +81,12 @@ func recoverPendingResidentAfterBoot(
  }
  if err:=ctx.Err();err!=nil{return "",err}
  release,err:=driver.AcquireExclusive(ctx)
- if err!=nil{return "",fmt.Errorf("cannot obtain exclusive reboot recovery lock: %w",err)}
+ if err!=nil{
+  // An acquirer can return a partial lease alongside a failure.
+  // Release that ownership before returning, as in DNS activation.
+  if release!=nil{release()}
+  return "",fmt.Errorf("cannot obtain exclusive reboot recovery lock: %w",err)
+ }
  if release==nil{return "",errors.New("recovery driver provided no exclusive lock release")}
  defer release()
  if err:=ctx.Err();err!=nil{return "",err}
@@ -109,6 +114,9 @@ func recoverPendingResidentAfterBoot(
  // A lost process or mismatched SYSTEM identity is grounds for restoring the
  // original. A working original will be reverified, not needlessly replaced.
  if err:=checks.VerifyRunningIdentity(ctx,state.Intent,"restored");err!=nil {
+  // A canceled identity probe is not evidence of a missing motor.
+  // Never initiate a privileged restore after losing the caller context.
+  if err:=ctx.Err();err!=nil{return "",err}
   if err:=driver.RestoreOriginal(ctx,state.Intent);err!=nil {
    return "",fmt.Errorf("independent original motor restore failed: %w",err)
   }

@@ -96,6 +96,16 @@ jobs:
           if($LASTEXITCODE -ne 0 -or $listed -cnotcontains 'TestProtectedDNSActivationPanicRequestsIndependentRecovery'){throw 'New panic regression missing'}
           go test ./motorupdate -run '^TestProtectedDNSActivation' -count=1 -v -timeout 2m
           if($LASTEXITCODE -ne 0){throw 'Protected activation regression failed'}
+      - name: Test boot recovery lock and cancellation boundaries (NO NATIVE WRITES)
+        shell: powershell
+        working-directory: build/codigo
+        run: |
+          $ErrorActionPreference='Stop'
+          $pattern='^Test(BootRecovery|DNSAwareBootRecovery)'
+          $listed=@(go test ./motorupdate -list $pattern)
+          if($LASTEXITCODE -ne 0 -or $listed -cnotcontains 'TestBootRecoveryReleasesPartialFailedLease' -or $listed -cnotcontains 'TestBootRecoveryDoesNotRestoreAfterCanceledIdentityProbe'){throw 'Expected boot recovery tests missing'}
+          go test ./motorupdate -run $pattern -count=1 -v -timeout 2m
+          if($LASTEXITCODE -ne 0){throw 'Boot recovery regression failed'}
       - name: Compile and enumerate exact candidate DNS diagnostic
         shell: powershell
         working-directory: build/codigo

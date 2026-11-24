@@ -335,3 +335,42 @@ func TestDNSAwareBootRecoveryRejectsMotorOnlyDispatch(t *testing.T){
  state,err=RecoverPendingResidentAfterBootWithOriginalDNS(context.Background(),dir,residentLabACL,residentLabACL,checks,lab)
  if err!=nil||state!="restored"||lab.dnsRestores!=1||lab.dnsChecks!=2||lab.unlockCalls!=1{t.Fatalf("correct dispatch failed: %s %v %+v",state,err,lab)}
 }
+
+
+type partialBootLeaseLab struct{bootPolicyLab}
+func(l *partialBootLeaseLab)AcquireExclusive(context.Context)(func(),error){
+ l.lockCalls++
+ return func(){l.unlockCalls++},errors.New("partial lease acquisition")
+}
+func TestBootRecoveryReleasesPartialFailedLease(t *testing.T){
+ dir:=armBootPolicyJournal(t)
+ lab:=&partialBootLeaseLab{}
+ status,err:=RecoverPendingResidentAfterBoot(context.Background(),dir,residentLabACL,residentLabACL,&bootIdentityLab{},lab)
+ if err==nil||status!=""||lab.lockCalls!=1||lab.unlockCalls!=1||lab.restoreCalls!=0||lab.verifyCalls!=0{t.Fatalf("unsafe partial lease handling: %s %v %+v",status,err,lab)}
+ pending,e:=InspectResidentRecoveryJournal(context.Background(),dir,residentLabACL)
+ if e!=nil||pending.Status!="recovery-required"{t.Fatalf("pending recovery lost: %+v %v",pending,e)}
+}
+type canceledBootIdentityLab struct{
+ bootIdentityLab
+ cancel context.CancelFunc
+}
+func(c *canceledBootIdentityLab)VerifyRunningIdentity(context.Context,ResidentRecoveryIntent,string)error{
+ c.cancel()
+ return context.Canceled
+}
+func TestBootRecoveryDoesNotRestoreAfterCanceledIdentityProbe(t *testing.T){
+ for _,dns:=range []bool{false,true}{
+  dir:=armBootPolicyJournal(t)
+  ctx,cancel:=context.WithCancel(context.Background())
+  checks:=&canceledBootIdentityLab{cancel:cancel}
+  lab:=&bootDNSPolicyLab{}
+  var status string
+  var err error
+  if dns{status,err=RecoverPendingResidentAfterBootWithOriginalDNS(ctx,dir,residentLabACL,residentLabACL,checks,lab)
+  }else{status,err=RecoverPendingResidentAfterBoot(ctx,dir,residentLabACL,residentLabACL,checks,&lab.bootPolicyLab)}
+  cancel()
+  if !errors.Is(err,context.Canceled)||status!=""||lab.restoreCalls!=0||lab.dnsRestores!=0||lab.unlockCalls!=1{t.Fatalf("canceled probe caused mutation: %s %v %+v",status,err,lab)}
+  pending,e:=InspectResidentRecoveryJournal(context.Background(),dir,residentLabACL)
+  if e!=nil||pending.Status!="recovery-required"{t.Fatalf("pending recovery lost: %+v %v",pending,e)}
+ }
+}
