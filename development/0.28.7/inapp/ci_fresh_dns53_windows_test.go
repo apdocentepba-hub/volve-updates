@@ -3,6 +3,8 @@
 package main
 
 import (
+ "crypto/rand"
+ "syscall"
 	"bytes"
 	"strings"
 	"io"
@@ -183,4 +185,33 @@ func assertCIFreshAllowedARecord(ctx context.Context,network,addr string)error{
   return fmt.Errorf("allowed DNS answer differs from expected test fixture")
  }
  return nil
+}
+
+// Independent Windows DNS API diagnostic: no explicit DNS server, no
+// changes to DNS settings, no hosts/cache lookup. The unique fixture
+// name is resolved only by the isolated actual motor's test upstream.
+// This observation never overrides a failed configured cmdlet gate.
+func TestCIConfiguredNativeTCPDNS(t *testing.T) {
+ if os.Getenv("VOLVE_CI_FRESH_DNS53_PROBE")!="GITHUB-HOSTED-VM-ONLY" ||
+    os.Getenv("VOLVE_CI_NESTED_GUEST_DNS")!="PRIVATE_GUEST_ONLY" {
+  t.Skip("private nested guest only")
+ }
+ var nonce [16]byte
+ if _,err:=rand.Read(nonce[:]);err!=nil {t.Fatal(err)}
+ name:=fmt.Sprintf("%x.volve-motor-ci.test.",nonce)
+ // windns.h: USE_TCP_ONLY, BYPASS_CACHE, NO_HOSTS_FILE, NO_NETBT.
+ const options=0x2|0x8|0x40|0x80
+ var records *syscall.DNSRecord
+ err:=syscall.DnsQuery(name,syscall.DNS_TYPE_A,options,nil,&records,nil)
+ if records!=nil {defer syscall.DnsRecordListFree(records,1)}
+ if err!=nil {t.Fatalf("native DnsQuery_W configured TCP status: %v",err)}
+ count:=0
+ for rec,n:=records,0;rec!=nil;rec,n=rec.Next,n+1 {
+  if n>=64 {t.Fatal("unexpectedly long DNS record chain")}
+  if rec.Type!=syscall.DNS_TYPE_A || rec.Dw&3!=syscall.DnsSectionAnswer {continue}
+  if rec.Length!=4 || !bytes.Equal(rec.Data[:4],[]byte{203,0,113,7}) {t.Fatal("native TCP returned unexpected A record")}
+  count++
+ }
+ if count!=1 {t.Fatalf("native TCP returned %d matching A records, expected one",count)}
+ t.Log("PASS VOLVE_NATIVE_DNSQUERY_CONFIGURED_TCP")
 }

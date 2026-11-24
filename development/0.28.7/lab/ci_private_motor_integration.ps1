@@ -119,11 +119,18 @@ try{
         }
         if(-not $resolved -and -not ($transport -ceq 'TCP' -and $tcpKnownFailure)){throw ('Configured resolver not verified: '+$transport)}
     }
+    # A separate native DNS API call distinguishes a cmdlet-specific issue
+    # from a Windows resolver issue. It is diagnostic, never an exemption.
+    $nativeProof=@(& $probe '-test.run=^TestCIConfiguredNativeTCPDNS$' '-test.v' '-test.timeout=30s' 2>&1)
+    $nativeExit=$LASTEXITCODE
+    $nativeTCP=($nativeExit -eq 0 -and @($nativeProof|Where-Object {[string]$_ -match '^--- PASS: TestCIConfiguredNativeTCPDNS '}).Count -eq 1 -and @($nativeProof|Where-Object {[string]$_ -match 'PASS VOLVE_NATIVE_DNSQUERY_CONFIGURED_TCP'}).Count -eq 1)
+    Write-Host ('CI NATIVE TCP DNS diagnostic: verified='+$nativeTCP+' exit='+$nativeExit)
+    foreach($line in $nativeProof){Write-Host ([string]$line)}
     Assert-LoopbackAssignments
     $again=@(Get-CimInstance Win32_Process -Filter ('ProcessId='+$pidNumber) -ErrorAction Stop)
     if($again.Count -ne 1 -or $again[0].CreationDate -ne $creation -or $again[0].ExecutablePath -ine $exe){throw 'Motor replaced during test'}
     if((Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash -cne $MotorSHA -or (Get-FileHash -LiteralPath $catalog -Algorithm SHA256).Hash -cne $catalogPin){throw 'Motor/catalog changed during probe'}
-    $report=[ordered]@{actual_system_motor=$true;motor_sha256=$MotorSHA;catalog_sha256=$catalogPin;independent_wire_probe_sha256=$WireProbeSHA;independent_wire_probe_verified=$true;dual_stack_transport_checks=$checks;configured_resolver_default=$true;configured_resolver_tcp=(-not $tcpKnownFailure);configured_tcp_known_failure=$tcpKnownFailure;configured_resolver_attempts=$resolverAttempts;blocked_domains_verified=$true;synthetic_upstream_only=$true}
+    $report=[ordered]@{actual_system_motor=$true;motor_sha256=$MotorSHA;catalog_sha256=$catalogPin;independent_wire_probe_sha256=$WireProbeSHA;independent_wire_probe_verified=$true;dual_stack_transport_checks=$checks;configured_resolver_default=$true;configured_resolver_tcp=(-not $tcpKnownFailure);configured_tcp_known_failure=$tcpKnownFailure;native_tcp_diagnostic_verified=$nativeTCP;native_tcp_diagnostic_exit=$nativeExit;configured_resolver_attempts=$resolverAttempts;blocked_domains_verified=$true;synthetic_upstream_only=$true}
 }finally{
     if($owned){
         $registered=Get-ScheduledTask -TaskName $task -TaskPath '\' -ErrorAction Stop
