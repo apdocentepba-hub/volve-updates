@@ -24,7 +24,16 @@ type signedRecoveryFixture struct{
 }
 func makeSignedRecoveryFixture(t *testing.T,expired bool)signedRecoveryFixture{
  t.Helper()
- root:=t.TempDir()
+ return makeSignedRecoveryFixtureAt(t,expired,t.TempDir())
+}
+
+// Only test callers may supply a fresh fixture root. The nested reboot
+// lab needs durable disk state rather than a testing.T cleanup directory.
+func makeSignedRecoveryFixtureAt(t *testing.T,expired bool,root string)signedRecoveryFixture{
+ t.Helper()
+ if !filepath.IsAbs(root)||filepath.Clean(root)!=root{t.Fatal("noncanonical signed fixture root")}
+ entries,err:=os.ReadDir(root)
+ if err!=nil||len(entries)!=0{t.Fatalf("fixture root must be fresh and empty: %v",err)}
  parent:=filepath.Join(root,"legacy-engine-recovery")
  if err:=os.Mkdir(parent,0700);err!=nil{t.Fatal(err)}
  live:=filepath.Join(root,legacyServiceName)
