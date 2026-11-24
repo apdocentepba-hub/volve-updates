@@ -98,3 +98,78 @@ jobs:
           go test . -run '^TestWindowsSignedUnversionedMigrationWithActualSYSTEMRecovery$' -count=1 -timeout 9m -v
           if($LASTEXITCODE -ne 0){throw 'Signed disposable SYSTEM transaction and watchdog rollback failed'}
           Write-Host 'PASS: disposable signed migration and independent real SYSTEM watchdog rollback; no installed VOLVE motor touched.'
+
+  nested-hyperv-start-probe:
+    name: Nested Hyper-V Start-VM probe (empty disk, no network, NO GUEST OS)
+    runs-on: windows-latest
+    timeout-minutes: 6
+    steps:
+      - name: Attempt real Start-VM and record exact outcome
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if($env:GITHUB_ACTIONS -ne 'true' -or $env:RUNNER_ENVIRONMENT -ne 'github-hosted'){throw 'Hosted CI only'}
+          $hostVM = Get-CimInstance Win32_ComputerSystem
+          if(($hostVM.Manufacturer+' '+$hostVM.Model) -notmatch '(?i:virtual machine|vmware|hyper-v|kvm|qemu|virtualbox)'){throw 'Not a disposable VM'}
+          $name = 'VOLVE-CI-NESTED-'+[guid]::NewGuid().ToString('N')
+          $dir = Join-Path $env:RUNNER_TEMP $name
+          $disk = Join-Path $dir 'empty.vhdx'
+          $vm = $null
+          $report = [ordered]@{
+            runner_commit = $env:GITHUB_SHA
+            phase = 'prerequisites'
+            start_vm_attempted = $false
+            start_vm_returned = $false
+            state_after_start = $null
+            network_adapters = $null
+            guest_os_installed = $false
+            guest_boot_verified = $false
+            disk_persistence_verified = $false
+            error_message = $null
+            error_type = $null
+            error_id = $null
+            hresult = $null
+            cleanup_ok = $false
+          }
+          try {
+            Import-Module Hyper-V -ErrorAction Stop
+            $report.phase = 'create_empty_disk_and_vm'
+            New-Item -ItemType Directory -Path $dir -ErrorAction Stop | Out-Null
+            $vm = New-VM -Name $name -Generation 2 -MemoryStartupBytes 1GB -NewVHDPath $disk -NewVHDSizeBytes 2GB -Path $dir -ErrorAction Stop
+            $vm | Set-VMProcessor -Count 1 -ErrorAction Stop
+            $vm | Get-VMNetworkAdapter | Remove-VMNetworkAdapter -Confirm:$false -ErrorAction Stop
+            $report.network_adapters = @($vm | Get-VMNetworkAdapter).Count
+            if($report.network_adapters -ne 0){throw 'Network isolation failed'}
+            $report.phase = 'start_vm'
+            $report.start_vm_attempted = $true
+            Start-VM -VM $vm -ErrorAction Stop
+            $report.start_vm_returned = $true
+            Start-Sleep -Seconds 3
+            $report.state_after_start = (Get-VM -Id $vm.Id -ErrorAction Stop).State.ToString()
+            if($report.state_after_start -ne 'Running'){throw 'Start-VM returned but VM is not Running'}
+            $report.phase = 'hypervisor_start_confirmed_only'
+          } catch {
+            $report.error_message = $_.Exception.Message
+            $report.error_type = $_.Exception.GetType().FullName
+            $report.error_id = $_.FullyQualifiedErrorId
+            $report.hresult = ('0x{0:X8}' -f $_.Exception.HResult)
+          } finally {
+            try {
+              if($null -ne $vm){
+                $owned = Get-VM -Id $vm.Id -ErrorAction Stop
+                if($owned.Name -cne $name){throw 'Unexpected VM identity'}
+                if($owned.State -ne 'Off'){Stop-VM -VM $owned -TurnOff -Force -ErrorAction Stop}
+                Remove-VM -VM $owned -Force -ErrorAction Stop
+              }
+              if(Test-Path -LiteralPath $dir){Remove-Item -LiteralPath $dir -Recurse -Force -ErrorAction Stop}
+              $report.cleanup_ok = $true
+            } catch {
+              $report.cleanup_error = $_.Exception.Message
+            }
+            $json = ConvertTo-Json -InputObject $report -Compress -Depth 4
+            Write-Host "VOLVE_NESTED_VM_RESULT=$json"
+            Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value $json
+          }
+          if(-not $report.cleanup_ok){throw 'Nested VM cleanup failed; see recorded result'}
+          if($report.error_message){throw ('Nested VM probe failed in '+$report.phase+': '+$report.error_message)}
+          Write-Host 'PASS: Hyper-V started an empty isolated VM; NO guest OS boot or VOLVE installation proven.'
