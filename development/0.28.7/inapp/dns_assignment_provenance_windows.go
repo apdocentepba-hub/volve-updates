@@ -114,6 +114,8 @@ type WindowsDNSAssignmentProvenance struct {
  // Contains local interface GUIDs and static DNS addresses; never serialize
  // this field into the user-facing diagnostic report.
  States []DNSServerState `json:"-"`
+ // Live index evidence is internal and excluded from the stable fingerprint.
+ interfaceIndexes map[string]uint32
  SHA256 string
  AdapterCount int
  StaticFamilyCount int
@@ -219,6 +221,7 @@ func InspectWindowsDNSAssignmentProvenanceReadOnly(
  return WindowsDNSAssignmentProvenance{
   Schema:1,Component:"windows-dns-assignment-provenance-read-only",
   States:states,SHA256:hex.EncodeToString(sum[:]),
+  interfaceIndexes:guidIndexes,
   AdapterCount:len(families),StaticFamilyCount:staticCount,
   AutomaticFamilyCount:automaticCount,
  },nil
