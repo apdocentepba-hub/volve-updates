@@ -305,6 +305,8 @@ jobs:
             network_connectivity_verified=$false
             network_adapters=$null
             scheduler_preflight=$null
+            guest_readiness=$null
+            guest_clock_skew_seconds=$null
             private_guest_dns_scheduler=$null
             cleanup_ok=$false
             error_message=$null
@@ -386,6 +388,15 @@ jobs:
             if($trial -cnotmatch '^[0-9]{14,18}$'){throw 'Unexpected trial identifier'}
             $checkedOut=(& git rev-parse HEAD).Trim()
             if($LASTEXITCODE -ne 0 -or $checkedOut -cne $env:CANDIDATE_HEAD){throw 'Candidate source checkout mismatch'}
+            # Collect guest identity before scheduler preflight, so a queued
+            # task cannot obscure a proven Windows boot.
+            $guestIdentity=Invoke-Command -Session $session -ErrorAction Stop -ScriptBlock {
+              $os=Get-CimInstance Win32_OperatingSystem -ErrorAction Stop
+              [pscustomobject]@{caption=[string]$os.Caption;bootUtcTicks=$os.LastBootUpTime.ToUniversalTime().Ticks.ToString()}
+            }
+            $report.guest_os=$guestIdentity.caption
+            $report.guest_boot_before=$guestIdentity.bootUtcTicks
+            $report.guest_boot_verified=$true
             # First boot of an evaluation image can register additional
             # Windows tasks. Give setup an independent clean boot BEFORE
             # taking the strict baseline; do not delete or exempt any task.
@@ -405,6 +416,30 @@ jobs:
               $session=Connect-Guest $vm.Id $credential 360
               Start-Sleep -Seconds 60
             }
+            # Read-only diagnostics for a Scheduler instance stuck in Queued.
+            # No Setup/OOBE, licensing, service or time settings are changed.
+            $sent=[datetime]::UtcNow
+            $readiness=Invoke-Command -Session $session -ErrorAction Stop -ScriptBlock {
+              $setup=Get-ItemProperty -LiteralPath 'HKLM:\SYSTEM\Setup' -ErrorAction Stop
+              $image=Get-ItemProperty -LiteralPath 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Setup\State' -ErrorAction Stop
+              $flags=[ordered]@{}
+              foreach($key in @('SystemSetupInProgress','OOBEInProgress','SetupType','SetupPhase')){
+                $prop=$setup.PSObject.Properties[$key]
+                $flags[$key]=if($null -ne $prop){[int]$prop.Value}else{$null}
+              }
+              $services=@(Get-Service -Name Schedule,EventLog,RpcSs,ProfSvc,TimeBrokerSvc -ErrorAction SilentlyContinue|ForEach-Object {[pscustomobject]@{name=$_.Name;status=[string]$_.Status}})
+              $os=Get-CimInstance Win32_OperatingSystem -ErrorAction Stop
+              [pscustomobject]@{
+                setup=$flags;image_state=[string]$image.ImageState;services=$services;
+                guest_utc_ticks=[datetime]::UtcNow.Ticks.ToString();
+                boot_utc_ticks=$os.LastBootUpTime.ToUniversalTime().Ticks.ToString();
+                interactive_session_present=[bool](@(Get-CimInstance Win32_LogonSession -Filter 'LogonType=2' -ErrorAction Stop).Count -gt 0);
+              }
+            }
+            $received=[datetime]::UtcNow
+            $midpoint=$sent.AddTicks([long](($received.Ticks-$sent.Ticks)/2))
+            $report.guest_clock_skew_seconds=[math]::Round(([long]$readiness.guest_utc_ticks-$midpoint.Ticks)/10000000,1)
+            $report.guest_readiness=$readiness
             # Prove Task Scheduler can execute an owned no-op as actual
             # LocalSystem before arming any recovery or injecting DNS faults.
             $report.stage='system_scheduler_preflight'
@@ -441,7 +476,21 @@ jobs:
                   $xml=[xml]$_.ToXml()
                   @($xml.SelectNodes("/*[local-name()='Event']/*[local-name()='EventData']/*[local-name()='Data'][@Name='TaskName']")|Where-Object {$_.InnerText -ceq ('\'+$name)}).Count -gt 0
                 }|ForEach-Object {[int]$_.Id})
-                [pscustomobject]@{sid_verified=$sidVerified;last_result=[int64]$info.LastTaskResult;state=[string]$t.State;event_ids=@($events|Sort-Object -Unique);scheduler_service=[string](Get-Service Schedule).Status}
+                # Observe global scheduler error IDs too: engine startup
+                # errors may not contain a TaskName field. No raw XML, task
+                # names or command lines are exported.
+                $engineErrors=@(Get-WinEvent -FilterHashtable @{LogName='Microsoft-Windows-TaskScheduler/Operational';StartTime=$start.AddSeconds(-5);Id=@(101,103,131,202,203,311,322,323,324)} -MaxEvents 100 -ErrorAction SilentlyContinue|ForEach-Object {[int]$_.Id})
+                [pscustomobject]@{
+                  sid_verified=$sidVerified;last_result=[int64]$info.LastTaskResult;
+                  state=[string]$t.State;event_ids=@($events|Sort-Object -Unique);
+                  engine_error_ids=@($engineErrors|Sort-Object -Unique);
+                  scheduler_service=[string](Get-Service Schedule).Status;
+                  last_run_after_request=($info.LastRunTime -ge $start.AddSeconds(-3));
+                  task_enabled=[bool]$t.Settings.Enabled;
+                  run_only_if_network=[bool]$t.Settings.RunOnlyIfNetworkAvailable;
+                  run_only_if_idle=[bool]$t.Settings.RunOnlyIfIdle;
+                  disallow_on_battery=[bool]$t.Settings.DisallowStartIfOnBatteries;
+                }
               }finally{
                 $owned=Get-ScheduledTask -TaskName $name -TaskPath '\' -ErrorAction Stop
                 if($owned.Principal.UserId -notin @('SYSTEM','S-1-5-18')){throw 'Probe task identity changed'}
@@ -451,7 +500,7 @@ jobs:
               }
             }
             $report.scheduler_preflight=$probe
-            if(-not $probe.sid_verified -or $probe.last_result -ne 0 -or $probe.state -eq 'Running'){throw 'Guest Scheduler did not demonstrate a successful LocalSystem no-op'}
+            if(-not $probe.sid_verified -or $probe.last_result -ne 0 -or -not $probe.last_run_after_request -or $probe.state -ne 'Ready' -or 100 -notin $probe.event_ids -or 102 -notin $probe.event_ids){throw 'Guest Scheduler did not demonstrate a completed LocalSystem no-op; inspect setup, clock and engine diagnostics'} 
             $nonce=[guid]::NewGuid().ToString('N')
             $before=Invoke-Command -Session $session -ArgumentList $nonce -ErrorAction Stop -ScriptBlock {
               param($nonce)
