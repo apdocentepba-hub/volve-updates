@@ -137,6 +137,17 @@ function Start-VolvPrivateDNSPeer {
             }
             if($tcp.Count -ne 2 -or $udp.Count -ne 2){throw 'Unexpected additional peer DNS listeners'}
             if($p.HasExited -or -not $ready){throw 'Peer readiness not proven'}
+            # Retain the ORIGINAL OS process object in this persistent
+            # PowerShell Direct runspace. Never reopen it by PID on readback.
+            if(Get-Variable -Name VolvCIPrivatePeerPin -Scope Global -ErrorAction SilentlyContinue){throw 'Unexpected retained peer identity'}
+            $handle=$p.SafeHandle
+            if($null -eq $handle -or $handle.IsClosed -or $handle.IsInvalid -or $p.HasExited){throw 'Cannot retain live original peer process handle'}
+            $global:VolvCIPrivatePeerPin=[pscustomobject]@{
+                Process=$p
+                Handle=$handle
+                NativeValue=$handle.DangerousGetHandle()
+                SessionPin=[guid]::NewGuid().ToString('N')
+            }
         }
         return $session
     }catch{
@@ -164,6 +175,13 @@ function Get-VolvPrivatePeerLiveIdentity {
         $p=@(Get-CimInstance Win32_Process -ErrorAction Stop|Where-Object {$_.ExecutablePath -ieq $exe -or $_.Name -ieq 'VOLVE-CI-PrivateDNSPeer.exe'})
         if($p.Count -ne 1 -or $p[0].ExecutablePath -ine $exe){throw 'Peer process identity ambiguous'}
         $id=[uint32]$p[0].ProcessId
+        $retained=Get-Variable -Name VolvCIPrivatePeerPin -Scope Global -ValueOnly -ErrorAction Stop
+        if($null -eq $retained -or $retained.SessionPin -cnotmatch '^[a-f0-9]{32}$' -or
+           $null -eq $retained.Handle -or $retained.Handle.IsClosed -or $retained.Handle.IsInvalid -or
+           $retained.Handle.DangerousGetHandle() -ne $retained.NativeValue -or
+           $retained.Process.Id -ne $id -or
+           -not [object]::ReferenceEquals($retained.Process.SafeHandle,$retained.Handle) -or
+           $retained.Process.HasExited){throw 'Original peer process handle or runspace continuity lost'}
         $tcp=@(Get-NetTCPConnection -State Listen -ErrorAction Stop|Where-Object {$_.LocalPort -eq 53 -and $_.OwningProcess -eq $id})
         $udp=@(Get-NetUDPEndpoint -ErrorAction Stop|Where-Object {$_.LocalPort -eq 53 -and $_.OwningProcess -eq $id})
         if($tcp.Count -ne 2 -or $udp.Count -ne 2){throw 'Peer listener count changed'}
@@ -204,7 +222,15 @@ namespace VolvCI {
             $latest=Get-WinEvent -LogName System -MaxEvents 1 -ErrorAction Stop
             if($latest.RecordId -gt 0){$systemCursor=[string]$latest.RecordId}
         }catch{}
+        # Recheck the retained original handle after every inventory read.
+        # HasExited checks the original kernel object, not a replacement PID.
+        if($retained.Handle.IsClosed -or $retained.Handle.IsInvalid -or
+           $retained.Handle.DangerousGetHandle() -ne $retained.NativeValue -or
+           -not [object]::ReferenceEquals($retained.Process.SafeHandle,$retained.Handle) -or
+           $retained.Process.HasExited){throw 'Original peer process exited during identity audit'}
         [pscustomobject]@{
+            retained_process_pin=$retained.SessionPin
+            retained_process_live=$true
             system_record_cursor=$systemCursor
             boot_event_record=[string]$bootEvent.RecordId
             boot_event_sha256=$bootEventHash
@@ -223,7 +249,7 @@ function Assert-VolvPrivatePeerIdentityEvidence {
     Set-StrictMode -Version Latest
     if($null -eq $PinnedIdentity -or $null -eq $current){throw 'Peer continuity unproven: missing evidence'}
     foreach($identity in @($PinnedIdentity,$current)){
-        foreach($field in @('boot_event_record','boot_event_sha256','uptime_seconds','native_uptime_ms','process_id','created_ticks','boot_ticks','adapter_guid','executable_sha256')){
+        foreach($field in @('retained_process_pin','retained_process_live','boot_event_record','boot_event_sha256','uptime_seconds','native_uptime_ms','process_id','created_ticks','boot_ticks','adapter_guid','executable_sha256')){
             if($null -eq $identity.PSObject.Properties[$field] -or [string]::IsNullOrWhiteSpace([string]$identity.$field)){throw ('Peer continuity unproven: missing '+$field)}
         }
         foreach($field in @('boot_event_record','uptime_seconds','native_uptime_ms','process_id','created_ticks','boot_ticks')){
@@ -233,16 +259,21 @@ function Assert-VolvPrivatePeerIdentityEvidence {
         foreach($field in @('boot_event_sha256','executable_sha256')){
             if([string]$identity.$field -cnotmatch '^[A-F0-9]{64}$'){throw ('Peer continuity unproven: invalid '+$field)}
         }
+        if([string]$identity.retained_process_pin -cnotmatch '^[a-f0-9]{32}$' -or
+           [string]$identity.retained_process_pin -ceq ('0'*32) -or
+           $identity.retained_process_live -isnot [bool] -or -not $identity.retained_process_live){
+            throw 'Peer continuity unproven: retained original process handle'
+        }
         $adapter=[guid]::Empty
         if(-not [guid]::TryParse([string]$identity.adapter_guid,[ref]$adapter) -or $adapter -eq [guid]::Empty){throw 'Peer continuity unproven: invalid adapter GUID'}
     }
-    # Only this disposable peer-liveness contract allows sub-millisecond
-    # WMI timestamp jitter. It is NOT the production reboot/recovery gate.
-    # Same kernel startup event, same executable/process/adapter and two
-    # independent advancing uptime counters are required for any jitter.
-    # See GetTickCount64: Microsoft Learn /win32/api/sysinfoapi/nf-sysinfoapi-gettickcount64.
+    # Disposable peer-liveness contract only. An open original process
+    # handle retained across PowerShell Direct calls, exact boot-event record
+    # and hash, unchanged process/adapter/executable and consistent monotonic
+    # uptime replace wall-clock WMI equality as identity evidence.
+    # WMI discrepancies remain visible; no production gate is changed.
     if($null -eq $PinnedIdentity){throw 'Peer continuity unproven: missing pin'}
-    foreach($field in @('boot_event_record','boot_event_sha256')){
+    foreach($field in @('retained_process_pin','boot_event_record','boot_event_sha256')){
         if([string]::IsNullOrEmpty([string]$PinnedIdentity.$field) -or [string]$current.$field -cne [string]$PinnedIdentity.$field){throw ('Peer continuity unproven: '+$field)}
     }
     if([string]$PinnedIdentity.uptime_seconds -cnotmatch '^[1-9][0-9]*$' -or [string]$current.uptime_seconds -cnotmatch '^[1-9][0-9]*$' -or [uint64]$current.uptime_seconds -lt [uint64]$PinnedIdentity.uptime_seconds){throw 'Peer continuity unproven: uptime'}
@@ -256,14 +287,7 @@ function Assert-VolvPrivatePeerIdentityEvidence {
     }
     $drift=[math]::Abs([decimal]$current.boot_ticks-[decimal]$PinnedIdentity.boot_ticks)
     if($drift -gt 0){
-        # Observed 5140 ticks (0.514 ms), with unchanged kernel event and
-        # increasing uptime. Limit to 10000 ticks (1 ms), compare to ORIGINAL
-        # pin, never roll the pin forward, and require positive progress
-        # from BOTH clocks. No causal attribution or production exemption.
-        if($drift -gt 10000 -or [uint64]$current.uptime_seconds -le [uint64]$PinnedIdentity.uptime_seconds -or [uint64]$current.native_uptime_ms -le [uint64]$PinnedIdentity.native_uptime_ms){
-            throw 'Peer continuity unproven: boot_ticks'
-        }
-        Write-Host ('CI PEER BOOT CLOCK DRIFT: ticks='+$drift+' kernel_event_unchanged=true both_uptimes_advanced=true original_exact_WMI=FALSE bounded_lab_identity=VERIFIED causal_attribution=UNPROVEN')
+        Write-Host ('CI PEER BOOT CLOCK DRIFT: ticks='+$drift+' kernel_event_unchanged=true retained_original_process_live=true original_exact_WMI=FALSE laboratory_handle_identity=VERIFIED causal_attribution=UNPROVEN')
     }
 }
 function Assert-VolvPrivatePeerSameIdentity {

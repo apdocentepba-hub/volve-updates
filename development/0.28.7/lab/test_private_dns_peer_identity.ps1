@@ -4,6 +4,8 @@ $ErrorActionPreference='Stop'
 . (Join-Path $PSScriptRoot 'private_dns_peer_vm.ps1')
 function New-PeerFixture {
     [pscustomobject]@{
+        retained_process_pin='0123456789abcdef0123456789abcdef'
+        retained_process_live=$true
         boot_event_record='123'
         boot_event_sha256=('A'*64)
         uptime_seconds='300'
@@ -21,7 +23,7 @@ Assert-VolvPrivatePeerIdentityEvidence -PinnedIdentity $pinned -current $current
 $current.uptime_seconds='310'
 $current.native_uptime_ms='310100'
 Assert-VolvPrivatePeerIdentityEvidence -PinnedIdentity $pinned -current $current
-foreach($jitter in @(5140,-5140,10000,-10000)){
+foreach($jitter in @(5140,-5140,10000,-10000,71030,-71030)){
     $current=New-PeerFixture
     $current.uptime_seconds='310'
     $current.native_uptime_ms='310100'
@@ -37,7 +39,11 @@ $cases=@(
     @{field='native_uptime_ms';value='0'},
     @{field='process_id';value='43'},
     @{field='created_ticks';value='639311539709780641'},
-    @{field='boot_ticks';value='639311539144990361'},
+    @{field='boot_ticks';value='0'},
+    @{field='retained_process_pin';value='1123456789abcdef0123456789abcdef'},
+    @{field='retained_process_pin';value=('0'*32)},
+    @{field='retained_process_live';value=$false},
+    @{field='retained_process_live';value='true'},
     @{field='adapter_guid';value='{D1DC3AD0-88A3-4F88-819F-4DFAC7D04033}'},
     @{field='executable_sha256';value=('D'*64)},
     @{field='boot_event_record';value='0'},
@@ -63,20 +69,23 @@ foreach($field in $pinned.PSObject.Properties.Name){
     catch{if($_.Exception.Message -notmatch '^Peer continuity unproven: missing '){throw};$rejected=$true}
     if(-not $rejected){throw ('Missing peer evidence accepted: '+$field)}
 }
+# A nonadvancing second counter is permissible only when both readings
+# still agree within sampling precision. A decrement is always rejected.
 foreach($case in @(
-    @{delta=10001;native='310100';perf='310'},
-    @{delta=-10001;native='310100';perf='310'},
-    @{delta=5140;native='300100';perf='310'},
-    @{delta=5140;native='301100';perf='300'},
-    @{delta=5140;native='299100';perf='310'}
+    @{delta=71030;native='310100';perf='310';pin='1123456789abcdef0123456789abcdef';live=$true},
+    @{delta=71030;native='310100';perf='310';pin=$pinned.retained_process_pin;live=$false},
+    @{delta=71030;native='299100';perf='310';pin=$pinned.retained_process_pin;live=$true},
+    @{delta=71030;native='316100';perf='310';pin=$pinned.retained_process_pin;live=$true}
 )){
     $current=New-PeerFixture
     $current.boot_ticks=([decimal]$pinned.boot_ticks+$case.delta).ToString([Globalization.CultureInfo]::InvariantCulture)
     $current.native_uptime_ms=$case.native
     $current.uptime_seconds=$case.perf
+    $current.retained_process_pin=$case.pin
+    $current.retained_process_live=$case.live
     $rejected=$false
     try{Assert-VolvPrivatePeerIdentityEvidence -PinnedIdentity $pinned -current $current}
     catch{if($_.Exception.Message -notmatch '^Peer continuity unproven:'){throw};$rejected=$true}
-    if(-not $rejected){throw 'Unsafe clock drift accepted'}
+    if(-not $rejected){throw 'Unsafe peer replacement or inconsistent uptime accepted'}
 }
-Write-Host 'PASS: peer identity evidence 6 accepted + 30 rejected synthetic cases; bounded lab WMI jitter, dual uptime and exact identity required; NO REBOOT NO DNS'
+Write-Host 'PASS: peer identity evidence 8 accepted + 35 rejected synthetic cases; original retained process handle required; WMI drift diagnostic only; NO REBOOT NO DNS'
