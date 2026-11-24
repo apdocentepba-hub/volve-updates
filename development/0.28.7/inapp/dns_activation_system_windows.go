@@ -68,7 +68,7 @@ func activateWindowsDNSAsProtectedSYSTEM(
    acl:=func(path string)error{return nativeDNSOriginalBackupACL(ctx,path)}
    durable,err:=LoadResidentDurablePublisherGrant(ctx,root,key,acl,acl,acl)
    if err!=nil{return nil,fmt.Errorf("DNS activation lacks durable publisher grant: %w",err)}
-   if err:=VerifyExplicitResidentRecoveryScope(ctx,durable.Permit,durable.Signature,key,ResidentRecoveryScopeMotorAndDNS);err!=nil{return nil,err}
+   if err:=VerifyExplicitResidentRecoveryScope(ctx,durable.Permit,durable.Signature,key,ResidentRecoveryScopeMotorAndDNS,publisherAuthorization.PinnedEvidence.IntentNonce);err!=nil{return nil,err}
    pending,err:=InspectResidentRecoveryJournal(ctx,durable.JournalDir,acl)
    pins:=publisherAuthorization.PinnedEvidence
    if err!=nil||pending.Status!="recovery-required"||pending.Intent.Nonce!=pins.IntentNonce||pending.Intent.TargetSHA256!=pins.TargetMotorSHA256{
