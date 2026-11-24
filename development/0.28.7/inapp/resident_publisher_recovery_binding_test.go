@@ -155,3 +155,25 @@ func TestSignedPublisherBootRecoveryRequiresProtectedCallbacksAndCancellation(t 
   t.Fatal("cancelled recovery obtained approval")
  }
 }
+
+
+func TestScopedResidentPublisherRecoveryBindsExactPendingJournal(t *testing.T){
+ for _,scope:=range []string{ResidentRecoveryScopeMotorOnly,ResidentRecoveryScopeMotorAndDNS}{
+  t.Run(scope,func(t *testing.T){
+   f:=makeSignedRecoveryFixture(t,false)
+   state,err:=InspectResidentRecoveryJournal(context.Background(),f.journal,func(string)error{return nil})
+   if err!=nil{t.Fatal(err)}
+   p:=f.pem
+   p.Schema=2
+   p.RecoveryScope=scope
+   p.RecoveryIntentNonce=state.Intent.Nonce
+   f=f.resign(t,p)
+   if err:=f.verify();err!=nil{t.Fatalf("valid scoped permit rejected: %v",err)}
+   // Sign again with the genuine test publisher but use the wrong
+   // transaction nonce. Identical original/target bytes are insufficient.
+   if p.RecoveryIntentNonce[0]=='a'{p.RecoveryIntentNonce="b"+p.RecoveryIntentNonce[1:]}else{p.RecoveryIntentNonce="a"+p.RecoveryIntentNonce[1:]}
+   f=f.resign(t,p)
+   if err:=f.verify();err==nil{t.Fatal("signed scoped permit for another transaction accepted")}
+  })
+ }
+}
