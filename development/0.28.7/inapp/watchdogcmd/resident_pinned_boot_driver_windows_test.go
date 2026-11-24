@@ -70,7 +70,7 @@ func TestMotorOnlyPinnedBootRefusesCompleteOrPartialDNSEvidence(t *testing.T){
    parent:=filepath.Join(root,residentRecoveryParent)
    if err:=os.Mkdir(parent,0700);err!=nil{t.Fatal(err)}
    fake:=&motorOnlyPinnedBootOpsFixture{}
-   ops:=&motorOnlyPinnedBootOps{root:root,original:fake}
+   ops:=&motorOnlyPinnedBootOps{root:root,original:fake,verifyScope:func(context.Context,motorupdate.ResidentRecoveryIntent)error{return nil}}
    ctx:=context.Background()
    intent:=motorupdate.ResidentRecoveryIntent{}
    if err:=ops.VerifySealedOriginal(ctx,intent);err!=nil{t.Fatal(err)}
@@ -98,7 +98,7 @@ func TestMotorOnlyPinnedBootRechecksEvidenceAfterDelegation(t *testing.T){
   if err:=os.Mkdir(parent,0700);err!=nil{t.Fatal(err)}
   inject:=func()error{return os.WriteFile(filepath.Join(parent,"dns-original-binding.sig"),nil,0600)}
   fake:=&motorOnlyPinnedBootOpsFixture{}
-  ops:=&motorOnlyPinnedBootOps{root:root,original:fake}
+  ops:=&motorOnlyPinnedBootOps{root:root,original:fake,verifyScope:func(context.Context,motorupdate.ResidentRecoveryIntent)error{return nil}}
   fn:=ops.VerifySealedOriginal
   if restore{fn=ops.RestoreOriginal;fake.afterRestore=inject}else{fake.afterVerify=inject}
   if err:=fn(context.Background(),motorupdate.ResidentRecoveryIntent{});err==nil{t.Fatal("new DNS evidence missed at return boundary")}
@@ -110,4 +110,19 @@ func TestMotorOnlyPinnedBootFailsClosedOnMissingAncestryOrContext(t *testing.T){
  if err:=rejectDNSStagingForMotorOnlyBoot(nil,root);err==nil{t.Fatal("nil context accepted")}
  ctx,done:=context.WithCancel(context.Background());done()
  if err:=rejectDNSStagingForMotorOnlyBoot(ctx,root);!errors.Is(err,context.Canceled){t.Fatal("cancelled recovery accepted")}
+}
+
+func TestMotorOnlyPinnedBootRejectsUnprovenScopeEvenWithNoDNSArtifacts(t *testing.T){
+ root:=t.TempDir()
+ if err:=os.Mkdir(filepath.Join(root,residentRecoveryParent),0700);err!=nil{t.Fatal(err)}
+ fake:=&motorOnlyPinnedBootOpsFixture{}
+ ops:=&motorOnlyPinnedBootOps{root:root,original:fake}
+ for _,verify:=range []func(context.Context,motorupdate.ResidentRecoveryIntent)error{
+  nil,func(context.Context,motorupdate.ResidentRecoveryIntent)error{return errors.New("signed scope requires original DNS")},
+ }{
+  ops.verifyScope=verify
+  if err:=ops.VerifySealedOriginal(context.Background(),motorupdate.ResidentRecoveryIntent{});err==nil{t.Fatal("scope not enforced before verification")}
+  if err:=ops.RestoreOriginal(context.Background(),motorupdate.ResidentRecoveryIntent{});err==nil{t.Fatal("scope not enforced before restore")}
+ }
+ if fake.verified!=0||fake.restored!=0{t.Fatal("unproven recovery scope reached motor operation")}
 }
