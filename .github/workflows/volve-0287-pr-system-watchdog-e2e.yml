@@ -1332,7 +1332,11 @@ jobs:
               $env:VOLVE_CI_NESTED_GUEST_DNS='PRIVATE_GUEST_ONLY'
               & $path -MotorExe $motor -MotorSHA $motorPin -WireProbeExe $wire -WireProbeSHA $wirePin -Trial $id
             }
-            if(-not $report.private_actual_motor_integration.actual_system_motor -or -not $report.private_actual_motor_integration.motor_stopped -or -not $report.private_actual_motor_integration.independent_wire_probe_verified -or $report.private_actual_motor_integration.independent_wire_probe_sha256 -cne $wireSHA -or $report.private_actual_motor_integration.dual_stack_transport_checks -ne 4 -or -not $report.private_actual_motor_integration.configured_resolver_default -or -not $report.private_actual_motor_integration.configured_resolver_tcp -or -not $report.private_actual_motor_integration.blocked_domains_verified){throw 'Actual motor activation/failure integration not proven'}
+            if(-not $report.private_actual_motor_integration.actual_system_motor -or -not $report.private_actual_motor_integration.motor_stopped -or -not $report.private_actual_motor_integration.independent_wire_probe_verified -or $report.private_actual_motor_integration.independent_wire_probe_sha256 -cne $wireSHA -or $report.private_actual_motor_integration.dual_stack_transport_checks -ne 4 -or -not $report.private_actual_motor_integration.configured_resolver_default -or -not $report.private_actual_motor_integration.blocked_domains_verified){throw 'Actual motor activation/failure integration not proven'}
+            if(-not $report.private_actual_motor_integration.configured_resolver_tcp){
+              if(-not $report.private_actual_motor_integration.configured_tcp_known_failure){throw 'Unexpected configured TCP failure'}
+              Write-Host 'KNOWN CONFIGURED TCP FAILURE 10057; continue independent recovery trial; overall result MUST FAIL'
+            }
             $report.stage='verify_dns_fault_after_actual_motor_stop'
             foreach($transport in @('Default','TCP')){
               $report.private_peer_challenges+=Assert-VolvPrivateDNSPeerChallenge -ClientSession $session -PeerSession $peerSession -ClientId $vm.Id -PeerId $peerVM.Id -SwitchId $privateSwitch.Id -ProbePath $probeGuest -ProbeSHA $probeSHA -PeerSHA $peerSHA -PinnedPeerIdentity $pinnedPeerIdentity -Phase Fault -Transport $transport
@@ -1598,5 +1602,6 @@ jobs:
             if(-not $report.dns_reboot_verified -or -not $report.dns_reboot_independent_readback -or -not $report.dns_reboot_arm_verified -or -not $report.guest_poweroff_observed -or -not $report.disk_persistence_verified){throw 'Signed DNS startup recovery not proven'}
             if(-not $report.private_network_connectivity_verified -or -not $report.private_peer_topology_verified){throw 'Private connectivity not proven'}
             if(-not $report.private_actual_motor_integration.motor_stopped){throw 'Integrated motor failure missing'}
+            if(-not $report.private_actual_motor_integration.configured_resolver_tcp){throw 'Configured Windows TCP DNS remains unverified (10057); independent recovery evidence retained; NO RELEASE'}
             Write-Host 'PASS: actual CI-tagged SYSTEM motor stopped, signed DNS restored after reboot, isolated UDP/TCP connectivity; NO INTERNET PROOF, NO PRODUCT INSTALL.'
           }

@@ -85,6 +85,7 @@ try{
     Write-Host 'PASS VOLVE_PRIVATE_MOTOR_RAW_WIRE_FOUR_TRANSPORTS_SYSTEM'
     # Recheck transient socket errors, never accept them as success.
     $resolverAttempts=@()
+    $tcpKnownFailure=$false
     foreach($transport in @('Default','TCP')){
         $resolved=$false
         for($attempt=1;$attempt -le 3;$attempt++){
@@ -99,7 +100,14 @@ try{
                 $transient=$id -cmatch '^(10054|10057|10061|10060|WSAECONNRESET|WSAENOTCONN|WSAECONNREFUSED|WSAETIMEDOUT|ERROR_TIMEOUT),Microsoft\.DnsClient\.Commands\.ResolveDnsName$'
                 Write-Host ('CI configured resolver: transport='+$transport+' attempt='+$attempt+' error='+$id)
                 $resolverAttempts+=@([pscustomobject]@{transport=$transport;attempt=$attempt;success=$false;error_id=$id})
-                if(-not $transient -or $attempt -eq 3){throw}
+                if(-not $transient){throw}
+                if($attempt -eq 3){
+                    # Only the exact reproduced TCP failure is eligible for
+                    # continued recovery evidence. It remains a failed gate.
+                    $tcpFailures=@($resolverAttempts|Where-Object {$_.transport -ceq 'TCP' -and -not $_.success -and $_.error_id -cmatch '^(10057|WSAENOTCONN),Microsoft\.DnsClient\.Commands\.ResolveDnsName$'})
+                    if($transport -ceq 'TCP' -and $tcpFailures.Count -eq 3){$tcpKnownFailure=$true;break}
+                    throw
+                }
                 Start-Sleep -Seconds 5
                 continue
             }
@@ -109,13 +117,13 @@ try{
             $resolved=$true
             break
         }
-        if(-not $resolved){throw ('Configured resolver not verified: '+$transport)}
+        if(-not $resolved -and -not ($transport -ceq 'TCP' -and $tcpKnownFailure)){throw ('Configured resolver not verified: '+$transport)}
     }
     Assert-LoopbackAssignments
     $again=@(Get-CimInstance Win32_Process -Filter ('ProcessId='+$pidNumber) -ErrorAction Stop)
     if($again.Count -ne 1 -or $again[0].CreationDate -ne $creation -or $again[0].ExecutablePath -ine $exe){throw 'Motor replaced during test'}
     if((Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash -cne $MotorSHA -or (Get-FileHash -LiteralPath $catalog -Algorithm SHA256).Hash -cne $catalogPin){throw 'Motor/catalog changed during probe'}
-    $report=[ordered]@{actual_system_motor=$true;motor_sha256=$MotorSHA;catalog_sha256=$catalogPin;independent_wire_probe_sha256=$WireProbeSHA;independent_wire_probe_verified=$true;dual_stack_transport_checks=$checks;configured_resolver_default=$true;configured_resolver_tcp=$true;configured_resolver_attempts=$resolverAttempts;blocked_domains_verified=$true;synthetic_upstream_only=$true}
+    $report=[ordered]@{actual_system_motor=$true;motor_sha256=$MotorSHA;catalog_sha256=$catalogPin;independent_wire_probe_sha256=$WireProbeSHA;independent_wire_probe_verified=$true;dual_stack_transport_checks=$checks;configured_resolver_default=$true;configured_resolver_tcp=(-not $tcpKnownFailure);configured_tcp_known_failure=$tcpKnownFailure;configured_resolver_attempts=$resolverAttempts;blocked_domains_verified=$true;synthetic_upstream_only=$true}
 }finally{
     if($owned){
         $registered=Get-ScheduledTask -TaskName $task -TaskPath '\' -ErrorAction Stop
