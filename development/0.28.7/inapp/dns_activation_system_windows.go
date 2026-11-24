@@ -11,6 +11,7 @@ import (
  "context"
  "errors"
  "fmt"
+ "path/filepath"
  "time"
 )
 
@@ -56,6 +57,29 @@ func activateWindowsDNSAsProtectedSYSTEM(
    if err!=nil{return nil,err}
    exclusive,ok:=guarded.(*exclusiveDNSActivationGuard)
    if !ok{return nil,errors.New("native DNS activation lost its protected kernel lease")}
+   // Refuse the old unscoped migration permit before any DNS write.
+   // Even if all DNS evidence is later removed, a schema-2 signed
+   // motor-and-DNS permit can never authorize motor-only boot recovery.
+   if !filepath.IsAbs(protectedRecoveryParent)||filepath.Clean(protectedRecoveryParent)!=protectedRecoveryParent||filepath.Base(protectedRecoveryParent)!="legacy-engine-recovery"{
+    return nil,errors.New("activation requires exact protected recovery ancestry")
+   }
+   root:=filepath.Dir(protectedRecoveryParent)
+   key:=publisherAuthorization.PinnedPublisherKey
+   acl:=func(path string)error{return nativeDNSOriginalBackupACL(ctx,path)}
+   durable,err:=LoadResidentDurablePublisherGrant(ctx,root,key,acl,acl,acl)
+   if err!=nil{return nil,fmt.Errorf("DNS activation lacks durable publisher grant: %w",err)}
+   if err:=VerifyExplicitResidentRecoveryScope(ctx,durable.Permit,durable.Signature,key,ResidentRecoveryScopeMotorAndDNS);err!=nil{return nil,err}
+   pending,err:=InspectResidentRecoveryJournal(ctx,durable.JournalDir,acl)
+   pins:=publisherAuthorization.PinnedEvidence
+   if err!=nil||pending.Status!="recovery-required"||pending.Intent.Nonce!=pins.IntentNonce||pending.Intent.TargetSHA256!=pins.TargetMotorSHA256{
+    return nil,errors.New("DNS activation signed scope does not match exact pending intent")
+   }
+   raw,signature,err:=loadSignedOriginalDNSEvidenceUnderLeaseWindows(ctx,root,key)
+   if err!=nil{return nil,fmt.Errorf("DNS activation lacks sealed original binding: %w",err)}
+   binding,err:=VerifySignedDNSOriginalBinding(ctx,raw,signature,key,pending.Intent,durable.Permit)
+   if err!=nil||binding.OriginalDNSJournalSHA256!=independentlyPinnedSHA256{
+    return nil,errors.New("DNS activation original snapshot not bound to explicit signed recovery scope")
+   }
    // No second lease acquisition here; the reserved nonce and the
    // activation's readback/commit must share one critical section.
    if _,err:=reserveSignedDNSActivationOnceUnderHeldLeaseNativeWindows(
