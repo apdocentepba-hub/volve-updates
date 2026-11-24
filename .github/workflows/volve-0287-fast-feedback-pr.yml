@@ -51,6 +51,54 @@ jobs:
           go test -count=1 -race -cover -v progress.go progress_test.go
           go vet progress.go progress_test.go
           echo 'PASS: installer UI state contract; NO installation or connectivity proof'
+  exact-native-diagnostic-build:
+    name: Compile exact Windows native DNS diagnostic (NO INSTALL)
+    runs-on: windows-2022
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.x'
+          cache: false
+      - name: Reconstruct hash-pinned VOLVE source; never publish a motor
+        shell: bash
+        run: |
+          python - <<'PY'
+          import hashlib, zipfile, shutil
+          from pathlib import Path
+          root=Path("development/0.28.7")
+          parts=sorted((root/"complete-source-parts").glob("part-*.bin"))
+          assert [p.name for p in parts]==[f"part-{i:02d}.bin" for i in range(10)]
+          data=b"".join(p.read_bytes() for p in parts)
+          assert hashlib.sha256(data).hexdigest()=="92b3536559151260375b17a64eedd009df8399e45460637208027b7ca0587ba5"
+          Path("source.zip").write_bytes(data)
+          Path("build").mkdir(exist_ok=True)
+          with zipfile.ZipFile("source.zip") as z:z.extractall("build")
+          for name,sha in [
+            ("VOLVE_0287_PRECHECK_RESCATE_OVERLAY_NO_INSTALAR.zip","fdfd31f21df81fe6da6075bfd442354297874576b6dc2c38f19bd35a681d95cd"),
+            ("VOLVE_0287_RECUPERACION_INTERRUPCION_FORZADA_NO_INSTALAR_v3.zip","773bd5eb5f1c4883021cc321856636354e964d3605dba9017e2fb5d1a7401b40"),
+          ]:
+            p=root/name
+            assert hashlib.sha256(p.read_bytes()).hexdigest()==sha
+            with zipfile.ZipFile(p) as z:z.extractall("build")
+          for p in (root/"journal").glob("*.go"):
+            shutil.copy2(p,Path("build/codigo/motorupdate")/p.name)
+          PY
+          go run development/0.28.7/inapp/apply_overlay.go build/codigo
+      - name: Compile and enumerate exact candidate DNS diagnostic
+        shell: powershell
+        working-directory: build/codigo
+        run: |
+          $ErrorActionPreference='Stop'
+          $out=Join-Path $env:RUNNER_TEMP 'VOLVE-CI-NativeDiagnostic.test.exe'
+          go test -c -tags volveci -trimpath -o $out .
+          if($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $out -PathType Leaf)){throw 'Exact candidate test compilation failed'}
+          $env:VOLVE_CI_FRESH_DNS53_PROBE=''
+          $env:VOLVE_CI_NESTED_GUEST_DNS=''
+          $listed=@(& $out '-test.list=^TestCI(ConfiguredNativeTCPDNS|FreshResidentSYSTEMPort53)$')
+          if($LASTEXITCODE -ne 0 -or $listed -cnotcontains 'TestCIConfiguredNativeTCPDNS' -or $listed -cnotcontains 'TestCIFreshResidentSYSTEMPort53'){throw 'Expected diagnostic tests missing from binary'}
+          Write-Host ('PASS: exact Windows diagnostic compiled and test census verified; SHA256='+((Get-FileHash -LiteralPath $out -Algorithm SHA256).Hash)+'; NO DNS EXECUTION')
   windows-synthetic-contract:
     name: Fast Windows syntax and security contracts
     runs-on: windows-2022
