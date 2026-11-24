@@ -6,6 +6,8 @@ package motorupdate
 // Test-only synthetic binary/ACL fixture: no actual motor or task changes.
 import (
  "context"
+ "errors"
+ "strings"
  "os"
  "path/filepath"
  "testing"
@@ -122,4 +124,79 @@ func TestDurablePublisherBootEvidenceRequiresLeaseBeforeDiskRead(t *testing.T){
  if err:=driver.RestoreOriginal(context.Background(),state.Intent);err==nil||reads!=0{
   t.Fatalf("post-release durable grant read or recovery admitted: reads=%d err=%v",reads,err)
  }
+}
+
+
+// Native NTFS/mutex + simulated DNS writer and stopped-candidate evidence.
+// This test does NOT validate a real Windows task/process fence or real DNS.
+func TestDurableDNSAwareBootDriverRejectsUnleasedAndUnfencedWrites(t *testing.T){
+ residentProtectedCITest(t)
+ f:=makeSignedDNSBootRecoveryFixture(t)
+ ctx:=context.Background()
+ if err:=PersistSignedOriginalDNSEvidenceNativeWindows(ctx,f.root,f.pub,f.binding,f.signature);err!=nil{t.Fatal(err)}
+ state,err:=InspectResidentRecoveryJournal(ctx,filepath.Join(f.parent,"motor-recovery-transaction"),func(p string)error{return nativeDNSOriginalBackupACL(ctx,p)})
+ if err!=nil{t.Fatal(err)}
+ ops:=&publisherBoundRecoveryOpsFixture{}
+ fenced:=false
+ fenceCalls:=0
+ fence:=func(context.Context,ResidentRecoveryIntent)error{
+  fenceCalls++
+  if !fenced{return errors.New("candidate still running")}
+  return nil
+ }
+ driver,err:=newDurablePublisherDNSBootDriver(ops,f.root,f.pub,fence,func()error{return nil},f.host.inspect,f.invoke)
+ if err!=nil{t.Fatal(err)}
+ if err:=driver.RestoreOriginalDNS(ctx,state.Intent);err==nil||f.writes!=0||fenceCalls!=0{t.Fatal("DNS mutation or guard called outside lease")}
+ release,err:=driver.AcquireExclusive(ctx)
+ if err!=nil{t.Fatal(err)}
+ defer release()
+ if err:=driver.VerifySealedOriginal(ctx,state.Intent);err!=nil{t.Fatal(err)}
+ if err:=driver.RestoreOriginalDNS(ctx,state.Intent);err==nil||f.writes!=0{t.Fatal("unfenced candidate permitted DNS mutation")}
+ fenced=true
+ if err:=driver.RestoreOriginalDNS(ctx,state.Intent);err!=nil{t.Fatal(err)}
+ if f.writes!=3||fenceCalls<5{t.Fatalf("DNS writer did not revalidate fence for each command: writes=%d calls=%d",f.writes,fenceCalls)}
+ if err:=driver.VerifyOriginalDNS(ctx,state.Intent);err!=nil{t.Fatal(err)}
+ f.expectOriginal(t)
+ f.expectStillPending(t)
+ if err:=driver.RestoreOriginalDNS(ctx,state.Intent);err!=nil||f.writes!=3{t.Fatal("restoration not idempotent under resident lease")}
+ fenced=false
+ if err:=driver.VerifyOriginalDNS(ctx,state.Intent);err==nil{t.Fatal("failed candidate returned during health checks")}
+}
+func TestDurableDNSAwareBootDriverRejectsTamperedBindingBeforeMotorOperations(t *testing.T){
+ residentProtectedCITest(t)
+ f:=makeSignedDNSBootRecoveryFixture(t)
+ ctx:=context.Background()
+ if err:=PersistSignedOriginalDNSEvidenceNativeWindows(ctx,f.root,f.pub,f.binding,f.signature);err!=nil{t.Fatal(err)}
+ journal:=filepath.Join(f.parent,"motor-recovery-transaction")
+ state,err:=InspectResidentRecoveryJournal(ctx,journal,func(p string)error{return nativeDNSOriginalBackupACL(ctx,p)})
+ if err!=nil{t.Fatal(err)}
+ ops:=&publisherBoundRecoveryOpsFixture{}
+ driver,err:=newDurablePublisherDNSBootDriver(ops,f.root,f.pub,func(context.Context,ResidentRecoveryIntent)error{return nil},func()error{return nil},f.host.inspect,f.invoke)
+ if err!=nil{t.Fatal(err)}
+ release,err:=driver.AcquireExclusive(ctx)
+ if err!=nil{t.Fatal(err)}
+ defer release()
+ _,_,sigPath,err:=dnsOriginalBindingEvidencePaths(f.root)
+ if err!=nil{t.Fatal(err)}
+ if err:=os.WriteFile(sigPath,[]byte("tampered"),0600);err!=nil{t.Fatal(err)}
+ if err:=driver.VerifySealedOriginal(ctx,state.Intent);err==nil{t.Fatal("forged DNS evidence admitted to original motor verification")}
+ if err:=driver.RestoreOriginal(ctx,state.Intent);err==nil{t.Fatal("forged DNS evidence admitted to original motor restoration")}
+ if err:=driver.RestoreOriginalDNS(ctx,state.Intent);err==nil{t.Fatal("forged DNS evidence admitted to DNS restoration")}
+ if ops.verified!=0||ops.restored!=0||f.writes!=0{t.Fatalf("tamper reached trusted operation: %+v writes=%d",ops,f.writes)}
+ f.expectStillPending(t)
+}
+func TestDurableDNSAwareBootDriverRechecksSystemAndRefusesMissingFence(t *testing.T){
+ residentProtectedCITest(t)
+ f:=makeSignedDNSBootRecoveryFixture(t)
+ ops:=&publisherBoundRecoveryOpsFixture{}
+ fence:=func(context.Context,ResidentRecoveryIntent)error{return nil}
+ deny:=func()error{return errors.New("not SYSTEM")}
+ if d,err:=newDurablePublisherDNSBootDriver(ops,f.root,f.pub,fence,deny,f.host.inspect,f.invoke);err==nil||d!=nil||!strings.Contains(err.Error(),"LocalSystem"){t.Fatal("non-SYSTEM construction accepted")}
+ if d,err:=newDurablePublisherDNSBootDriver(ops,f.root,f.pub,nil,func()error{return nil},f.host.inspect,f.invoke);err==nil||d!=nil{t.Fatal("missing candidate fence accepted")}
+ system:=true
+ d,err:=newDurablePublisherDNSBootDriver(ops,f.root,f.pub,fence,func()error{if !system{return deny()};return nil},f.host.inspect,f.invoke)
+ if err!=nil{t.Fatal(err)}
+ system=false
+ if release,err:=d.AcquireExclusive(context.Background());err==nil||release!=nil{if release!=nil{release()};t.Fatal("lost SYSTEM token still acquired lease")}
+ if f.writes!=0{t.Fatal("invalid token triggered DNS writes")}
 }
