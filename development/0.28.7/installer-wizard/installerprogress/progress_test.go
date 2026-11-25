@@ -1,6 +1,8 @@
 package installerprogress
 
 import (
+ "context"
+ "errors"
  "sync"
  "testing"
 )
@@ -82,4 +84,51 @@ func TestConcurrentReaders(t *testing.T) {
  advance(t,s,len(order)-1)
  if s.RequireReboot()!=nil||s.ConfirmReboot()!=nil {t.Fatal(s.View())}
  wg.Wait()
+}
+
+func TestResumeVerifiedCommit(t *testing.T) {
+ ctx:=context.Background()
+ called:=0
+ s,err:=ResumeVerifiedCommit(ctx,func(context.Context)error{called++;return nil})
+ if err!=nil||s==nil||called!=1{t.Fatalf("resume failed: %v",err)}
+ if v:=s.View();v.Percent!=87||v.Status!="awaiting_reboot"||v.Next!=PostBootVerified||!v.RebootRequired{t.Fatal(v)}
+ if s.ConfirmReboot()==nil||s.Confirm(PostBootVerified)==nil{t.Fatal("resumed UI accepted unverified reboot")}
+ if s.ResumePostBootVerification(ctx,func(context.Context)error{return nil})!=nil{t.Fatal("verified restart rejected")}
+ if s.View().Percent!=87{t.Fatal("restart observation alone completed UI")}
+ if s.ConfirmReboot()!=nil||s.View().Percent!=100{t.Fatal(s.View())}
+}
+func TestResumeVerifiedCommitRejectsMissingFailureAndCancellation(t *testing.T) {
+ ctx:=context.Background()
+ bad:=errors.New("journal not verified")
+ if s,err:=ResumeVerifiedCommit(nil,nil);s!=nil||err==nil{t.Fatal("nil context accepted")}
+ if s,err:=ResumeVerifiedCommit(ctx,nil);s!=nil||err==nil{t.Fatal("missing reader accepted")}
+ if s,err:=ResumeVerifiedCommit(ctx,func(context.Context)error{return bad});s!=nil||!errors.Is(err,bad){t.Fatal("invalid journal accepted")}
+ canceled,cancel:=context.WithCancel(ctx)
+ cancel()
+ if s,err:=ResumeVerifiedCommit(canceled,func(context.Context)error{t.Fatal("called after cancel");return nil});s!=nil||!errors.Is(err,context.Canceled){t.Fatal("canceled resume accepted")}
+ during,stop:=context.WithCancel(ctx)
+ defer stop()
+ if s,err:=ResumeVerifiedCommit(during,func(context.Context)error{stop();return nil});s!=nil||!errors.Is(err,context.Canceled){t.Fatal("race with cancellation accepted")}
+}
+func TestResumeRestartFailureAndInvalidation(t *testing.T) {
+ ctx:=context.Background()
+ s,err:=ResumeVerifiedCommit(ctx,func(context.Context)error{return nil})
+ if err!=nil{t.Fatal(err)}
+ bad:=errors.New("same boot")
+ if err:=s.ResumePostBootVerification(ctx,func(context.Context)error{return bad});!errors.Is(err,bad)||s.ConfirmReboot()==nil{t.Fatal("same boot accepted")}
+ // A callback can read the UI and report recovery without deadlocking.
+ if err:=s.ResumePostBootVerification(ctx,func(context.Context)error{
+  if s.View().Percent!=87{t.Fatal(s.View())}
+  return s.Fail()
+ });err==nil||s.View().Status!="recovery_required"||s.ConfirmReboot()==nil{t.Fatal("stale restart proof accepted")}
+ if err:=s.ConfirmRecovery();err!=nil||s.View().Status!="recovered_not_installed"{t.Fatal(s.View())}
+}
+func TestResumeRestartCancellationAndConcurrentRequest(t *testing.T) {
+ ctx:=context.Background()
+ s,err:=ResumeVerifiedCommit(ctx,func(context.Context)error{return nil})
+ if err!=nil{t.Fatal(err)}
+ during,stop:=context.WithCancel(ctx)
+ defer stop()
+ if err:=s.ResumePostBootVerification(during,func(context.Context)error{stop();return nil});!errors.Is(err,context.Canceled)||s.ConfirmReboot()==nil{t.Fatal("canceled reboot evidence accepted")}
+ if err:=s.ResumePostBootVerification(ctx,func(context.Context)error{return s.RequireReboot()});err==nil{t.Fatal("concurrent reboot request not detected")}
 }

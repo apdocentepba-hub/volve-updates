@@ -3,6 +3,7 @@
 package installerprogress
 
 import (
+ "context"
  "errors"
  "sync"
 )
@@ -37,6 +38,41 @@ type View struct {
  RebootRequired bool
 }
 func New() *State { return &State{status:"running"} }
+
+// ResumeVerifiedCommit reconstructs ONLY the UI state after a durable commit.
+// The trusted controller must independently verify its authenticated journal
+// and current transaction identity. This package does not read a UI-supplied
+// checkpoint, trust a stored percentage, authenticate the callback or grant
+// any permission. A success is still only 87%, pending post-boot proof.
+// A failed verification yields no resumable state.
+func ResumeVerifiedCommit(ctx context.Context, verifyCommit func(context.Context) error) (*State,error) {
+ if ctx==nil || verifyCommit==nil {return nil,errors.New("verified commit reader required")}
+ if err:=ctx.Err();err!=nil{return nil,err}
+ if err:=verifyCommit(ctx);err!=nil{return nil,err}
+ if err:=ctx.Err();err!=nil{return nil,err}
+ return &State{next:len(order)-1,status:"awaiting_reboot"},nil
+}
+
+// ResumePostBootVerification allows the UI to resume verification after a
+// restart that the authenticated controller has independently observed.
+// This is NOT confirmation of healthy protection. It only records the
+// pending post-boot check; a failed health check must still enter recovery.
+func (s *State) ResumePostBootVerification(ctx context.Context, verifyRestart func(context.Context) error) error {
+ if ctx==nil || verifyRestart==nil{return errors.New("verified restart reader required")}
+ if err:=ctx.Err();err!=nil{return err}
+ // Do not hold the UI mutex across I/O or a controller callback.
+ s.mu.Lock()
+ eligible:=s.status=="awaiting_reboot" && !s.rebootRequested && s.next==len(order)-1
+ s.mu.Unlock()
+ if !eligible{return errors.New("restart observation not expected")}
+ if err:=verifyRestart(ctx);err!=nil{return err}
+ s.mu.Lock()
+ defer s.mu.Unlock()
+ if err:=ctx.Err();err!=nil{return err}
+ if s.status!="awaiting_reboot" || s.rebootRequested || s.next!=len(order)-1{return errors.New("restart observation invalidated during verification")}
+ s.rebootRequested=true
+ return nil
+}
 
 // Confirm is called only by the future authenticated controller adapter
 // after a successful independent check. The last stage is deliberately
