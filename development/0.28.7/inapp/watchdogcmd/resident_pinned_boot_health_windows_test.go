@@ -103,6 +103,7 @@ func TestPinnedBootHealthQueriesLiveTaskProcessAndBothDNS53Owners(t *testing.T){
     "$again[0].CreationDate -ne $p[0].CreationDate",
     "VOLVE_ORIGINAL_SYSTEM_DNS53_IDENTITY_VERIFIED",
     "Export-ScheduledTask","DtdProcessing]::Prohibit","$live.DocumentElement.OuterXml -cne $saved.DocumentElement.OuterXml",intent.TaskXMLSHA256,
+    "[Text.UnicodeEncoding]::new","[Text.UTF8Encoding]::new($false,$true)","[IO.StringReader]::new($savedText)",
    }
    for _,token:=range required{
     if !strings.Contains(script,token){t.Errorf("health OS probe missing %q",token)}

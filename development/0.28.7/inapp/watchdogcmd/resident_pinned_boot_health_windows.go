@@ -8,7 +8,10 @@ package main
 // activate the productive recovery CLI. It does not imply reboot acceptance.
 import (
  "context"
+ "crypto/sha256"
+ "encoding/hex"
  "errors"
+ "io"
  "fmt"
  "os"
  "path/filepath"
@@ -86,8 +89,17 @@ func(h *residentPinnedBootHealthWindows)VerifyRunningIdentity(
  // principal setting or restart policy has drifted from the signed backup.
  xmlInfo,err:=os.Lstat(taskXML)
  if err!=nil||!xmlInfo.Mode().IsRegular()||xmlInfo.Size()<32||xmlInfo.Size()>2<<20{return errors.New("protected original task XML is absent or invalid")}
- xmlHash,err:=digestResidentLive(ctx,taskXML)
- if err!=nil||xmlHash!=intent.TaskXMLSHA256{return errors.New("original task XML differs from journal-pinned SHA-256")}
+ // Do not use digestResidentLive: that function intentionally accepts
+ // only the original EXE basename. Hash this separately bounded XML file.
+ file,err:=os.Open(taskXML)
+ if err!=nil{return err}
+ hashXML:=sha256.New()
+ n,readErr:=io.Copy(hashXML,io.LimitReader(file,(2<<20)+1))
+ closeErr:=file.Close()
+ if readErr!=nil||closeErr!=nil||n!=xmlInfo.Size()||n>2<<20||hex.EncodeToString(hashXML.Sum(nil))!=intent.TaskXMLSHA256{
+  return errors.New("original task XML differs from journal-pinned SHA-256")
+ }
+ if err:=ctx.Err();err!=nil{return err}
  script:="$ErrorActionPreference='Stop';$ProgressPreference='SilentlyContinue';"+
   "$ident=[Security.Principal.WindowsIdentity]::GetCurrent();"+
   "if($ident.User.Value -ne 'S-1-5-18'){throw 'SYSTEM identity required for original health'};"+
@@ -99,9 +111,13 @@ func(h *residentPinnedBootHealthWindows)VerifyRunningIdentity(
   // Compare complete XML documents, ignoring only declaration and
   // insignificant formatting whitespace. Reject DTD/external resolution.
   "$settings=[System.Xml.XmlReaderSettings]::new();$settings.DtdProcessing=[System.Xml.DtdProcessing]::Prohibit;$settings.XmlResolver=$null;"+
-  "$mem=[IO.MemoryStream]::new($bytes);$reader=[System.Xml.XmlReader]::Create($mem,$settings);"+
+  // Scheduler exports can declare UTF-16 even when persisted as UTF-8.
+  // Decode actual bytes first, as the existing signed XML restore does.
+  "$utf16=($bytes.Length -ge 2 -and (($bytes[0] -eq 255 -and $bytes[1] -eq 254) -or ($bytes[0] -eq 254 -and $bytes[1] -eq 255)));"+
+  "if($utf16){$enc=[Text.UnicodeEncoding]::new(($bytes[0] -eq 254),$true,$true);$savedText=$enc.GetString($bytes,2,$bytes.Length-2)}else{$enc=[Text.UTF8Encoding]::new($false,$true);$savedText=$enc.GetString($bytes).TrimStart([char]0xFEFF)};"+
+  "$srSaved=[IO.StringReader]::new($savedText);$reader=[System.Xml.XmlReader]::Create($srSaved,$settings);"+
   "$saved=[System.Xml.XmlDocument]::new();$saved.XmlResolver=$null;"+
-  "try{$saved.Load($reader)}finally{$reader.Dispose();$mem.Dispose()};"+
+  "try{$saved.Load($reader)}finally{$reader.Dispose();$srSaved.Dispose()};"+
   "function Assert-OriginalTaskXML {"+
   "$liveText=[string](Export-ScheduledTask -TaskName 'VOLVE-DNS-SERVER-0270' -TaskPath '\\' -ErrorAction Stop);"+
   "$sr=[IO.StringReader]::new($liveText);$lr=[System.Xml.XmlReader]::Create($sr,$settings);"+
