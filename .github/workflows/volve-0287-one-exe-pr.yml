@@ -383,17 +383,27 @@ jobs:
           $ErrorActionPreference='Stop'
           $nsis=@('C:\Program Files (x86)\NSIS\makensis.exe','C:\Program Files\NSIS\makensis.exe') | Where-Object {Test-Path -LiteralPath $_ -PathType Leaf} | Select-Object -First 1
           if(-not $nsis){
-            $installed=$false
             foreach($attempt in 1..3){
-              choco install nsis --yes --no-progress --limit-output --execution-timeout=90
-              if($LASTEXITCODE -eq 0){$installed=$true;break}
-              Write-Warning ('NSIS package provisioning attempt '+$attempt+' failed; exit='+$LASTEXITCODE)
+              $code=-1
+              try{
+                choco install nsis --yes --no-progress --limit-output --execution-timeout=90
+                $code=$LASTEXITCODE
+              }catch{
+                Write-Warning ('NSIS package provisioning command failed on attempt '+$attempt)
+              }
+              # Chocolatey returned success during a real 504 feed failure
+              # (run 45691666933). Exit code alone is not installation proof.
+              $nsis=@('C:\Program Files (x86)\NSIS\makensis.exe','C:\Program Files\NSIS\makensis.exe') | Where-Object {Test-Path -LiteralPath $_ -PathType Leaf} | Select-Object -First 1
+              if($code -eq 0 -and $nsis){break}
+              $nsis=$null
+              Write-Warning ('NSIS provisioning attempt '+$attempt+' did not prove compiler availability; exit='+$code)
               if($attempt -lt 3){Start-Sleep -Seconds (10*$attempt)}
             }
-            if(-not $installed){throw 'CI cannot provision NSIS compiler after bounded retries; no build bypass'}
-            $nsis=@('C:\Program Files (x86)\NSIS\makensis.exe','C:\Program Files\NSIS\makensis.exe') | Where-Object {Test-Path -LiteralPath $_ -PathType Leaf} | Select-Object -First 1
           }
-          if(-not $nsis){throw 'CI NSIS compiler still missing after provision'}
+          if(-not $nsis){throw 'CI cannot provision NSIS compiler after bounded retries; no build bypass'}
+          $version=(& $nsis '/VERSION' 2>&1 | Out-String).Trim()
+          if($LASTEXITCODE -ne 0 -or $version -notmatch '^v?3\.[0-9]+(?:\.[0-9]+)?$'){throw 'NSIS compiler execution/version check refused'}
+          Write-Host ('NSIS version verified: '+$version)
           Write-Host 'PASS: disposable Windows NSIS compiler available before early integrity gate'
       - name: CI-only single NSIS EXE includes actual compiled DNS motor and rejects tamper
         timeout-minutes: 7
@@ -709,12 +719,9 @@ jobs:
           $dnsBefore=Get-DnsClientServerAddress -ErrorAction Stop | Sort-Object InterfaceIndex,AddressFamily | Select-Object InterfaceIndex,AddressFamily,ServerAddresses | ConvertTo-Json -Depth 7 -Compress
           $tasksBefore=@(Get-ScheduledTask -ErrorAction Stop | Where-Object {$_.TaskName -match '^(?i:VOLVE[-_\.])'} | Sort-Object TaskPath,TaskName | ForEach-Object {$_.TaskPath+$_.TaskName}) -join '|'
           $nsis=@('C:\Program Files (x86)\NSIS\makensis.exe','C:\Program Files\NSIS\makensis.exe') | Where-Object {Test-Path -LiteralPath $_ -PathType Leaf} | Select-Object -First 1
-          if(-not $nsis){
-            choco install nsis --yes --no-progress --limit-output
-            if($LASTEXITCODE -ne 0){throw 'REFUSED: NSIS compiler unavailable'}
-            $nsis=@('C:\Program Files (x86)\NSIS\makensis.exe','C:\Program Files\NSIS\makensis.exe') | Where-Object {Test-Path -LiteralPath $_ -PathType Leaf} | Select-Object -First 1
-          }
-          if(-not $nsis){throw 'REFUSED: no NSIS compiler'}
+          # Compiler provisioning must have passed the early gate; do not
+          # silently install another compiler inside the final host audit.
+          if(-not $nsis){throw 'REFUSED: previously verified NSIS compiler missing'}
           $wizardRoot='development/0.28.7/installer-wizard'
           Push-Location $wizardRoot
           try{
