@@ -175,6 +175,12 @@ jobs:
           if($markers.Count -ne 6){throw 'Six actual loopback TCP responses not verified'}
           if(@($proof|Where-Object {$_ -match 'PASS VOLVE_TCP_IDLE_SHUTDOWN$'}).Count -ne 1){throw 'Idle TCP shutdown not verified'}
           if(@($proof|Where-Object {$_ -match 'PASS VOLVE_PARTIAL_START_DRAIN$'}).Count -ne 1){throw 'Partial IPv6 startup cleanup not verified'}
+          $listed=@(go test . -list '^TestResidentDNSRunnerCompletesTruncatedUpstreamTCP$')
+          if($LASTEXITCODE -ne 0 -or $listed -cnotcontains 'TestResidentDNSRunnerCompletesTruncatedUpstreamTCP'){throw 'Upstream TCP completion regression missing'}
+          $complete=@(go test . -run '^TestResidentDNSRunnerCompletesTruncatedUpstreamTCP$' -count=1 -v -timeout 45s 2>&1)
+          $completeExit=$LASTEXITCODE
+          $complete|ForEach-Object {Write-Host $_}
+          if($completeExit -ne 0 -or @($complete|Where-Object {$_ -match 'PASS VOLVE_UPSTREAM_TCP_COMPLETES_TRUNCATION_DUAL_STACK$'}).Count -ne 1){throw 'Upstream TCP completion failed'}
           Write-Host 'PASS: actual production DNS runner accepted three sequential queries per address family; no adapter changes'
   windows-synthetic-contract:
     name: Fast Windows syntax and security contracts

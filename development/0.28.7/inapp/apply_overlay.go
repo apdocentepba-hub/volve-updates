@@ -124,7 +124,7 @@ func patchDNSPersistentTCP(path string) error {
 					}
 					// Every query, including a reused connection, traverses
 					// the same rule engine and upstream/failed-response path.
-					ans, e := s.handle(q)
+					ans, e := s.handleTransport(q, true)
 					if e != nil {
 						ans = SERVFAIL(q)
 					}
@@ -143,6 +143,57 @@ func patchDNSPersistentTCP(path string) error {
 					}
 				}`
     return patch(path, original, replacement)
+}
+
+// A TCP client retry must not receive the same truncated UDP answer.
+// Keep ordinary UDP behavior and the existing block rule path; only a
+// truncated response to a TCP client requires an upstream TCP retry.
+func patchDNSUpstreamTruncation(path string) error {
+    const oldHandle = `func (s *Server) handle(query []byte) ([]byte, error) {`
+    const newHandle = `func (s *Server) handle(query []byte) ([]byte, error) {
+        return s.handleTransport(query, false)
+    }
+    func (s *Server) handleTransport(query []byte, tcpClient bool) ([]byte, error) {`
+    if err:=patch(path,oldHandle,newHandle);err!=nil{return err}
+    const oldReturn = `		return response[:n], nil
+	}
+	return nil, fmt.Errorf("upstreams failed: %w", last)
+}`
+    const newReturn = `		if tcpClient && response[2]&0x02 != 0 {
+            full,err:=s.completeTruncatedDNSOverTCP(target,query,end)
+            if err!=nil {last=err;continue}
+            return full,nil
+        }
+        return response[:n], nil
+	}
+	return nil, fmt.Errorf("upstreams failed: %w", last)
+}
+func (s *Server) completeTruncatedDNSOverTCP(target string,query []byte,questionEnd int)([]byte,error){
+    if len(query)<12||len(query)>65535||questionEnd<17||questionEnd>len(query){return nil,errors.New("invalid TCP upstream request")}
+    conn,err:=net.DialTimeout("tcp",target,s.timeout)
+    if err!=nil{return nil,err}
+    defer conn.Close()
+    if err=conn.SetDeadline(time.Now().Add(s.timeout));err!=nil{return nil,err}
+    packet:=make([]byte,2+len(query))
+    binary.BigEndian.PutUint16(packet[:2],uint16(len(query)));copy(packet[2:],query)
+    for len(packet)>0 {
+        n,e:=conn.Write(packet);if e!=nil{return nil,e};if n<=0{return nil,io.ErrShortWrite};packet=packet[n:]
+    }
+    var length [2]byte
+    if _,err=io.ReadFull(conn,length[:]);err!=nil{return nil,err}
+    n:=int(binary.BigEndian.Uint16(length[:]))
+    if n<questionEnd{return nil,errors.New("short upstream TCP DNS frame")}
+    reply:=make([]byte,n)
+    if _,err=io.ReadFull(conn,reply);err!=nil{return nil,err}
+    if reply[0]!=query[0]||reply[1]!=query[1]||reply[2]&0x80==0||
+        reply[2]&0x78!=query[2]&0x78||reply[2]&0x02!=0||
+        binary.BigEndian.Uint16(reply[4:6])!=1||
+        string(reply[12:questionEnd])!=string(query[12:questionEnd]){
+        return nil,errors.New("uncorrelated or truncated upstream TCP DNS response")
+    }
+    return reply,nil
+}`
+    return patch(path,oldReturn,newReturn)
 }
 
 func main() {
@@ -197,6 +248,7 @@ func fullEngineAt(root string) (*blocker.Engine, error) {
     if err := patch(filepath.Join(target, "dnsprod_windows.go"), fullCatalogMarker, fullCatalogReplacement); err != nil { panic(err) }
     if err := patchResidentDNSEntry(filepath.Join(target,"dnsprod_windows.go")); err != nil { panic(err) }
     if err := patchDNSPersistentTCP(filepath.Join(target,"dnsproxy","dns.go")); err != nil { panic(err) }
+    if err := patchDNSUpstreamTruncation(filepath.Join(target,"dnsproxy","dns.go")); err != nil { panic(err) }
     const oldMain = "if len(os.Args) == 2 && os.Args[1] == \"--check-app-updates\" {"
     const newMain = `if len(os.Args) == 2 && os.Args[1] == "--prepare-legacy-rollback" {
         if err := printLegacyRecoveryPreparation(); err != nil {

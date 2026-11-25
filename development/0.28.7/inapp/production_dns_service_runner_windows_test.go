@@ -12,6 +12,7 @@ import (
     "fmt"
     "net"
     "strings"
+    "sync/atomic"
     "testing"
     "time"
 
@@ -195,4 +196,82 @@ func TestResidentDNSRunnerDrainsPartialIPv6Start(t *testing.T){
     if e!=nil{t.Fatalf("independent IPv6 listener was disturbed: %v",e)}
     client.Close()
     t.Log("PASS VOLVE_PARTIAL_START_DRAIN")
+}
+
+func TestResidentDNSRunnerCompletesTruncatedUpstreamTCP(t *testing.T){
+ root:=t.TempDir()
+ putLabFullCatalog(t,root,400002)
+ upstreamTCP,err:=net.Listen("tcp4","127.0.0.1:0")
+ if err!=nil{t.Fatal(err)}
+ defer upstreamTCP.Close()
+ upstreamUDP,err:=net.ListenPacket("udp4",upstreamTCP.Addr().String())
+ if err!=nil{t.Fatal(err)}
+ defer upstreamUDP.Close()
+ var udpCount,tcpCount atomic.Int32
+ go func(){
+  buf:=make([]byte,4096)
+  for {
+   n,peer,e:=upstreamUDP.ReadFrom(buf);if e!=nil{return}
+   if n<17{continue}
+   reply:=append([]byte(nil),buf[:n]...)
+   reply[2]=0x83;reply[3]=0x80 // QR + TC + RD
+   udpCount.Add(1)
+   _,_=upstreamUDP.WriteTo(reply,peer)
+  }
+ }()
+ go func(){
+  for {
+   c,e:=upstreamTCP.Accept();if e!=nil{return}
+   func(){
+    defer c.Close()
+    _=c.SetDeadline(time.Now().Add(2*time.Second))
+    var length [2]byte
+    if _,e:=io.ReadFull(c,length[:]);e!=nil{return}
+    n:=int(binary.BigEndian.Uint16(length[:]))
+    if n<17||n>4096{return}
+    query:=make([]byte,n)
+    if _,e:=io.ReadFull(c,query);e!=nil{return}
+    tcpCount.Add(1)
+    response:=append([]byte(nil),query...)
+    response[2]=0x81;response[3]=0x80;response[7]=1
+    response=append(response,0xc0,0x0c,0,1,0,1,0,0,0,60,0,4,203,0,113,7)
+    frame:=make([]byte,2+len(response))
+    binary.BigEndian.PutUint16(frame[:2],uint16(len(response)));copy(frame[2:],response)
+    for len(frame)>0{n,e:=c.Write(frame);if e!=nil||n<=0{return};frame=frame[n:]}
+   }()
+  }
+ }()
+ free,err:=net.ListenPacket("udp4","127.0.0.1:0")
+ if err!=nil{t.Fatal(err)}
+ port:=free.LocalAddr().(*net.UDPAddr).Port
+ free.Close()
+ if port==53{t.Fatal("refusing system DNS port")}
+ ctx,cancel:=context.WithCancel(context.Background())
+ defer cancel()
+ ready:=make(chan struct{},1)
+ done:=make(chan error,1)
+ go func(){done<-runDNSServiceAt(ctx,root,port,[]string{upstreamTCP.Addr().String()},ready)}()
+ select{
+ case <-ready:
+ case err:=<-done:t.Fatalf("resident startup: %v",err)
+ case <-time.After(8*time.Second):t.Fatal("resident startup timeout")
+ }
+ for _,host:=range []string{"127.0.0.1","::1"}{
+  addr:=net.JoinHostPort(host,fmt.Sprint(port))
+  queryCtx,stop:=context.WithTimeout(ctx,6*time.Second)
+  err:=assertCIFreshAllowedARecord(queryCtx,"tcp",addr)
+  stop()
+  if err!=nil{t.Fatalf("truncated response not completed over %s: %v",host,err)}
+  blockCtx,stopBlock:=context.WithTimeout(ctx,3*time.Second)
+  got,blockErr:=queryCITCPRCode(blockCtx,addr,"stake.com")
+  stopBlock()
+  if blockErr!=nil||got!=3{t.Fatalf("blocked query did not remain local: %d %v",got,blockErr)}
+ }
+ if udpCount.Load()!=2||tcpCount.Load()!=2{t.Fatalf("unexpected forwarding counts UDP=%d TCP=%d",udpCount.Load(),tcpCount.Load())}
+ cancel()
+ select{
+ case err:=<-done:if !errors.Is(err,context.Canceled){t.Fatal(err)}
+ case <-time.After(4*time.Second):t.Fatal("runner did not drain")
+ }
+ t.Log("PASS VOLVE_UPSTREAM_TCP_COMPLETES_TRUNCATION_DUAL_STACK")
 }
