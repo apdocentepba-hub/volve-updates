@@ -73,6 +73,7 @@ func TestSupportReleaseDeniesForgedAndWrongScope(t *testing.T){
   "nonrandom-case-id":func(p *SupportReleasePermit){p.CaseID="support@example.org"},
   "short-nonce":func(p *SupportReleasePermit){p.Nonce="1"},
   "expired":func(p *SupportReleasePermit){p.ExpiresUTC=now.Add(-time.Minute).Format(time.RFC3339)},
+  "exact-expiry":func(p *SupportReleasePermit){p.ExpiresUTC=now.Format(time.RFC3339)},
   "premature":func(p *SupportReleasePermit){p.IssuedUTC=now.Add(time.Hour).Format(time.RFC3339)},
   "long-lived":func(p *SupportReleasePermit){p.ExpiresUTC=now.Add(48*time.Hour).Format(time.RFC3339)},
  }
@@ -115,6 +116,10 @@ func TestSupportReleaseRefusesInvalidInstalledEvidenceAndActiveRecovery(t *testi
   "legacy":func(e *Evidence){e.LegacyTasks=3},
   "pending-recovery":func(e *Evidence){e.RecoveryJournalPresent=true},
   "no-host-evidence":func(e *Evidence){e.Complete=false},
+  "missing-install-root":func(e *Evidence){e.ProgramFilesRoot=false},
+  "missing-data-root":func(e *Evidence){e.ProgramDataResidues=0},
+  "missing-task":func(e *Evidence){e.OtherVolveTasks=0},
+  "unexpected-task":func(e *Evidence){e.OtherVolveTasks=2},
  }{
   t.Run(name,func(t *testing.T){
    e:=host;change(&e)

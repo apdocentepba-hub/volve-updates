@@ -140,3 +140,26 @@ func assertNoDestructiveReceipt(t *testing.T,x Plan){
         t.Fatalf("receipt review wrongly authorized removal: %+v",x)
     }
 }
+
+func TestSignedReceiptRejectsWindowsAliasesAndOverlappingRoots(t *testing.T){
+ for _,tc:=range []struct{name,install,data string}{
+  {"nested-data",`C:\Program Files\VOLVE`,`C:\PROGRAM FILES\VOLVE\data`},
+  {"nested-install",`C:\ProgramData\VOLVE\app`,`C:\programdata\volve`},
+  {"same-casefold",`C:\Program Files\VOLVE`,`C:\PROGRAM FILES\volve`},
+  {"dos-device",`C:\Program Files\NUL.txt`,`C:\ProgramData\VOLVE`},
+  {"superscript-device",`C:\Program Files\COM¹`,`C:\ProgramData\VOLVE`},
+  {"control", "C:\\Program Files\\VOLVE\x01",`C:\ProgramData\VOLVE`},
+ }{
+  t.Run(tc.name,func(t *testing.T){
+   r:=testReceipt();r.InstallRoot=tc.install;r.DataRoot=tc.data
+   raw,sig,key,_:=testSigned(t,r)
+   if _,err:=VerifySignedInstalledReceipt(raw,sig,key);err==nil{t.Fatal("unsafe signed root accepted")}
+  })
+ }
+ // Similar textual prefixes are valid when no directory ancestry exists.
+ if !independentWindowsRoots(`C:\ProgramData\VOLVE`,`C:\ProgramData\VOLVE-DATA`){t.Fatal("separate sibling roots rejected")}
+ r:=testReceipt()
+ other:=r.Tasks[0];other.Name="VOLVE-managed-dns-0287";r.Tasks=append(r.Tasks,other)
+ raw,sig,key,_:=testSigned(t,r)
+ if _,err:=VerifySignedInstalledReceipt(raw,sig,key);err==nil{t.Fatal("case-insensitive duplicate task accepted")}
+}

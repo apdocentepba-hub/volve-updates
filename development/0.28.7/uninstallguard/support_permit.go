@@ -104,7 +104,7 @@ func VerifySignedSupportReleasePermit(
  if err!=nil{return denied,errors.New("invalid support authorization expiry")}
  if now.IsZero(){return denied,errors.New("current system clock not verified")}
  now=now.UTC()
- if issued.After(now.Add(5*time.Minute))||expiry.Before(now)||
+ if issued.After(now.Add(5*time.Minute))||!now.Before(expiry)||
   !expiry.After(issued)||expiry.Sub(issued)>24*time.Hour{
   return denied,errors.New("support authorization not yet valid, expired or lifetime too long")
  }
@@ -131,6 +131,12 @@ func ReviewSupportRemovalOnly(
  if e.LegacyTasks>0||e.RecoveryJournalPresent{
   return denied,errors.New("unresolved legacy tasks or pending recovery prevent support removal review")
  }
+ // A historical signature is not evidence of an installed product on this
+ // host. Refuse absent or contradictory census before reporting review.
+ if !e.ProgramFilesRoot||e.ProgramDataResidues<1||e.OtherVolveTasks!=len(receipt.Tasks){
+  return denied,errors.New("live installation census does not match signed receipt")
+ }
+ if err:=ctx.Err();err!=nil{return denied,err}
  return SupportRemovalReview{
   Schema:1,Component:"VOLVE-SUPPORT-RELEASE-REVIEW-ONLY",
   VerifiedPublisherReceipt:true,VerifiedIndependentSupportSignature:true,

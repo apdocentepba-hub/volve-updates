@@ -74,8 +74,28 @@ func windowsAbsolutePath(p string) bool {
     for _,segment:=range strings.Split(p[3:],"\\") {
         if segment==""||segment=="."||segment==".."||
             strings.Contains(segment,":")||strings.HasSuffix(segment,".")||strings.HasSuffix(segment," ") {return false}
+        for _,ch:=range segment {
+            if ch<32 || ch==127 {return false}
+        }
+        // DOS device aliases remain reserved even with an extension.
+        stem:=strings.ToUpper(strings.TrimRight(strings.SplitN(segment,".",2)[0]," "))
+        switch stem {
+        case "CON","PRN","AUX","NUL","CONIN$","CONOUT$",
+            "COM1","COM2","COM3","COM4","COM5","COM6","COM7","COM8","COM9",
+            "LPT1","LPT2","LPT3","LPT4","LPT5","LPT6","LPT7","LPT8","LPT9",
+            "COM¹","COM²","COM³","LPT¹","LPT²","LPT³":
+            return false
+        }
     }
     return true
+}
+
+// Signed lexical roots must be separate trees, not merely different strings.
+// Native live audits still need to reject junctions and verify actual file IDs.
+func independentWindowsRoots(a,b string)bool{
+    if !windowsAbsolutePath(a)||!windowsAbsolutePath(b){return false}
+    a=strings.ToUpper(a);b=strings.ToUpper(b)
+    return a!=b&&!strings.HasPrefix(a,b+"\\")&&!strings.HasPrefix(b,a+"\\")
 }
 
 func validateReceipt(r InstalledReceipt) error {
@@ -86,8 +106,7 @@ func validateReceipt(r InstalledReceipt) error {
     if _,err:=hex.DecodeString(r.InstallationID);err!=nil || strings.ToLower(r.InstallationID)!=r.InstallationID {
         return errors.New("installation ID must be exact lowercase hex")
     }
-    if !windowsAbsolutePath(r.InstallRoot)||!windowsAbsolutePath(r.DataRoot)||
-        strings.EqualFold(r.InstallRoot,r.DataRoot) {
+    if !independentWindowsRoots(r.InstallRoot,r.DataRoot) {
         return errors.New("installed Windows roots are not canonical or independent")
     }
     if r.Origin!="FRESH" && r.Origin!="MIGRATED_FROM_0286"{
@@ -113,7 +132,11 @@ func validateReceipt(r InstalledReceipt) error {
     }
     if len(r.Tasks)==0 || len(r.Tasks)>8 {return errors.New("signed installed tasks missing or excessive")}
     previous=""
+    seenTasks:=map[string]bool{}
     for _,t:=range r.Tasks {
+        folded:=strings.ToUpper(t.Name)
+        if seenTasks[folded]{return errors.New("duplicate Windows task identity in signed receipt")}
+        seenTasks[folded]=true
         if t.Principal!="SYSTEM" || !strings.HasPrefix(t.Name,"VOLVE-")||
             len(t.Name)>128 || t.Name<=previous || strings.ContainsAny(t.Name,"\\/:*?\"<>|\x00\r\n") ||
             !isSHA256(t.XMLSHA256)||!isSHA256(t.ActionSHA256){
