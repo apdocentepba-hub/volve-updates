@@ -27,6 +27,9 @@ on:
       - 'development/0.28.7/inapp/dns_activation_exclusive_lease_test.go'
       - 'development/0.28.7/inapp/dns_activation_nonce_native_windows.go'
       - 'development/0.28.7/inapp/dns_activation_nonce_native_windows_test.go'
+      - 'development/0.28.7/inapp/dns_activation_publisher_guard.go'
+      - 'development/0.28.7/inapp/dns_activation_publisher_guard_test.go'
+      - 'development/0.28.7/inapp/dns_activation_system_windows.go'
       - 'development/0.28.7/inapp/resident_health_probe.go'
       - 'development/0.28.7/inapp/resident_health_probe_test.go'
       - 'development/0.28.7/inapp/resident_active_health.go'
@@ -134,6 +137,11 @@ jobs:
           if($LASTEXITCODE -ne 0 -or $listed -cnotcontains 'TestResidentHealthPersistentTCPDNS'){throw 'Candidate TCP health tests missing'}
           go test ./motorupdate -run '^TestResidentHealthPersistentTCPDNS$' -count=1 -v -timeout 30s
           if($LASTEXITCODE -ne 0){throw 'Candidate persistent TCP health regression failed'}
+          $pattern='^TestPublisherScopedDNSActivation'
+          $listed=@(go test ./motorupdate -list $pattern)
+          if($LASTEXITCODE -ne 0 -or $listed -cnotcontains 'TestPublisherScopedDNSActivationExpiryDuringAttestation' -or $listed -cnotcontains 'TestPublisherScopedDNSActivationSnapshotIsIndependent'){throw 'Publisher attestation regression census incomplete'}
+          go test ./motorupdate -run $pattern -count=1 -v -timeout 2m
+          if($LASTEXITCODE -ne 0){throw 'Publisher attestation regression failed'}
           $listed=@(go test ./motorupdate -list '^TestWindowsNativeSignedDNSActivationNonceRejectsStaleClock$')
           if($LASTEXITCODE -ne 0 -or $listed -cnotcontains 'TestWindowsNativeSignedDNSActivationNonceRejectsStaleClock'){throw 'Native nonce stale-clock regression missing'}
           go test ./motorupdate -run '^TestWindowsNativeSignedDNSActivationNonceRejectsStaleClock$' -count=1 -v -timeout 3m

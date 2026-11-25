@@ -25,6 +25,16 @@ type DNSActivationPublisherAuthorization struct {
  PinnedEvidence DNSActivationExternallyPinnedEvidence
 }
 
+// Snapshot once before a controller starts using the evidence. A caller
+// must not concurrently mutate inputs during this initial copy. Subsequent
+// changes to caller-owned buffers cannot change an admitted transaction.
+func snapshotDNSActivationAuthorization(auth DNSActivationPublisherAuthorization) DNSActivationPublisherAuthorization {
+ auth.GrantJSON=append([]byte(nil),auth.GrantJSON...)
+ auth.Signature=append([]byte(nil),auth.Signature...)
+ auth.PinnedPublisherKey=append(ed25519.PublicKey(nil),auth.PinnedPublisherKey...)
+ return auth
+}
+
 type publisherScopedDNSActivationGuard struct {
  inner DNSActivationSafetyGuard
  rawGrant []byte
@@ -78,11 +88,15 @@ func(g *publisherScopedDNSActivationGuard)verifyPublisherAdmission(ctx context.C
 }
 func(g *publisherScopedDNSActivationGuard)VerifyArmed(ctx context.Context,pin string)error{
  if err:=g.verifyPublisherAdmission(ctx,pin);err!=nil{return err}
- return g.inner.VerifyArmed(ctx,pin)
+ if err:=g.inner.VerifyArmed(ctx,pin);err!=nil{return err}
+ // OS attestation can take long enough to exhaust a short-lived permit.
+ // Never authorize the next operation on evidence that expired inside it.
+ return g.verifyPublisherAdmission(ctx,pin)
 }
 func(g *publisherScopedDNSActivationGuard)VerifyLiveProtection(ctx context.Context,pin string)error{
  if err:=g.verifyPublisherAdmission(ctx,pin);err!=nil{return err}
- return g.inner.VerifyLiveProtection(ctx,pin)
+ if err:=g.inner.VerifyLiveProtection(ctx,pin);err!=nil{return err}
+ return g.verifyPublisherAdmission(ctx,pin)
 }
 func(g *publisherScopedDNSActivationGuard)CommitActive(ctx context.Context,pin string)error{
  if err:=g.verifyPublisherAdmission(ctx,pin);err!=nil{return err}

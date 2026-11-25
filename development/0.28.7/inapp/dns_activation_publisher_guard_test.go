@@ -137,3 +137,47 @@ func TestPublisherScopedDNSActivationCancelledContextDoesNotAuthorizeNewWrites(t
  }
  if backend.writes!=0{t.Fatal("cancelled activation wrote DNS")}
 }
+
+type activationSlowAttestation struct{
+ DNSActivationSafetyGuard
+ afterArmed func()
+ afterHealth func()
+}
+func(g *activationSlowAttestation)VerifyArmed(ctx context.Context,pin string)error{
+ if err:=g.DNSActivationSafetyGuard.VerifyArmed(ctx,pin);err!=nil{return err}
+ if g.afterArmed!=nil{g.afterArmed()}
+ return nil
+}
+func(g *activationSlowAttestation)VerifyLiveProtection(ctx context.Context,pin string)error{
+ if err:=g.DNSActivationSafetyGuard.VerifyLiveProtection(ctx,pin);err!=nil{return err}
+ if g.afterHealth!=nil{g.afterHealth()}
+ return nil
+}
+
+func TestPublisherScopedDNSActivationExpiryDuringAttestation(t *testing.T){
+ for _,phase:=range []string{"armed","health"}{
+  t.Run(phase,func(t *testing.T){
+   raw,pin,backend,inner,auth,clock:=publisherDNSGuardFixture(t)
+   slow:=&activationSlowAttestation{DNSActivationSafetyGuard:inner}
+   expire:=func(){*clock=clock.Add(30*time.Minute)}
+   if phase=="armed"{slow.afterArmed=expire}else{slow.afterHealth=expire}
+   signed,err:=newPublisherScopedDNSActivationGuard(context.Background(),raw,pin,auth,slow,func()time.Time{return *clock})
+   if err!=nil{t.Fatal(err)}
+   if phase=="armed"{
+    if err:=signed.VerifyArmed(context.Background(),pin);err==nil{t.Fatal("permit expiry during armed attestation accepted")}
+    if backend.writes!=0||inner.commitCalls!=0{t.Fatal("armed review mutated state")}
+   }else{
+    if err:=activateVOLVEDNSWithRecovery(context.Background(),raw,pin,backend,signed);err==nil{t.Fatal("expired health attestation committed")}
+    if backend.writes!=2||inner.recoverCalls!=1||inner.commitCalls!=0{t.Fatal("expired health proof did not force independent recovery")}
+    assertActivationTestState(t,backend,true)
+   }
+  })
+ }
+}
+
+func TestPublisherScopedDNSActivationSnapshotIsIndependent(t *testing.T){
+ _,_,_,_,auth,_:=publisherDNSGuardFixture(t)
+ snap:=snapshotDNSActivationAuthorization(auth)
+ auth.GrantJSON[0]^=1;auth.Signature[0]^=1;auth.PinnedPublisherKey[0]^=1
+ if snap.GrantJSON[0]==auth.GrantJSON[0]||snap.Signature[0]==auth.Signature[0]||snap.PinnedPublisherKey[0]==auth.PinnedPublisherKey[0]{t.Fatal("controller snapshot aliases caller-owned evidence")}
+}

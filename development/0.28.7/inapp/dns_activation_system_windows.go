@@ -32,6 +32,11 @@ func activateWindowsDNSAsProtectedSYSTEM(
  if err:=VerifyWindowsCurrentSystemSIDReadOnly();err!=nil{
   return fmt.Errorf("VOLVE DNS activation requires the actual Windows LocalSystem SID: %w",err)
  }
+ // All native preflight, durable grant verification, nonce reservation
+ // and activation must use the same detached evidence as the signed guard.
+ // Do not capture the caller's mutable original slices in the backend closure.
+ originalJournal=append([]byte(nil),originalJournal...)
+ publisherAuthorization=snapshotDNSActivationAuthorization(publisherAuthorization)
  // A signed RESTORE or MIGRATION receipt alone cannot authorize DNS activation.
  // This admission must be bound to the current publisher, exact candidate,
  // original DNS and independently armed watchdog task. It is repeated before
