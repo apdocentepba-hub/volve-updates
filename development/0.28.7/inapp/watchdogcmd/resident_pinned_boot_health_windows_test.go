@@ -76,9 +76,14 @@ func TestPinnedBootHealthQueriesLiveTaskProcessAndBothDNS53Owners(t *testing.T){
  payload:=[]byte("MZ-synthetic-executable-test-do-not-run")
  if err:=os.WriteFile(original,payload,0600);err!=nil{t.Fatal(err)}
  hash:=sha256.Sum256(payload)
+ taskXML:=filepath.Join(root,residentRecoveryParent,residentRecoveryFolder,residentRecoveryTask)
+ if err:=os.MkdirAll(filepath.Dir(taskXML),0700);err!=nil{t.Fatal(err)}
+ taskBytes:=[]byte("<Task><RegistrationInfo><Description>synthetic task fixture</Description></RegistrationInfo></Task>")
+ if err:=os.WriteFile(taskXML,taskBytes,0600);err!=nil{t.Fatal(err)}
+ xmlHash:=sha256.Sum256(taskBytes)
  intent:=motorupdate.ResidentRecoveryIntent{
   Task:"VOLVE-DNS-SERVER-0270",TargetVersion:"0.28.7",
-  LegacySHA256:hex.EncodeToString(hash[:]),
+  LegacySHA256:hex.EncodeToString(hash[:]),TaskXMLSHA256:hex.EncodeToString(xmlHash[:]),
  }
  calls:=0
  health:=&residentPinnedBootHealthWindows{
@@ -97,10 +102,12 @@ func TestPinnedBootHealthQueriesLiveTaskProcessAndBothDNS53Owners(t *testing.T){
     "($known -icontains ([string]$_.ExecutablePath))","([string]$_.Name -like 'VOLVE_DNS_*') -or",
     "$again[0].CreationDate -ne $p[0].CreationDate",
     "VOLVE_ORIGINAL_SYSTEM_DNS53_IDENTITY_VERIFIED",
+    "Export-ScheduledTask","DtdProcessing]::Prohibit","$live.DocumentElement.OuterXml -cne $saved.DocumentElement.OuterXml",intent.TaskXMLSHA256,
    }
    for _,token:=range required{
     if !strings.Contains(script,token){t.Errorf("health OS probe missing %q",token)}
    }
+   if strings.Count(script,"Assert-OriginalTaskXML;")!=2{t.Error("complete task XML must bracket live identity checks")}
    if strings.Contains(script,"Get-FileHash") {
     t.Error("watchdog health must not depend on missing Get-FileHash cmdlet")
    }
@@ -127,6 +134,10 @@ func TestPinnedBootHealthQueriesLiveTaskProcessAndBothDNS53Owners(t *testing.T){
   t.Fatal("unprotected original motor trusted as restored")
  }
  if calls!=2{t.Fatal("untrusted NTFS ACL reached process-owner probe")}
+ health.verifyACL=func(string)error{return nil}
+ if err:=os.WriteFile(taskXML,append(taskBytes,byte(' ')),0600);err!=nil{t.Fatal(err)}
+ if err:=health.VerifyRunningIdentity(context.Background(),intent,"restored");err==nil{t.Fatal("modified protected task XML accepted")}
+ if calls!=2{t.Fatal("modified task XML reached native probe")}
 }
 
 

@@ -64,12 +64,13 @@ func(h *residentPinnedBootHealthWindows)VerifyRunningIdentity(
  if h==nil||h.verifySystem==nil||h.verifyACL==nil||h.queryWindows==nil||
   !filepath.IsAbs(h.root)||filepath.Clean(h.root)!=h.root||
   outcome!="restored"||intent.Task!="VOLVE-DNS-SERVER-0270"||
-  intent.TargetVersion!="0.28.7"||!validSHA.MatchString(intent.LegacySHA256){
+  intent.TargetVersion!="0.28.7"||!validSHA.MatchString(intent.LegacySHA256)||!validSHA.MatchString(intent.TaskXMLSHA256){
   return errors.New("restored original SYSTEM health lacks exact trusted identity")
  }
  if err:=h.verifySystem(ctx);err!=nil{return fmt.Errorf("original DNS process check requires SYSTEM: %w",err)}
  old:=filepath.Join(h.root,residentLegacyExe)
- for _,p:=range []string{h.root,old}{
+ taskXML:=filepath.Join(h.root,residentRecoveryParent,residentRecoveryFolder,residentRecoveryTask)
+ for _,p:=range []string{h.root,old,filepath.Dir(filepath.Dir(taskXML)),filepath.Dir(taskXML),taskXML}{
   if err:=h.verifyACL(p);err!=nil{return fmt.Errorf("original DNS health NTFS ACL refused: %w",err)}
  }
  info,err:=os.Lstat(old)
@@ -81,10 +82,33 @@ func(h *residentPinnedBootHealthWindows)VerifyRunningIdentity(
  if err!=nil||hash!=intent.LegacySHA256{
   return errors.New("live original binary does not equal journal-pinned SHA-256")
  }
+ // An original executable and Running task are insufficient if a trigger,
+ // principal setting or restart policy has drifted from the signed backup.
+ xmlInfo,err:=os.Lstat(taskXML)
+ if err!=nil||!xmlInfo.Mode().IsRegular()||xmlInfo.Size()<32||xmlInfo.Size()>2<<20{return errors.New("protected original task XML is absent or invalid")}
+ xmlHash,err:=digestResidentLive(ctx,taskXML)
+ if err!=nil||xmlHash!=intent.TaskXMLSHA256{return errors.New("original task XML differs from journal-pinned SHA-256")}
  script:="$ErrorActionPreference='Stop';$ProgressPreference='SilentlyContinue';"+
   "$ident=[Security.Principal.WindowsIdentity]::GetCurrent();"+
   "if($ident.User.Value -ne 'S-1-5-18'){throw 'SYSTEM identity required for original health'};"+
   "$old="+q(old)+";$sha="+q(intent.LegacySHA256)+";"+
+  "$xmlPath="+q(taskXML)+";$xmlSHA="+q(intent.TaskXMLSHA256)+";"+
+  "$bytes=[IO.File]::ReadAllBytes($xmlPath);$xh=[Security.Cryptography.SHA256]::Create();"+
+  "try{$actualXML=[BitConverter]::ToString($xh.ComputeHash($bytes)).Replace('-','').ToLowerInvariant()}finally{$xh.Dispose()};"+
+  "if($actualXML -cne $xmlSHA){throw 'signed original task XML changed'};"+
+  // Compare complete XML documents, ignoring only declaration and
+  // insignificant formatting whitespace. Reject DTD/external resolution.
+  "$settings=[System.Xml.XmlReaderSettings]::new();$settings.DtdProcessing=[System.Xml.DtdProcessing]::Prohibit;$settings.XmlResolver=$null;"+
+  "$mem=[IO.MemoryStream]::new($bytes);$reader=[System.Xml.XmlReader]::Create($mem,$settings);"+
+  "$saved=[System.Xml.XmlDocument]::new();$saved.XmlResolver=$null;"+
+  "try{$saved.Load($reader)}finally{$reader.Dispose();$mem.Dispose()};"+
+  "function Assert-OriginalTaskXML {"+
+  "$liveText=[string](Export-ScheduledTask -TaskName 'VOLVE-DNS-SERVER-0270' -TaskPath '\\' -ErrorAction Stop);"+
+  "$sr=[IO.StringReader]::new($liveText);$lr=[System.Xml.XmlReader]::Create($sr,$settings);"+
+  "$live=[System.Xml.XmlDocument]::new();$live.XmlResolver=$null;"+
+  "try{$live.Load($lr)}finally{$lr.Dispose();$sr.Dispose()};"+
+  "if($null -eq $live.DocumentElement -or $null -eq $saved.DocumentElement -or $live.DocumentElement.OuterXml -cne $saved.DocumentElement.OuterXml){throw 'restored complete task XML differs from sealed original'}};"+
+  "Assert-OriginalTaskXML;"+
   "$t=Get-ScheduledTask -TaskName 'VOLVE-DNS-SERVER-0270' -TaskPath '\\' -ErrorAction Stop;"+
   "if(@($t).Count -ne 1 -or $t.TaskPath -ne '\\' -or "+
   "$t.Principal.UserId -notin @('SYSTEM','S-1-5-18') -or "+
@@ -107,6 +131,7 @@ func(h *residentPinnedBootHealthWindows)VerifyRunningIdentity(
   "if($tcp.Count -ne 1 -or $tcp[0].OwningProcess -ne $p[0].ProcessId){throw ('original DNS TCP53 owner mismatch: '+$ip)}};"+
   "$again=@(Get-CimInstance Win32_Process -ErrorAction Stop|Where-Object{([string]$_.Name -like 'VOLVE_DNS_*') -or ($known -icontains ([string]$_.ExecutablePath))});"+
   "if($again.Count -ne 1 -or $again[0].ProcessId -ne $p[0].ProcessId -or $again[0].CreationDate -ne $p[0].CreationDate -or [string]$again[0].ExecutablePath -ine $old){throw 'motor identity changed during socket owner audit'};"+
+  "Assert-OriginalTaskXML;"+
   "Write-Output 'VOLVE_ORIGINAL_SYSTEM_DNS53_IDENTITY_VERIFIED'"
  out,err:=h.queryWindows(ctx,script)
  if err!=nil||strings.TrimSpace(out)!="VOLVE_ORIGINAL_SYSTEM_DNS53_IDENTITY_VERIFIED"{

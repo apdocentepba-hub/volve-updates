@@ -39,6 +39,8 @@ on:
       - 'development/0.28.7/inapp/watchdogcmd/main_windows.go'
       - 'development/0.28.7/inapp/watchdogcmd/resident_pinned_boot_cli_windows.go'
       - 'development/0.28.7/inapp/watchdogcmd/resident_pinned_boot_cli_windows_test.go'
+      - 'development/0.28.7/inapp/watchdogcmd/resident_pinned_boot_health_windows.go'
+      - 'development/0.28.7/inapp/watchdogcmd/resident_pinned_boot_health_windows_test.go'
       - 'development/0.28.7/inapp/resident_health_probe.go'
       - 'development/0.28.7/inapp/resident_health_probe_test.go'
       - 'development/0.28.7/inapp/resident_active_health.go'
@@ -166,6 +168,11 @@ jobs:
           if($LASTEXITCODE -ne 0 -or $listed -cnotcontains 'TestPinnedRecoveryContextCoversObservedRealRestoration'){throw 'Recovery timeout regression missing'}
           go test ./cmd/volve-managed-watchdog -run $pattern -count=1 -v -timeout 30s
           if($LASTEXITCODE -ne 0){throw 'Recovery timeout regression failed'}
+          $pattern='^TestPinnedBootHealth'
+          $listed=@(go test ./cmd/volve-managed-watchdog -list $pattern)
+          if($LASTEXITCODE -ne 0 -or $listed -cnotcontains 'TestPinnedBootHealthQueriesLiveTaskProcessAndBothDNS53Owners'){throw 'Complete original task health regression missing'}
+          go test ./cmd/volve-managed-watchdog -run $pattern -count=1 -v -timeout 2m
+          if($LASTEXITCODE -ne 0){throw 'Complete original task health regression failed'}
           $listed=@(go test ./motorupdate -list '^TestWindowsNativeSignedDNSActivationNonceRejectsStaleClock$')
           if($LASTEXITCODE -ne 0 -or $listed -cnotcontains 'TestWindowsNativeSignedDNSActivationNonceRejectsStaleClock'){throw 'Native nonce stale-clock regression missing'}
           go test ./motorupdate -run '^TestWindowsNativeSignedDNSActivationNonceRejectsStaleClock$' -count=1 -v -timeout 3m
