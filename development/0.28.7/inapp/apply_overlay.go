@@ -64,6 +64,87 @@ func patchResidentDNSEntry(path string) error {
     return os.WriteFile(path,updated,0600)
 }
 
+// The pinned base DNS proxy previously closed its TCP connection after
+// exactly one query. Reuse must preserve all existing filtering and failure
+// behavior. Reject any drift in the original handler before modifying it.
+func patchDNSPersistentTCP(path string) error {
+    const original = `				defer c.Close()
+				_ = c.SetDeadline(time.Now().Add(12 * time.Second))
+				var length [2]byte
+				if _, e := io.ReadFull(c, length[:]); e != nil {
+					return
+				}
+				n := int(binary.BigEndian.Uint16(length[:]))
+				if n < 12 || n > 65500 {
+					return
+				}
+				q := make([]byte, n)
+				if _, e := io.ReadFull(c, q); e != nil {
+					return
+				}
+				ans, e := s.handle(q)
+				if e != nil {
+					ans = SERVFAIL(q)
+				}
+				if len(ans) < 12 {
+					return
+				}
+				binary.BigEndian.PutUint16(length[:], uint16(len(ans)))
+				_, _ = c.Write(length[:])
+				_, _ = c.Write(ans)`
+    const replacement = `				defer c.Close()
+				// A TCP DNS connection can carry multiple framed queries.
+				// Keep the original per-frame timeout and bound total lifetime
+				// and query count. Closing on cancellation unblocks idle reads.
+				stopClose := context.AfterFunc(ctx, func() { _ = c.Close() })
+				defer stopClose()
+				expires := time.Now().Add(2 * time.Minute)
+				for served := 0; served < 128; served++ {
+					if ctx.Err() != nil || !time.Now().Before(expires) {
+						return
+					}
+					deadline := time.Now().Add(12 * time.Second)
+					if expires.Before(deadline) {
+						deadline = expires
+					}
+					if err := c.SetDeadline(deadline); err != nil {
+						return
+					}
+					var length [2]byte
+					if _, e := io.ReadFull(c, length[:]); e != nil {
+						return
+					}
+					n := int(binary.BigEndian.Uint16(length[:]))
+					if n < 12 || n > 65500 {
+						return
+					}
+					q := make([]byte, n)
+					if _, e := io.ReadFull(c, q); e != nil {
+						return
+					}
+					// Every query, including a reused connection, traverses
+					// the same rule engine and upstream/failed-response path.
+					ans, e := s.handle(q)
+					if e != nil {
+						ans = SERVFAIL(q)
+					}
+					if len(ans) < 12 || len(ans) > 65535 {
+						return
+					}
+					frame := make([]byte, 2+len(ans))
+					binary.BigEndian.PutUint16(frame[:2], uint16(len(ans)))
+					copy(frame[2:], ans)
+					for len(frame) > 0 {
+						written, err := c.Write(frame)
+						if err != nil || written <= 0 {
+							return
+						}
+						frame = frame[written:]
+					}
+				}`
+    return patch(path, original, replacement)
+}
+
 func main() {
     if len(os.Args) != 2 { panic("usage: go run apply_overlay.go <source-code-dir>") }
     target := os.Args[1]
@@ -115,6 +196,7 @@ func fullEngineAt(root string) (*blocker.Engine, error) {
     // Use the downloaded Full list, not a status counter.`
     if err := patch(filepath.Join(target, "dnsprod_windows.go"), fullCatalogMarker, fullCatalogReplacement); err != nil { panic(err) }
     if err := patchResidentDNSEntry(filepath.Join(target,"dnsprod_windows.go")); err != nil { panic(err) }
+    if err := patchDNSPersistentTCP(filepath.Join(target,"dnsproxy","dns.go")); err != nil { panic(err) }
     const oldMain = "if len(os.Args) == 2 && os.Args[1] == \"--check-app-updates\" {"
     const newMain = `if len(os.Args) == 2 && os.Args[1] == "--prepare-legacy-rollback" {
         if err := printLegacyRecoveryPreparation(); err != nil {
