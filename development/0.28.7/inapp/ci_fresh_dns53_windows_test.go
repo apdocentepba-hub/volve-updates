@@ -215,3 +215,60 @@ func TestCIConfiguredNativeTCPDNS(t *testing.T) {
  if count!=1 {t.Fatalf("native TCP returned %d matching A records, expected one",count)}
  t.Log("PASS VOLVE_NATIVE_DNSQUERY_CONFIGURED_TCP")
 }
+
+// Compare an exact allowed challenge over a fresh TCP connection and then
+// a second challenge on the SAME socket. This is an independent diagnostic
+// of connection reuse, not a substitute for the configured Windows client.
+// No data is sent anywhere except the attested isolated loopback motor.
+func TestCIResidentTCPConnectionReuse(t *testing.T) {
+ if os.Getenv("VOLVE_CI_FRESH_DNS53_PROBE")!="GITHUB-HOSTED-VM-ONLY" ||
+    os.Getenv("VOLVE_CI_NESTED_GUEST_DNS")!="PRIVATE_GUEST_ONLY" {
+  t.Skip("private nested guest only")
+ }
+ for _,host:=range []string{"127.0.0.1","::1"} {
+  t.Run(host,func(t *testing.T){
+   ctx,cancel:=context.WithTimeout(context.Background(),8*time.Second)
+   defer cancel()
+   var dialer net.Dialer
+   c,err:=dialer.DialContext(ctx,"tcp",net.JoinHostPort(host,"53"))
+   if err!=nil{t.Fatal(err)}
+   defer c.Close()
+   if deadline,ok:=ctx.Deadline();ok{if err=c.SetDeadline(deadline);err!=nil{t.Fatal(err)}}
+   for attempt:=1;attempt<=2;attempt++{
+    var nonce [16]byte
+    if _,err=rand.Read(nonce[:]);err!=nil{t.Fatal(err)}
+    question:=[]byte{32}
+    question=append(question,[]byte(fmt.Sprintf("%x",nonce))...)
+    for _,label:=range []string{"volve-motor-ci","test"}{
+     question=append(question,byte(len(label)))
+     question=append(question,[]byte(label)...)
+    }
+    question=append(question,0,0,1,0,1)
+    message:=append([]byte{0x6f,byte(attempt),1,0,0,1,0,0,0,0,0,0},question...)
+    packet:=make([]byte,2+len(message))
+    binary.BigEndian.PutUint16(packet[:2],uint16(len(message)))
+    copy(packet[2:],message)
+    for len(packet)>0{
+     n,e:=c.Write(packet)
+     if e!=nil{t.Fatalf("connection query %d write: %v",attempt,e)}
+     if n==0{t.Fatal(io.ErrShortWrite)}
+     packet=packet[n:]
+    }
+    var length [2]byte
+    if _,err=io.ReadFull(c,length[:]);err!=nil{t.Fatalf("connection query %d frame: %v",attempt,err)}
+    size:=int(binary.BigEndian.Uint16(length[:]))
+    if size!=len(message)+16{t.Fatalf("query %d unexpected DNS frame length %d",attempt,size)}
+    response:=make([]byte,size)
+    if _,err=io.ReadFull(c,response);err!=nil{t.Fatalf("connection query %d body: %v",attempt,err)}
+    if !bytes.Equal(response[:2],message[:2]) || response[2]&0x80==0 ||
+       response[3]&0x0f!=0 || binary.BigEndian.Uint16(response[4:6])!=1 ||
+       binary.BigEndian.Uint16(response[6:8])!=1 ||
+       !bytes.Equal(response[12:len(message)],question) ||
+       !bytes.Equal(response[len(message):],[]byte{0xc0,0x0c,0,1,0,1,0,0,0,60,0,4,203,0,113,7}) {
+     t.Fatalf("query %d response mismatch",attempt)
+    }
+    t.Logf("PASS VOLVE_TCP_REUSE_QUERY address=%s sequence=%d",host,attempt)
+   }
+  })
+ }
+}

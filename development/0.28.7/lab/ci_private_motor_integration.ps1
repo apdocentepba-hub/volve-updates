@@ -126,6 +126,15 @@ try{
     $nativeTCP=($nativeExit -eq 0 -and @($nativeProof|Where-Object {[string]$_ -match '^--- PASS: TestCIConfiguredNativeTCPDNS '}).Count -eq 1 -and @($nativeProof|Where-Object {[string]$_ -match 'PASS VOLVE_NATIVE_DNSQUERY_CONFIGURED_TCP'}).Count -eq 1)
     Write-Host ('CI NATIVE TCP DNS diagnostic: verified='+$nativeTCP+' exit='+$nativeExit)
     foreach($line in $nativeProof){Write-Host ([string]$line)}
+    # Separate connection-reuse observation: both addresses, two distinct
+    # challenges each on one socket. Do not retry or reconnect on EOF.
+    # This is diagnostic only and cannot waive the configured-client gate.
+    $reuseProof=@(& $probe '-test.run=^TestCIResidentTCPConnectionReuse$' '-test.v' '-test.timeout=30s' 2>&1)
+    $reuseExit=$LASTEXITCODE
+    $reuseMarkers=@($reuseProof|Where-Object {[string]$_ -match 'PASS VOLVE_TCP_REUSE_QUERY address=(127\.0\.0\.1|::1) sequence=[12]$'})
+    $reuseVerified=($reuseExit -eq 0 -and $reuseMarkers.Count -eq 4 -and @($reuseProof|Where-Object {[string]$_ -match '^--- PASS: TestCIResidentTCPConnectionReuse '}).Count -eq 1)
+    Write-Host ('CI TCP REUSE diagnostic: verified='+$reuseVerified+' exit='+$reuseExit+' verified_queries='+$reuseMarkers.Count)
+    foreach($line in $reuseProof){Write-Host ([string]$line)}
     # Explicit-server probes are diagnostic ONLY. They do not establish
     # that the Windows-configured resolver chooses or reaches that server.
     # No retry, cache flush, adapter change or external network is involved.
@@ -154,7 +163,7 @@ try{
     $again=@(Get-CimInstance Win32_Process -Filter ('ProcessId='+$pidNumber) -ErrorAction Stop)
     if($again.Count -ne 1 -or $again[0].CreationDate -ne $creation -or $again[0].ExecutablePath -ine $exe){throw 'Motor replaced during test'}
     if((Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash -cne $MotorSHA -or (Get-FileHash -LiteralPath $catalog -Algorithm SHA256).Hash -cne $catalogPin){throw 'Motor/catalog changed during probe'}
-    $report=[ordered]@{actual_system_motor=$true;motor_sha256=$MotorSHA;catalog_sha256=$catalogPin;independent_wire_probe_sha256=$WireProbeSHA;independent_wire_probe_verified=$true;dual_stack_transport_checks=$checks;configured_resolver_default=$true;configured_resolver_tcp=(-not $tcpKnownFailure);configured_tcp_known_failure=$tcpKnownFailure;native_tcp_diagnostic_verified=$nativeTCP;native_tcp_diagnostic_exit=$nativeExit;explicit_tcp_diagnostic=$explicitTCP;configured_resolver_attempts=$resolverAttempts;blocked_domains_verified=$true;synthetic_upstream_only=$true}
+    $report=[ordered]@{actual_system_motor=$true;motor_sha256=$MotorSHA;catalog_sha256=$catalogPin;independent_wire_probe_sha256=$WireProbeSHA;independent_wire_probe_verified=$true;dual_stack_transport_checks=$checks;configured_resolver_default=$true;configured_resolver_tcp=(-not $tcpKnownFailure);configured_tcp_known_failure=$tcpKnownFailure;native_tcp_diagnostic_verified=$nativeTCP;native_tcp_diagnostic_exit=$nativeExit;tcp_reuse_diagnostic_verified=$reuseVerified;tcp_reuse_diagnostic_exit=$reuseExit;tcp_reuse_verified_queries=$reuseMarkers.Count;explicit_tcp_diagnostic=$explicitTCP;configured_resolver_attempts=$resolverAttempts;blocked_domains_verified=$true;synthetic_upstream_only=$true}
 }finally{
     if($owned){
         $registered=Get-ScheduledTask -TaskName $task -TaskPath '\' -ErrorAction Stop
