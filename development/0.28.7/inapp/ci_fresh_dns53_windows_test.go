@@ -4,6 +4,9 @@ package main
 
 import (
  "crypto/rand"
+ "errors"
+ "math/bits"
+ "strconv"
  "syscall"
 	"bytes"
 	"strings"
@@ -134,11 +137,14 @@ func queryCITCPRCode(ctx context.Context, addr, domain string) (byte,error) {
 // assertCIFreshAllowedARecord is a black-box test of the ACTUAL DNS wire
 // response from the resident SYSTEM motor. It rejects NOERROR/zero answers.
 func assertCIFreshAllowedARecord(ctx context.Context,network,addr string)error{
+ return assertCIFreshAllowedARecordWithDialer(ctx,network,addr,net.Dialer{})
+}
+
+func assertCIFreshAllowedARecordWithDialer(ctx context.Context,network,addr string,dialer net.Dialer)error{
  if network!="tcp" && network!="udp"{return fmt.Errorf("unexpected DNS transport")}
  question:=[]byte{7,'e','x','a','m','p','l','e',3,'o','r','g',0,0,1,0,1}
  query:=[]byte{0x6f,0x18,1,0,0,1,0,0,0,0,0,0}
  query=append(query,question...)
- dialer:=net.Dialer{}
  conn,err:=dialer.DialContext(ctx,network,addr)
  if err!=nil{return err}
  defer conn.Close()
@@ -273,5 +279,60 @@ func TestCIResidentTCPConnectionReuse(t *testing.T) {
     t.Logf("PASS VOLVE_TCP_REUSE_QUERY address=%s sequence=%d",host,attempt)
    }
   })
+ }
+}
+
+// Isolate Winsock outgoing-interface selection from the motor's DNS parser.
+// Both families exercise identical wire queries with three socket policies:
+// OS default, exact loopback interface, exact private adapter. No persistent
+// route, adapter, firewall or DNS configuration is changed. The native
+// configured-resolver gate remains mandatory regardless of this diagnostic.
+func TestCIResidentTCPInterfaceSelection(t *testing.T){
+ if os.Getenv("GITHUB_ACTIONS")!="true"||os.Getenv("RUNNER_ENVIRONMENT")!="github-hosted"||
+  os.Getenv("VOLVE_CI_NESTED_GUEST_DNS")!="PRIVATE_GUEST_ONLY"||
+  os.Getenv("VOLVE_CI_FRESH_DNS53_PROBE")!="GITHUB-HOSTED-VM-ONLY"{
+  t.Skip("isolated hosted private guest only")
+ }
+ index:=func(name string)int{
+  n,err:=strconv.Atoi(os.Getenv(name))
+  if err!=nil||n<=0||n>0xffffff{t.Fatalf("invalid attested interface index %s",name)}
+  return n
+ }
+ private:=index("VOLVE_CI_PRIVATE_NIC_INDEX")
+ v4loop:=index("VOLVE_CI_LOOPBACK_V4_INDEX")
+ v6loop:=index("VOLVE_CI_LOOPBACK_V6_INDEX")
+ if private==v4loop||private==v6loop{t.Fatal("private and loopback indexes must differ")}
+ for _,family:=range []struct{host string;loop,level int;ipv4 bool}{
+  {"127.0.0.1",v4loop,syscall.IPPROTO_IP,true},
+  {"::1",v6loop,syscall.IPPROTO_IPV6,false},
+ }{
+  for _,policy:=range []struct{name string;idx int}{{"default",0},{"loopback",family.loop},{"private",private}}{
+   ctx,cancel:=context.WithTimeout(context.Background(),4*time.Second)
+   d:=net.Dialer{}
+   optionApplied:=false
+   if policy.idx!=0{
+    d.Control=func(network,address string,raw syscall.RawConn)error{
+     if (family.ipv4&&network!="tcp4")||(!family.ipv4&&network!="tcp6"){return errors.New("wrong socket family")}
+     var sockErr error
+     value:=uint32(policy.idx)
+     // Windows SDK: IP_UNICAST_IF=31 uses network byte order;
+     // IPV6_UNICAST_IF=31 uses host byte order.
+     if family.ipv4{value=bits.ReverseBytes32(value)}
+     if err:=raw.Control(func(fd uintptr){
+      sockErr=syscall.SetsockoptInt(syscall.Handle(fd),family.level,31,int(value))
+      optionApplied=sockErr==nil
+     });err!=nil{return err}
+     return sockErr
+    }
+   }
+   err:=assertCIFreshAllowedARecordWithDialer(ctx,"tcp",net.JoinHostPort(family.host,"53"),d)
+   cancel()
+   code:=uint64(0)
+   var errno syscall.Errno
+   if errors.As(err,&errno){code=uint64(errno)}
+   t.Logf("VOLVE_TCP_INTERFACE_OBSERVATION host=%s policy=%s index=%d option_applied=%t answer_verified=%t winsock=%d error=%v",family.host,policy.name,policy.idx,optionApplied,err==nil,code,err)
+   if policy.idx==0&&err!=nil{t.Errorf("unbound control failed: %v",err)}
+   if policy.idx!=0&&!optionApplied{t.Errorf("interface option not applied for %s %s",family.host,policy.name)}
+  }
  }
 }

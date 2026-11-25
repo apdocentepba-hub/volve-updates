@@ -7,11 +7,17 @@ on:
       - 'development/0.28.7/inapp/**'
       - 'development/0.28.7/lab/**'
       - 'development/0.28.7/journal/**'
+  push:
+    branches: [work/0287-installer-progress-20261124]
+    paths:
+      - 'development/0.28.7/lab/ci_private_motor_integration.ps1'
+      - 'development/0.28.7/inapp/ci_fresh_dns53_windows_test.go'
   workflow_dispatch:
 permissions:
   contents: read
 jobs:
   signed-legacy-and-system-watchdog:
+    if: github.event_name != 'push'
     runs-on: windows-latest
     timeout-minutes: 45
     steps:
@@ -221,7 +227,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        trial: [strict-reboot, native-dns]
+        trial: ${{ fromJSON(github.event_name == 'push' && '["native-dns"]' || '["strict-reboot","native-dns"]') }}
     steps:
       - uses: actions/checkout@v4
         with:
