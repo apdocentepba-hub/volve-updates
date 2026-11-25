@@ -6,6 +6,8 @@ import (
  "crypto/rand"
  "errors"
  "math/bits"
+ "runtime"
+ "unsafe"
  "strconv"
  "sync"
  "sync/atomic"
@@ -336,6 +338,64 @@ func TestCIResidentTCPInterfaceSelection(t *testing.T){
    if policy.idx==0&&err!=nil{t.Errorf("unbound control failed: %v",err)}
    if policy.idx!=0&&!optionApplied{t.Errorf("interface option not applied for %s %s",family.host,policy.name)}
   }
+ }
+ // Compare the native DNS API's interface selection, using the same
+ // actual running motor and configured resolver, without an explicit server.
+ // Every call has a fresh reserved challenge. The outer Go test process
+ // enforces a bounded timeout; no DNS configuration is changed.
+ if unsafe.Sizeof(uintptr(0))!=8{t.Fatal("DnsQueryEx diagnostic requires Win64")}
+ proc:=syscall.NewLazyDLL("dnsapi.dll").NewProc("DnsQueryEx")
+ if err:=proc.Find();err!=nil{t.Fatal(err)}
+ type queryRequest struct{
+  Version uint32
+  Name *uint16
+  Type uint16
+  Options uint64
+  Servers uintptr
+  InterfaceIndex uint32
+  Callback uintptr
+  Context uintptr
+ }
+ type queryResult struct{
+  Version uint32
+  Status int32
+  Options uint64
+  Records *syscall.DNSRecord
+  Reserved uintptr
+ }
+ var layout queryRequest
+ var resultLayout queryResult
+ // windns.h DNS_QUERY_REQUEST / DNS_QUERY_RESULT, Win64 ABI.
+ if unsafe.Sizeof(layout)!=64||unsafe.Offsetof(layout.Options)!=24||unsafe.Offsetof(layout.InterfaceIndex)!=40||unsafe.Offsetof(layout.Callback)!=48||
+  unsafe.Sizeof(resultLayout)!=32||unsafe.Offsetof(resultLayout.Records)!=16{t.Fatal("unexpected Win64 native DNS ABI")}
+ policies:=[]struct{name string;idx int}{{"default",0},{"loopback-v4",v4loop},{"private",private}}
+ if v6loop!=v4loop{policies=append(policies,struct{name string;idx int}{"loopback-v6",v6loop})}
+ for _,policy:=range policies{
+  var nonce [16]byte
+  if _,err:=rand.Read(nonce[:]);err!=nil{t.Fatal(err)}
+  name,err:=syscall.UTF16PtrFromString(fmt.Sprintf("%x.volve-motor-ci.test.",nonce))
+  if err!=nil{t.Fatal(err)}
+  request:=queryRequest{Version:1,Name:name,Type:syscall.DNS_TYPE_A,Options:0x2|0x8|0x40|0x80,InterfaceIndex:uint32(policy.idx)}
+  result:=queryResult{Version:1}
+  status,_,_:=proc.Call(uintptr(unsafe.Pointer(&request)),uintptr(unsafe.Pointer(&result)),0)
+  runtime.KeepAlive(name)
+  runtime.KeepAlive(&request)
+  count:=0
+  valid:=status==0&&result.Status==0
+  if valid{
+   for rec,n:=result.Records,0;rec!=nil;rec,n=rec.Next,n+1{
+    if n>=64{valid=false;break}
+    if rec.Type==syscall.DNS_TYPE_A&&rec.Dw&3==syscall.DnsSectionAnswer{
+     if rec.Length!=4||!bytes.Equal(rec.Data[:4],[]byte{203,0,113,7}){valid=false;break}
+     count++
+    }
+   }
+  }
+  if result.Records!=nil{syscall.DnsRecordListFree(result.Records,1)}
+  runtime.KeepAlive(&result)
+  verified:=valid&&count==1
+  t.Logf("VOLVE_DNSQUERYEX_INTERFACE_OBSERVATION policy=%s index=%d status=%d result_status=%d answer_verified=%t",policy.name,policy.idx,uint32(status),result.Status,verified)
+  if status==0&&result.Status==0&&!verified{t.Error("DnsQueryEx success did not return exact fixture A record")}
  }
 }
 
