@@ -445,10 +445,12 @@ func TestCIConfiguredNativeTCPReferenceControl(t *testing.T){
  var nonce [16]byte
  if _,err:=rand.Read(nonce[:]);err!=nil{t.Fatal(err)}
  challenge:=fmt.Sprintf("%x.volve-motor-ci.test",nonce)
+ fallbackChallenge:="fallback-"+challenge
  var listeners []net.Listener
  var packets []net.PacketConn
  var workers sync.WaitGroup
  var acceptedTCP,queryTCP,replyTCP,queryUDP,replyUDP atomic.Int32
+ var fallbackUDP,fallbackTCReply,fallbackTCP,fallbackTCPReply atomic.Int32
  // All listening sockets are exact loopback addresses and only live within
  // this test process. The invoking script verifies no previous port53 owner.
  defer func(){
@@ -480,14 +482,19 @@ func TestCIConfiguredNativeTCPReferenceControl(t *testing.T){
       if size<17||size>4096{return}
       q:=make([]byte,size)
       if _,e:=io.ReadFull(c,q);e!=nil{return}
-      r,match,e:=ciReferenceDNSReply(q,challenge);if e!=nil{return}
+      r,match,e:=ciReferenceDNSReply(q,challenge)
+      fallback:=false
+      if e!=nil{r,fallback,e=ciReferenceDNSReply(q,fallbackChallenge)}
+      if e!=nil{return}
       if match{queryTCP.Add(1)}
+      if fallback{fallbackTCP.Add(1)}
       frame:=make([]byte,2+len(r))
       binary.BigEndian.PutUint16(frame[:2],uint16(len(r)));copy(frame[2:],r)
       for len(frame)>0{
        n,e:=c.Write(frame);if e!=nil||n<=0{return};frame=frame[n:]
       }
       if match{replyTCP.Add(1)}
+      if fallback{fallbackTCPReply.Add(1)}
      }
     }()
    }
@@ -497,9 +504,23 @@ func TestCIConfiguredNativeTCPReferenceControl(t *testing.T){
    buf:=make([]byte,4096)
    for {
     n,peer,e:=p.ReadFrom(buf);if e!=nil{return}
-    r,match,e:=ciReferenceDNSReply(buf[:n],challenge);if e!=nil{continue}
+    r,match,e:=ciReferenceDNSReply(buf[:n],challenge)
+    fallback:=false
+    if e!=nil{r,fallback,e=ciReferenceDNSReply(buf[:n],fallbackChallenge)}
+    if e!=nil{continue}
+    if fallback{
+     // An exact reserved challenge receives a valid truncated UDP answer.
+     // A normal resolver must retry over TCP to obtain the A record.
+     fallbackUDP.Add(1)
+     r=r[:len(r)-16]
+     r[2]|=0x02
+     r[6]=0;r[7]=0
+    }
     if match{queryUDP.Add(1)}
-    if n,e=p.WriteTo(r,peer);e==nil&&n==len(r)&&match{replyUDP.Add(1)}
+    if n,e=p.WriteTo(r,peer);e==nil&&n==len(r){
+     if match{replyUDP.Add(1)}
+     if fallback{fallbackTCReply.Add(1)}
+    }
    }
   }(p)
  }
@@ -534,6 +555,25 @@ func TestCIConfiguredNativeTCPReferenceControl(t *testing.T){
  t.Logf("VOLVE_REFERENCE_TCP_OBSERVATION raw_four_transports=true native_verified=%t native_error=%v tcp_connections=%d tcp_queries=%d tcp_replies=%d udp_queries=%d udp_replies=%d",err==nil,err,acceptedTCP.Load()-before,queryTCP.Load(),replyTCP.Load(),queryUDP.Load(),replyUDP.Load())
  // A failed configured query is valid diagnostic evidence, not a release PASS.
  if err==nil&&(queryTCP.Load()<1||replyTCP.Load()<1){t.Fatal("native reference success lacks matching TCP wire evidence")}
+ // Distinct name, same configured resolver, WITHOUT USE_TCP_ONLY. This
+ // separates automatic UDP truncation fallback from forced TCP mode.
+ var fallbackRecords *syscall.DNSRecord
+ fallbackErr:=syscall.DnsQuery(fallbackChallenge+".",syscall.DNS_TYPE_A,options &^ 0x2,nil,&fallbackRecords,nil)
+ if fallbackRecords!=nil{defer syscall.DnsRecordListFree(fallbackRecords,1)}
+ fallbackCount:=0
+ if fallbackErr==nil{
+  for rec,n:=fallbackRecords,0;rec!=nil;rec,n=rec.Next,n+1{
+   if n>=64{t.Fatal("fallback native record chain excessive")}
+   if rec.Type==syscall.DNS_TYPE_A&&rec.Dw&3==syscall.DnsSectionAnswer{
+    if rec.Length!=4||!bytes.Equal(rec.Data[:4],[]byte{203,0,113,7}){t.Fatal("fallback native response unexpected")}
+    fallbackCount++
+   }
+  }
+ }
+ time.Sleep(100*time.Millisecond)
+ fallbackVerified:=fallbackErr==nil&&fallbackCount==1&&fallbackUDP.Load()>0&&fallbackTCReply.Load()>0&&fallbackTCP.Load()>0&&fallbackTCPReply.Load()>0
+ t.Logf("VOLVE_REFERENCE_TCP_OBSERVATION automatic_fallback=true verified=%t native_error=%v udp_queries=%d truncated_replies=%d tcp_queries=%d tcp_replies=%d",fallbackVerified,fallbackErr,fallbackUDP.Load(),fallbackTCReply.Load(),fallbackTCP.Load(),fallbackTCPReply.Load())
+ if fallbackErr==nil&&!fallbackVerified{t.Fatal("automatic fallback returned success without complete wire proof")}
 }
 
 func TestCIReferenceDNSReplyRejectsUnexpectedNames(t *testing.T){
