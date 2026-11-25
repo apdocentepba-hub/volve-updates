@@ -23,6 +23,8 @@ on:
       - 'development/0.28.7/inapp/ci_fresh_dns53_windows_test.go'
       - 'development/0.28.7/inapp/production_dns_service_runner_windows_test.go'
       - 'development/0.28.7/inapp/production_dns_service_runner_windows.go'
+      - 'development/0.28.7/inapp/dns_activation_exclusive_lease.go'
+      - 'development/0.28.7/inapp/dns_activation_exclusive_lease_test.go'
       - 'development/0.28.7/inapp/apply_overlay.go'
   workflow_dispatch:
 permissions:
@@ -117,6 +119,11 @@ jobs:
           if($LASTEXITCODE -ne 0 -or $listed -cnotcontains 'TestProtectedDNSActivationPanicRequestsIndependentRecovery'){throw 'New panic regression missing'}
           go test ./motorupdate -run '^TestProtectedDNSActivation' -count=1 -v -timeout 2m
           if($LASTEXITCODE -ne 0){throw 'Protected activation regression failed'}
+          $pattern='^TestWindowsProtectedDNSActivationLeaseCanceled(AcquisitionDoesNotReachFactory|ReacquisitionRefusesReadback)$'
+          $listed=@(go test ./motorupdate -list $pattern)
+          if($LASTEXITCODE -ne 0 -or $listed -cnotcontains 'TestWindowsProtectedDNSActivationLeaseCanceledAcquisitionDoesNotReachFactory' -or $listed -cnotcontains 'TestWindowsProtectedDNSActivationLeaseCanceledReacquisitionRefusesReadback'){throw 'Cancellation regression census incomplete'}
+          go test ./motorupdate -run $pattern -count=1 -v -timeout 2m
+          if($LASTEXITCODE -ne 0){throw 'Protected activation acquisition/reacquisition cancellation regression failed'}
       - name: Test boot recovery lock and cancellation boundaries (NO NATIVE WRITES)
         shell: powershell
         working-directory: build/codigo

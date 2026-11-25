@@ -65,6 +65,10 @@ func(g *exclusiveDNSActivationGuard)RecoverIndependently(ctx context.Context,pin
  if reacquired==nil{
   return errors.Join(recoveryErr,errors.New("CRITICAL: independent recovery returned without protected kernel lease"))
  }
+ if err:=ctx.Err();err!=nil{
+  reacquired()
+  return errors.Join(recoveryErr,fmt.Errorf("CRITICAL: recovery context expired while reacquiring protected Windows lease: %w",err))
+ }
  g.release=reacquired
  return recoveryErr
 }
@@ -95,6 +99,9 @@ func activateVOLVEDNSUnderProtectedLease(
  if release==nil{return errors.New("protected resident mutex yielded no owner release")}
  guarded:=&exclusiveDNSActivationGuard{inner:guard,acquire:acquire,release:release}
  defer guarded.close()
+ // The backend factory can consume a one-use signed authorization.
+ // Cancellation while acquiring the native mutex must not reach it.
+ if err:=ctx.Err();err!=nil{return err}
  backend,err:=backendFactory(ctx,guarded)
  if err!=nil{return fmt.Errorf("protected native DNS adapter refused: %w",err)}
  if backend==nil{return errors.New("protected native DNS adapter absent")}

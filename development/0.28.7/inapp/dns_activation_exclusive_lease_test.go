@@ -135,3 +135,44 @@ func TestWindowsProtectedDNSActivationLeaseRefusesUnsafeSetup(t *testing.T){
  }
  if lease.acquired!=1||lease.released!=1{t.Fatalf("backend failure did not release protected mutex: %+v",lease)}
 }
+
+func TestWindowsProtectedDNSActivationLeaseCanceledAcquisitionDoesNotReachFactory(t *testing.T){
+ journal,pin,_,guard:=prepareActivationTest(t)
+ ctx,cancel:=context.WithCancel(context.Background())
+ defer cancel()
+ lease:=&activationLeaseHarness{}
+ acquire:=func(c context.Context)(func(),error){
+  release,err:=lease.acquire(c)
+  cancel()
+  return release,err
+ }
+ err:=activateVOLVEDNSUnderProtectedLease(ctx,journal,pin,guard,acquire,
+  func(context.Context,DNSActivationSafetyGuard)(DNSAdapterBackend,error){
+   t.Fatal("canceled acquisition reached authorization-consuming backend factory")
+   return nil,errors.New("unreachable")
+  })
+ if !errors.Is(err,context.Canceled)||lease.held||lease.acquired!=1||lease.released!=1{
+  t.Fatalf("canceled lease not safely released: %v %+v",err,lease)
+ }
+}
+func TestWindowsProtectedDNSActivationLeaseCanceledReacquisitionRefusesReadback(t *testing.T){
+ _,pin,_,rawGuard:=prepareActivationTest(t)
+ ctx,cancel:=context.WithCancel(context.Background())
+ defer cancel()
+ lease:=&activationLeaseHarness{}
+ first,err:=lease.acquire(ctx)
+ if err!=nil{t.Fatal(err)}
+ spy:=&activationLeaseGuardSpy{lease:lease,inner:rawGuard}
+ g:=&exclusiveDNSActivationGuard{inner:spy,release:first,acquire:func(c context.Context)(func(),error){
+  release,err:=lease.acquire(c)
+  cancel()
+  return release,err
+ }}
+ defer g.close()
+ err=g.RecoverIndependently(ctx,pin)
+ if !errors.Is(err,context.Canceled)||!strings.Contains(err.Error(),"CRITICAL")||
+  lease.held||g.release!=nil||lease.acquired!=2||lease.released!=2||
+  !spy.recoveryObservedWithoutLease{
+  t.Fatalf("canceled recovery lease accepted: %v %+v",err,lease)
+ }
+}
