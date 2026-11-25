@@ -209,4 +209,28 @@ try{
 }
 if($null -eq $report){throw 'Actual motor verification incomplete'}
 $report.motor_stopped=$true
+# Independent reference server is a separate process using the same
+# assignments, after the actual motor has been stopped and port53 freed.
+# It cannot affect production or the original configured TCP failure gate.
+$report.reference_tcp_diagnostic_exit=$null
+$report.reference_tcp_observations=@()
+if($report.configured_tcp_known_failure){
+    Assert-FreeDNS53
+    Assert-LoopbackAssignments
+    if((Get-FileHash -LiteralPath $probe -Algorithm SHA256).Hash -cne $WireProbeSHA){throw 'Reference probe hash changed'}
+    $env:VOLVE_CI_REFERENCE_DNS53='MOTOR_STOPPED_PRIVATE_LOOPBACK_ONLY'
+    try{
+        $reference=@(& $probe '-test.run=^TestCIConfiguredNativeTCPReferenceControl$' '-test.v' '-test.timeout=45s' 2>&1)
+        $report.reference_tcp_diagnostic_exit=$LASTEXITCODE
+        foreach($line in $reference){
+            Write-Host ([string]$line)
+            if([string]$line -match 'VOLVE_REFERENCE_TCP_OBSERVATION '){$report.reference_tcp_observations+=([string]$line).Trim()}
+        }
+        Write-Host ('CI TCP REFERENCE diagnostic: exit='+$report.reference_tcp_diagnostic_exit+' observations='+$report.reference_tcp_observations.Count)
+    }finally{
+        Remove-Item -LiteralPath Env:VOLVE_CI_REFERENCE_DNS53 -ErrorAction SilentlyContinue
+    }
+    Assert-FreeDNS53
+    Assert-LoopbackAssignments
+}
 [pscustomobject]$report

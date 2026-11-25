@@ -7,6 +7,8 @@ import (
  "errors"
  "math/bits"
  "strconv"
+ "sync"
+ "sync/atomic"
  "syscall"
 	"bytes"
 	"strings"
@@ -335,4 +337,151 @@ func TestCIResidentTCPInterfaceSelection(t *testing.T){
    if policy.idx!=0&&!optionApplied{t.Errorf("interface option not applied for %s %s",family.host,policy.name)}
   }
  }
+}
+
+// Independent reference server for the configured DNS failure experiment.
+// It implements only the exact reserved A/IN challenge and fixed control
+// example.org; no forwarding, catalog, adapter changes or production code.
+func ciReferenceDNSReply(q []byte,challenge string)([]byte,bool,error){
+ if len(q)<17||len(q)>4096||q[2]&0xfe!=0||q[3]&0x80!=0||
+  binary.BigEndian.Uint16(q[4:6])!=1||binary.BigEndian.Uint16(q[6:8])!=0||
+  binary.BigEndian.Uint16(q[8:10])!=0{return nil,false,errors.New("invalid reference query")}
+ off:=12
+ var labels []string
+ for {
+  if off>=len(q){return nil,false,io.ErrUnexpectedEOF}
+  n:=int(q[off]);off++
+  if n==0{break}
+  if n>63||off+n>len(q)||len(labels)>=3{return nil,false,errors.New("invalid reference labels")}
+  labels=append(labels,strings.ToLower(string(q[off:off+n])));off+=n
+ }
+ if off+4>len(q)||binary.BigEndian.Uint16(q[off:off+2])!=1||
+  binary.BigEndian.Uint16(q[off+2:off+4])!=1{return nil,false,errors.New("reference requires A/IN")}
+ off+=4
+ extra:=binary.BigEndian.Uint16(q[10:12])
+ if extra==0{
+  if off!=len(q){return nil,false,errors.New("trailing reference query data")}
+ }else{
+  if extra!=1||off+11>len(q)||q[off]!=0||binary.BigEndian.Uint16(q[off+1:off+3])!=41||
+   off+11+int(binary.BigEndian.Uint16(q[off+9:off+11]))!=len(q){return nil,false,errors.New("invalid reference EDNS")}
+ }
+ name:=strings.Join(labels,".")
+ match:=name==challenge
+ if !match&&name!="example.org"{return nil,false,errors.New("not an owned reference challenge")}
+ answer:=append([]byte(nil),q[:off]...)
+ answer[2]=0x81;answer[3]=0x80
+ for i:=6;i<12;i++{answer[i]=0}
+ answer[7]=1
+ answer=append(answer,0xc0,0x0c,0,1,0,1,0,0,0,60,0,4,203,0,113,7)
+ return answer,match,nil
+}
+
+func TestCIConfiguredNativeTCPReferenceControl(t *testing.T){
+ if os.Getenv("GITHUB_ACTIONS")!="true"||os.Getenv("RUNNER_ENVIRONMENT")!="github-hosted"||
+  os.Getenv("VOLVE_CI_NESTED_GUEST_DNS")!="PRIVATE_GUEST_ONLY"||
+  os.Getenv("VOLVE_CI_REFERENCE_DNS53")!="MOTOR_STOPPED_PRIVATE_LOOPBACK_ONLY"{
+  t.Skip("independent private guest reference control only")
+ }
+ var nonce [16]byte
+ if _,err:=rand.Read(nonce[:]);err!=nil{t.Fatal(err)}
+ challenge:=fmt.Sprintf("%x.volve-motor-ci.test",nonce)
+ var listeners []net.Listener
+ var packets []net.PacketConn
+ var workers sync.WaitGroup
+ var acceptedTCP,queryTCP,replyTCP,queryUDP,replyUDP atomic.Int32
+ // All listening sockets are exact loopback addresses and only live within
+ // this test process. The invoking script verifies no previous port53 owner.
+ defer func(){
+  for _,l:=range listeners{l.Close()}
+  for _,p:=range packets{p.Close()}
+  workers.Wait()
+ }()
+ for _,host:=range []string{"127.0.0.1","::1"}{
+  endpoint:=net.JoinHostPort(host,"53")
+  l,e:=net.Listen("tcp",endpoint)
+  if e!=nil{t.Fatal(e)}
+  listeners=append(listeners,l)
+  p,e:=net.ListenPacket("udp",endpoint)
+  if e!=nil{t.Fatal(e)}
+  packets=append(packets,p)
+  workers.Add(2)
+  go func(l net.Listener){
+   defer workers.Done()
+   for {
+    c,e:=l.Accept();if e!=nil{return}
+    acceptedTCP.Add(1)
+    func(){
+     defer c.Close()
+     _=c.SetDeadline(time.Now().Add(3*time.Second))
+     for i:=0;i<4;i++{
+      var length [2]byte
+      if _,e:=io.ReadFull(c,length[:]);e!=nil{return}
+      size:=int(binary.BigEndian.Uint16(length[:]))
+      if size<17||size>4096{return}
+      q:=make([]byte,size)
+      if _,e:=io.ReadFull(c,q);e!=nil{return}
+      r,match,e:=ciReferenceDNSReply(q,challenge);if e!=nil{return}
+      if match{queryTCP.Add(1)}
+      frame:=make([]byte,2+len(r))
+      binary.BigEndian.PutUint16(frame[:2],uint16(len(r)));copy(frame[2:],r)
+      for len(frame)>0{
+       n,e:=c.Write(frame);if e!=nil||n<=0{return};frame=frame[n:]
+      }
+      if match{replyTCP.Add(1)}
+     }
+    }()
+   }
+  }(l)
+  go func(p net.PacketConn){
+   defer workers.Done()
+   buf:=make([]byte,4096)
+   for {
+    n,peer,e:=p.ReadFrom(buf);if e!=nil{return}
+    r,match,e:=ciReferenceDNSReply(buf[:n],challenge);if e!=nil{continue}
+    if match{queryUDP.Add(1)}
+    if n,e=p.WriteTo(r,peer);e==nil&&n==len(r)&&match{replyUDP.Add(1)}
+   }
+  }(p)
+ }
+ // Establish that the reference really serves valid DNS on all four sockets
+ // before testing the Windows resolver with no explicit DNS server.
+ for _,host:=range []string{"127.0.0.1","::1"}{
+  for _,network:=range []string{"udp","tcp"}{
+   ctx,cancel:=context.WithTimeout(context.Background(),4*time.Second)
+   err:=assertCIFreshAllowedARecord(ctx,network,net.JoinHostPort(host,"53"))
+   cancel()
+   if err!=nil{t.Fatalf("reference control %s %s failed: %v",host,network,err)}
+  }
+ }
+ before:=acceptedTCP.Load()
+ const options=0x2|0x8|0x40|0x80
+ var records *syscall.DNSRecord
+ err:=syscall.DnsQuery(challenge+".",syscall.DNS_TYPE_A,options,nil,&records,nil)
+ if records!=nil{defer syscall.DnsRecordListFree(records,1)}
+ count:=0
+ if err==nil{
+  for rec,n:=records,0;rec!=nil;rec,n=rec.Next,n+1{
+   if n>=64{t.Fatal("reference native record chain excessive")}
+   if rec.Type==syscall.DNS_TYPE_A&&rec.Dw&3==syscall.DnsSectionAnswer{
+    if rec.Length!=4||!bytes.Equal(rec.Data[:4],[]byte{203,0,113,7}){t.Fatal("reference native response unexpected")}
+    count++
+   }
+  }
+  if count!=1{t.Fatal("reference native result not an actual answer")}
+ }
+ // Give the reference write goroutine time to finish recording the reply.
+ time.Sleep(100*time.Millisecond)
+ t.Logf("VOLVE_REFERENCE_TCP_OBSERVATION raw_four_transports=true native_verified=%t native_error=%v tcp_connections=%d tcp_queries=%d tcp_replies=%d udp_queries=%d udp_replies=%d",err==nil,err,acceptedTCP.Load()-before,queryTCP.Load(),replyTCP.Load(),queryUDP.Load(),replyUDP.Load())
+ // A failed configured query is valid diagnostic evidence, not a release PASS.
+ if err==nil&&(queryTCP.Load()<1||replyTCP.Load()<1){t.Fatal("native reference success lacks matching TCP wire evidence")}
+}
+
+func TestCIReferenceDNSReplyRejectsUnexpectedNames(t *testing.T){
+ q:=append([]byte{0x6f,0x18,1,0,0,1,0,0,0,0,0,0},[]byte{7,'e','x','a','m','p','l','e',3,'o','r','g',0,0,1,0,1}...)
+ reply,match,err:=ciReferenceDNSReply(q,"reserved.volve-motor-ci.test")
+ if err!=nil||match||len(reply)!=len(q)+16{t.Fatalf("reference control invalid: %v",err)}
+ bad:=append([]byte(nil),q...);bad[13]='z'
+ if _,_,err:=ciReferenceDNSReply(bad,"reserved.volve-motor-ci.test");err==nil{t.Fatal("unexpected name accepted")}
+ bad=append(append([]byte(nil),q...),1)
+ if _,_,err:=ciReferenceDNSReply(bad,"reserved.volve-motor-ci.test");err==nil{t.Fatal("trailing bytes accepted")}
 }
