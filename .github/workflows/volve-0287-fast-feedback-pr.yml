@@ -22,6 +22,7 @@ on:
       - 'development/0.28.7/unifiedbundle/**'
       - 'development/0.28.7/inapp/ci_fresh_dns53_windows_test.go'
       - 'development/0.28.7/inapp/production_dns_service_runner_windows_test.go'
+      - 'development/0.28.7/inapp/apply_overlay.go'
   workflow_dispatch:
 permissions:
   contents: read
@@ -150,6 +151,7 @@ jobs:
           if($exitCode -ne 0){throw 'Real runner ephemeral TCP regression failed'}
           $markers=@($proof|Where-Object {$_ -match 'PASS VOLVE_EPHEMERAL_TCP_REUSE address=(127\.0\.0\.1|::1) sequence=[123] rcode=[03]$'})
           if($markers.Count -ne 6){throw 'Six actual loopback TCP responses not verified'}
+          if(@($proof|Where-Object {$_ -match 'PASS VOLVE_TCP_IDLE_SHUTDOWN$'}).Count -ne 1){throw 'Idle TCP shutdown not verified'}
           Write-Host 'PASS: actual production DNS runner accepted three sequential queries per address family; no adapter changes'
   windows-synthetic-contract:
     name: Fast Windows syntax and security contracts

@@ -113,6 +113,12 @@ func TestResidentDualStackDNSFullCatalogFromRealRunner(t *testing.T) {
             }
         })
     }
+    // A retained, idle TCP client must not delay service shutdown for
+    // the old 12-second read deadline or the new connection lifetime.
+    idle,err:=net.DialTimeout("tcp",net.JoinHostPort("127.0.0.1",fmt.Sprint(port)),2*time.Second)
+    if err!=nil{t.Fatal(err)}
+    defer idle.Close()
+    if err:=idle.SetReadDeadline(time.Now().Add(4*time.Second));err!=nil{t.Fatal(err)}
     cancel()
     select{
     case err:=<-done:
@@ -121,7 +127,10 @@ func TestResidentDualStackDNSFullCatalogFromRealRunner(t *testing.T) {
         }
     case <-time.After(4*time.Second):t.Fatal("resident motor did not shut down after cancellation")
     }
+    var closed [1]byte
+    if _,err:=idle.Read(closed[:]);err==nil{t.Fatal("idle TCP connection survived shutdown")}else if timeout,ok:=err.(net.Error);ok&&timeout.Timeout(){t.Fatal("idle TCP connection remained open after shutdown")}
     t.Log("PASS: resident service runner on IPv4+IPv6; 400002 Full rules, 4 blocked DNS packets, 2 allowed; localhost ephemeral port only")
+    t.Log("PASS VOLVE_TCP_IDLE_SHUTDOWN")
 }
 
 func TestResidentDNSRunnerFailClosedWithoutFullCatalog(t *testing.T){
