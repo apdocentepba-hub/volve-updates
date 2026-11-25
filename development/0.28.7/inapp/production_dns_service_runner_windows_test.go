@@ -6,7 +6,9 @@ package main
 // production --dns-service entrypoint is NOT executed in Windows CI.
 import (
     "context"
+    "encoding/binary"
     "errors"
+    "io"
     "fmt"
     "net"
     "strings"
@@ -66,6 +68,50 @@ func TestResidentDualStackDNSFullCatalogFromRealRunner(t *testing.T) {
                     address,tc.domain,actual,tc.rcode,err)
             }
         }
+    }
+    // Reuse the same TCP socket for different questions. This independent
+    // regression exercises the real DNS runner without changing Windows DNS
+    // assignments, opening port 53 or needing a privileged process.
+    for _,host:=range []string{"127.0.0.1","::1"}{
+        t.Run("tcp-reuse-"+host,func(t *testing.T){
+            address:=net.JoinHostPort(host,fmt.Sprint(port))
+            conn,err:=(&net.Dialer{Timeout:3*time.Second}).DialContext(ctx,"tcp",address)
+            if err!=nil{t.Fatal(err)}
+            defer conn.Close()
+            if err=conn.SetDeadline(time.Now().Add(5*time.Second));err!=nil{t.Fatal(err)}
+            for i,tc:=range []struct{domain string;rcode byte}{
+                {"vm-ci-dns-400001.bet.ar",3},
+                {"example.org",0},
+                {"sub.stake.com",3},
+            }{
+                id:=uint16(0x7240+i)
+                message:=[]byte{byte(id>>8),byte(id),1,0,0,1,0,0,0,0,0,0}
+                for _,label:=range strings.Split(tc.domain,"."){
+                    message=append(message,byte(len(label)))
+                    message=append(message,label...)
+                }
+                message=append(message,0,0,1,0,1)
+                packet:=make([]byte,2+len(message))
+                binary.BigEndian.PutUint16(packet[:2],uint16(len(message)))
+                copy(packet[2:],message)
+                for len(packet)>0{
+                    n,e:=conn.Write(packet)
+                    if e!=nil{t.Fatalf("sequence %d write: %v",i+1,e)}
+                    if n==0{t.Fatal(io.ErrShortWrite)}
+                    packet=packet[n:]
+                }
+                var length [2]byte
+                if _,err=io.ReadFull(conn,length[:]);err!=nil{t.Fatalf("sequence %d frame: %v",i+1,err)}
+                size:=int(binary.BigEndian.Uint16(length[:]))
+                if size<12||size>4096{t.Fatalf("invalid DNS response length %d",size)}
+                response:=make([]byte,size)
+                if _,err=io.ReadFull(conn,response);err!=nil{t.Fatalf("sequence %d body: %v",i+1,err)}
+                if binary.BigEndian.Uint16(response[:2])!=id||response[2]&0x80==0||response[3]&15!=tc.rcode||binary.BigEndian.Uint16(response[4:6])!=1{
+                    t.Fatalf("sequence %d wrong transaction or response code: %x",i+1,response[:12])
+                }
+                t.Logf("PASS VOLVE_EPHEMERAL_TCP_REUSE address=%s sequence=%d rcode=%d",host,i+1,tc.rcode)
+            }
+        })
     }
     cancel()
     select{

@@ -21,6 +21,7 @@ on:
       - 'development/0.28.7/lab/test_private_dns_peer_identity.ps1'
       - 'development/0.28.7/unifiedbundle/**'
       - 'development/0.28.7/inapp/ci_fresh_dns53_windows_test.go'
+      - 'development/0.28.7/inapp/production_dns_service_runner_windows_test.go'
   workflow_dispatch:
 permissions:
   contents: read
@@ -137,6 +138,19 @@ jobs:
           $listed=@(& $out '-test.list=^TestCI(ConfiguredNativeTCPDNS|FreshResidentSYSTEMPort53|ResidentTCPConnectionReuse)$')
           if($LASTEXITCODE -ne 0 -or $listed -cnotcontains 'TestCIConfiguredNativeTCPDNS' -or $listed -cnotcontains 'TestCIFreshResidentSYSTEMPort53' -or $listed -cnotcontains 'TestCIResidentTCPConnectionReuse'){throw 'Expected diagnostic tests missing from binary'}
           Write-Host ('PASS: exact Windows diagnostic compiled and test census verified; SHA256='+((Get-FileHash -LiteralPath $out -Algorithm SHA256).Hash)+'; NO DNS EXECUTION')
+      - name: Test real DNS runner TCP reuse on ephemeral loopback only (NO INSTALL)
+        shell: powershell
+        working-directory: build/codigo
+        run: |
+          $ErrorActionPreference='Stop'
+          $out=Join-Path $env:RUNNER_TEMP 'VOLVE-CI-NativeDiagnostic.test.exe'
+          $proof=@(& $out '-test.run=^TestResidentDualStackDNSFullCatalogFromRealRunner$' '-test.v' '-test.timeout=45s')
+          $exitCode=$LASTEXITCODE
+          $proof|Write-Host
+          if($exitCode -ne 0){throw 'Real runner ephemeral TCP regression failed'}
+          $markers=@($proof|Where-Object {$_ -match 'PASS VOLVE_EPHEMERAL_TCP_REUSE address=(127\.0\.0\.1|::1) sequence=[123] rcode=[03]$'})
+          if($markers.Count -ne 6){throw 'Six actual loopback TCP responses not verified'}
+          Write-Host 'PASS: actual production DNS runner accepted three sequential queries per address family; no adapter changes'
   windows-synthetic-contract:
     name: Fast Windows syntax and security contracts
     runs-on: windows-2022
