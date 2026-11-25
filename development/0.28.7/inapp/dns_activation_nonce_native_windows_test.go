@@ -196,3 +196,22 @@ func TestWindowsSignedDNSActivationNonceAndRecoveryShareOneRealKernelLease(t *te
  if err!=nil||!bytes.Equal(originalReceipt,after){t.Fatal("replayed grant changed sealed NTFS nonce")}
  t.Log("PASS: one real Windows kernel lease spans signed O_EXCL nonce reservation, simulated activation failure, independent recovery handoff; replay blocked; NO DNS WRITES")
 }
+
+func TestWindowsNativeSignedDNSActivationNonceRejectsStaleClock(t *testing.T){
+ parent,_,_,_,pins,_,_:=makeNativeDNSActivationOnceFixture(t)
+ f:=makeDNSGrantFixture(t)
+ f.now=time.Now().UTC().Add(-20*time.Minute)
+ f.grant.IssuedAtUnix=f.now.Add(-time.Minute).Unix()
+ f.grant.ExpiresAtUnix=f.now.Add(5*time.Minute).Unix()
+ f.pins.OriginalDNSJournalSHA256=pins.OriginalDNSJournalSHA256
+ f.grant.OriginalDNSJournalSHA256=pins.OriginalDNSJournalSHA256
+ raw,sig:=signDNSActivationFixture(t,f)
+ ctx:=context.Background()
+ // A stale timestamp would accept this cryptographically valid old grant.
+ if _,err:=VerifyPublisherSignedDNSActivationGrant(ctx,raw,sig,f.pub,f.pins,f.now);err!=nil{t.Fatal(err)}
+ if _,err:=ReserveSignedDNSActivationOnceNativeWindows(ctx,parent,raw,sig,f.pub,f.pins,f.now);err==nil||!strings.Contains(err.Error(),"expired"){
+  t.Fatalf("expired authorization revived by stale timestamp: %v",err)
+ }
+ path:=filepath.Join(parent,dnsActivationOnceFilePrefix+f.pins.IntentNonce+".json")
+ if _,err:=os.Lstat(path);!errors.Is(err,os.ErrNotExist){t.Fatalf("expired grant consumed nonce: %v",err)}
+}

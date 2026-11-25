@@ -132,6 +132,12 @@ func ReserveSignedDNSActivationOnceNativeWindows(
  if err!=nil{return refused,fmt.Errorf("protected activation reservation mutex denied: %w",err)}
  if release==nil{return refused,errors.New("protected activation reservation missing release")}
  defer release()
+ if err:=ctx.Err();err!=nil{return refused,err}
+ // A caller-supplied timestamp must never extend a grant's lifetime while
+ // waiting for the protected Windows mutex.
+ now=latestDNSActivationTime(now)
+ grant,err=VerifyPublisherSignedDNSActivationGrant(ctx,grantJSON,signature,pinnedPublisherKey,independentlyPinned,now)
+ if err!=nil{return refused,fmt.Errorf("activation grant expired or changed while waiting for mutex: %w",err)}
  return reserveSignedDNSActivationOnceNativeCore(ctx,recoveryParent,grantJSON,grant,now)
 }
 
@@ -158,10 +164,18 @@ func reserveSignedDNSActivationOnceUnderHeldLeaseNativeWindows(
   strings.HasPrefix(recoveryParent,`\\`){
   return refused,errors.New("one-use activation requires exact trusted local recovery parent")
  }
+ now=latestDNSActivationTime(now)
  grant,err:=VerifyPublisherSignedDNSActivationGrant(
   ctx,grantJSON,signature,pinnedPublisherKey,independentlyPinned,now)
  if err!=nil{return refused,fmt.Errorf("one-use activation grant invalid: %w",err)}
  return reserveSignedDNSActivationOnceNativeCore(ctx,recoveryParent,grantJSON,grant,now)
+}
+
+// Never move backward to a stale timestamp supplied by an earlier caller.
+func latestDNSActivationTime(previous time.Time)time.Time{
+ current:=time.Now()
+ if previous.After(current){return previous}
+ return current
 }
 
 // The caller MUST own the trusted process-external Windows lease. This
@@ -180,6 +194,11 @@ func reserveSignedDNSActivationOnceNativeCore(
  if !parent.IsDir()||parent.Mode()&os.ModeSymlink!=0{
   return refused,errors.New("one-use activation recovery parent is a link or non-directory")
  }
+ if err:=ctx.Err();err!=nil{return refused,err}
+ now=latestDNSActivationTime(now)
+ if !now.Before(time.Unix(grant.ExpiresAtUnix,0)){
+  return refused,errors.New("DNS activation grant expired before nonce reservation")
+ }
  grantDigest:=sha256.Sum256(grantJSON)
  receipt:=DNSActivationOnceReceipt{
   Schema:1,Component:dnsActivationOnceReceiptComponent,
@@ -197,6 +216,10 @@ func reserveSignedDNSActivationOnceNativeCore(
  destination:=filepath.Join(recoveryParent,dnsActivationOnceFilePrefix+grant.IntentNonce+".json")
  // O_EXCL is the actual NTFS cross-process one-use arbiter. NEVER treat an
  // existing file (even a broken receipt) as a reusable publisher grant.
+ if err:=ctx.Err();err!=nil{return refused,err}
+ if !latestDNSActivationTime(now).Before(time.Unix(grant.ExpiresAtUnix,0)){
+  return refused,errors.New("DNS activation grant expired before exclusive nonce creation")
+ }
  file,err:=os.OpenFile(destination,os.O_WRONLY|os.O_CREATE|os.O_EXCL,0600)
  if err!=nil{
   if errors.Is(err,os.ErrExist){return refused,errors.New("DNS activation nonce already reserved; signed grant cannot be replayed")}
@@ -231,6 +254,9 @@ func reserveSignedDNSActivationOnceNativeCore(
   return refused,errors.New("one-use activation parent changed protection during reservation")
  }
  if err:=ctx.Err();err!=nil{return refused,err}
+ if !latestDNSActivationTime(now).Before(time.Unix(grant.ExpiresAtUnix,0)){
+  return refused,errors.New("DNS activation grant expired during durable nonce reservation; grant remains spent")
+ }
  // Caller must now prove the separate watchdog is ARMED, system identity is
  // LocalSystem, replay is durably journaled and activation is publisher-
  // authorized under the protected transaction. This receipt alone permits

@@ -25,6 +25,8 @@ on:
       - 'development/0.28.7/inapp/production_dns_service_runner_windows.go'
       - 'development/0.28.7/inapp/dns_activation_exclusive_lease.go'
       - 'development/0.28.7/inapp/dns_activation_exclusive_lease_test.go'
+      - 'development/0.28.7/inapp/dns_activation_nonce_native_windows.go'
+      - 'development/0.28.7/inapp/dns_activation_nonce_native_windows_test.go'
       - 'development/0.28.7/inapp/resident_health_probe.go'
       - 'development/0.28.7/inapp/resident_health_probe_test.go'
       - 'development/0.28.7/inapp/resident_active_health.go'
@@ -132,6 +134,10 @@ jobs:
           if($LASTEXITCODE -ne 0 -or $listed -cnotcontains 'TestResidentHealthPersistentTCPDNS'){throw 'Candidate TCP health tests missing'}
           go test ./motorupdate -run '^TestResidentHealthPersistentTCPDNS$' -count=1 -v -timeout 30s
           if($LASTEXITCODE -ne 0){throw 'Candidate persistent TCP health regression failed'}
+          $listed=@(go test ./motorupdate -list '^TestWindowsNativeSignedDNSActivationNonceRejectsStaleClock$')
+          if($LASTEXITCODE -ne 0 -or $listed -cnotcontains 'TestWindowsNativeSignedDNSActivationNonceRejectsStaleClock'){throw 'Native nonce stale-clock regression missing'}
+          go test ./motorupdate -run '^TestWindowsNativeSignedDNSActivationNonceRejectsStaleClock$' -count=1 -v -timeout 3m
+          if($LASTEXITCODE -ne 0){throw 'Native nonce stale-clock regression failed'}
       - name: Test boot recovery lock and cancellation boundaries (NO NATIVE WRITES)
         shell: powershell
         working-directory: build/codigo
