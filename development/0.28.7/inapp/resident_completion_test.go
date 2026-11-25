@@ -2,6 +2,7 @@ package motorupdate
 
 import (
  "context"
+ "encoding/json"
  "errors"
  "os"
  "path/filepath"
@@ -163,6 +164,39 @@ func TestResidentHealthAuditRejectsFailedProbeWithoutMutation(t *testing.T) {
    if _,err:=os.Stat(filepath.Join(dir,ResidentResultFile));!os.IsNotExist(err){
     t.Fatalf("failed audit wrote terminal receipt: %v",err)
    }
+  })
+ }
+}
+
+func TestResidentCompletionRejectsReplacementAfterSuccessfulHealthAudit(t *testing.T){
+ ctx:=context.Background()
+ dir:=t.TempDir()
+ original,err:=ArmResidentRecoveryIntent(ctx,dir,residentFixture(),residentLabACL,residentLabACL)
+ if err!=nil{t.Fatal(err)}
+ for _,outcome:=range []string{"committed","restored"}{
+  t.Run(outcome,func(t *testing.T){
+   // Reset only the private test fixture. No native OS operations.
+   raw,err:=json.Marshal(original);if err!=nil{t.Fatal(err)}
+   path:=filepath.Join(dir,ResidentIntentFile)
+   if err=os.WriteFile(path,raw,0600);err!=nil{t.Fatal(err)}
+   reads:=0
+   protect:=func(p string)error{
+    if p!=path{return nil}
+    reads++
+    if reads==3{
+     replacement:=original;replacement.TargetVersion="0.28.8"
+     b,e:=json.Marshal(replacement);if e!=nil{return e}
+     return os.WriteFile(path,b,0600)
+    }
+    return nil
+   }
+   checks:=&residentCompletionLab{}
+   err=ConfirmResidentRecoveryOutcome(ctx,dir,outcome,residentLabACL,protect,checks)
+   if err==nil{t.Fatal("health for a prior intent authorized a replacement")}
+   if checks.identityCalls!=2||checks.dnsCalls!=1||checks.connectivityCalls!=1{t.Fatal("replacement was not tested after health verification")}
+   if _,e:=os.Stat(filepath.Join(dir,ResidentResultFile));!os.IsNotExist(e){t.Fatal("unexpected terminal receipt")}
+   state,e:=InspectResidentRecoveryJournal(ctx,dir,residentLabACL)
+   if e!=nil||state.Status!="recovery-required"||state.Intent.TargetVersion!="0.28.8"{t.Fatalf("replacement evidence not preserved: %+v %v",state,e)}
   })
  }
 }

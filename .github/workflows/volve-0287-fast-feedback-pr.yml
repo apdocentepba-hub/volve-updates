@@ -30,6 +30,10 @@ on:
       - 'development/0.28.7/inapp/dns_activation_publisher_guard.go'
       - 'development/0.28.7/inapp/dns_activation_publisher_guard_test.go'
       - 'development/0.28.7/inapp/dns_activation_system_windows.go'
+      - 'development/0.28.7/inapp/resident_journal.go'
+      - 'development/0.28.7/inapp/resident_journal_test.go'
+      - 'development/0.28.7/inapp/resident_completion.go'
+      - 'development/0.28.7/inapp/resident_completion_test.go'
       - 'development/0.28.7/inapp/resident_health_probe.go'
       - 'development/0.28.7/inapp/resident_health_probe_test.go'
       - 'development/0.28.7/inapp/resident_active_health.go'
@@ -142,6 +146,11 @@ jobs:
           if($LASTEXITCODE -ne 0 -or $listed -cnotcontains 'TestPublisherScopedDNSActivationExpiryDuringAttestation' -or $listed -cnotcontains 'TestPublisherScopedDNSActivationSnapshotIsIndependent'){throw 'Publisher attestation regression census incomplete'}
           go test ./motorupdate -run $pattern -count=1 -v -timeout 2m
           if($LASTEXITCODE -ne 0){throw 'Publisher attestation regression failed'}
+          $pattern='^TestResident(Journal|Completion|HealthAudit)'
+          $listed=@(go test ./motorupdate -list $pattern)
+          if($LASTEXITCODE -ne 0 -or $listed -cnotcontains 'TestResidentCompletionRejectsReplacementAfterSuccessfulHealthAudit' -or $listed -cnotcontains 'TestResidentJournalRejectsIntentReplacementBeforeTerminalWrite'){throw 'Terminal intent binding regression census incomplete'}
+          go test ./motorupdate -run $pattern -count=1 -v -timeout 2m
+          if($LASTEXITCODE -ne 0){throw 'Terminal intent binding regression failed'}
           $listed=@(go test ./motorupdate -list '^TestWindowsNativeSignedDNSActivationNonceRejectsStaleClock$')
           if($LASTEXITCODE -ne 0 -or $listed -cnotcontains 'TestWindowsNativeSignedDNSActivationNonceRejectsStaleClock'){throw 'Native nonce stale-clock regression missing'}
           go test ./motorupdate -run '^TestWindowsNativeSignedDNSActivationNonceRejectsStaleClock$' -count=1 -v -timeout 3m

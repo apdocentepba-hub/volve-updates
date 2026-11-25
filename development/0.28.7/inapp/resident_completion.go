@@ -46,6 +46,7 @@ func AuditResidentRecoveryOutcome(
  if checks==nil || protect==nil {
   return empty,errors.New("resident outcome has no trusted health checks or ACL services")
  }
+ if ctx==nil{return empty,errors.New("missing resident health context")}
  if err:=ctx.Err();err!=nil{return empty,err}
  current,err:=InspectResidentRecoveryJournal(ctx,dir,protect)
  if err!=nil{return empty,fmt.Errorf("unverifiable resident transaction: %w",err)}
@@ -86,8 +87,7 @@ func ConfirmResidentRecoveryOutcome(
  if seal==nil {
   return errors.New("resident outcome has no trusted health checks or ACL services")
  }
- if _,err:=AuditResidentRecoveryOutcome(ctx,dir,outcome,protect,checks);err!=nil {
-  return err
- }
- return FinishResidentRecoveryIntent(ctx,dir,outcome,seal,protect)
+ verified,err:=AuditResidentRecoveryOutcome(ctx,dir,outcome,protect,checks)
+ if err!=nil{return err}
+ return finishResidentRecoveryIntentBound(ctx,dir,outcome,&verified,seal,protect)
 }
