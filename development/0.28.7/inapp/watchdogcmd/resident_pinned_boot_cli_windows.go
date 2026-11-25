@@ -12,7 +12,20 @@ import (
  "fmt"
  "path/filepath"
  "strings"
+ "time"
 )
+
+// A previous real isolated DNS restoration (run 45459849542,
+// job 138679464895) took 437.588 seconds before independent readback.
+// Four minutes is insufficient. Allow twelve minutes for recovery itself,
+// inside the coordinator's separate fifteen-minute rescue budget. This is
+// a bounded safety-repair budget, not an installation authorization, a
+// guarantee of completion, or a change to task registration.
+const pinnedRecoveryBudgetWindows = 12*time.Minute
+
+func newPinnedRecoveryContextWindows()(context.Context,context.CancelFunc){
+ return context.WithTimeout(context.Background(),pinnedRecoveryBudgetWindows)
+}
 
 func pinnedRecoveryInstalledRootWindows(ctx context.Context)(string,error){
  if err:=ctx.Err();err!=nil{return "",err}

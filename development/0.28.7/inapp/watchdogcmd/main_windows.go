@@ -227,7 +227,7 @@ func main(){
     // reboot recovery acceptance. There are NO caller-selected roots,
     // tasks or binaries. Without a genuine signed grant it fails closed.
     if len(os.Args)==2 && os.Args[1]=="--recover-pinned-signed-boot" {
-        ctx,cancel:=context.WithTimeout(context.Background(),240*time.Second)
+        ctx,cancel:=newPinnedRecoveryContextWindows()
         defer cancel()
         phase,err:=runPinnedResidentBootRecoveryCLIWindows(ctx)
         if err!=nil{

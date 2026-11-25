@@ -60,3 +60,16 @@ func TestPinnedRecoveryBootCLIHasNoUserControlledRootOrAutomaticTask(t *testing.
   }
  }
 }
+
+func TestPinnedRecoveryContextCoversObservedRealRestoration(t *testing.T){
+ ctx,cancel:=newPinnedRecoveryContextWindows()
+ defer cancel()
+ deadline,ok:=ctx.Deadline()
+ if !ok{t.Fatal("missing bounded recovery deadline")}
+ remaining:=time.Until(deadline)
+ if remaining<11*time.Minute||remaining>12*time.Minute{t.Fatalf("unexpected recovery budget %s",remaining)}
+ cancel()
+ if !errors.Is(ctx.Err(),context.Canceled){t.Fatal("recovery context not cancelable")}
+ raw,err:=os.ReadFile("main_windows.go");if err!=nil{t.Fatal(err)}
+ if !regexp.MustCompile(`(?s)if\s+len\(os\.Args\)\s*==\s*2\s*&&\s*os\.Args\[1\]\s*==\s*"--recover-pinned-signed-boot"\s*\{\s*ctx\s*,\s*cancel\s*:=\s*newPinnedRecoveryContextWindows\(\)`).Match(raw){t.Fatal("actual CLI does not use the bounded recovery context")}
+}
