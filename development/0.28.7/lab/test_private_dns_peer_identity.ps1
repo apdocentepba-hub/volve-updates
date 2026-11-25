@@ -69,6 +69,22 @@ foreach($field in $pinned.PSObject.Properties.Name){
     catch{if($_.Exception.Message -notmatch '^Peer continuity unproven: missing '){throw};$rejected=$true}
     if(-not $rejected){throw ('Missing peer evidence accepted: '+$field)}
 }
+# Fixed offsets in either direction do not establish a reboot. The
+# original live handle and boot-event pins still have to match.
+foreach($offset in @(-120000,120000)){
+    $offsetPin=New-PeerFixture
+    $offsetNow=New-PeerFixture
+    $offsetPin.native_uptime_ms=([decimal]300100+$offset).ToString([Globalization.CultureInfo]::InvariantCulture)
+    $offsetNow.native_uptime_ms=([decimal]310100+$offset).ToString([Globalization.CultureInfo]::InvariantCulture)
+    $offsetNow.uptime_seconds='310'
+    Assert-VolvPrivatePeerIdentityEvidence -PinnedIdentity $offsetPin -current $offsetPin
+    Assert-VolvPrivatePeerIdentityEvidence -PinnedIdentity $offsetPin -current $offsetNow
+    $offsetNow.native_uptime_ms=([decimal]$offsetNow.native_uptime_ms+5001).ToString([Globalization.CultureInfo]::InvariantCulture)
+    $rejected=$false
+    try{Assert-VolvPrivatePeerIdentityEvidence -PinnedIdentity $offsetPin -current $offsetNow}
+    catch{if($_.Exception.Message -cne 'Peer continuity unproven: uptime intervals disagree'){throw};$rejected=$true}
+    if(-not $rejected){throw 'Changing clock offset falsely accepted'}
+}
 # A nonadvancing second counter is permissible only when both readings
 # still agree within sampling precision. A decrement is always rejected.
 foreach($case in @(
@@ -88,4 +104,4 @@ foreach($case in @(
     catch{if($_.Exception.Message -notmatch '^Peer continuity unproven:'){throw};$rejected=$true}
     if(-not $rejected){throw 'Unsafe peer replacement or inconsistent uptime accepted'}
 }
-Write-Host 'PASS: peer identity evidence 8 accepted + 35 rejected synthetic cases; original retained process handle required; WMI drift diagnostic only; NO REBOOT NO DNS'
+Write-Host 'PASS: peer identity evidence 12 accepted + 37 rejected synthetic cases; original retained process handle and elapsed-interval agreement required; NO REBOOT NO DNS'

@@ -281,10 +281,18 @@ function Assert-VolvPrivatePeerIdentityEvidence {
         if([string]$current.$field -cne [string]$PinnedIdentity.$field){throw ('Peer continuity unproven: '+$field)}
     }
     if([uint64]$current.native_uptime_ms -lt [uint64]$PinnedIdentity.native_uptime_ms){throw 'Peer continuity unproven: native uptime decreased'}
-    foreach($identity in @($PinnedIdentity,$current)){
-        $skew=[math]::Abs(([decimal]$identity.uptime_seconds*1000)-[decimal]$identity.native_uptime_ms)
-        if($skew -gt 5000){throw 'Peer continuity unproven: uptime counters disagree'}
-    }
+    # WMI performance counters and GetTickCount64 need not have the same
+    # absolute origin. Do not infer a reboot from a fixed offset between
+    # providers. Compare elapsed intervals against the ORIGINAL pin instead.
+    # Retain the existing 5-second sampling budget; both counters must be
+    # nondecreasing, and the original live kernel process handle, boot
+    # event and all other identity pins are still mandatory.
+    $perfElapsed=([decimal]$current.uptime_seconds-[decimal]$PinnedIdentity.uptime_seconds)*1000
+    $nativeElapsed=[decimal]$current.native_uptime_ms-[decimal]$PinnedIdentity.native_uptime_ms
+    $elapsedSkew=[math]::Abs($perfElapsed-$nativeElapsed)
+    $initialOffset=([decimal]$PinnedIdentity.uptime_seconds*1000)-[decimal]$PinnedIdentity.native_uptime_ms
+    Write-Host ('CI PEER UPTIME: initial_offset_ms='+$initialOffset+' perf_elapsed_ms='+$perfElapsed+' native_elapsed_ms='+$nativeElapsed+' elapsed_skew_ms='+$elapsedSkew)
+    if($elapsedSkew -gt 5000){throw 'Peer continuity unproven: uptime intervals disagree'}
     $drift=[math]::Abs([decimal]$current.boot_ticks-[decimal]$PinnedIdentity.boot_ticks)
     if($drift -gt 0){
         Write-Host ('CI PEER BOOT CLOCK DRIFT: ticks='+$drift+' kernel_event_unchanged=true retained_original_process_live=true original_exact_WMI=FALSE laboratory_handle_identity=VERIFIED causal_attribution=UNPROVEN')
