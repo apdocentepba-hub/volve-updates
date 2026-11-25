@@ -100,14 +100,24 @@ func (s *State) RequireReboot() error {
  return nil
 }
 
-// ConfirmReboot must be called only after authenticating a new boot and
-// verifying the durable receipt, live protection and independent recovery.
-// An acknowledgment, a timeout, or a successful pre-boot probe is insufficient.
-func (s *State) ConfirmReboot() error {
+// ConfirmReboot requires a controller-supplied verification operation
+// that authenticates a new boot and verifies the durable receipt, live
+// protection and independent recovery. This package is a UI state machine,
+// NOT the authenticating controller. An acknowledgment alone is insufficient.
+// The callback runs outside the mutex and may report a recovery requirement.
+func (s *State) ConfirmReboot(ctx context.Context, verifyHealth func(context.Context) error) error {
+ if ctx==nil || verifyHealth==nil{return errors.New("verified post-boot health reader required")}
+ if err:=ctx.Err();err!=nil{return err}
+ s.mu.Lock()
+ eligible:=s.status=="awaiting_reboot" && s.rebootRequested && s.next==len(order)-1
+ s.mu.Unlock()
+ if !eligible{return errors.New("post-boot confirmation not expected")}
+ if err:=verifyHealth(ctx);err!=nil{return err}
  s.mu.Lock()
  defer s.mu.Unlock()
- if s.status != "awaiting_reboot" || !s.rebootRequested || s.next != len(order)-1 {
-  return errors.New("post-boot confirmation not expected")
+ if err:=ctx.Err();err!=nil{return err}
+ if s.status!="awaiting_reboot" || !s.rebootRequested || s.next!=len(order)-1 {
+  return errors.New("post-boot confirmation invalidated during verification")
  }
  s.next++
  s.status="completed"
