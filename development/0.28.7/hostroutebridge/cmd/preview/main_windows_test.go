@@ -7,6 +7,9 @@ import (
  "encoding/json"
  "strings"
  "testing"
+
+ motorupdate "volve-browser-protection/motorupdate"
+ bridge "volve.local/installer/singlefile/hostroutebridge"
 )
 
 func TestSetupPreviewRejectsNonHostedMachinesBeforeAnyInventory(t *testing.T) {
@@ -58,5 +61,35 @@ func TestSetupPreviewJSONPreservesLegacyMigrationBlockers(t *testing.T) {
  }
  if decoded.CanInstall||decoded.CanUpgrade||decoded.CanChangeDNS||decoded.CanChangeTasks {
   t.Fatalf("blocker serialization authorized mutation: %s",raw)
+ }
+}
+
+func TestReadOnlyProgressRequiresCanonicalProtectedReview(t *testing.T){
+ ctx:=context.Background()
+ for _,tc:=range []struct{route motorupdate.MotorInstallRoute;want int}{
+  {motorupdate.MotorRouteFreshCandidate,25},
+  {motorupdate.MotorRouteCatalogCandidate,25},
+  {motorupdate.MotorRouteLegacyReview,25},
+  {motorupdate.MotorRouteManagedReview,25},
+  {motorupdate.MotorRouteRecoveryReview,0},
+  {motorupdate.MotorRouteConflictingResidue,0},
+  {motorupdate.MotorRouteUnverified,0},
+ }{
+  review:=bridge.Review{Schema:1,Component:"installer-signed-bundle-windows-route-review",Release:"0.28.7",PackageParts:7,WindowsPublisherAndPackageVerified:true,InventoriesChecked:6,Route:tc.route,Reason:"test fixture",Status:"REVIEW_ONLY_NEVER_INSTALL_OR_MIGRATE"}
+  plan,err:=bridge.PlanFromVerifiedReview(ctx,review)
+  if err!=nil{t.Fatal(err)}
+  v,err:=projectReadOnlyProgress(ctx,review,plan,false)
+  if err!=nil||v.Percent!=0{t.Fatalf("unprotected review advanced: %+v %v",v,err)}
+  v,err=projectReadOnlyProgress(ctx,review,plan,true)
+  if err!=nil||v.Percent!=tc.want||v.RebootRequired{t.Fatalf("wrong review projection: %+v %v",v,err)}
+  if tc.want==25&&string(v.Next)!="backup_verified"{t.Fatal(v)}
+  altered:=plan
+  altered.CanInstall=true
+  if _,err:=projectReadOnlyProgress(ctx,review,altered,true);err==nil{t.Fatal("mutated plan accepted")}
+  altered=plan
+  altered.Prerequisites=nil
+  if _,err:=projectReadOnlyProgress(ctx,review,altered,true);err==nil{t.Fatal("missing prerequisites accepted")}
+  review.WindowsPublisherAndPackageVerified=false
+  if _,err:=projectReadOnlyProgress(ctx,review,plan,true);err==nil{t.Fatal("unverified package accepted")}
  }
 }

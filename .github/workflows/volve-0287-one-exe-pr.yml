@@ -356,6 +356,13 @@ jobs:
               assert original.is_file()
               assert not (target/name).exists()
               shutil.copy2(original,target/name)
+          progress=root/'installer-wizard/installerprogress'
+          progress_out=root/'singlefile/installerprogress'
+          progress_out.mkdir(parents=True,exist_ok=True)
+          for name in ('progress.go','progress_test.go'):
+              assert (progress/name).is_file()
+              assert not (progress_out/name).exists()
+              shutil.copy2(progress/name,progress_out/name)
           preview=bridge/'cmd/preview'
           out=target/'cmd/preview'
           out.mkdir(parents=True,exist_ok=True)
@@ -599,6 +606,8 @@ jobs:
                $report.result -ne 'REVIEW_ONLY' -or
                $report.target_release -ne '0.28.7' -or
                $report.windows_inventories_checked -ne 6 -or
+               $report.review_progress_percent -ne 0 -or
+               $report.review_progress_status -cne 'REVIEW_ONLY_running' -or
                $report.synthetic_ci_signed_container_verified -ne $true -or
                $report.status -ne 'NO_INSTALL_OR_DNS_CHANGE_AUTHORIZED' -or
                $report.can_install -ne $false -or
@@ -634,6 +643,11 @@ jobs:
                  $protected.windows_inventories_checked -ne 6 -or
                  $protected.synthetic_ci_signed_container_verified -ne $true -or
                  $protected.protected_transition_mutex_held_during_review -ne $true -or
+                 $protected.review_progress_percent -notin @(0,25) -or
+                 $protected.review_progress_status -notin @('REVIEW_ONLY_running','REVIEW_ONLY_failed_before_activation') -or
+                 ($protected.review_progress_percent -eq 25 -and $protected.review_progress_next -cne 'backup_verified') -or
+                 ($protected.next_review_mode -in @('REVIEW_NEW_INSTALL','REVIEW_CATALOG_PRESERVING_INSTALL','REVIEW_LEGACY_SIGNED_MIGRATION','REVIEW_MANAGED_SIGNED_UPDATE') -and $protected.review_progress_percent -ne 25) -or
+                 ($protected.next_review_mode -in @('STOP_HOST_STATE_UNVERIFIED','STOP_RECOVERY_MUST_FINISH_FIRST','STOP_CONFLICTING_PROTECTION') -and $protected.review_progress_percent -ne 0) -or
                  $protected.browser_registry_keys_checked -ne 3 -or
                  $protected.hosts_baseline_checked -ne $true -or
                  $protected.dns_adapter_assignment_baseline_checked -ne $true -or

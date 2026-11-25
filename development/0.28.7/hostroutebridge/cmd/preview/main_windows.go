@@ -14,10 +14,12 @@ import (
  "fmt"
  "os"
  "path/filepath"
+ "reflect"
  "time"
 
  motorupdate "volve-browser-protection/motorupdate"
  bridge "volve.local/installer/singlefile/hostroutebridge"
+ progress "volve.local/installer/singlefile/installerprogress"
 )
 
 type setupPreviewReport struct {
@@ -47,6 +49,32 @@ type setupPreviewReport struct {
  CanChangeDNS bool `json:"can_change_dns"`
  CanChangeTasks bool `json:"can_change_tasks"`
  Status string `json:"status"`
+ ReviewProgressPercent int `json:"review_progress_percent"`
+ ReviewProgressNext string `json:"review_progress_next"`
+ ReviewProgressStatus string `json:"review_progress_status"`
+}
+
+// projectReadOnlyProgress links the first two checkpoints to actual
+// controller observations, never to a UI percentage or caller-selected
+// route. It cannot advance backup, watchdog, mutation or reboot stages.
+// A review that is not protected by the lease remains at zero.
+func projectReadOnlyProgress(ctx context.Context, review bridge.Review, plan bridge.InstallerPlanReadOnly, protected bool)(progress.View,error){
+ var zero progress.View
+ expected,err:=bridge.PlanFromVerifiedReview(ctx,review)
+ if err!=nil{return zero,err}
+ if !reflect.DeepEqual(expected,plan){return zero,errors.New("review plan differs from canonical verified plan")}
+ state:=progress.New()
+ if !protected{return state.View(),nil}
+ switch plan.Mode{
+ case bridge.PlanFresh,bridge.PlanCatalog,bridge.PlanLegacy,bridge.PlanManaged:
+  if err:=state.Confirm(progress.Preflight);err!=nil{return zero,err}
+  if err:=state.Confirm(progress.PackageVerified);err!=nil{return zero,err}
+ case bridge.PlanStop,bridge.PlanConflict,bridge.PlanRecovery:
+  if err:=state.Fail();err!=nil{return zero,err}
+ default:return zero,errors.New("unknown review mode")
+ }
+ if err:=ctx.Err();err!=nil{return zero,err}
+ return state.View(),nil
 }
 
 func inspectCIHostReadOnly(ctx context.Context) (setupPreviewReport,error) {
@@ -122,7 +150,12 @@ func inspectCIHostWithProtectedOption(ctx context.Context, holdProtectedMutex bo
     plan.Disposition!="READ_ONLY_PLAN_NOT_AN_INSTALLATION_PERMIT" {
   return refused,errors.New("non-authorizing preinstallation proof violated")
  }
+ view,err:=projectReadOnlyProgress(ctx,review,plan,holdProtectedMutex)
+ if err!=nil{return refused,fmt.Errorf("read-only progress rejected: %w",err)}
  return setupPreviewReport{
+  ReviewProgressPercent:view.Percent,
+  ReviewProgressNext:string(view.Next),
+  ReviewProgressStatus:"REVIEW_ONLY_"+view.Status,
   Schema:1,
   Component:"VOLVE-0287-WINDOWS-SETUP-PREVIEW-CI",
   Scope:"DISPOSABLE_WINDOWS_CI_ONLY_NOT_USER_PC",
