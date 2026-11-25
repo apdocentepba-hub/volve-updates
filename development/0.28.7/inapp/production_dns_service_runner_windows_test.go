@@ -163,3 +163,36 @@ func TestResidentDNSRunnerRejectsAlreadyBoundIPv4Port(t *testing.T){
         t.Fatalf("occupied local DNS port incorrectly accepted: %v",err)
     }
 }
+
+// The IPv6 TCP bind is forced to fail after IPv4 starts. Returning an error
+// must mean both owned IPv4 listeners and the partial IPv6 UDP listener are
+// closed, without touching the independently owned conflicting TCP socket.
+func TestResidentDNSRunnerDrainsPartialIPv6Start(t *testing.T){
+    root:=t.TempDir()
+    putLabFullCatalog(t,root,400002)
+    conflict,err:=net.Listen("tcp6","[::1]:0")
+    if err!=nil{t.Fatal(err)}
+    defer conflict.Close()
+    port:=conflict.Addr().(*net.TCPAddr).Port
+    if port==53{t.Fatal("refusing production DNS port")}
+    ready:=make(chan struct{},1)
+    ctx,cancel:=context.WithTimeout(context.Background(),8*time.Second)
+    defer cancel()
+    err=runDNSServiceAt(ctx,root,port,nil,ready)
+    if err==nil||!strings.Contains(err.Error(),"IPv6")||len(ready)!=0{
+        t.Fatalf("expected IPv6 partial-start failure without readiness: %v",err)
+    }
+    for _,host:=range []string{"127.0.0.1","::1"}{
+        addr:=net.JoinHostPort(host,fmt.Sprint(port))
+        udp,e:=net.ListenPacket("udp",addr)
+        if e!=nil{t.Fatalf("owned UDP still bound at return on %s: %v",host,e)}
+        udp.Close()
+    }
+    tcp,e:=net.Listen("tcp4",net.JoinHostPort("127.0.0.1",fmt.Sprint(port)))
+    if e!=nil{t.Fatalf("owned IPv4 TCP still bound at return: %v",e)}
+    tcp.Close()
+    client,e:=net.DialTimeout("tcp6",conflict.Addr().String(),time.Second)
+    if e!=nil{t.Fatalf("independent IPv6 listener was disturbed: %v",e)}
+    client.Close()
+    t.Log("PASS VOLVE_PARTIAL_START_DRAIN")
+}
