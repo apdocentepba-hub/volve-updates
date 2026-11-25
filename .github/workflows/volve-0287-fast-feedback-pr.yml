@@ -134,8 +134,8 @@ jobs:
           if($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $out -PathType Leaf)){throw 'Exact candidate test compilation failed'}
           $env:VOLVE_CI_FRESH_DNS53_PROBE=''
           $env:VOLVE_CI_NESTED_GUEST_DNS=''
-          $listed=@(& $out '-test.list=^TestCI(ConfiguredNativeTCPDNS|FreshResidentSYSTEMPort53)$')
-          if($LASTEXITCODE -ne 0 -or $listed -cnotcontains 'TestCIConfiguredNativeTCPDNS' -or $listed -cnotcontains 'TestCIFreshResidentSYSTEMPort53'){throw 'Expected diagnostic tests missing from binary'}
+          $listed=@(& $out '-test.list=^TestCI(ConfiguredNativeTCPDNS|FreshResidentSYSTEMPort53|ResidentTCPConnectionReuse)$')
+          if($LASTEXITCODE -ne 0 -or $listed -cnotcontains 'TestCIConfiguredNativeTCPDNS' -or $listed -cnotcontains 'TestCIFreshResidentSYSTEMPort53' -or $listed -cnotcontains 'TestCIResidentTCPConnectionReuse'){throw 'Expected diagnostic tests missing from binary'}
           Write-Host ('PASS: exact Windows diagnostic compiled and test census verified; SHA256='+((Get-FileHash -LiteralPath $out -Algorithm SHA256).Hash)+'; NO DNS EXECUTION')
   windows-synthetic-contract:
     name: Fast Windows syntax and security contracts

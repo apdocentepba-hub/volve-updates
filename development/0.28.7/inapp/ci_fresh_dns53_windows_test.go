@@ -221,9 +221,12 @@ func TestCIConfiguredNativeTCPDNS(t *testing.T) {
 // of connection reuse, not a substitute for the configured Windows client.
 // No data is sent anywhere except the attested isolated loopback motor.
 func TestCIResidentTCPConnectionReuse(t *testing.T) {
- if os.Getenv("VOLVE_CI_FRESH_DNS53_PROBE")!="GITHUB-HOSTED-VM-ONLY" ||
-    os.Getenv("VOLVE_CI_NESTED_GUEST_DNS")!="PRIVATE_GUEST_ONLY" {
-  t.Skip("private nested guest only")
+ nested:=os.Getenv("VOLVE_CI_NESTED_GUEST_DNS")=="PRIVATE_GUEST_ONLY"
+ hosted:=os.Getenv("GITHUB_ACTIONS")=="true" &&
+  os.Getenv("RUNNER_ENVIRONMENT")=="github-hosted" &&
+  os.Getenv("VOLVE_CI_TCP_REUSE_PROBE")=="OWNED_SYSTEM_LOOPBACK_ONLY"
+ if os.Getenv("VOLVE_CI_FRESH_DNS53_PROBE")!="GITHUB-HOSTED-VM-ONLY" || (!nested && !hosted) {
+  t.Skip("private nested guest or explicitly authorized hosted SYSTEM loopback trial only")
  }
  for _,host:=range []string{"127.0.0.1","::1"} {
   t.Run(host,func(t *testing.T){

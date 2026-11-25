@@ -1,7 +1,7 @@
 name: VOLVE pilot fresh motor SYSTEM DNS53 (DISPOSABLE VM ONLY)
 on:
   push:
-    branches: [feature/motor-updater-0287-pilot, work/0287-native-setup-preview-20261113]
+    branches: [feature/motor-updater-0287-pilot, work/0287-native-setup-preview-20261113, work/0287-installer-progress-20261124]
     paths:
       - 'development/0.28.7/inapp/ci_fresh_dns53_windows.go'
       - 'development/0.28.7/inapp/ci_fresh_dns53_windows_test.go'
@@ -128,10 +128,14 @@ jobs:
             $owner=Invoke-CimMethod -InputObject $matched[0] -MethodName GetOwnerSid -ErrorAction Stop
             if($owner.ReturnValue -ne 0 -or $owner.Sid -ne 'S-1-5-18'){throw 'DNS service owner is not SYSTEM'}
             $env:VOLVE_CI_FRESH_DNS53_PROBE='GITHUB-HOSTED-VM-ONLY'
-            $firstProof=@(go test . -run '^TestCIFreshResidentSYSTEMPort53$' -count=1 -timeout 1m -v)
+            $env:VOLVE_CI_TCP_REUSE_PROBE='OWNED_SYSTEM_LOOPBACK_ONLY'
+            $firstProof=@(go test . -run '^TestCI(FreshResidentSYSTEMPort53|ResidentTCPConnectionReuse)$' -count=1 -timeout 1m -v)
             $firstExit=$LASTEXITCODE
             $firstProof | Write-Host
-            if($firstExit -ne 0){throw 'External real DNS53 IPv4+IPv6 blocking verification failed'}
+            if($firstExit -ne 0){throw 'External real DNS53 blocking or TCP reuse verification failed'}
+            $reuse=@($firstProof|Where-Object {$_ -match 'PASS VOLVE_TCP_REUSE_QUERY address=(127\.0\.0\.1|::1) sequence=[12]$'})
+            if($reuse.Count -ne 4 -or @($firstProof|Where-Object {$_ -match '^--- PASS: TestCIResidentTCPConnectionReuse '}).Count -ne 1){throw 'Missing four independent TCP reuse responses'}
+            Write-Host 'PASS: actual SYSTEM motor TCP reuse on both address families, two unique queries per connection; NO ADAPTER WRITES'
             if(@($firstProof | Where-Object {$_ -match 'actually forwards an allowed A record'}).Count -ne 1){
               throw 'DNS53 PASS without verified usable allowed-domain A answer'
             }
@@ -188,6 +192,7 @@ jobs:
             Write-Host 'PASS: tampered catalog cannot restart the SYSTEM motor and does not open DNS/53'
           }finally{
             Remove-Item Env:\VOLVE_CI_FRESH_DNS53_PROBE -ErrorAction SilentlyContinue
+            Remove-Item Env:\VOLVE_CI_TCP_REUSE_PROBE -ErrorAction SilentlyContinue
             if($registered){
               Stop-ScheduledTask -TaskName $task -ErrorAction SilentlyContinue
               Start-Sleep -Seconds 2
