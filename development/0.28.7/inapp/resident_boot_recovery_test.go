@@ -2,6 +2,7 @@ package motorupdate
 
 import (
  "context"
+ "encoding/json"
  "errors"
  "os"
  "path/filepath"
@@ -372,5 +373,41 @@ func TestBootRecoveryDoesNotRestoreAfterCanceledIdentityProbe(t *testing.T){
   if !errors.Is(err,context.Canceled)||status!=""||lab.restoreCalls!=0||lab.dnsRestores!=0||lab.unlockCalls!=1{t.Fatalf("canceled probe caused mutation: %s %v %+v",status,err,lab)}
   pending,e:=InspectResidentRecoveryJournal(context.Background(),dir,residentLabACL)
   if e!=nil||pending.Status!="recovery-required"{t.Fatalf("pending recovery lost: %+v %v",pending,e)}
+ }
+}
+
+func TestBootRecoveryRejectsReplacementAtTerminalBoundary(t *testing.T){
+ for _,dns:=range []bool{false,true}{
+  name:="motor-only";if dns{name="motor-and-dns"}
+  t.Run(name,func(t *testing.T){
+   ctx:=context.Background()
+   dir:=armBootPolicyJournal(t)
+   state,err:=InspectResidentRecoveryJournal(ctx,dir,residentLabACL)
+   if err!=nil{t.Fatal(err)}
+   lab:=&bootDNSPolicyLab{}
+   path:=filepath.Join(dir,ResidentIntentFile)
+   armed:=false
+   reads:=0
+   lab.terminalDuringVerify=func(){if lab.verifyCalls==2{armed=true}}
+   protect:=func(p string)error{
+    if !armed||p!=path{return nil}
+    reads++
+    if reads==2{
+     replacement:=state.Intent;replacement.TargetVersion="0.28.8"
+     raw,e:=json.Marshal(replacement);if e!=nil{return e}
+     return os.WriteFile(path,raw,0600)
+    }
+    return nil
+   }
+   checks:=&bootIdentityLab{}
+   var outcome string
+   if dns{outcome,err=RecoverPendingResidentAfterBootWithOriginalDNS(ctx,dir,residentLabACL,protect,checks,lab)}else{
+    outcome,err=RecoverPendingResidentAfterBoot(ctx,dir,residentLabACL,protect,checks,&lab.bootPolicyLab)
+   }
+   if err==nil||outcome!=""||reads<2||lab.unlockCalls!=1||lab.verifyCalls!=2{t.Fatalf("replacement not rejected at terminal boundary: %s %v %+v",outcome,err,lab)}
+   if _,err:=os.Stat(filepath.Join(dir,ResidentResultFile));!os.IsNotExist(err){t.Fatal("replacement received a false terminal receipt")}
+   latest,err:=InspectResidentRecoveryJournal(ctx,dir,residentLabACL)
+   if err!=nil||latest.Status!="recovery-required"||latest.Intent.TargetVersion!="0.28.8"{t.Fatalf("pending evidence not preserved: %+v %v",latest,err)}
+  })
  }
 }

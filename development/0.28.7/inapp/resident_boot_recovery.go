@@ -117,6 +117,10 @@ func recoverPendingResidentAfterBoot(
   // A canceled identity probe is not evidence of a missing motor.
   // Never initiate a privileged restore after losing the caller context.
   if err:=ctx.Err();err!=nil{return "",err}
+  // A failed identity probe may take time. Do not restore a stale intent
+  // if a different transaction has been observed during that interval.
+  current,readErr:=InspectResidentRecoveryJournal(ctx,journalDir,protect)
+  if readErr!=nil||current!=state{return "",errors.New("recovery journal changed during failed identity probe")}
   if err:=driver.RestoreOriginal(ctx,state.Intent);err!=nil {
    return "",fmt.Errorf("independent original motor restore failed: %w",err)
   }
@@ -161,7 +165,7 @@ func recoverPendingResidentAfterBoot(
  if err!=nil||finalState.Status!="recovery-required"||finalState.Intent!=state.Intent{
   return "",errors.New("recovery journal changed before terminal receipt")
  }
- if err:=FinishResidentRecoveryIntent(ctx,journalDir,"restored",seal,protect);err!=nil{
+ if err:=finishResidentRecoveryIntentBound(ctx,journalDir,"restored",&state.Intent,seal,protect);err!=nil{
   return "",fmt.Errorf("restored motor receipt not durable: %w",err)
  }
  return "restored",nil
