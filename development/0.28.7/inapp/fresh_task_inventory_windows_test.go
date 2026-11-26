@@ -207,7 +207,21 @@ func TestWindowsOriginalCatalogArchiveFourComponentReview(t *testing.T){
  got,err:=review()
  if err!=nil||!got.HostsVerified||got.BrowserKeysVerified!=3||!got.DNSBackupVerified||!got.CatalogBackupVerified||
   got.CompleteRecoverySnapshot||got.InstallAuthorized||got.RestoreAuthorized{t.Fatal("four-component review incorrectly reported",err)}
+ // Corrupt an earlier synthetic archive only when catalog verification starts.
+ // The second triple check must refuse the result rather than report success.
  _,file,err:=catalogOriginalArchivePaths(parent);if err!=nil{t.Fatal(err)}
+ _,browserFile,err:=browserOriginalArchivePaths(parent);if err!=nil{t.Fatal(err)}
+ prior,err:=os.ReadFile(browserFile);if err!=nil{t.Fatal(err)}
+ mutated:=false
+ driftCheck:=func(p string)error{
+  if p==file&&!mutated{mutated=true;return os.WriteFile(browserFile,[]byte("{}"),0600)}
+  return nil
+ }
+ drift,driftErr:=verifyOriginalProtectionArchivesUnarmed(ctx,parent,dnsParent,snap,browser,inv,pin,driftCheck)
+ if !mutated||driftErr==nil||drift!=(originalProtectionPairReceipt{}){t.Fatal("prior archive drift during catalog review accepted")}
+ if err:=os.WriteFile(browserFile,prior,0600);err!=nil{t.Fatal(err)}
+ if got,err:=review();err!=nil||!got.CatalogBackupVerified{t.Fatal("intact synthetic archives not verified after fixture reset",err)}
+ t.Log("PASS VOLVE_FOUR_ARCHIVES_REJECT_DRIFT_DURING_CATALOG_REVIEW")
  if err:=os.WriteFile(file,[]byte("{}"),0600);err!=nil{t.Fatal(err)}
  if got,err:=review();err==nil||got!=(originalProtectionPairReceipt{}){t.Fatal("invalid catalog archive accepted")}
  t.Log("PASS VOLVE_FOUR_ORIGINAL_ARCHIVES_FIXTURE_REVIEW_NO_AUTHORIZATION")
