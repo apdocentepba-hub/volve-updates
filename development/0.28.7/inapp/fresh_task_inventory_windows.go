@@ -456,3 +456,27 @@ func reopenOriginalRecoveryReviewUnarmed(ctx context.Context,root,id,expectedPin
  if err:=loadOriginalRecoveryReviewEvidenceUnarmed(ctx,root,id,expectedPin,check);err!=nil{return denied,err}
  return receipt,nil
 }
+
+// InspectBoundOriginalRecoveryNativeReadOnly coordinates with the existing
+// resident transition mutex and verifies durable evidence using native ACLs.
+// The caller supplies an independently trusted expected pin and census;
+// this is not a signature verifier, authorization, or a restoration driver.
+// Call only outside an existing resident transition lease.
+func InspectBoundOriginalRecoveryNativeReadOnly(ctx context.Context,root,id,expectedPin string,
+ baseline ProtectionSnapshot,browser WindowsBrowserPolicyEvidence,inventory WindowsFreshVOLVETaskInventory,dnsPin string)(WindowsOriginalBackupReview,error){
+ denied:=WindowsOriginalBackupReview{Status:"UNVERIFIED"}
+ if ctx==nil{return denied,errors.New("native recovery review requires context")}
+ if err:=ctx.Err();err!=nil{return denied,err}
+ pin,err:=originalRecoveryReviewPin(id,baseline,dnsPin)
+ if err!=nil||pin!=expectedPin{return denied,errors.New("independent recovery pin mismatch")}
+ if _,err:=originalRecoveryEvidencePath(root,id);err!=nil{return denied,err}
+ release,err:=AcquireProtectedResidentTransitionLease(ctx)
+ if err!=nil||release==nil{return denied,errors.New("protected recovery review lease unavailable")}
+ defer release()
+ receipt,err:=reopenOriginalRecoveryReviewUnarmed(ctx,root,id,expectedPin,baseline,browser,inventory,dnsPin,
+  func(path string)error{return nativeDNSOriginalBackupACL(ctx,path)})
+ if err!=nil||!receipt.HostsVerified||receipt.BrowserKeysVerified!=3||!receipt.DNSBackupVerified||!receipt.CatalogBackupVerified||
+  receipt.CompleteRecoverySnapshot||receipt.InstallAuthorized||receipt.RestoreAuthorized{return denied,errors.New("bound original archives not currently verified")}
+ if err:=ctx.Err();err!=nil{return denied,err}
+ return WindowsOriginalBackupReview{Status:"BOUND_FOUR_ARCHIVES_VERIFIED_READ_ONLY",HostsVerified:true,BrowserKeysVerified:3,DNSBackupVerified:true,CatalogBackupVerified:true},nil
+}
