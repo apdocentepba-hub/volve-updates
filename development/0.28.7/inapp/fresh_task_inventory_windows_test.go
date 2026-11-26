@@ -212,3 +212,41 @@ func TestWindowsOriginalCatalogArchiveFourComponentReview(t *testing.T){
  if got,err:=review();err==nil||got!=(originalProtectionPairReceipt{}){t.Fatal("invalid catalog archive accepted")}
  t.Log("PASS VOLVE_FOUR_ORIGINAL_ARCHIVES_FIXTURE_REVIEW_NO_AUTHORIZATION")
 }
+
+func TestWindowsOriginalCatalogArchiveNativeDisplayReview(t *testing.T){
+ if os.Getenv("GITHUB_ACTIONS")!="true"||os.Getenv("RUNNER_ENVIRONMENT")!="github-hosted"{t.Skip("disposable runner only")}
+ ctx,cancel:=context.WithTimeout(context.Background(),150*time.Second);defer cancel()
+ parent,snap,browser,hosts,policies:=makeOriginalProtectionPairFixture(t)
+ observed,err:=InspectWindowsDNSAssignmentProvenanceReadOnly(ctx,protectionSnapshotDNSInspect)
+ if err!=nil{t.Fatal(err)}
+ journal,pin,err:=BuildDNSOriginalJournal(ctx,observed.States)
+ if err!=nil{t.Fatal(err)}
+ snap.DNSAdaptersSHA256=observed.SHA256
+ dnsParent:=filepath.Join(filepath.Dir(parent),"legacy-engine-recovery")
+ if err:=os.Mkdir(dnsParent,0700);err!=nil{t.Fatal(err)}
+ seal:=func(path string)error{return sealDNSBackupLabNode(ctx,path)}
+ check:=func(path string)error{return nativeDNSOriginalBackupACL(ctx,path)}
+ if err:=seal(parent);err!=nil{t.Fatal(err)}
+ if err:=seal(dnsParent);err!=nil{t.Fatal(err)}
+ sum:=sha256.Sum256([]byte(catalogTaskAbsentMarker))
+ snap.CatalogTaskDefinitionSHA256=hex.EncodeToString(sum[:])
+ inv:=WindowsFreshVOLVETaskInventory{}
+ hostsPin:=WindowsHostsFileEvidence{SHA256:snap.HostsSHA256,BlockedRuleCount:snap.HostsBlockedRuleCount}
+ if err:=storeOriginalWindowsHostsBackupUnarmed(ctx,parent,hosts,hostsPin,seal,check);err!=nil{t.Fatal(err)}
+ if err:=storeBrowserOriginalArchiveUnarmed(ctx,parent,browser,policies,seal,check);err!=nil{t.Fatal(err)}
+ if _,err:=StoreDNSOriginalBackupUnarmed(ctx,dnsParent,journal,pin,seal,check);err!=nil{t.Fatal(err)}
+ if err:=storeOriginalCatalogArchiveUnarmed(ctx,parent,snap,inv,originalCatalogDefinition{},seal,check);err!=nil{t.Fatal(err)}
+ report,err:=InspectOriginalBackupArchivesNativeReadOnly(ctx,parent,dnsParent,snap,browser,inv,pin)
+ if err!=nil||report.Status!="FOUR_ARCHIVES_VERIFIED_READ_ONLY"||!report.HostsVerified||report.BrowserKeysVerified!=3||
+  !report.CatalogBackupVerified||!report.DNSBackupVerified||report.CompleteRecoverySnapshot||report.InstallAuthorized||report.RestoreAuthorized{
+  t.Fatal("native display review failed",err)
+ }
+ serialized,err:=json.Marshal(report);if err!=nil{t.Fatal(err)}
+ if strings.Contains(string(serialized),parent)||strings.Contains(string(serialized),snap.HostsSHA256)||strings.Contains(string(serialized),pin){
+  t.Fatal("private recovery data leaked to display")
+ }
+ wrong:=snap;wrong.DNSAdaptersSHA256=strings.Repeat("f",64)
+ refused,err:=InspectOriginalBackupArchivesNativeReadOnly(ctx,parent,dnsParent,wrong,browser,inv,pin)
+ if err==nil||refused!=(WindowsOriginalBackupReview{Status:"UNVERIFIED"}){t.Fatal("wrong original baseline received display credit")}
+ t.Log("PASS VOLVE_FOUR_ARCHIVES_REAL_NTFS_DISPLAY_ONLY")
+}

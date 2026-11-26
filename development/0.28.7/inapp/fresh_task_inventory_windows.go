@@ -302,3 +302,38 @@ func verifyOriginalProtectionArchivesUnarmed(ctx context.Context,protectionParen
  receipt.CatalogBackupVerified=true
  return receipt,nil
 }
+
+// WindowsOriginalBackupReview is a display-only result. It contains no paths,
+// XML, DNS addresses, raw registry values or authorization. A zero-value
+// result is not proof of anything. Administrators retain legitimate access.
+type WindowsOriginalBackupReview struct {
+ Status string `json:"status"`
+ HostsVerified bool `json:"hosts_verified"`
+ BrowserKeysVerified int `json:"browser_keys_verified"`
+ DNSBackupVerified bool `json:"dns_backup_verified"`
+ CatalogBackupVerified bool `json:"catalog_backup_verified"`
+ CompleteRecoverySnapshot bool `json:"complete_recovery_snapshot"`
+ RestoreAuthorized bool `json:"restore_authorized"`
+ InstallAuthorized bool `json:"install_authorized"`
+}
+
+// InspectOriginalBackupArchivesNativeReadOnly reopens existing local archives
+// with native Windows ACL verification. The input pins must come from a
+// separate trusted census; this function does not authenticate that census,
+// assert transaction atomicity or modify any files, ACLs, tasks or DNS.
+func InspectOriginalBackupArchivesNativeReadOnly(ctx context.Context,protectionParent,dnsParent string,
+ baseline ProtectionSnapshot,browser WindowsBrowserPolicyEvidence,inventory WindowsFreshVOLVETaskInventory,
+ dnsJournalPin string)(WindowsOriginalBackupReview,error){
+ denied:=WindowsOriginalBackupReview{Status:"UNVERIFIED"}
+ if ctx==nil{return denied,errors.New("original archive review requires context")}
+ if err:=ctx.Err();err!=nil{return denied,err}
+ receipt,err:=verifyOriginalProtectionArchivesUnarmed(ctx,protectionParent,dnsParent,baseline,browser,inventory,dnsJournalPin,
+  func(path string)error{return nativeDNSOriginalBackupACL(ctx,path)})
+ if err!=nil{return denied,errors.New("local original archive verification failed")}
+ if !receipt.HostsVerified||receipt.BrowserKeysVerified!=3||!receipt.DNSBackupVerified||!receipt.CatalogBackupVerified||
+  receipt.CompleteRecoverySnapshot||receipt.InstallAuthorized||receipt.RestoreAuthorized{
+  return denied,errors.New("inconsistent original archive observation")
+ }
+ return WindowsOriginalBackupReview{Status:"FOUR_ARCHIVES_VERIFIED_READ_ONLY",HostsVerified:true,BrowserKeysVerified:3,
+  DNSBackupVerified:true,CatalogBackupVerified:true},nil
+}

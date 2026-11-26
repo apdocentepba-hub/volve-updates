@@ -36,6 +36,7 @@ type setupPreviewReport struct {
  BrowserRegistryKeysChecked int `json:"browser_registry_keys_checked"`
  BrowserRegistryNumberedEntries int `json:"browser_registry_numbered_entries"`
  BrowserPolicyCensusStable bool `json:"browser_policy_census_stable_under_lock"`
+ OriginalBackupReview motorupdate.WindowsOriginalBackupReview `json:"original_backup_review"`
  HostsBaselineChecked bool `json:"hosts_baseline_checked"`
  CatalogTaskBaselineChecked bool `json:"catalog_task_baseline_checked"`
  DNSAdapterAssignmentBaselineChecked bool `json:"dns_adapter_assignment_baseline_checked"`
@@ -170,6 +171,7 @@ func inspectCIHostWithProtectedOption(ctx context.Context, holdProtectedMutex bo
   BrowserRegistryKeysChecked:len(browser.Records),
   BrowserRegistryNumberedEntries:browser.TotalNumberedEntries,
   BrowserPolicyCensusStable:holdProtectedMutex&&len(browser.Records)==3,
+  OriginalBackupReview:motorupdate.WindowsOriginalBackupReview{Status:"NOT_CHECKED_NO_ARCHIVES"},
   HostsBaselineChecked:holdProtectedMutex&&protectionSnapshot.HostsSHA256!="",
   CatalogTaskBaselineChecked:holdProtectedMutex&&protectionSnapshot.CatalogTaskDefinitionSHA256!="",
   DNSAdapterAssignmentBaselineChecked:holdProtectedMutex&&protectionSnapshot.DNSAdaptersSHA256!="",

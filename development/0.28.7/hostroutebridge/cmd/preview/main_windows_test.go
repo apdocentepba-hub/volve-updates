@@ -93,3 +93,17 @@ func TestReadOnlyProgressRequiresCanonicalProtectedReview(t *testing.T){
   if _,err:=projectReadOnlyProgress(ctx,review,plan,true);err==nil{t.Fatal("unverified package accepted")}
  }
 }
+
+func TestSetupPreviewOriginalBackupReviewIsNotBackupCompletion(t *testing.T){
+ report:=setupPreviewReport{OriginalBackupReview:motorupdate.WindowsOriginalBackupReview{Status:"NOT_CHECKED_NO_ARCHIVES"},ReviewProgressPercent:25,ReviewProgressNext:"backup_verified"}
+ raw,err:=json.Marshal(report);if err!=nil{t.Fatal(err)}
+ var decoded setupPreviewReport
+ if err:=json.Unmarshal(raw,&decoded);err!=nil{t.Fatal(err)}
+ if decoded.OriginalBackupReview.Status!="NOT_CHECKED_NO_ARCHIVES"||
+  decoded.OriginalBackupReview.HostsVerified||decoded.OriginalBackupReview.BrowserKeysVerified!=0||
+  decoded.OriginalBackupReview.DNSBackupVerified||decoded.OriginalBackupReview.CatalogBackupVerified||
+  decoded.OriginalBackupReview.CompleteRecoverySnapshot||decoded.OriginalBackupReview.InstallAuthorized||
+  decoded.OriginalBackupReview.RestoreAuthorized||decoded.CanInstall||decoded.ReviewProgressPercent!=25{
+  t.Fatal("read-only preview misrepresented archive verification")
+ }
+}
