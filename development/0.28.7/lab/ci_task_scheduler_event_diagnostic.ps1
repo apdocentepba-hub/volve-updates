@@ -251,9 +251,10 @@ function Get-VolvCIProcessCreationCorrelation {
         # usable candidate. Never emit the executable field to CI output.
         $exe=Read-OnlyField $event 'NewProcessName'
         if($null -eq $clientProcessNumber -or [string]::IsNullOrWhiteSpace($exe)){continue}
-        $births+=([pscustomobject]@{pid=$clientProcessNumber;when=$event.when;imageId=(Get-VolvCITaskPseudonym -Identity $exe.ToLowerInvariant()); image=$exe})
+        $creator=ConvertTo-VolvCIPidDecimal (Read-OnlyField $event 'ProcessId')
+        $births+=([pscustomobject]@{pid=$clientProcessNumber;creator=$creator;when=$event.when;imageId=(Get-VolvCITaskPseudonym -Identity $exe.ToLowerInvariant()); image=$exe})
     }
-    $counts=[ordered]@{taskUpdateEvents=0;creationCandidate=0;creationMissing=0;creationAmbiguous=0;invalidUpdateEvidence=0;candidateImageIds=@();currentImageClasses=@()}
+    $counts=[ordered]@{taskUpdateEvents=0;creationCandidate=0;creationMissing=0;creationAmbiguous=0;invalidUpdateEvidence=0;parentPidMatch=0;parentPidMismatch=0;parentPidUnavailable=0;candidateImageIds=@();currentImageClasses=@()}
     foreach($raw in $UpdateEventXML){
         $event=Read-CIEvent $raw
         if($event.event -cne '4702' -or
@@ -272,6 +273,12 @@ function Get-VolvCIProcessCreationCorrelation {
         })
         if($matches.Count -eq 1){
             $counts.creationCandidate++
+            # Corroboration only: 4702 ParentProcessId vs 4688 creator PID.
+            # Even equality cannot exclude PID reuse or prove causal identity.
+            $parent=ConvertTo-VolvCIPidDecimal (Read-OnlyField $event 'ParentProcessId')
+            if($null -eq $parent -or $null -eq $matches[0].creator){$counts.parentPidUnavailable++}
+            elseif($parent -ceq $matches[0].creator){$counts.parentPidMatch++}
+            else{$counts.parentPidMismatch++}
             $counts.candidateImageIds=@(($counts.candidateImageIds+@($matches[0].imageId))|Sort-Object -Unique)
             if($InspectCurrentImage){
                 $class=Get-VolvCICurrentWindowsImageClass -Image $matches[0].image
@@ -358,6 +365,13 @@ if($Mode -ceq 'Test'){
     if($match.taskUpdateEvents -ne 1 -or $match.creationCandidate -ne 1 -or
        $match.creationMissing -ne 0 -or $match.creationAmbiguous -ne 0 -or
        $match.invalidUpdateEvidence -ne 0){throw 'NOT VERIFIED: 4702/4688 synthetic correlation failed'}
+    $withParent=$valid4702.Replace('</EventData>','<Data Name="ParentProcessId">264</Data></EventData>')
+    $withCreator=$birth4688.Replace('</EventData>','<Data Name="ProcessId">0x108</Data></EventData>')
+    $parentMatch=Get-VolvCIProcessCreationCorrelation -TaskIdentity $fixture -UpdateEventXML @($withParent) -CreationEventXML @($withCreator)
+    if($parentMatch.parentPidMatch -ne 1 -or $parentMatch.parentPidMismatch -ne 0 -or $parentMatch.parentPidUnavailable -ne 0){throw 'Parent/creator PID corroboration failed'}
+    $parentMismatch=Get-VolvCIProcessCreationCorrelation -TaskIdentity $fixture -UpdateEventXML @($withParent) -CreationEventXML @($withCreator.Replace('0x108','0x109'))
+    if($parentMismatch.parentPidMismatch -ne 1 -or $parentMismatch.parentPidMatch -ne 0){throw 'Different parent PID falsely corroborated'}
+    if($match.parentPidUnavailable -ne 1 -or $match.parentPidMatch -ne 0){throw 'Missing parent evidence falsely corroborated'}
     $miss=Get-VolvCIProcessCreationCorrelation -TaskIdentity $fixture -UpdateEventXML @($valid4702) -CreationEventXML @()
     if($miss.creationMissing -ne 1 -or $miss.creationCandidate -ne 0){throw 'NOT VERIFIED: missing birth event falsely matched'}
     $afterBirth=$birth4688.Replace('11:00:00Z','11:02:00Z')
@@ -477,7 +491,7 @@ try {
 # Optional process creation audit is not enabled here: this is READ-ONLY.
 # A timestamp/PID match alone is an investigative lead, not actor proof.
 $creationAudit='unavailable'
-$processCandidates=[pscustomobject]@{taskUpdateEvents=0;creationCandidate=0;creationMissing=0;creationAmbiguous=0;invalidUpdateEvidence=0;candidateImageIds=@();currentImageClasses=@()}
+$processCandidates=[pscustomobject]@{taskUpdateEvents=0;creationCandidate=0;creationMissing=0;creationAmbiguous=0;invalidUpdateEvidence=0;parentPidMatch=0;parentPidMismatch=0;parentPidUnavailable=0;candidateImageIds=@();currentImageClasses=@()}
 if($securityStatus -ceq 'available'){
     try {
         $creationEvents=@(Get-WinEvent -FilterHashtable @{
@@ -510,6 +524,9 @@ Write-Host ('CI TASK EVENT POSTMORTEM: identityId='+$IdentityId.ToUpperInvariant
     '; pidTemporalCandidate='+$processCandidates.creationCandidate+
     '; pidBirthAbsent='+$processCandidates.creationMissing+
     '; pidBirthAmbiguous='+$processCandidates.creationAmbiguous+
+    '; parentPidMatch='+$processCandidates.parentPidMatch+
+    '; parentPidMismatch='+$processCandidates.parentPidMismatch+
+    '; parentPidUnavailable='+$processCandidates.parentPidUnavailable+
     '; candidateImageIds='+($processCandidates.candidateImageIds -join ',')+
     '; currentImageClasses='+($processCandidates.currentImageClasses -join ',')+
     '; cursorScoped='+($AfterSecurityRecordId -gt 0 -and $AfterSchedulerRecordId -gt 0)+
