@@ -129,6 +129,11 @@ func writeCIFreshCatalog(root string)error{
 // All other valid questions have NOERROR with zero answers; blocked domains
 // must NEVER reach this upstream fixture in the real motor integration test.
 func ciFreshAllowedUpstreamResponse(query []byte)([]byte,error){
+ return ciFreshUpstreamResponse(query,false)
+}
+
+// TCP-only upstream challenge; CI fixture, never production.
+func ciFreshUpstreamResponse(query []byte,tcp bool)([]byte,error){
  if len(query)<17 || binary.BigEndian.Uint16(query[4:6])!=1 {
   return nil,errors.New("CI upstream: invalid DNS question header")
  }
@@ -160,6 +165,15 @@ func ciFreshAllowedUpstreamResponse(query []byte)([]byte,error){
  if allowedChallenge{
   for _,c:=range labels[0]{if !(c>='a'&&c<='f'||c>='0'&&c<='9'){allowedChallenge=false;break}}
  }
+ if len(labels)==3 && strings.HasPrefix(labels[0],"tc-") && len(labels[0])==35 && labels[1]=="volve-motor-ci" && labels[2]=="test" && qtype==1 && qclass==1 {
+  valid:=true
+  for _,ch:=range labels[0][3:]{if !(ch>='a'&&ch<='f'||ch>='0'&&ch<='9'){valid=false;break}}
+  if valid{
+   if !tcp{reply[2]|=0x02;return reply,nil}
+   reply[7]=1
+   return append(reply,0xC0,0x0C,0,1,0,1,0,0,0,60,0,4,203,0,113,8),nil
+  }
+ }
  if (domain=="example.org" || allowedChallenge) && qtype==1 && qclass==1 {
   reply[7]=1 // one actual A record, not merely NOERROR
   reply=append(reply,0xC0,0x0C,0,1,0,1,0,0,0,60,0,4,203,0,113,7)
@@ -184,9 +198,35 @@ func runCIFreshDNS53WithDuration(root,token string,duration time.Duration)error{
  }else if os.IsNotExist(err) {
   if err:=writeCIFreshCatalog(root);err!=nil{return err}
  }else{return fmt.Errorf("cannot inspect lab root: %w",err)}
- upstream,err:=net.ListenPacket("udp4","127.0.0.1:0")
+ upstreamTCP,err:=net.Listen("tcp4","127.0.0.1:0")
+ if err!=nil{return err}
+ defer upstreamTCP.Close()
+ upstream,err:=net.ListenPacket("udp4",upstreamTCP.Addr().String())
  if err!=nil{return err}
  defer upstream.Close()
+ go func(){
+  for{
+   conn,e:=upstreamTCP.Accept();if e!=nil{return}
+   func(){
+    defer conn.Close()
+    if conn.SetDeadline(time.Now().Add(3*time.Second))!=nil{return}
+    var header [2]byte
+    if _,e:=io.ReadFull(conn,header[:]);e!=nil{return}
+    size:=int(binary.BigEndian.Uint16(header[:]))
+    if size<17||size>4096{return}
+    q:=make([]byte,size)
+    if _,e:=io.ReadFull(conn,q);e!=nil{return}
+    r,e:=ciFreshUpstreamResponse(q,true);if e!=nil{return}
+    framed:=make([]byte,2+len(r))
+    binary.BigEndian.PutUint16(framed[:2],uint16(len(r)))
+    copy(framed[2:],r)
+    for len(framed)>0{
+     n,e:=conn.Write(framed);if e!=nil||n==0{return}
+     framed=framed[n:]
+    }
+   }()
+  }
+ }()
  go func(){
   b:=make([]byte,2048)
   for{

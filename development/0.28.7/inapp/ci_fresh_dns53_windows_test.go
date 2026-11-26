@@ -226,6 +226,30 @@ func TestCIConfiguredNativeTCPDNS(t *testing.T) {
  t.Log("PASS VOLVE_NATIVE_DNSQUERY_CONFIGURED_TCP")
 }
 
+// Native configured resolver must receive the exact upstream TCP-only A
+// record. This proves upstream completion, not a client-side TCP retry.
+func TestCIConfiguredNativeUpstreamTruncation(t *testing.T){
+ if os.Getenv("VOLVE_CI_FRESH_DNS53_PROBE")!="GITHUB-HOSTED-VM-ONLY" ||
+    os.Getenv("VOLVE_CI_NESTED_GUEST_DNS")!="PRIVATE_GUEST_ONLY"{t.Skip("private nested guest only")}
+ var nonce [16]byte
+ if _,err:=rand.Read(nonce[:]);err!=nil{t.Fatal(err)}
+ name:=fmt.Sprintf("tc-%x.volve-motor-ci.test.",nonce)
+ const options=0x8|0x40|0x80
+ var records *syscall.DNSRecord
+ err:=syscall.DnsQuery(name,syscall.DNS_TYPE_A,options,nil,&records,nil)
+ if records!=nil{defer syscall.DnsRecordListFree(records,1)}
+ if err!=nil{t.Fatal(err)}
+ count:=0
+ for rec,n:=records,0;rec!=nil;rec,n=rec.Next,n+1{
+  if n>=64{t.Fatal("unexpected record chain")}
+  if rec.Type!=syscall.DNS_TYPE_A||rec.Dw&3!=syscall.DnsSectionAnswer{continue}
+  if rec.Length!=4||!bytes.Equal(rec.Data[:4],[]byte{203,0,113,8}){t.Fatal("unexpected upstream TCP-only answer")}
+  count++
+ }
+ if count!=1{t.Fatalf("expected exactly one TCP-only fixture A record, got %d",count)}
+ t.Log("PASS VOLVE_NATIVE_CONFIGURED_UPSTREAM_TRUNCATION_TCP_ANSWER")
+}
+
 // Compare an exact allowed challenge over a fresh TCP connection and then
 // a second challenge on the SAME socket. This is an independent diagnostic
 // of connection reuse, not a substitute for the configured Windows client.
