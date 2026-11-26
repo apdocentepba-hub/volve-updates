@@ -1,0 +1,54 @@
+name: VOLVE Windows DNS client baseline (READ ONLY NO INSTALL)
+on:
+  push:
+    branches: [work/0287-dns-client-baseline-20261126]
+permissions:
+  contents: read
+jobs:
+  resolver-baseline:
+    name: Resolver baseline on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 6
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2022, windows-2025]
+    steps:
+      - name: Compare configured resolver against explicit existing DNS server
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          if($env:GITHUB_ACTIONS -cne 'true' -or $env:RUNNER_ENVIRONMENT -cne 'github-hosted'){throw 'Hosted runner only'}
+          $os=Get-CimInstance Win32_OperatingSystem
+          $computer=Get-CimInstance Win32_ComputerSystem
+          if(($computer.Manufacturer+' '+$computer.Model) -notmatch '(?i)virtual machine|hyper-v|vmware|qemu|kvm'){throw 'Disposable VM not verified'}
+          $routes=@(Get-NetRoute -AddressFamily IPv4 -DestinationPrefix '0.0.0.0/0' -ErrorAction Stop | Sort-Object RouteMetric,InterfaceMetric)
+          if($routes.Count -lt 1){throw 'Non-loopback baseline requires ordinary configured network'}
+          $index=$routes[0].InterfaceIndex
+          $servers=@((Get-DnsClientServerAddress -InterfaceIndex $index -AddressFamily IPv4).ServerAddresses | Where-Object {$_ -and $_ -notmatch '^127\.' -and $_ -ne '0.0.0.0'})
+          if($servers.Count -lt 1){throw 'No configured non-loopback IPv4 resolver'}
+          $server=[string]$servers[0]
+          function Observe-DNS([string]$name,[string]$mode){
+            $query=@{Name=$name;Type='A';DnsOnly=$true;NoHostsFile=$true;QuickTimeout=$true;ErrorAction='Stop'}
+            if($mode -like '*tcp'){$query.TcpOnly=$true}
+            if($mode -like 'explicit-*'){$query.Server=$server}
+            try {
+              $answer=@(Resolve-DnsName @query | Where-Object {$_.Type -eq 'A' -and $_.IPAddress})
+              return [pscustomobject]@{name=$name;mode=$mode;verified=($answer.Count -gt 0);answer_count=$answer.Count;error_id=$null}
+            }catch{
+              # Output only the cmdlet error identifier; never addresses, adapter names or full exception text.
+              return [pscustomobject]@{name=$name;mode=$mode;verified=$false;answer_count=0;error_id=([string]$_.FullyQualifiedErrorId -split ',')[0]}
+            }
+          }
+          # Two IANA-reserved example domains and alternating query order reduce
+          # reliance on a single result. No configured resolver is modified.
+          $observations=@()
+          foreach($mode in @('configured-tcp','explicit-tcp','configured-default','explicit-default')){$observations+=Observe-DNS 'example.org.' $mode}
+          foreach($mode in @('explicit-tcp','configured-tcp','explicit-default','configured-default')){$observations+=Observe-DNS 'example.net.' $mode}
+          if($observations.Count -ne 8){throw 'Incomplete diagnostic matrix'}
+          $serverAfter=@((Get-DnsClientServerAddress -InterfaceIndex $index -AddressFamily IPv4).ServerAddresses | Where-Object {$_ -and $_ -notmatch '^127\.' -and $_ -ne '0.0.0.0'})
+          if(($servers -join ',') -cne ($serverAfter -join ',')){throw 'DNS configuration changed externally; baseline invalid'}
+          $report=[ordered]@{scope='HOSTED_STANDARD_RUNNER_READ_ONLY_NOT_VOLVE';os=$os.Caption;build=$os.BuildNumber;observations=$observations;configuration_unchanged=$true;wire_capture=$false;release_authorized=$false}
+          Write-Host ('VOLVE_CLIENT_BASELINE='+($report|ConvertTo-Json -Depth 5 -Compress))
+          if(@($observations|Where-Object {$_.mode -eq 'configured-default' -and $_.verified}).Count -ne 2){throw 'Ordinary DNS control did not pass both names; diagnostic inconclusive'}
+          Write-Host 'PASS diagnostic completed; TCP findings must be interpreted separately; NO INSTALL NO RELEASE'
