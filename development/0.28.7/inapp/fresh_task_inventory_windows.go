@@ -298,6 +298,11 @@ func verifyOriginalProtectionArchivesUnarmed(ctx context.Context,protectionParen
  if _,err:=readOriginalCatalogArchiveUnarmed(ctx,protectionParent,baseline,inventory,check);err!=nil{
   return denied,errors.New("original catalog archive not verified")
  }
+ // Recheck the prior three archives after catalog I/O. This catches drift
+ // during the sequential review; it does NOT establish atomicity or grant
+ // permission to restore. The future controller still needs its own lock.
+ again,err:=verifyOriginalProtectionTripleUnarmed(ctx,protectionParent,dnsParent,baseline,browser,dnsJournalPin,check)
+ if err!=nil||again!=receipt{return denied,errors.New("original protection archives changed during catalog review")}
  if err:=ctx.Err();err!=nil{return denied,err}
  receipt.CatalogBackupVerified=true
  return receipt,nil
