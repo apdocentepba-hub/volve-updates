@@ -46,7 +46,7 @@ func TestReboot(t *testing.T) {
 func TestFailureBeforeActivation(t *testing.T) {
  for i:=0;i<3;i++ {
   s:=New();advance(t,s,i)
-  if s.Fail()!=nil||s.View().Status!="failed_before_activation"||s.ConfirmRecovery()==nil||s.Confirm(order[i])==nil {t.Fatal(s.View())}
+  if s.Fail()!=nil||s.View().Status!="failed_before_activation"||s.ConfirmRecovery(context.Background(),verifiedHealth)==nil||s.Confirm(order[i])==nil {t.Fatal(s.View())}
  }
 }
 func TestRecovery(t *testing.T) {
@@ -56,7 +56,7 @@ func TestRecovery(t *testing.T) {
    if i==len(order)-1 {if s.RequireReboot()!=nil {t.Fatal(s.View())}}
    if s.Fail()!=nil||s.View().Status!="recovery_required"||s.Confirm(order[i])==nil||s.ConfirmReboot(context.Background(),verifiedHealth)==nil {t.Fatal(s.View())}
    if success {
-    if s.ConfirmRecovery()!=nil||s.View().Status!="recovered_not_installed" {t.Fatal(s.View())}
+    if s.ConfirmRecovery(context.Background(),verifiedHealth)!=nil||s.View().Status!="recovered_not_installed" {t.Fatal(s.View())}
    } else {
     if s.RecoveryFailed()!=nil||s.View().Status!="recovery_failed" {t.Fatal(s.View())}
    }
@@ -123,7 +123,7 @@ func TestResumeRestartFailureAndInvalidation(t *testing.T) {
   if s.View().Percent!=87{t.Fatal(s.View())}
   return s.Fail()
  });err==nil||s.View().Status!="recovery_required"||s.ConfirmReboot(context.Background(),verifiedHealth)==nil{t.Fatal("stale restart proof accepted")}
- if err:=s.ConfirmRecovery();err!=nil||s.View().Status!="recovered_not_installed"{t.Fatal(s.View())}
+ if err:=s.ConfirmRecovery(context.Background(),verifiedHealth);err!=nil||s.View().Status!="recovered_not_installed"{t.Fatal(s.View())}
 }
 func TestResumeRestartCancellationAndConcurrentRequest(t *testing.T) {
  ctx:=context.Background()
@@ -166,4 +166,36 @@ func TestConcurrentPostBootProofOnlyOneFinalizes(t *testing.T){
  <-entered;<-entered;close(release)
  a,b:=<-outcomes,<-outcomes
  if (a==nil)==(b==nil)||s.View().Status!="completed"{t.Fatalf("unexpected results: %v %v %+v",a,b,s.View())}
+}
+
+func TestRecoveryRequiresVerifiedRestoration(t *testing.T) {
+ ctx:=context.Background()
+ s:=New();advance(t,s,3)
+ if err:=s.Fail();err!=nil{t.Fatal(err)}
+ bad:=errors.New("original configuration not restored")
+ if s.ConfirmRecovery(nil,verifiedHealth)==nil || s.ConfirmRecovery(ctx,nil)==nil {t.Fatal("missing recovery verifier accepted")}
+ if err:=s.ConfirmRecovery(ctx,func(context.Context)error{return bad});!errors.Is(err,bad){t.Fatal(err)}
+ if s.View().Status!="recovery_required"{t.Fatal(s.View())}
+ during,cancel:=context.WithCancel(ctx)
+ defer cancel()
+ if err:=s.ConfirmRecovery(during,func(context.Context)error{cancel();return nil});!errors.Is(err,context.Canceled){t.Fatal(err)}
+ if s.View().Status!="recovery_required"{t.Fatal(s.View())}
+ if err:=s.ConfirmRecovery(ctx,func(context.Context)error{
+  if s.View().Status!="recovery_required"{t.Fatal(s.View())}
+  return s.RecoveryFailed()
+ });err==nil||s.View().Status!="recovery_failed"{t.Fatal("invalidated recovery proof accepted")}
+}
+func TestConcurrentRecoveryProofOnlyOneFinalizes(t *testing.T){
+ ctx:=context.Background()
+ s:=New();advance(t,s,3)
+ if err:=s.Fail();err!=nil{t.Fatal(err)}
+ entered:=make(chan struct{},2)
+ release:=make(chan struct{})
+ outcomes:=make(chan error,2)
+ for i:=0;i<2;i++{
+  go func(){outcomes<-s.ConfirmRecovery(ctx,func(context.Context)error{entered<-struct{}{};<-release;return nil})}()
+ }
+ <-entered;<-entered;close(release)
+ a,b:=<-outcomes,<-outcomes
+ if (a==nil)==(b==nil)||s.View().Status!="recovered_not_installed"{t.Fatalf("unexpected results: %v %v %+v",a,b,s.View())}
 }

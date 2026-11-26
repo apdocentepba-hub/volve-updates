@@ -137,10 +137,22 @@ func (s *State) Fail() error {
  if s.next>=3 { s.status="recovery_required" } else { s.status="failed_before_activation" }
  return nil
 }
-func (s *State) ConfirmRecovery() error {
+// ConfirmRecovery projects independently verified restoration into the UI.
+// A callback success is not itself an authorization to modify the host.
+// The authenticated controller must verify the original snapshot, live
+// restored state and durable recovery receipt before reporting success.
+func (s *State) ConfirmRecovery(ctx context.Context, verifyRestoration func(context.Context) error) error {
+ if ctx==nil || verifyRestoration==nil {return errors.New("verified restoration reader required")}
+ if err:=ctx.Err();err!=nil{return err}
+ s.mu.Lock()
+ eligible:=s.status=="recovery_required"
+ s.mu.Unlock()
+ if !eligible{return errors.New("no pending recovery")}
+ if err:=verifyRestoration(ctx);err!=nil{return err}
  s.mu.Lock()
  defer s.mu.Unlock()
- if s.status != "recovery_required" { return errors.New("no pending recovery") }
+ if err:=ctx.Err();err!=nil{return err}
+ if s.status!="recovery_required"{return errors.New("recovery proof invalidated during verification")}
  s.status="recovered_not_installed"
  return nil
 }
