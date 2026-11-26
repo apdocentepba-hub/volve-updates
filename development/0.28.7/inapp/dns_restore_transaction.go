@@ -93,7 +93,7 @@ func sameDNSState(a,b DNSServerState) bool {
 // and it never overwrites anything except VOLVE's exact localhost setting.
 // It does NOT modify hosts or browser policy.
 func RestoreVOLVEDNSAfterFailure(ctx context.Context,records []DNSRestoreRecord, backend DNSAdapterBackend) error {
-    if backend==nil || len(records)==0 {return errors.New("missing recovery backend or journal")}
+    if ctx==nil || backend==nil || len(records)==0 {return errors.New("missing recovery context, backend or journal")}
     if err:=ctx.Err();err!=nil{return err}
     seen:=map[string]bool{}
     ordered:=append([]DNSRestoreRecord(nil),records...)
@@ -136,5 +136,15 @@ func RestoreVOLVEDNSAfterFailure(ctx context.Context,records []DNSRestoreRecord,
         if err!=nil{return fmt.Errorf("cannot verify restored DNS state: %w",err)}
         if !sameDNSState(after,r.Original){return errors.New("DNS restoration did not match original; recovery remains pending")}
     }
-    return nil
+    // A successful per-family readback is not a complete recovery receipt:
+    // a later adapter write or external change may disturb an earlier one.
+    // Reobserve every original, without applying any additional writes.
+    for _,r:=range ordered {
+        if err:=ctx.Err();err!=nil{return err}
+        actual,err:=backend.Read(ctx,r.Original.InterfaceGUID,r.Original.Family)
+        if err!=nil{return fmt.Errorf("final DNS recovery readback unavailable: %w",err)}
+        if err:=validDNSState(actual);err!=nil{return fmt.Errorf("final DNS recovery state invalid: %w",err)}
+        if !sameDNSState(actual,r.Original){return errors.New("final DNS recovery census differs from original; recovery remains pending")}
+    }
+    return ctx.Err()
 }
