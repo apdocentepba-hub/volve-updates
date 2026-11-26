@@ -1,0 +1,95 @@
+name: VOLVE dual loopback DNS differential (DISPOSABLE CI ONLY NO INSTALL)
+on:
+  push:
+    branches: [work/0287-dns-dual-stack-differential-20261126]
+permissions:
+  contents: read
+jobs:
+  compare-loopbacks:
+    runs-on: windows-2022
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Compare forced TCP with IPv4-only and dual loopback configuration
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          if($env:GITHUB_ACTIONS -cne 'true' -or $env:RUNNER_ENVIRONMENT -cne 'github-hosted'){throw 'Hosted runner only'}
+          $vm=Get-CimInstance Win32_ComputerSystem
+          if(($vm.Manufacturer+' '+$vm.Model) -notmatch '(?i)virtual machine|hyper-v|vmware|qemu|kvm'){throw 'Disposable VM not verified'}
+          $routes=@(Get-NetRoute -AddressFamily IPv4 -DestinationPrefix '0.0.0.0/0')
+          if($routes.Count -ne 1){throw 'Ambiguous default route; no changes'}
+          $idx=$routes[0].InterfaceIndex
+          $guid=([guid](Get-NetAdapter -InterfaceIndex $idx).InterfaceGuid).ToString('B')
+          $key4='HKLM:\SYSTEM\CurrentControlSet\Services\Tcpip\Parameters\Interfaces\'+$guid
+          $key6='HKLM:\SYSTEM\CurrentControlSet\Services\Tcpip6\Parameters\Interfaces\'+$guid
+          $reg4=Get-ItemProperty -LiteralPath $key4
+          $reg6=Get-ItemProperty -LiteralPath $key6
+          $orig4=@((Get-DnsClientServerAddress -InterfaceIndex $idx -AddressFamily IPv4).ServerAddresses)
+          $orig6=@((Get-DnsClientServerAddress -InterfaceIndex $idx -AddressFamily IPv6).ServerAddresses)
+          $dhcp=@(([string]$reg4.DhcpNameServer -split '[,\s]+')|Where-Object {$_})
+          if(([string]$reg4.NameServer).Trim() -or ([string]$reg6.NameServer).Trim() -or ([string]$reg4.ProfileNameServer).Trim() -or ([string]$reg6.ProfileNameServer).Trim() -or !$orig4.Count -or ($orig4 -join ',') -cne ($dhcp -join ',')){throw 'Original automatic DNS not independently established; no changes'}
+          $tcp=@(Get-NetTCPConnection -LocalPort 53 -State Listen -ErrorAction SilentlyContinue)
+          $udp=@(Get-NetUDPEndpoint -LocalPort 53 -ErrorAction SilentlyContinue)
+          if(@(@($tcp)+@($udp)|Where-Object {$_.LocalAddress -in @('0.0.0.0','::','127.0.0.1','::1')}).Count){throw 'Local port 53 conflict; no changes'}
+          $env:VOLVE_LAB_PREFIX=[guid]::NewGuid().ToString('N')
+          $env:VOLVE_LAB_LOG=Join-Path $env:RUNNER_TEMP ('volve-dual-'+$env:VOLVE_LAB_PREFIX+'.jsonl')
+          $env:VOLVE_LAB_READY=Join-Path $env:RUNNER_TEMP ('volve-dual-'+$env:VOLVE_LAB_PREFIX+'.ready')
+          $fixture=Join-Path $env:GITHUB_WORKSPACE 'development/0.28.7/lab/ci_dns_dual_loopback_reference.py'
+          $netsh=Join-Path $env:SystemRoot 'System32\netsh.exe'
+          $proc=$null;$changed4=$false;$changed6=$false;$restored=$false;$observations=@()
+          function AssertIdentity {
+            if(([guid](Get-NetAdapter -InterfaceIndex $idx).InterfaceGuid).ToString('B') -cne $guid){throw 'Adapter identity changed'}
+          }
+          function Observe([string]$label,[string]$server,[bool]$forceTCP){
+            $name=$env:VOLVE_LAB_PREFIX+'-'+[guid]::NewGuid().ToString('N').Substring(0,16)+'.test'
+            $query=@{Name=($name+'.');Type='A';DnsOnly=$true;NoHostsFile=$true;QuickTimeout=$true;ErrorAction='Stop'}
+            if($forceTCP){$query.TcpOnly=$true}
+            if($server){$query.Server=$server}
+            $verified=$false;$errorId=$null
+            try {$a=@(Resolve-DnsName @query|Where-Object {$_.Type -eq 'A'});$verified=($a.Count -eq 1 -and $a[0].IPAddress -ceq '203.0.113.7')}
+            catch {$errorId=([string]$_.FullyQualifiedErrorId -split ',')[0]}
+            Start-Sleep -Milliseconds 150
+            $wire=@(if(Test-Path -LiteralPath $env:VOLVE_LAB_LOG){Get-Content -LiteralPath $env:VOLVE_LAB_LOG|ForEach-Object {ConvertFrom-Json $_}|Where-Object {$_.name -ceq $name}})
+            [pscustomobject]@{mode=$label;answer_verified=$verified;ipv4_tcp=@($wire|Where-Object {$_.host -ceq 'ipv4-loopback' -and $_.transport -ceq 'tcp'}).Count;ipv6_tcp=@($wire|Where-Object {$_.host -ceq 'ipv6-loopback' -and $_.transport -ceq 'tcp'}).Count;udp=@($wire|Where-Object {$_.transport -ceq 'udp'}).Count;error_id=$errorId}
+          }
+          try{
+            $proc=Start-Process -FilePath (Get-Command python -ErrorAction Stop).Source -ArgumentList @('-u',('"'+$fixture+'"')) -PassThru
+            for($i=0;$i -lt 50 -and !(Test-Path -LiteralPath $env:VOLVE_LAB_READY);$i++){if($proc.HasExited){throw 'Fixture failed to bind'};Start-Sleep -Milliseconds 100}
+            if(!(Test-Path -LiteralPath $env:VOLVE_LAB_READY)){throw 'Fixture not ready'}
+            $observations+=Observe 'explicit-v4-tcp' '127.0.0.1' $true
+            $observations+=Observe 'explicit-v6-tcp' '::1' $true
+            if(!$observations[0].answer_verified -or $observations[0].ipv4_tcp -lt 1 -or !$observations[1].answer_verified -or $observations[1].ipv6_tcp -lt 1 -or @($observations|Where-Object {$_.udp -ne 0}).Count){throw 'Explicit controls failed; no DNS changes'}
+            AssertIdentity
+            $changed4=$true
+            & $netsh interface ipv4 set dnsservers "name=$idx" source=static address=127.0.0.1 validate=no | Out-Null
+            if($LASTEXITCODE -ne 0 -or (@((Get-DnsClientServerAddress -InterfaceIndex $idx -AddressFamily IPv4).ServerAddresses) -join ',') -cne '127.0.0.1'){throw 'IPv4 configuration failed'}
+            $observations+=Observe 'configured-v4-default' '' $false
+            $observations+=Observe 'configured-v4-tcp' '' $true
+            AssertIdentity
+            $changed6=$true
+            & $netsh interface ipv6 set dnsservers "name=$idx" source=static address=::1 validate=no | Out-Null
+            if($LASTEXITCODE -ne 0 -or (@((Get-DnsClientServerAddress -InterfaceIndex $idx -AddressFamily IPv6).ServerAddresses) -join ',') -cne '::1'){throw 'IPv6 configuration failed'}
+            $observations+=Observe 'configured-dual-default' '' $false
+            $observations+=Observe 'configured-dual-tcp' '' $true
+          }finally{
+            try{
+              AssertIdentity
+              $restoreErrors=@()
+              if($changed6){& $netsh interface ipv6 set dnsservers "name=$idx" source=dhcp | Out-Null;if($LASTEXITCODE -ne 0){$restoreErrors+='IPv6'}}
+              if($changed4){& $netsh interface ipv4 set dnsservers "name=$idx" source=dhcp | Out-Null;if($LASTEXITCODE -ne 0){$restoreErrors+='IPv4'}}
+              $after4=@((Get-DnsClientServerAddress -InterfaceIndex $idx -AddressFamily IPv4).ServerAddresses)
+              $after6=@((Get-DnsClientServerAddress -InterfaceIndex $idx -AddressFamily IPv6).ServerAddresses)
+              $restored=(!$restoreErrors.Count -and ($after4 -join ',') -ceq ($orig4 -join ',') -and ($after6 -join ',') -ceq ($orig6 -join ',') -and !([string](Get-ItemProperty -LiteralPath $key4).NameServer).Trim() -and !([string](Get-ItemProperty -LiteralPath $key6).NameServer).Trim())
+              if(!$restored){throw 'Exact original DNS restoration not verified'}
+            }finally{
+              if($proc -and !$proc.HasExited){Stop-Process -Id $proc.Id -Force -ErrorAction Stop;$proc.WaitForExit()}
+              Write-Host ('VOLVE_DUAL_LOOPBACK_DIFFERENTIAL='+([ordered]@{scope='HOSTED_SERVER2022_REFERENCE_ONLY';build=(Get-CimInstance Win32_OperatingSystem).BuildNumber;dnsapi_version=(Get-Item (Join-Path $env:SystemRoot 'System32\dnsapi.dll')).VersionInfo.FileVersion;observations=$observations;original_dns_restored=$restored;release_authorized=$false}|ConvertTo-Json -Depth 5 -Compress))
+            }
+          }
+          if($observations.Count -ne 6 -or !$restored){throw 'Incomplete diagnostic'}
+          $forced=@($observations|Where-Object {$_.mode -like '*tcp' -and $_.answer_verified -and ($_.ipv4_tcp+$_.ipv6_tcp) -gt 0 -and $_.udp -eq 0})
+          if($forced.Count -ne 4){throw 'Configured forced TCP reference still unverified; NO RELEASE'}
+          Write-Host 'PASS: exact forced TCP answers for both configurations; reference only, no release'
