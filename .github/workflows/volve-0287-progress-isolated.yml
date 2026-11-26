@@ -1,0 +1,31 @@
+name: VOLVE 0.28.7 isolated installer progress verification (NO INSTALL)
+on:
+  push:
+    branches: [work/0287-verified-recovery-ui-20261125]
+    paths:
+      - 'development/0.28.7/installer-wizard/installerprogress/**'
+      - '.github/workflows/volve-0287-progress-isolated.yml'
+permissions:
+  contents: read
+jobs:
+  progress-only:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    defaults:
+      run:
+        working-directory: development/0.28.7/installer-wizard/installerprogress
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.x'
+          cache: false
+      - name: Verify exact recovery state machine and races
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --exit-code HEAD -- progress.go progress_test.go
+          go test -list . progress.go progress_test.go
+          go test -count=1 -race -cover -v progress.go progress_test.go
+          go vet progress.go progress_test.go
+          echo 'PASS: isolated installer state contract only; NO INSTALL'
