@@ -6,7 +6,11 @@ permissions:
   contents: read
 jobs:
   compare-loopbacks:
-    runs-on: windows-2022
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [windows-2022, windows-2025]
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 8
     steps:
       - uses: actions/checkout@v4
@@ -143,7 +147,7 @@ jobs:
               if(!$restored){throw 'Exact original DNS restoration not verified'}
             }finally{
               if($proc -and !$proc.HasExited){Stop-Process -Id $proc.Id -Force -ErrorAction Stop;$proc.WaitForExit()}
-              Write-Host ('VOLVE_DUAL_LOOPBACK_DIFFERENTIAL='+([ordered]@{scope='HOSTED_SERVER2022_REFERENCE_ONLY';build=(Get-CimInstance Win32_OperatingSystem).BuildNumber;dnsapi_version=(Get-Item (Join-Path $env:SystemRoot 'System32\dnsapi.dll')).VersionInfo.FileVersion;observations=$observations;native_observations=$nativeObservations;original_dns_restored=$restored;release_authorized=$false}|ConvertTo-Json -Depth 5 -Compress))
+              Write-Host ('VOLVE_DUAL_LOOPBACK_DIFFERENTIAL='+([ordered]@{scope='HOSTED_WINDOWS_REFERENCE_ONLY';os=(Get-CimInstance Win32_OperatingSystem).Caption;build=(Get-CimInstance Win32_OperatingSystem).BuildNumber;dnsapi_version=(Get-Item (Join-Path $env:SystemRoot 'System32\dnsapi.dll')).VersionInfo.FileVersion;observations=$observations;native_observations=$nativeObservations;original_dns_restored=$restored;release_authorized=$false}|ConvertTo-Json -Depth 5 -Compress))
             }
           }
           if($observations.Count -ne 6 -or $nativeObservations.Count -ne 10 -or !$restored){throw 'Incomplete diagnostic'}
@@ -152,5 +156,5 @@ jobs:
           $variants=@($nativeObservations|Where-Object {$_.mode -match '-tcp-(minimal|no-cache|wire-only)$' -and $_.answer_verified -and $_.error_id -eq 0 -and ($_.ipv4_tcp+$_.ipv6_tcp) -gt 0 -and $_.udp -eq 0})
           Write-Host ('NATIVE_TCP_OPTION_VARIANTS_VERIFIED='+$variants.Count+'/6')
           $forced=@($observations|Where-Object {$_.mode -like '*tcp' -and $_.answer_verified -and ($_.ipv4_tcp+$_.ipv6_tcp) -gt 0 -and $_.udp -eq 0})
-          if($forced.Count -ne 4){throw 'Configured forced TCP reference still unverified; NO RELEASE'}
+          if($forced.Count -ne 4 -or $nativeForced.Count -ne 2){throw 'Configured forced TCP reference still unverified; NO RELEASE'}
           Write-Host 'PASS: exact forced TCP answers for both configurations; reference only, no release'
