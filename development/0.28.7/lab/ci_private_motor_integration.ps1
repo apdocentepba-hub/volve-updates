@@ -1,12 +1,13 @@
-# Hosted CI, isolated Windows guest only. No adapter writes, no product
-# task, no external network. Run exact CI-tagged production DNS code against
+# Hosted CI, isolated Windows guest only. No DNS assignment writes, no
+# product task, no external network. Optional temporary route control only. Run exact CI-tagged production DNS code against
 # the already-armed localhost assignments; stop it to induce the DNS fault.
 [CmdletBinding()]
 param([Parameter(Mandatory=$true)][string]$MotorExe,
       [Parameter(Mandatory=$true)][ValidatePattern('^[A-F0-9]{64}$')][string]$MotorSHA,
       [Parameter(Mandatory=$true)][string]$WireProbeExe,
       [Parameter(Mandatory=$true)][ValidatePattern('^[A-F0-9]{64}$')][string]$WireProbeSHA,
-      [Parameter(Mandatory=$true)][ValidatePattern('^[0-9]{6,20}$')][string]$Trial)
+      [Parameter(Mandatory=$true)][ValidatePattern('^[0-9]{6,20}$')][string]$Trial,
+      [switch]$PrivateGatewayControl)
 Set-StrictMode -Version Latest
 $ErrorActionPreference='Stop'
 if($env:GITHUB_ACTIONS -cne 'true' -or $env:RUNNER_ENVIRONMENT -cne 'github-hosted' -or $env:VOLVE_CI_NESTED_GUEST_DNS -cne 'PRIVATE_GUEST_ONLY'){throw 'Isolated hosted CI only'}
@@ -170,6 +171,64 @@ try{
         }
         Assert-LoopbackAssignments
     }
+    # A/B control of the no-default-route fixture, with identical live
+    # motor and DNS assignments. The host must attest the isolated peer
+    # topology and disabled forwarding before explicitly enabling this.
+    # A positive result identifies a possible fixture incompatibility,
+    # not a production fix or permission to ignore the original gate.
+    $gatewayControl=[ordered]@{attempted=$false;default_verified=$false;tcp_verified=$false;native_tcp_verified=$false;route_removed=$false;error_ids=@();after_removal_default_verified=$false;after_removal_tcp_verified=$false;after_removal_error_id=$null;reversible_route_effect=$false}
+    if($tcpKnownFailure -and $PrivateGatewayControl){
+        Assert-LoopbackAssignments
+        $idx=[uint32]$nic[0].InterfaceIndex
+        $ip=@(Get-NetIPAddress -InterfaceIndex $idx -AddressFamily IPv4 -ErrorAction Stop|Where-Object {$_.IPAddress -ceq '192.0.2.10' -and $_.PrefixLength -eq 24 -and $_.AddressState -eq 'Preferred'})
+        if($ip.Count -ne 1 -or @(Get-NetRoute -ErrorAction Stop|Where-Object {$_.DestinationPrefix -in @('0.0.0.0/0','::/0')}).Count -ne 0){throw 'Gateway control precondition failed'}
+        $gatewayControl.attempted=$true
+        try{
+            New-NetRoute -InterfaceIndex $idx -DestinationPrefix '0.0.0.0/0' -NextHop '192.0.2.53' -RouteMetric 5000 -PolicyStore ActiveStore -ErrorAction Stop|Out-Null
+            $routes=@(Get-NetRoute -ErrorAction Stop|Where-Object {$_.DestinationPrefix -in @('0.0.0.0/0','::/0')})
+            if($routes.Count -ne 1 -or $routes[0].InterfaceIndex -ne $idx -or $routes[0].NextHop -cne '192.0.2.53' -or $routes[0].RouteMetric -ne 5000){throw 'Unexpected gateway control route'}
+            Assert-LoopbackAssignments
+            foreach($transport in @('Default','TCP')){
+                $challenge=[guid]::NewGuid().ToString('N')+'.volve-motor-ci.test.'
+                $gatewayQuery=@{Name=$challenge;Type='A';DnsOnly=$true;NoHostsFile=$true;QuickTimeout=$true;ErrorAction='Stop'}
+                if($transport -ceq 'TCP'){$gatewayQuery.TcpOnly=$true}
+                try{
+                    $answers=@(Resolve-DnsName @gatewayQuery|Where-Object {$_.PSObject.Properties['IPAddress'] -and [string]$_.Type -eq 'A'})
+                    $ok=$answers.Count -eq 1 -and $answers[0].IPAddress -ceq '203.0.113.7' -and ([string]$answers[0].Name).TrimEnd('.') -ceq $challenge.TrimEnd('.')
+                    if($transport -ceq 'TCP'){$gatewayControl.tcp_verified=$ok}else{$gatewayControl.default_verified=$ok}
+                }catch{$gatewayControl.error_ids+=([string]$_.FullyQualifiedErrorId)}
+            }
+            $proof=@(& $probe '-test.run=^TestCIConfiguredNativeTCPDNS$' '-test.v' '-test.timeout=30s' 2>&1)
+            $exitCode=$LASTEXITCODE
+            $gatewayControl.native_tcp_verified=($exitCode -eq 0 -and @($proof|Where-Object {[string]$_ -match 'PASS VOLVE_NATIVE_DNSQUERY_CONFIGURED_TCP'}).Count -eq 1)
+        }finally{
+            $ownedRoutes=@(Get-NetRoute -PolicyStore ActiveStore -ErrorAction Stop|Where-Object {$_.DestinationPrefix -ceq '0.0.0.0/0' -and $_.InterfaceIndex -eq $idx -and $_.NextHop -ceq '192.0.2.53' -and $_.RouteMetric -eq 5000})
+            if($ownedRoutes.Count -gt 1){throw 'Ambiguous gateway control route; refuse removal'}
+            if($ownedRoutes.Count -eq 1){$ownedRoutes[0]|Remove-NetRoute -Confirm:$false -ErrorAction Stop}
+            if(@(Get-NetRoute -ErrorAction Stop|Where-Object {$_.DestinationPrefix -in @('0.0.0.0/0','::/0')}).Count -ne 0){throw 'Gateway control route cleanup failed'}
+            Assert-LoopbackAssignments
+            $gatewayControl.route_removed=$true
+        }
+        # A/B/A control: after restoring the original routing table, use
+        # fresh names again, with identical flags. A successful B alone
+        # does not distinguish route effects from transient resolver state.
+        foreach($transport in @('Default','TCP')){
+            Assert-LoopbackAssignments
+            $challenge=[guid]::NewGuid().ToString('N')+'.volve-motor-ci.test.'
+            $gatewayQuery=@{Name=$challenge;Type='A';DnsOnly=$true;NoHostsFile=$true;QuickTimeout=$true;ErrorAction='Stop'}
+            if($transport -ceq 'TCP'){$gatewayQuery.TcpOnly=$true}
+            try{
+                $answers=@(Resolve-DnsName @gatewayQuery|Where-Object {$_.PSObject.Properties['IPAddress'] -and [string]$_.Type -eq 'A'})
+                $ok=$answers.Count -eq 1 -and $answers[0].IPAddress -ceq '203.0.113.7' -and ([string]$answers[0].Name).TrimEnd('.') -ceq $challenge.TrimEnd('.')
+                if($transport -ceq 'TCP'){$gatewayControl.after_removal_tcp_verified=$ok}else{$gatewayControl.after_removal_default_verified=$ok}
+            }catch{
+                if($transport -ceq 'TCP'){$gatewayControl.after_removal_error_id=[string]$_.FullyQualifiedErrorId}
+                else{$gatewayControl.error_ids+=([string]$_.FullyQualifiedErrorId)}
+            }
+        }
+        $gatewayControl.reversible_route_effect=($gatewayControl.default_verified -and $gatewayControl.tcp_verified -and $gatewayControl.native_tcp_verified -and $gatewayControl.route_removed -and $gatewayControl.after_removal_default_verified -and -not $gatewayControl.after_removal_tcp_verified -and $gatewayControl.after_removal_error_id -cmatch '^(10057|WSAENOTCONN),Microsoft\.DnsClient\.Commands\.ResolveDnsName$')
+        Write-Host ('CI PRIVATE GATEWAY CONTROL: '+($gatewayControl|ConvertTo-Json -Compress))
+    }
     # Explicit-server probes are diagnostic ONLY. They do not establish
     # that the Windows-configured resolver chooses or reaches that server.
     # No retry, cache flush, adapter change or external network is involved.
@@ -198,7 +257,7 @@ try{
     $again=@(Get-CimInstance Win32_Process -Filter ('ProcessId='+$pidNumber) -ErrorAction Stop)
     if($again.Count -ne 1 -or $again[0].CreationDate -ne $creation -or $again[0].ExecutablePath -ine $exe){throw 'Motor replaced during test'}
     if((Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash -cne $MotorSHA -or (Get-FileHash -LiteralPath $catalog -Algorithm SHA256).Hash -cne $catalogPin){throw 'Motor/catalog changed during probe'}
-    $report=[ordered]@{native_upstream_truncation_verified=$truncationVerified;native_upstream_truncation_exit=$truncationExit;actual_system_motor=$true;motor_sha256=$MotorSHA;catalog_sha256=$catalogPin;independent_wire_probe_sha256=$WireProbeSHA;independent_wire_probe_verified=$true;dual_stack_transport_checks=$checks;configured_resolver_default=$true;configured_resolver_tcp=(-not $tcpKnownFailure);configured_tcp_known_failure=$tcpKnownFailure;native_tcp_diagnostic_verified=$nativeTCP;native_tcp_diagnostic_exit=$nativeExit;tcp_reuse_diagnostic_verified=$reuseVerified;tcp_reuse_diagnostic_exit=$reuseExit;tcp_reuse_verified_queries=$reuseMarkers.Count;tcp_interface_diagnostic_exit=$interfaceExit;tcp_interface_observations=$interfaceProof;dnsqueryex_interface_observations=$queryExProof;explicit_tcp_diagnostic=$explicitTCP;configured_resolver_attempts=$resolverAttempts;blocked_domains_verified=$true;synthetic_upstream_only=$true}
+    $report=[ordered]@{private_gateway_control=[pscustomobject]$gatewayControl;native_upstream_truncation_verified=$truncationVerified;native_upstream_truncation_exit=$truncationExit;actual_system_motor=$true;motor_sha256=$MotorSHA;catalog_sha256=$catalogPin;independent_wire_probe_sha256=$WireProbeSHA;independent_wire_probe_verified=$true;dual_stack_transport_checks=$checks;configured_resolver_default=$true;configured_resolver_tcp=(-not $tcpKnownFailure);configured_tcp_known_failure=$tcpKnownFailure;native_tcp_diagnostic_verified=$nativeTCP;native_tcp_diagnostic_exit=$nativeExit;tcp_reuse_diagnostic_verified=$reuseVerified;tcp_reuse_diagnostic_exit=$reuseExit;tcp_reuse_verified_queries=$reuseMarkers.Count;tcp_interface_diagnostic_exit=$interfaceExit;tcp_interface_observations=$interfaceProof;dnsqueryex_interface_observations=$queryExProof;explicit_tcp_diagnostic=$explicitTCP;configured_resolver_attempts=$resolverAttempts;blocked_domains_verified=$true;synthetic_upstream_only=$true}
 }finally{
     if($owned){
         $registered=Get-ScheduledTask -TaskName $task -TaskPath '\' -ErrorAction Stop

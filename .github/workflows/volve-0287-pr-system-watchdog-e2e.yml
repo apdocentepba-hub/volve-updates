@@ -1330,19 +1330,33 @@ jobs:
               [pscustomobject]@{capsule_sha256=$pin;exact_components=3;independent_readback_verified=$true;production_install=$false}
             }
             if($report.private_setup_capsule.capsule_sha256 -cne $capsuleSHA -or -not $report.private_setup_capsule.independent_readback_verified -or $report.private_setup_capsule.exact_components -ne 3){throw 'Single EXE staging proof absent'}
+            # Only the existing private switch connects the two VMs. The
+            # peer has no default route or IP forwarding; it cannot route
+            # the temporary gateway control to the host or Internet.
+            $null=Assert-VolvPrivatePeerTopology -ClientId $vm.Id -PeerId $peerVM.Id -SwitchId $privateSwitch.Id
+            $gatewayPeerSafe=Invoke-Command -Session $peerSession -ErrorAction Stop -ScriptBlock {
+              $a=@(Get-NetAdapter -ErrorAction Stop)
+              if($a.Count -ne 1 -or $a[0].Name -cne 'VOLVE-CI-PRIVATE-DNS-PEER'){throw 'Unexpected gateway peer adapter'}
+              $interfaces=@(Get-NetIPInterface -ErrorAction Stop)
+              if(@($interfaces|Where-Object {$_.Forwarding -ne 'Disabled'}).Count -ne 0){throw 'Peer forwarding enabled'}
+              if(@(Get-NetRoute -ErrorAction Stop|Where-Object {$_.DestinationPrefix -in @('0.0.0.0/0','::/0')}).Count -ne 0){throw 'Peer default route detected'}
+              $true
+            }
+            if($gatewayPeerSafe -ne $true){throw 'Gateway control peer not attested'}
             $report.private_actual_motor_integration=Invoke-Command -Session $session -ArgumentList $integrationGuest,$integrationSHA,$motorGuest,$motorSHA,$wireGuest,$wireSHA,$trial -ErrorAction Stop -ScriptBlock {
               param($path,$sha,$motor,$motorPin,$wire,$wirePin,$id)
               if((Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash -cne $sha){throw 'Integration script hash mismatch'}
               $env:GITHUB_ACTIONS='true'
               $env:RUNNER_ENVIRONMENT='github-hosted'
               $env:VOLVE_CI_NESTED_GUEST_DNS='PRIVATE_GUEST_ONLY'
-              & $path -MotorExe $motor -MotorSHA $motorPin -WireProbeExe $wire -WireProbeSHA $wirePin -Trial $id
+              & $path -MotorExe $motor -MotorSHA $motorPin -WireProbeExe $wire -WireProbeSHA $wirePin -Trial $id -PrivateGatewayControl
             }
             if(-not $report.private_actual_motor_integration.actual_system_motor -or -not $report.private_actual_motor_integration.motor_stopped -or -not $report.private_actual_motor_integration.independent_wire_probe_verified -or $report.private_actual_motor_integration.independent_wire_probe_sha256 -cne $wireSHA -or $report.private_actual_motor_integration.dual_stack_transport_checks -ne 4 -or -not $report.private_actual_motor_integration.configured_resolver_default -or -not $report.private_actual_motor_integration.blocked_domains_verified){throw 'Actual motor activation/failure integration not proven'}
             if(-not $report.private_actual_motor_integration.configured_resolver_tcp){
               if(-not $report.private_actual_motor_integration.configured_tcp_known_failure){throw 'Unexpected configured TCP failure'}
               Write-Host 'KNOWN CONFIGURED TCP FAILURE 10057; continue independent recovery trial; overall result MUST FAIL'
             }
+            $null=Assert-VolvPrivatePeerTopology -ClientId $vm.Id -PeerId $peerVM.Id -SwitchId $privateSwitch.Id
             $report.stage='verify_dns_fault_after_actual_motor_stop'
             foreach($transport in @('Default','TCP')){
               $report.private_peer_challenges+=Assert-VolvPrivateDNSPeerChallenge -ClientSession $session -PeerSession $peerSession -ClientId $vm.Id -PeerId $peerVM.Id -SwitchId $privateSwitch.Id -ProbePath $probeGuest -ProbeSHA $probeSHA -PeerSHA $peerSHA -PinnedPeerIdentity $pinnedPeerIdentity -Phase Fault -Transport $transport
