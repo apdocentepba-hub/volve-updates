@@ -392,6 +392,7 @@ func TestWindowsOriginalCatalogArchiveNativeActualCensus(t *testing.T){
  t.Log("PASS VOLVE_LAB_WRITER_TERMINATED_AFTER_PARTIAL_SYNC")
  if err:=loadOriginalRecoveryReviewEvidenceUnarmed(ctx,root,transactionID,binding,check);err==nil{t.Fatal("truncated evidence accepted")}
  runOriginalRecoveryReviewChild(t,childInput,false)
+ t.Log("PASS VOLVE_NATIVE_LEASE_BOUND_REVIEW_CHILD")
  t.Log("PASS VOLVE_NEW_PROCESS_REOPENS_VALID_AND_REFUSES_STALE_TRUNCATED_REVIEW")
  if err:=persistOriginalRecoveryReviewEvidenceUnarmed(ctx,root,transactionID,binding,snap,browser,inv,pin,seal,check);err==nil{t.Fatal("interrupted evidence slot reused")}
  if err:=ctx.Err();err!=nil{t.Fatal("native test context expired; refusal evidence invalid",err)}
@@ -543,15 +544,14 @@ func TestVOLVEOriginalRecoveryReviewChild(t *testing.T){
  var input originalRecoveryChildInput
  if err:=residentCanonical(raw,&input);err!=nil{t.Fatal("child evidence not canonical")}
  ctx,cancel:=context.WithTimeout(context.Background(),45*time.Second);defer cancel()
- receipt,err:=reopenOriginalRecoveryReviewUnarmed(ctx,input.Root,input.ID,input.Binding,input.Snapshot,input.Browser,input.Inventory,input.DNSPin,
-  func(p string)error{return nativeDNSOriginalBackupACL(ctx,p)})
+ receipt,err:=InspectBoundOriginalRecoveryNativeReadOnly(ctx,input.Root,input.ID,input.Binding,input.Snapshot,input.Browser,input.Inventory,input.DNSPin)
  if err:=ctx.Err();err!=nil{t.Fatal("child review context expired; refusal invalid",err)}
  if err!=nil{
-  if receipt!=(originalProtectionPairReceipt{}){t.Fatal("failed child returned evidence")}
+  if receipt!=(WindowsOriginalBackupReview{Status:"UNVERIFIED"}){t.Fatal("failed child returned evidence")}
   t.Log("VOLVE_CHILD_REVIEW_REFUSED")
   return
  }
- if !receipt.HostsVerified||receipt.BrowserKeysVerified!=3||!receipt.DNSBackupVerified||!receipt.CatalogBackupVerified||
+ if receipt.Status!="BOUND_FOUR_ARCHIVES_VERIFIED_READ_ONLY"||!receipt.HostsVerified||receipt.BrowserKeysVerified!=3||!receipt.DNSBackupVerified||!receipt.CatalogBackupVerified||
   receipt.CompleteRecoverySnapshot||receipt.InstallAuthorized||receipt.RestoreAuthorized{t.Fatal("invalid child receipt")}
  t.Log("VOLVE_CHILD_REVIEW_VERIFIED")
 }
