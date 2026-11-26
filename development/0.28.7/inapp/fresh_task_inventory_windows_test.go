@@ -257,8 +257,40 @@ func TestWindowsOriginalCatalogArchiveNativeDisplayReview(t *testing.T){
 func TestWindowsOriginalCatalogArchiveNativeActualCensus(t *testing.T){
  if os.Getenv("GITHUB_ACTIONS")!="true"||os.Getenv("RUNNER_ENVIRONMENT")!="github-hosted"{t.Skip("disposable hosted runner only")}
  ctx,cancel:=context.WithTimeout(context.Background(),150*time.Second);defer cancel()
- snap,browser,err:=InspectWindowsProtectionSnapshotReadOnly(ctx,"","",DefaultWindowsProtectionSnapshotInspectors())
- if err!=nil{t.Fatal("native original census unavailable")}
+ // Preserve the first failed census stage, but never log GUIDs, paths,
+ // task names, DNS addresses or arbitrary native exception text.
+ readers:=DefaultWindowsProtectionSnapshotInspectors()
+ stage:="not-started"
+ hostsReader:=readers.Hosts
+ readers.Hosts=func(c context.Context)(WindowsHostsFileEvidence,error){stage="hosts";return hostsReader(c)}
+ browserReader:=readers.Browser
+ readers.Browser=func(c context.Context,q string)([]byte,error){stage="browser";return browserReader(c,q)}
+ taskReader:=readers.Tasks
+ readers.Tasks=func(c context.Context,q string)([]byte,error){stage="task-scheduler";return taskReader(c,q)}
+ dnsReader:=readers.DNS
+ readers.DNS=func(c context.Context,q string)([]byte,error){stage="dns-assignment";return dnsReader(c,q)}
+ snap,browser,err:=InspectWindowsProtectionSnapshotReadOnly(ctx,"","",readers)
+ if err!=nil{
+  reason:="unclassified-validation"
+  for _,entry:=range []struct{prefix,code string}{
+   {"hosts baseline unavailable:","hosts-read"},
+   {"hosts baseline hash or candidate count invalid","hosts-validation"},
+   {"browser policy baseline unavailable:","browser-read-or-validation"},
+   {"VOLVE catalog task baseline unavailable:","task-read-or-validation"},
+   {"original DNS assignment provenance unavailable: Windows DNS assignment source unavailable:","dns-native-query"},
+   {"original DNS assignment provenance unavailable: invalid Windows DNS assignment JSON:","dns-json"},
+   {"original DNS assignment provenance unavailable: incomplete or ambiguous Windows DNS assignment evidence:","dns-incomplete-row"},
+   {"original DNS assignment provenance unavailable: DNS interface identity or unsupported profile-specific source","dns-identity-or-profile"},
+   {"original DNS assignment provenance unavailable: effective DNS server is invalid or in the wrong address family","dns-address-family"},
+   {"original DNS assignment provenance unavailable: adapter ","dns-missing-family"},
+   {"original DNS assignment provenance unavailable: automatic DNS assignment has contradictory static registry evidence","dns-automatic-source"},
+   {"original DNS assignment provenance unavailable: static DNS source lacks a supported NameServer REG_SZ value","dns-static-source"},
+   {"original DNS assignment provenance unavailable: static NameServer registry list does not match effective Windows DNS servers","dns-static-mismatch"},
+   {"original DNS assignment provenance unavailable:","dns-other-validation"},
+   {"VOLVE catalog task is present but not uniquely publisher-pinned","task-identity"},
+  }{if strings.HasPrefix(err.Error(),entry.prefix){reason=entry.code;break}}
+  t.Fatalf("native original census unavailable: stage=%s reason=%s",stage,reason)
+ }
  inv,err:=InspectWindowsVOLVETasksReadOnly(ctx,"","",DefaultWindowsFreshTaskInspect)
  if err!=nil||inv.VOLVETaskCount!=0||len(inv.UnknownTaskNames)!=0||inv.VerifiedCatalogTask!=nil{t.Fatal("native clean-task observation unavailable")}
  hostsPin:=WindowsHostsFileEvidence{SHA256:snap.HostsSHA256,BlockedRuleCount:snap.HostsBlockedRuleCount}
