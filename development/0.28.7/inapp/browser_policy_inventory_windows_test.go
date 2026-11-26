@@ -269,3 +269,52 @@ func TestVOLVEBrowserOriginalPairRealNTFS(t *testing.T){
  if receipt,err:=verifyOriginalProtectionPairUnarmed(ctx,parent,snap,browser,check);err==nil||receipt!=(originalProtectionPairReceipt{}){t.Fatal("modified member accepted")}
  t.Log("PASS VOLVE_ORIGINAL_PAIR_REAL_NTFS_NO_INSTALL")
 }
+
+func TestVOLVEBrowserOriginalTripleBindsDNSProvenance(t *testing.T){
+ ctx:=context.Background()
+ parent,snap,browser,raw,data:=makeOriginalProtectionPairFixture(t)
+ allow:=func(string)error{return nil}
+ observed,err:=InspectWindowsDNSAssignmentProvenanceReadOnly(ctx,protectionSnapshotDNSInspect)
+ if err!=nil{t.Fatal(err)}
+ journal,digest,err:=BuildDNSOriginalJournal(ctx,observed.States)
+ if err!=nil{t.Fatal(err)}
+ snap.DNSAdaptersSHA256=observed.SHA256
+ dnsParent:=filepath.Join(filepath.Dir(parent),"legacy-engine-recovery")
+ if err:=os.Mkdir(dnsParent,0700);err!=nil{t.Fatal(err)}
+ hostsPin:=WindowsHostsFileEvidence{SHA256:snap.HostsSHA256,BlockedRuleCount:snap.HostsBlockedRuleCount}
+ if err:=storeOriginalWindowsHostsBackupUnarmed(ctx,parent,raw,hostsPin,allow,allow);err!=nil{t.Fatal(err)}
+ if err:=storeBrowserOriginalArchiveUnarmed(ctx,parent,browser,data,allow,allow);err!=nil{t.Fatal(err)}
+ if receipt,err:=verifyOriginalProtectionTripleUnarmed(ctx,parent,dnsParent,snap,browser,digest,allow);err==nil||receipt!=(originalProtectionPairReceipt{}){t.Fatal("missing DNS stage accepted")}
+ if _,err:=StoreDNSOriginalBackupUnarmed(ctx,dnsParent,journal,digest,allow,allow);err!=nil{t.Fatal(err)}
+ receipt,err:=verifyOriginalProtectionTripleUnarmed(ctx,parent,dnsParent,snap,browser,digest,allow)
+ if err!=nil||!receipt.HostsVerified||receipt.BrowserKeysVerified!=3||!receipt.DNSBackupVerified||
+  receipt.CatalogBackupVerified||receipt.CompleteRecoverySnapshot||receipt.InstallAuthorized||receipt.RestoreAuthorized{t.Fatal("incorrect combined receipt",err)}
+ wrong:=snap;wrong.DNSAdaptersSHA256=strings.Repeat("f",64)
+ if receipt,err:=verifyOriginalProtectionTripleUnarmed(ctx,parent,dnsParent,wrong,browser,digest,allow);err==nil||receipt!=(originalProtectionPairReceipt{}){t.Fatal("unrelated DNS baseline accepted")}
+ if receipt,err:=verifyOriginalProtectionTripleUnarmed(ctx,parent,dnsParent,snap,browser,strings.Repeat("f",64),allow);err==nil||receipt!=(originalProtectionPairReceipt{}){t.Fatal("wrong journal pin accepted")}
+ other:=filepath.Join(t.TempDir(),"legacy-engine-recovery")
+ if receipt,err:=verifyOriginalProtectionTripleUnarmed(ctx,parent,other,snap,browser,digest,allow);err==nil||receipt!=(originalProtectionPairReceipt{}){t.Fatal("other transaction directory accepted")}
+}
+func TestVOLVEBrowserOriginalTripleRejectsDNSOrderAndModeDrift(t *testing.T){
+ ctx:=context.Background()
+ const guid="{12345678-1234-1234-1234-123456789abc}"
+ original:=[]DNSServerState{
+  {InterfaceGUID:guid,Family:DNSIPv4,Mode:DNSStatic,Servers:[]string{"9.9.9.9","1.1.1.1"}},
+  {InterfaceGUID:guid,Family:DNSIPv6,Mode:DNSAutomatic,Servers:[]string{}},
+ }
+ encoded,err:=json.Marshal(original);if err!=nil{t.Fatal(err)}
+ sum:=sha256.Sum256(encoded)
+ _,snap,_,_,_:=makeOriginalProtectionPairFixture(t)
+ snap.DNSAdaptersSHA256=hex.EncodeToString(sum[:])
+ raw,pin,err:=BuildDNSOriginalJournal(ctx,original);if err!=nil{t.Fatal(err)}
+ records,err:=VerifyDNSOriginalJournal(ctx,raw,pin);if err!=nil{t.Fatal(err)}
+ if err:=originalDNSRecordsMatchProtectionBaseline(records,snap);err!=nil{t.Fatal("automatic nil/empty encoding mismatch",err)}
+ for _,kind:=range []string{"server-order","assignment-mode"}{
+  changed:=sortedDNSRecoveryRecords(records)
+  switch kind{
+  case "server-order":changed[0].Original.Servers=[]string{"1.1.1.1","9.9.9.9"}
+  case "assignment-mode":changed[0].Original.Mode=DNSAutomatic;changed[0].Original.Servers=nil
+  }
+  if err:=originalDNSRecordsMatchProtectionBaseline(changed,snap);err==nil{t.Fatal("DNS baseline drift accepted",kind)}
+ }
+}

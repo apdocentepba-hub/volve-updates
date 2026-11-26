@@ -20,6 +20,7 @@ import (
  "os"
  "os/exec"
  "path/filepath"
+ "sort"
  "strings"
 )
 
@@ -357,4 +358,56 @@ func verifyOriginalProtectionPairUnarmed(ctx context.Context,parent string,
  if _,err:=readOriginalWindowsHostsBackupUnarmed(ctx,parent,hostsPin,check);err!=nil{return denied,errors.New("original hosts backup changed while verifying pair")}
  if err:=ctx.Err();err!=nil{return denied,err}
  return originalProtectionPairReceipt{HostsVerified:true,BrowserKeysVerified:3},nil
+}
+
+// Compare original records from the independently pinned, verified journal
+// to the stable Windows assignment provenance fingerprint. Automatic states
+// use [] in the provenance encoding, not the journal's nil server slice.
+// Preserve exact static server ordering and address spelling.
+func originalDNSRecordsMatchProtectionBaseline(records []DNSRestoreRecord,baseline ProtectionSnapshot)error{
+ if !validProtectionSnapshot(baseline){return errors.New("independent protection baseline incomplete")}
+ if err:=validateDNSRecoveryRecords(records);err!=nil{return err}
+ states:=make([]DNSServerState,0,len(records))
+ for _,record:=range records{
+  s:=record.Original
+  s.InterfaceGUID=strings.ToLower(s.InterfaceGUID)
+  s.Servers=append([]string{},s.Servers...)
+  states=append(states,s)
+ }
+ sort.Slice(states,func(i,j int)bool{
+  return states[i].InterfaceGUID+string(states[i].Family)<states[j].InterfaceGUID+string(states[j].Family)
+ })
+ raw,err:=json.Marshal(states)
+ if err!=nil{return errors.New("original DNS provenance encoding failed")}
+ sum:=sha256.Sum256(raw)
+ if !strings.EqualFold(hex.EncodeToString(sum[:]),baseline.DNSAdaptersSHA256){
+  return errors.New("original DNS journal belongs to a different protection baseline")
+ }
+ return nil
+}
+
+// Verify three local backups under one transaction directory. The caller
+// must authenticate the independent pins and hold the relevant lock; this
+// observation alone is not atomic, signed, or a restore/activation permit.
+// Catalog and full browser-policy coverage remain outstanding.
+func verifyOriginalProtectionTripleUnarmed(ctx context.Context,protectionParent,dnsParent string,
+ baseline ProtectionSnapshot,browser WindowsBrowserPolicyEvidence,dnsJournalPin string,
+ check func(string)error)(originalProtectionPairReceipt,error){
+ var denied originalProtectionPairReceipt
+ if ctx==nil||check==nil{return denied,errors.New("triple verification requires context and trusted ACL verifier")}
+ if err:=ctx.Err();err!=nil{return denied,err}
+ if !filepath.IsAbs(dnsParent)||filepath.Clean(dnsParent)!=dnsParent||
+  filepath.Base(dnsParent)!="legacy-engine-recovery"||
+  !strings.EqualFold(filepath.Dir(dnsParent),filepath.Dir(protectionParent)){
+  return denied,errors.New("recovery parents must belong to the same local transaction directory")
+ }
+ if !protectionDigest.MatchString(strings.ToLower(dnsJournalPin)){return denied,errors.New("independent DNS journal pin required")}
+ receipt,err:=verifyOriginalProtectionPairUnarmed(ctx,protectionParent,baseline,browser,check)
+ if err!=nil{return denied,err}
+ records,err:=ReadStagedDNSOriginalBackupUnarmed(ctx,dnsParent,dnsJournalPin,check)
+ if err!=nil{return denied,errors.New("original DNS backup not verified")}
+ if err:=originalDNSRecordsMatchProtectionBaseline(records,baseline);err!=nil{return denied,err}
+ if err:=ctx.Err();err!=nil{return denied,err}
+ receipt.DNSBackupVerified=true
+ return receipt,nil
 }
