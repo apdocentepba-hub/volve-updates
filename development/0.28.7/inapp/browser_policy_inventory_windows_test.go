@@ -459,6 +459,19 @@ func TestVOLVEBrowserOriginalDecodeNativeCaptureFormat(t *testing.T){
  if err!=nil{t.Fatal("fixture census failed",err)}
  payload,err:=captureOriginalBrowserPolicyBytes(ctx,baseline,func(context.Context)([]byte,error){return []byte(envelope.Capture),nil})
  if err!=nil{t.Fatal("fixture independent capture failed",err)}
+ // Persist the actual native capture, seal with native ACLs, then discard
+ // the in-memory input. Reconstruction must originate from the reopened
+ // archive, not from an easier direct capture-to-decoder shortcut.
+ archiveCtx,archiveCancel:=context.WithTimeout(context.Background(),90*time.Second);defer archiveCancel()
+ parent:=filepath.Join(t.TempDir(),"original-protection-recovery")
+ if err:=os.Mkdir(parent,0700);err!=nil{t.Fatal(err)}
+ seal:=func(p string)error{return sealDNSBackupLabNode(archiveCtx,p)}
+ check:=func(p string)error{return nativeDNSOriginalBackupACL(archiveCtx,p)}
+ if err:=seal(parent);err!=nil{t.Fatal(err)}
+ if err:=storeBrowserOriginalArchiveUnarmed(archiveCtx,parent,baseline,payload,seal,check);err!=nil{t.Fatal("native capture archive failed",err)}
+ payload=nil
+ payload,err=readBrowserOriginalArchiveUnarmed(archiveCtx,parent,baseline,check)
+ if err!=nil||len(payload)!=3{t.Fatal("native capture archive reopen failed",err)}
  reconstructed:=make(map[string]originalBrowserStringKey,3)
  for _,record:=range baseline.Records{
   decoded,err:=decodeOriginalBrowserStringKey(payload[record.Name],record)
@@ -515,6 +528,7 @@ func TestVOLVEBrowserOriginalDecodeNativeCaptureFormat(t *testing.T){
   for _,observed:=range rebuilt.Records{if observed.Name==expected.Name{found=true;if observed!=expected{t.Fatal("reconstructed native policy fingerprint or metadata differs")}}}
   if !found{t.Fatal("reconstructed policy missing")}
  }
+ t.Log("PASS VOLVE_BROWSER_ARCHIVE_TO_NATIVE_REBUILD_NTFS")
  t.Log("PASS VOLVE_BROWSER_SYNTHETIC_REBUILD_INDEPENDENT_FINGERPRINT_AND_CLEANUP")
  t.Log("PASS VOLVE_BROWSER_NATIVE_CAPTURE_FORMAT_SYNTHETIC_THREE_STATES")
 }
