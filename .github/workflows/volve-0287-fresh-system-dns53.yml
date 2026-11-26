@@ -96,9 +96,10 @@ jobs:
           if(Get-ScheduledTask -TaskName 'VOLVE-DNS-RESCUE-0270' -ErrorAction SilentlyContinue){throw 'Production recovery task present'}
           $base=(Get-DnsClientServerAddress | Sort-Object InterfaceIndex,AddressFamily | Select-Object InterfaceIndex,AddressFamily,ServerAddresses | ConvertTo-Json -Compress -Depth 6)
           $hosts=(Get-FileHash -Algorithm SHA256 -LiteralPath "$env:WINDIR\System32\drivers\etc\hosts").Hash
-          foreach($endpoint in @('127.0.0.1','::1')){
-            if(@(Get-NetUDPEndpoint -LocalPort 53 -LocalAddress $endpoint -ErrorAction SilentlyContinue).Count -ne 0){throw ('DNS port 53 already occupied: '+$endpoint)}
-          }
+          $occupied=@(Get-NetUDPEndpoint -LocalPort 53 -ErrorAction SilentlyContinue)+@(Get-NetTCPConnection -LocalPort 53 -State Listen -ErrorAction SilentlyContinue)
+          $conflicts=@($occupied|Where-Object {$_.LocalAddress -in @('0.0.0.0','::','127.0.0.1','::1')})
+          if($conflicts.Count){$conflicts|Select-Object LocalAddress,LocalPort,OwningProcess|Format-Table|Out-String|Write-Host;throw 'Existing loopback/wildcard DNS listener; no changes'}
+          Write-Host ('DNS53 preflight: unrelated-interface listeners='+$occupied.Count)
           $task='VOLVE-CI-FreshMotor-'+$env:GITHUB_RUN_ID
           if($task -notmatch '^VOLVE-CI-FreshMotor-[0-9]{6,20}$'){throw 'Unexpected disposable task name'}
           $root=Join-Path $env:RUNNER_TEMP ('VOLVE-CI-FreshDNS53-'+$env:GITHUB_RUN_ID)
@@ -127,6 +128,23 @@ jobs:
             if($matched.Count -ne 1){throw 'Single real resident process was not started'}
             $owner=Invoke-CimMethod -InputObject $matched[0] -MethodName GetOwnerSid -ErrorAction Stop
             if($owner.ReturnValue -ne 0 -or $owner.Sid -ne 'S-1-5-18'){throw 'DNS service owner is not SYSTEM'}
+            # Process creation alone is not a readiness receipt. Require all
+            # four bound loopback sockets to belong to the exact same process.
+            $ready=$false
+            $readyDeadline=(Get-Date).AddSeconds(35)
+            do {
+              $running=Get-CimInstance Win32_Process -Filter ('ProcessId='+$matched[0].ProcessId) -ErrorAction SilentlyContinue
+              $state=Get-ScheduledTask -TaskName $task -ErrorAction Stop
+              $info=Get-ScheduledTaskInfo -TaskName $task -ErrorAction Stop
+              $ownedTCP=@(Get-NetTCPConnection -LocalPort 53 -State Listen -ErrorAction SilentlyContinue|Where-Object {$_.OwningProcess -eq $matched[0].ProcessId})
+              $ownedUDP=@(Get-NetUDPEndpoint -LocalPort 53 -ErrorAction SilentlyContinue|Where-Object {$_.OwningProcess -eq $matched[0].ProcessId})
+              $ready=($null -ne $running -and $running.ExecutablePath -ieq $exe -and $ownedTCP.Count -eq 2 -and $ownedUDP.Count -eq 2 -and @($ownedTCP|Where-Object {$_.LocalAddress -in @('127.0.0.1','::1')}).Count -eq 2 -and @($ownedUDP|Where-Object {$_.LocalAddress -in @('127.0.0.1','::1')}).Count -eq 2)
+              if($ready){break}
+              if(!$running -or $state.State -ne 'Running'){break}
+              Start-Sleep -Milliseconds 400
+            }until((Get-Date) -ge $readyDeadline)
+            Write-Host ('VOLVE_SYSTEM_READY='+([ordered]@{ready=$ready;process_alive=($null -ne $running);task_state=[string]$state.State;last_task_result=$info.LastTaskResult;tcp=$ownedTCP.Count;udp=$ownedUDP.Count}|ConvertTo-Json -Compress))
+            if(!$ready){throw 'SYSTEM motor did not establish four verified loopback listeners; no release'}
             $env:VOLVE_CI_FRESH_DNS53_PROBE='GITHUB-HOSTED-VM-ONLY'
             $env:VOLVE_CI_TCP_REUSE_PROBE='OWNED_SYSTEM_LOOPBACK_ONLY'
             $firstProof=@(go test . -run '^TestCI(FreshResidentSYSTEMPort53|ResidentTCPConnectionReuse)$' -count=1 -timeout 1m -v)
@@ -190,6 +208,14 @@ jobs:
               }
             }
             Write-Host 'PASS: tampered catalog cannot restart the SYSTEM motor and does not open DNS/53'
+          }catch{
+            if($registered){
+              $taskState=Get-ScheduledTask -TaskName $task -ErrorAction SilentlyContinue
+              $taskInfo=Get-ScheduledTaskInfo -TaskName $task -ErrorAction SilentlyContinue
+              Write-Host ('VOLVE_SYSTEM_FAILURE='+([ordered]@{task_state=[string]$taskState.State;last_task_result=$taskInfo.LastTaskResult;catalog_present=(Test-Path -LiteralPath (Join-Path $root 'catalog\feeds\hagezi_gambling_full.txt'))}|ConvertTo-Json -Compress))
+              @(Get-NetTCPConnection -LocalPort 53 -State Listen -ErrorAction SilentlyContinue)+@(Get-NetUDPEndpoint -LocalPort 53 -ErrorAction SilentlyContinue)|Select-Object LocalAddress,LocalPort,OwningProcess|Format-Table|Out-String|Write-Host
+            }
+            throw
           }finally{
             Remove-Item Env:\VOLVE_CI_FRESH_DNS53_PROBE -ErrorAction SilentlyContinue
             Remove-Item Env:\VOLVE_CI_TCP_REUSE_PROBE -ErrorAction SilentlyContinue
