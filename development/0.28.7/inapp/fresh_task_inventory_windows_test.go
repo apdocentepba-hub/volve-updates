@@ -358,6 +358,20 @@ func TestWindowsOriginalCatalogArchiveNativeActualCensus(t *testing.T){
  // independent pin. An interrupted/truncated record is never accepted.
  if err:=persistOriginalRecoveryReviewEvidenceUnarmed(ctx,root,transactionID,binding,snap,browser,inv,pin,seal,check);err!=nil{t.Fatal("durable review evidence failed",err)}
  if err:=loadOriginalRecoveryReviewEvidenceUnarmed(ctx,root,transactionID,binding,check);err!=nil{t.Fatal("durable review reopen failed",err)}
+ reopened,err:=reopenOriginalRecoveryReviewUnarmed(ctx,root,transactionID,binding,snap,browser,inv,pin,check)
+ if err!=nil||reopened!=report{t.Fatal("fresh four-archive review failed",err)}
+ _,archiveFile,err:=catalogOriginalArchivePaths(parent)
+ if err!=nil{t.Fatal(err)}
+ priorArchive,err:=os.ReadFile(archiveFile)
+ if err!=nil{t.Fatal(err)}
+ if err:=os.WriteFile(archiveFile,[]byte("{}"),0600);err!=nil{t.Fatal(err)}
+ if err:=loadOriginalRecoveryReviewEvidenceUnarmed(ctx,root,transactionID,binding,check);err!=nil{t.Fatal("historical record unexpectedly changed",err)}
+ stale,err:=reopenOriginalRecoveryReviewUnarmed(ctx,root,transactionID,binding,snap,browser,inv,pin,check)
+ if err==nil||stale!=(originalProtectionPairReceipt{}){t.Fatal("stale historical review accepted as current evidence")}
+ if err:=os.WriteFile(archiveFile,priorArchive,0600);err!=nil{t.Fatal(err)}
+ reopened,err=reopenOriginalRecoveryReviewUnarmed(ctx,root,transactionID,binding,snap,browser,inv,pin,check)
+ if err!=nil||reopened!=report{t.Fatal("intact fixture rejected after reset",err)}
+ t.Log("PASS VOLVE_DURABLE_REOPEN_REJECTS_STALE_ARCHIVE")
  if err:=loadOriginalRecoveryReviewEvidenceUnarmed(ctx,root,transactionID,strings.Repeat("f",64),check);err==nil{t.Fatal("foreign durable pin accepted")}
  if err:=persistOriginalRecoveryReviewEvidenceUnarmed(ctx,root,transactionID,binding,snap,browser,inv,pin,seal,check);err==nil{t.Fatal("existing durable evidence overwritten")}
  path,err:=originalRecoveryEvidencePath(root,transactionID)
