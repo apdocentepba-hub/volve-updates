@@ -8,3 +8,5 @@ Status: **BLOCKED FOR RELEASE**. No production DNS changes authorized.
 - Native archive rehearsal 45888771357 passed real host census and before/after archive verification. Run 45889237082 passed all three string decode tests including native synthetic HKCU roundtrip, but actual census failed with generic diagnostic. No weakened gate; next test reports first failed stage and bounded reason code.
 
 Next: diagnose the intermittent census failure, use independently verified Windows 10/11 environments if available, keep forced-TCP and release gates intact. Do not rerun the 10 GB nested guest without a new hypothesis. Do not expose DNS listeners on non-loopback interfaces as a workaround. No new product compatibility claims.
+
+- Run 45890229214, job 140150797528, commit 2f48af3: 26/26 top-level tests passed, including actual Windows four-archive census, native NTFS and synthetic REG_SZ roundtrip. The previous intermittent census error did not recur; root cause is still unknown. No claim of full registry recovery or resolution of configured TCP.

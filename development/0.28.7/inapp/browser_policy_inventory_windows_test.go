@@ -407,3 +407,69 @@ func TestVOLVEBrowserOriginalDecodeNativeStringRoundtrip(t *testing.T){
  if err!=nil||strings.TrimSpace(string(out))!="VOLVE_SYNTHETIC_REGSZ_ROUNDTRIP_OK"{t.Fatal("native synthetic registry roundtrip or cleanup failed",err)}
  t.Log("PASS VOLVE_BROWSER_SYNTHETIC_HKCU_REGSZ_ROUNDTRIP_AND_CLEANUP")
 }
+
+// Verify that the production read-only BinaryWriter encoding can actually
+// be decoded, using synthetic values on a disposable HKCU fixture only.
+// The real HKLM policy paths are never queried or mutated by this test.
+func TestVOLVEBrowserOriginalDecodeNativeCaptureFormat(t *testing.T){
+ if os.Getenv("GITHUB_ACTIONS")!="true"||os.Getenv("RUNNER_ENVIRONMENT")!="github-hosted"{t.Skip("disposable hosted runner only")}
+ ctx,cancel:=context.WithTimeout(context.Background(),45*time.Second);defer cancel()
+ fixtureQuery:=func(q string)string{
+  paths:=[]string{
+   `Registry::HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Google\Chrome\URLBlocklist`,
+   `Registry::HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Microsoft\Edge\URLBlocklist`,
+   `Registry::HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Mozilla\Firefox\WebsiteFilter\Block`,
+  }
+  for i,p:=range paths{
+   suffix:=[]string{"chrome","edge","firefox"}[i]
+   q=strings.Replace(q,"Path='"+p+"'","Path=('Registry::HKEY_CURRENT_USER\\'+$name+'\\'+'"+suffix+"')",1)
+  }
+  if strings.Contains(q,"HKEY_LOCAL_MACHINE"){t.Fatal("fixture query still addresses real policy")}
+  return q
+ }
+ const setup=`$ErrorActionPreference='Stop';$ProgressPreference='SilentlyContinue';
+ if($env:GITHUB_ACTIONS -cne 'true' -or $env:RUNNER_ENVIRONMENT -cne 'github-hosted'){throw 'Hosted fixture only'};
+ $name='Software\VOLVE-REGSZ-FORMAT-'+[Guid]::NewGuid().ToString('N');
+ $root=[Microsoft.Win32.Registry]::CurrentUser;
+ if($null -ne ($existing=$root.OpenSubKey($name))){$existing.Dispose();throw 'Fixture collision'};
+ $created=$false;
+ try{
+  $parent=$root.CreateSubKey($name);$created=$true;$parent.Dispose();
+  $key=$root.CreateSubKey($name+'\chrome');
+  try{
+   $key.SetValue('1',[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($env:VOLVE_SYNTHETIC_REGSZ)),[Microsoft.Win32.RegistryValueKind]::String);
+   $key.SetValue('2','fixture-two.test',[Microsoft.Win32.RegistryValueKind]::String);
+   $key.Flush()
+  }finally{$key.Dispose()};
+  $key=$root.CreateSubKey($name+'\edge');$key.Dispose();
+ `
+ script:=setup+"\n$baseline=& {"+fixtureQuery(WindowsVOLVEBrowserPolicyQuery)+"};\n$capture=& {"+fixtureQuery(browserOriginalCaptureQuery())+"};\n"+
+ `[pscustomobject]@{Baseline=[string]$baseline;Capture=[string]$capture}|ConvertTo-Json -Compress
+ }finally{if($created){$root.DeleteSubKeyTree($name)}};
+ if($null -ne ($left=$root.OpenSubKey($name))){$left.Dispose();throw 'Fixture cleanup failed'}`
+ ps:=filepath.Join(os.Getenv("SystemRoot"),"System32","WindowsPowerShell","v1.0","powershell.exe")
+ const value="https://example.test/área/😀"
+ cmd:=exec.CommandContext(ctx,ps,"-NoLogo","-NoProfile","-NonInteractive","-Command",script)
+ cmd.Env=append(os.Environ(),"VOLVE_SYNTHETIC_REGSZ="+base64.StdEncoding.EncodeToString([]byte(value)))
+ out,err:=cmd.Output()
+ if err!=nil{t.Fatal("native fixture capture or cleanup failed")}
+ var envelope struct{Baseline string;Capture string}
+ if err:=json.Unmarshal(out,&envelope);err!=nil{t.Fatal("native fixture capture format invalid")}
+ baseline,err:=InspectWindowsBrowserPoliciesReadOnly(ctx,func(context.Context,string)([]byte,error){return []byte(envelope.Baseline),nil})
+ if err!=nil{t.Fatal("fixture census failed",err)}
+ payload,err:=captureOriginalBrowserPolicyBytes(ctx,baseline,func(context.Context)([]byte,error){return []byte(envelope.Capture),nil})
+ if err!=nil{t.Fatal("fixture independent capture failed",err)}
+ for _,record:=range baseline.Records{
+  decoded,err:=decodeOriginalBrowserStringKey(payload[record.Name],record)
+  if err!=nil{t.Fatal("native BinaryWriter stream not decoded",err)}
+  switch record.Name{
+  case "chrome":
+   if !decoded.Present||len(decoded.Values)!=2||decoded.Values["1"]!=value||decoded.Values["2"]!="fixture-two.test"{t.Fatal("native strings not reconstructed exactly")}
+  case "edge":
+   if !decoded.Present||len(decoded.Values)!=0{t.Fatal("empty key not preserved")}
+  case "firefox":
+   if decoded.Present||len(decoded.Values)!=0{t.Fatal("absent key not preserved")}
+  }
+ }
+ t.Log("PASS VOLVE_BROWSER_NATIVE_CAPTURE_FORMAT_SYNTHETIC_THREE_STATES")
+}

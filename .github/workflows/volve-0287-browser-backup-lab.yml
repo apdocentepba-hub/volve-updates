@@ -63,8 +63,9 @@ jobs:
           if(@($result|Where-Object {$_ -match '^--- PASS: TestVOLVEBrowserOriginalPair'}).Count -ne 2){throw 'Expected two paired backup tests'}
           if(@($result|Where-Object {$_ -match 'PASS VOLVE_ORIGINAL_PAIR_REAL_NTFS_NO_INSTALL'}).Count -ne 1){throw 'Missing paired backup native evidence'}
           if(@($result|Where-Object {$_ -match '^--- PASS: TestVOLVEBrowserOriginalTriple'}).Count -ne 2){throw 'Expected two DNS baseline integration tests'}
-          if(@($result|Where-Object {$_ -match '^--- PASS: TestVOLVEBrowserOriginalDecode'}).Count -ne 3){throw 'Expected three typed browser backup decode tests'}
+          if(@($result|Where-Object {$_ -match '^--- PASS: TestVOLVEBrowserOriginalDecode'}).Count -ne 4){throw 'Expected four typed browser backup decode tests'}
           if(@($result|Where-Object {$_ -match 'PASS VOLVE_BROWSER_SYNTHETIC_HKCU_REGSZ_ROUNDTRIP_AND_CLEANUP'}).Count -ne 1){throw 'Missing native synthetic registry roundtrip evidence'}
+          if(@($result|Where-Object {$_ -match 'PASS VOLVE_BROWSER_NATIVE_CAPTURE_FORMAT_SYNTHETIC_THREE_STATES'}).Count -ne 1){throw 'Missing native capture format reconstruction evidence'}
       - name: Verify catalog original XML capture against independently observed definition
         working-directory: build/codigo
         shell: pwsh
