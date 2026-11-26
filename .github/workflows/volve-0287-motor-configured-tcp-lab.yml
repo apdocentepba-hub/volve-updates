@@ -1,0 +1,138 @@
+name: VOLVE actual motor configured TCP differential (DISPOSABLE CI NO INSTALL)
+on:
+  push:
+    branches: [work/0287-real-motor-configured-tcp-20261126]
+    paths:
+      - '.github/workflows/volve-0287-motor-configured-tcp-lab.yml'
+permissions:
+  contents: read
+jobs:
+  configured-motor:
+    runs-on: windows-2025
+    timeout-minutes: 9
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.x'
+          cache: false
+      - name: Reconstruct and verify full VOLVE Go source
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $parts=@(Get-ChildItem 'development/0.28.7/complete-source-parts' -Filter 'part-*.bin' | Sort-Object Name)
+          if($parts.Count -ne 10){throw 'Source archive part count'}
+          $dest=[IO.File]::Create((Join-Path (Get-Location) 'source.zip'))
+          try {
+            for($i=0;$i -lt 10;$i++){
+              if($parts[$i].Name -ne ('part-{0:D2}.bin' -f $i)){throw 'Source archive order'}
+              $src=[IO.File]::OpenRead($parts[$i].FullName)
+              try{$src.CopyTo($dest)}finally{$src.Dispose()}
+            }
+          }finally{$dest.Dispose()}
+          if((Get-FileHash source.zip -Algorithm SHA256).Hash.ToLowerInvariant() -ne '92b3536559151260375b17a64eedd009df8399e45460637208027b7ca0587ba5'){throw 'Source SHA256 mismatch'}
+          Expand-Archive source.zip -DestinationPath build -Force
+          $old='development/0.28.7/VOLVE_0287_PRECHECK_RESCATE_OVERLAY_NO_INSTALAR.zip'
+          if((Get-FileHash $old -Algorithm SHA256).Hash.ToLowerInvariant() -ne 'fdfd31f21df81fe6da6075bfd442354297874576b6dc2c38f19bd35a681d95cd'){throw 'Preflight ZIP SHA256 mismatch'}
+          Expand-Archive $old -DestinationPath build -Force
+          Copy-Item development/0.28.7/journal/*.go build/codigo/motorupdate/ -Force
+          $recovery='development/0.28.7/VOLVE_0287_RECUPERACION_INTERRUPCION_FORZADA_NO_INSTALAR_v3.zip'
+          if((Get-FileHash $recovery -Algorithm SHA256).Hash.ToLowerInvariant() -ne '773bd5eb5f1c4883021cc321856636354e964d3605dba9017e2fb5d1a7401b40'){throw 'Recovery ZIP SHA256 mismatch'}
+          Expand-Archive $recovery -DestinationPath build -Force
+          go run development/0.28.7/inapp/apply_overlay.go build/codigo
+          if($LASTEXITCODE -ne 0){throw 'Source overlay failed'}
+      - name: Compile existing CI motor, without publishing
+        working-directory: build/codigo
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          go build -tags volveci -trimpath -o "$env:RUNNER_TEMP\VOLVE_CI_FreshDNS53.exe" .
+          if($LASTEXITCODE -ne 0){throw 'Real motor build failed'}
+      - name: Verify configured resolver and restore exact original DHCP DNS
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          if($env:GITHUB_ACTIONS -cne 'true' -or $env:RUNNER_ENVIRONMENT -cne 'github-hosted'){throw 'Hosted disposable runner only'}
+          $vm=Get-CimInstance Win32_ComputerSystem
+          if(($vm.Manufacturer+' '+$vm.Model) -notmatch '(?i)virtual machine|hyper-v|vmware|qemu|kvm'){throw 'Disposable VM not attested'}
+          $os=Get-CimInstance Win32_OperatingSystem
+          if($os.Caption -notmatch 'Server 2025'){throw 'Unexpected operating system'}
+          if(@(Get-ScheduledTask | Where-Object {$_.TaskName -match '^(?i:VOLVE[-_])'}).Count){throw 'Existing VOLVE task; no changes'}
+          $routes=@(Get-NetRoute -AddressFamily IPv4 -DestinationPrefix '0.0.0.0/0')
+          if($routes.Count -ne 1){throw 'Ambiguous default route'}
+          $idx=$routes[0].InterfaceIndex
+          $adapter=Get-NetAdapter -InterfaceIndex $idx
+          $key='HKLM:\SYSTEM\CurrentControlSet\Services\Tcpip\Parameters\Interfaces\'+([guid]$adapter.InterfaceGuid).ToString('B')
+          $reg=Get-ItemProperty -LiteralPath $key
+          $original=@((Get-DnsClientServerAddress -InterfaceIndex $idx -AddressFamily IPv4).ServerAddresses)
+          $dhcp=@(([string]$reg.DhcpNameServer -split '[,\s]+')|Where-Object {$_})
+          if(([string]$reg.NameServer).Trim() -or !$original.Count -or ($original -join ',') -cne ($dhcp -join ',')){throw 'Original IPv4 DNS is not unequivocally DHCP; no changes'}
+          function Census {
+            Get-DnsClientServerAddress -ErrorAction Stop | Sort-Object InterfaceIndex,AddressFamily | Select-Object InterfaceIndex,AddressFamily,ServerAddresses | ConvertTo-Json -Depth 6 -Compress
+          }
+          $baseline=Census
+          $hosts=(Get-FileHash -LiteralPath "$env:WINDIR\System32\drivers\etc\hosts" -Algorithm SHA256).Hash
+          $existing=@(Get-NetTCPConnection -LocalPort 53 -State Listen -ErrorAction SilentlyContinue)+@(Get-NetUDPEndpoint -LocalPort 53 -ErrorAction SilentlyContinue)
+          if(@($existing|Where-Object {$_.LocalAddress -in @('0.0.0.0','::','127.0.0.1','::1')}).Count){throw 'Conflicting DNS listener; no changes'}
+          $root=Join-Path $env:RUNNER_TEMP ('VOLVE-CI-FreshDNS53-'+$env:GITHUB_RUN_ID)
+          if(Test-Path -LiteralPath $root){throw 'Existing lab root'}
+          $exe=Join-Path $env:RUNNER_TEMP 'VOLVE_CI_FreshDNS53.exe'
+          $netsh=Join-Path $env:SystemRoot 'System32\netsh.exe'
+          $proc=$null
+          $changed=$false
+          $restored=$false
+          $observations=@()
+          function Probe([string]$mode,[bool]$tcp,[bool]$explicit,[bool]$trunc){
+            $nonce=[guid]::NewGuid().ToString('N')
+            $name=if($trunc){'tc-'+$nonce+'.volve-motor-ci.test.'}else{$nonce+'.volve-motor-ci.test.'}
+            $expected=if($trunc){'203.0.113.8'}else{'203.0.113.7'}
+            $q=@{Name=$name;Type='A';DnsOnly=$true;NoHostsFile=$true;QuickTimeout=$true;ErrorAction='Stop'}
+            if($tcp){$q.TcpOnly=$true}
+            if($explicit){$q.Server='127.0.0.1'}
+            $ok=$false;$errorId=$null
+            try{$a=@(Resolve-DnsName @q | Where-Object {$_.Type -eq 'A'});$ok=($a.Count -eq 1 -and $a[0].IPAddress -ceq $expected)}
+            catch{$errorId=([string]$_.FullyQualifiedErrorId -split ',')[0]}
+            [pscustomobject]@{mode=$mode;answer_verified=$ok;error_id=$errorId}
+          }
+          try{
+            $proc=Start-Process -FilePath $exe -ArgumentList @('--ci-fresh-dns53',('"'+$root+'"'),'VOLVE-CI-GITHUB-HOSTED-VM-DNS53-ONLY') -PassThru -RedirectStandardOutput (Join-Path $env:RUNNER_TEMP 'motor-lab-out.txt') -RedirectStandardError (Join-Path $env:RUNNER_TEMP 'motor-lab-err.txt')
+            $ready=$false
+            for($i=0;$i -lt 40;$i++){
+              if($proc.HasExited){throw 'Real motor exited before binding'}
+              $tcp=@(Get-NetTCPConnection -LocalPort 53 -State Listen -ErrorAction SilentlyContinue|Where-Object {$_.OwningProcess -eq $proc.Id})
+              $udp=@(Get-NetUDPEndpoint -LocalPort 53 -ErrorAction SilentlyContinue|Where-Object {$_.OwningProcess -eq $proc.Id})
+              if($tcp.Count -eq 2 -and $udp.Count -eq 2 -and @($tcp|Where-Object {$_.LocalAddress -in @('127.0.0.1','::1')}).Count -eq 2 -and @($udp|Where-Object {$_.LocalAddress -in @('127.0.0.1','::1')}).Count -eq 2){$ready=$true;break}
+              Start-Sleep -Milliseconds 250
+            }
+            if(!$ready){throw 'Four exclusive loopback listeners not verified; no DNS changes'}
+            $observations+=Probe 'explicit-udp' $false $true $false
+            $observations+=Probe 'explicit-tcp' $true $true $false
+            if(@($observations|Where-Object {$_.answer_verified}).Count -ne 2){throw 'Explicit motor controls failed; no DNS changes'}
+            if((Census) -cne $baseline -or ([guid](Get-NetAdapter -InterfaceIndex $idx).InterfaceGuid) -ne ([guid]$adapter.InterfaceGuid)){throw 'DNS or adapter drift before probe'}
+            $changed=$true
+            & $netsh interface ipv4 set dnsservers "name=$idx" source=static address=127.0.0.1 validate=no | Out-Null
+            if($LASTEXITCODE -ne 0){throw 'Temporary CI DNS configuration failed'}
+            $now=@((Get-DnsClientServerAddress -InterfaceIndex $idx -AddressFamily IPv4).ServerAddresses)
+            if($now.Count -ne 1 -or $now[0] -cne '127.0.0.1'){throw 'Temporary DNS readback failed'}
+            $observations+=Probe 'configured-default' $false $false $false
+            $observations+=Probe 'configured-tcp' $true $false $false
+            $observations+=Probe 'configured-truncation' $false $false $true
+          }finally{
+            try{
+              if($changed){
+                if(([guid](Get-NetAdapter -InterfaceIndex $idx).InterfaceGuid) -ne ([guid]$adapter.InterfaceGuid)){throw 'Adapter changed; refuse wrong-adapter restoration'}
+                & $netsh interface ipv4 set dnsservers "name=$idx" source=dhcp | Out-Null
+                if($LASTEXITCODE -ne 0){throw 'DHCP restoration failed'}
+              }
+              $after=Get-ItemProperty -LiteralPath $key
+              $restored=((Census) -ceq $baseline -and !([string]$after.NameServer).Trim() -and (Get-FileHash -LiteralPath "$env:WINDIR\System32\drivers\etc\hosts" -Algorithm SHA256).Hash -ceq $hosts)
+              if(!$restored){throw 'Exact original DNS and hosts readback not verified'}
+            }finally{
+              if($proc -and !$proc.HasExited){Stop-Process -Id $proc.Id -Force -ErrorAction Stop;$proc.WaitForExit()}
+              Write-Host ('VOLVE_REAL_MOTOR_CONFIGURED='+([ordered]@{scope='HOSTED_SERVER_2025_EPHEMERAL_PROCESS_NO_INSTALL';observations=$observations;original_dns_restored=$restored;production_authorized=$false}|ConvertTo-Json -Depth 5 -Compress))
+            }
+          }
+          if(!$restored -or $observations.Count -ne 5 -or @($observations|Where-Object {$_.answer_verified}).Count -ne 5){throw 'Actual configured resolver compatibility not verified; NO RELEASE'}
+          Write-Host 'PASS: actual motor, configured TCP and TCP-only upstream challenge, original DNS restored; NO RELEASE'
