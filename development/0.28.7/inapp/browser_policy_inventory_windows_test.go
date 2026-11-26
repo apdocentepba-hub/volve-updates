@@ -9,6 +9,10 @@ import (
  "encoding/hex"
  "encoding/json"
  "errors"
+ "os"
+ "os/exec"
+ "path/filepath"
+ "time"
  "strconv"
  "strings"
  "testing"
@@ -151,4 +155,67 @@ func TestVOLVEBrowserOriginalCaptureRealWindowsReadOnly(t *testing.T){
  if err!=nil{t.Fatal(err)}
  for i,p:=range e.Records{if p!=after.Records[i]{t.Fatal("browser registry changed during read-only capture")}}
  t.Log("PASS VOLVE_BROWSER_ORIGINAL_THREE_KEYS_NATIVE_READ_ONLY")
+}
+
+func browserArchiveFixture(t *testing.T)(WindowsBrowserPolicyEvidence,map[string][]byte){
+ t.Helper()
+ e,rows:=makeBrowserOriginalCaptureFixture(t)
+ raw,err:=json.Marshal(rows);if err!=nil{t.Fatal(err)}
+ data,err:=captureOriginalBrowserPolicyBytes(context.Background(),e,func(context.Context)([]byte,error){return raw,nil})
+ if err!=nil{t.Fatal(err)}
+ return e,data
+}
+
+func TestVOLVEBrowserOriginalArchiveCreateOnlyAndTamper(t *testing.T){
+ ctx:=context.Background()
+ e,data:=browserArchiveFixture(t)
+ parent:=filepath.Join(t.TempDir(),"original-protection-recovery")
+ if err:=os.Mkdir(parent,0700);err!=nil{t.Fatal(err)}
+ allow:=func(string)error{return nil}
+ if err:=storeBrowserOriginalArchiveUnarmed(ctx,parent,e,data,allow,allow);err!=nil{t.Fatal(err)}
+ got,err:=readBrowserOriginalArchiveUnarmed(ctx,parent,e,allow)
+ if err!=nil||len(got)!=3{t.Fatal("reopen failed",err)}
+ for n,v:=range data{if string(got[n])!=string(v){t.Fatal("original bytes differ")}}
+ if err:=storeBrowserOriginalArchiveUnarmed(ctx,parent,e,data,allow,allow);err==nil{t.Fatal("overwrite permitted")}
+ _,file,err:=browserOriginalArchivePaths(parent);if err!=nil{t.Fatal(err)}
+ if err:=os.WriteFile(file,[]byte("[]"),0600);err!=nil{t.Fatal(err)}
+ if got,err:=readBrowserOriginalArchiveUnarmed(ctx,parent,e,allow);err==nil||got!=nil{t.Fatal("tampered archive accepted")}
+}
+
+func TestVOLVEBrowserOriginalArchiveRefusesPartialAndInvalidPayload(t *testing.T){
+ ctx:=context.Background()
+ e,data:=browserArchiveFixture(t)
+ parent:=filepath.Join(t.TempDir(),"original-protection-recovery")
+ if err:=os.Mkdir(parent,0700);err!=nil{t.Fatal(err)}
+ allow:=func(string)error{return nil}
+ deny:=func(string)error{return errors.New("fixture ACL denied")}
+ dir,file,err:=browserOriginalArchivePaths(parent);if err!=nil{t.Fatal(err)}
+ saved:=data["chrome"];data["chrome"]=[]byte("bad")
+ if err:=storeBrowserOriginalArchiveUnarmed(ctx,parent,e,data,allow,allow);err==nil{t.Fatal("invalid payload accepted")}
+ data["chrome"]=saved
+ if err:=storeBrowserOriginalArchiveUnarmed(ctx,parent,e,data,allow,deny);err==nil{t.Fatal("unsafe parent accepted")}
+ if _,err:=os.Lstat(dir);!os.IsNotExist(err){t.Fatal("stage created before verification")}
+ if err:=storeBrowserOriginalArchiveUnarmed(ctx,parent,e,data,deny,allow);err==nil{t.Fatal("failed seal ignored")}
+ if _,err:=os.Lstat(file);!os.IsNotExist(err){t.Fatal("payload written before directory seal")}
+ if err:=storeBrowserOriginalArchiveUnarmed(ctx,parent,e,data,allow,allow);err==nil{t.Fatal("interrupted stage reused")}
+}
+
+func TestVOLVEBrowserOriginalArchiveRealNTFS(t *testing.T){
+ if os.Getenv("GITHUB_ACTIONS")!="true"||os.Getenv("RUNNER_ENVIRONMENT")!="github-hosted"{t.Skip("disposable runner only")}
+ ctx,cancel:=context.WithTimeout(context.Background(),90*time.Second);defer cancel()
+ e,data:=browserArchiveFixture(t)
+ parent:=filepath.Join(t.TempDir(),"original-protection-recovery")
+ if err:=os.Mkdir(parent,0700);err!=nil{t.Fatal(err)}
+ if err:=sealDNSBackupLabNode(ctx,parent);err!=nil{t.Fatal(err)}
+ seal:=func(path string)error{return sealDNSBackupLabNode(ctx,path)}
+ check:=func(path string)error{return nativeDNSOriginalBackupACL(ctx,path)}
+ if err:=storeBrowserOriginalArchiveUnarmed(ctx,parent,e,data,seal,check);err!=nil{t.Fatal(err)}
+ got,err:=readBrowserOriginalArchiveUnarmed(ctx,parent,e,check)
+ if err!=nil||len(got)!=3{t.Fatal("native archive reopen failed",err)}
+ for n,v:=range data{if string(got[n])!=string(v){t.Fatal("original bytes differ")}}
+ _,file,err:=browserOriginalArchivePaths(parent);if err!=nil{t.Fatal(err)}
+ out,err:=exec.CommandContext(ctx,"icacls.exe",file,"/grant","*S-1-1-0:W").CombinedOutput()
+ if err!=nil{t.Fatalf("fixture ACL change failed: %v %s",err,string(out))}
+ if got,err:=readBrowserOriginalArchiveUnarmed(ctx,parent,e,check);err==nil||got!=nil{t.Fatal("weakened backup ACL accepted")}
+ t.Log("PASS VOLVE_BROWSER_ARCHIVE_REAL_NTFS_FIXTURE")
 }

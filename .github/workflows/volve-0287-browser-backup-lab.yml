@@ -50,9 +50,11 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference='Stop'
-          $result=@(go test ./motorupdate -run '^TestVOLVEBrowser(Policy|OriginalCapture)' -count=1 -v -timeout 3m)
+          $result=@(go test ./motorupdate -run '^TestVOLVEBrowser(Policy|OriginalCapture|OriginalArchive)' -count=1 -v -timeout 4m)
           $exit=$LASTEXITCODE
           $result|Write-Host
           if($exit -ne 0){throw 'Browser capture regression failed'}
           if(@($result|Where-Object {$_ -match '^--- PASS: TestVOLVEBrowserOriginalCapture'}).Count -ne 3){throw 'Expected exactly three new capture tests'}
           if(@($result|Where-Object {$_ -match 'PASS VOLVE_BROWSER_ORIGINAL_THREE_KEYS_NATIVE_READ_ONLY'}).Count -ne 1){throw 'Missing native observation'}
+          if(@($result|Where-Object {$_ -match '^--- PASS: TestVOLVEBrowserOriginalArchive'}).Count -ne 3){throw 'Expected three archive tests'}
+          if(@($result|Where-Object {$_ -match 'PASS VOLVE_BROWSER_ARCHIVE_REAL_NTFS_FIXTURE'}).Count -ne 1){throw 'Missing real NTFS fixture evidence'}

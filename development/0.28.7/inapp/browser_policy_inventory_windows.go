@@ -227,3 +227,87 @@ func captureOriginalBrowserPolicyBytes(ctx context.Context,baseline WindowsBrows
  if err:=ctx.Err();err!=nil{return nil,err}
  return result,nil
 }
+
+// Create-only local staging; no registry mutation or restoration permit.
+// The trusted baseline is external to the archive. A separate native
+// adapter and transaction authorization are required before real use.
+const browserOriginalArchiveDir="browser-original-backup-v1"
+const browserOriginalArchiveFile="original-browser-policies.json"
+const browserOriginalArchiveLimit=4*browserOriginalPayloadLimit+65536
+
+func browserOriginalArchivePaths(parent string)(string,string,error){
+ if !filepath.IsAbs(parent)||filepath.Clean(parent)!=parent||
+  filepath.Base(parent)!="original-protection-recovery"||strings.HasPrefix(parent,`\\`){
+  return "","",errors.New("dedicated local original-protection recovery parent required")
+ }
+ dir:=filepath.Join(parent,browserOriginalArchiveDir)
+ return dir,filepath.Join(dir,browserOriginalArchiveFile),nil
+}
+
+func storeBrowserOriginalArchiveUnarmed(ctx context.Context,parent string,baseline WindowsBrowserPolicyEvidence,
+ data map[string][]byte,seal,check func(string)error)error{
+ if ctx==nil||seal==nil||check==nil{return errors.New("browser archive requires context and trusted ACL callbacks")}
+ if err:=ctx.Err();err!=nil{return err}
+ if len(data)!=3||len(baseline.Records)!=3{return errors.New("three original browser payloads required")}
+ rows:=make([]browserOriginalCaptureRow,0,3)
+ for _,p:=range baseline.Records{
+  value:=data[p.Name]
+  if len(value)==0||len(value)>browserOriginalPayloadLimit{return errors.New("browser payload size invalid")}
+  rows=append(rows,browserOriginalCaptureRow{WindowsBrowserPolicyRecord:p,PayloadBase64:base64.StdEncoding.EncodeToString(value)})
+ }
+ raw,err:=json.Marshal(rows)
+ if err!=nil||len(raw)>browserOriginalArchiveLimit{return errors.New("browser archive encoding refused")}
+ if _,err:=captureOriginalBrowserPolicyBytes(ctx,baseline,func(context.Context)([]byte,error){return raw,nil});err!=nil{return err}
+ dir,file,err:=browserOriginalArchivePaths(parent);if err!=nil{return err}
+ if err:=verifyOriginalHostsBackupNode(parent,true,check);err!=nil{return err}
+ if err:=os.Mkdir(dir,0700);err!=nil{return errors.New("browser archive stage must be new")}
+ if err:=seal(dir);err!=nil{return err}
+ if err:=verifyOriginalHostsBackupNode(dir,true,check);err!=nil{return err}
+ if err:=verifyOriginalHostsBackupNode(parent,true,check);err!=nil{return err}
+ if err:=ctx.Err();err!=nil{return err}
+ f,err:=os.OpenFile(file,os.O_CREATE|os.O_EXCL|os.O_WRONLY,0600)
+ if err!=nil{return err}
+ n,writeErr:=f.Write(raw)
+ if writeErr==nil&&n!=len(raw){writeErr=io.ErrShortWrite}
+ if writeErr==nil{writeErr=f.Sync()}
+ closeErr:=f.Close()
+ if writeErr!=nil{return writeErr}
+ if closeErr!=nil{return closeErr}
+ if err:=seal(file);err!=nil{return err}
+ _,err=readBrowserOriginalArchiveUnarmed(ctx,parent,baseline,check)
+ return err
+}
+
+func readBrowserOriginalArchiveUnarmed(ctx context.Context,parent string,baseline WindowsBrowserPolicyEvidence,
+ check func(string)error)(map[string][]byte,error){
+ if ctx==nil||check==nil{return nil,errors.New("browser archive requires context and ACL verifier")}
+ if err:=ctx.Err();err!=nil{return nil,err}
+ dir,file,err:=browserOriginalArchivePaths(parent);if err!=nil{return nil,err}
+ verify:=func()error{
+  if err:=verifyOriginalHostsBackupNode(parent,true,check);err!=nil{return err}
+  if err:=verifyOriginalHostsBackupNode(dir,true,check);err!=nil{return err}
+  if err:=verifyOriginalHostsBackupNode(file,false,check);err!=nil{return err}
+  nodes,err:=os.ReadDir(dir)
+  if err!=nil{return err}
+  if len(nodes)!=1||nodes[0].Name()!=browserOriginalArchiveFile{return errors.New("ambiguous browser archive directory")}
+  return nil
+ }
+ if err:=verify();err!=nil{return nil,err}
+ before,err:=os.Lstat(file);if err!=nil{return nil,err}
+ if !before.Mode().IsRegular()||before.Size()<2||before.Size()>browserOriginalArchiveLimit{return nil,errors.New("browser archive file invalid")}
+ f,err:=os.Open(file);if err!=nil{return nil,err}
+ opened,err:=f.Stat()
+ if err!=nil||!os.SameFile(before,opened){f.Close();return nil,errors.New("browser archive changed before opening")}
+ raw,readErr:=io.ReadAll(io.LimitReader(f,browserOriginalArchiveLimit+1))
+ end,statErr:=f.Stat()
+ closeErr:=f.Close()
+ if readErr!=nil||statErr!=nil||closeErr!=nil{return nil,errors.New("browser archive read failed")}
+ after,err:=os.Lstat(file);if err!=nil{return nil,err}
+ if len(raw)>browserOriginalArchiveLimit||!after.Mode().IsRegular()||!os.SameFile(before,after)||
+  !os.SameFile(opened,end)||before.Size()!=end.Size()||before.Size()!=after.Size()||
+  before.Size()!=int64(len(raw))||!before.ModTime().Equal(end.ModTime())||!before.ModTime().Equal(after.ModTime()){
+  return nil,errors.New("browser archive changed during read")
+ }
+ if err:=verify();err!=nil{return nil,err}
+ return captureOriginalBrowserPolicyBytes(ctx,baseline,func(context.Context)([]byte,error){return raw,nil})
+}
