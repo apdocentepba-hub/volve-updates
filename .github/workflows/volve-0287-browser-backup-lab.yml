@@ -82,3 +82,58 @@ jobs:
           if(@($result|Where-Object {$_ -match 'PASS VOLVE_FOUR_ORIGINAL_ARCHIVES_FIXTURE_REVIEW_NO_AUTHORIZATION'}).Count -ne 1){throw 'Missing four-component fixture review'}
           if(@($result|Where-Object {$_ -match 'PASS VOLVE_FOUR_ARCHIVES_REAL_NTFS_DISPLAY_ONLY'}).Count -ne 1){throw 'Missing native four-archive display review'}
           if(@($result|Where-Object {$_ -match 'PASS VOLVE_ACTUAL_NATIVE_ORIGINALS_ARCHIVED_AND_RECENSUSED_NO_OS_WRITES'}).Count -ne 1){throw 'Missing actual native originals before/after evidence'}
+          if(@($result|Where-Object {$_ -match 'PASS VOLVE_FOUR_ARCHIVES_REJECT_DRIFT_DURING_CATALOG_REVIEW'}).Count -ne 1){throw 'Missing archive drift rejection evidence'}
+      - name: Reimport inert synthetic task XML and verify cleanup (hosted lab only)
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          if($env:GITHUB_ACTIONS -cne 'true' -or $env:RUNNER_ENVIRONMENT -cne 'github-hosted'){throw 'Hosted runner only'}
+          $vm=Get-CimInstance Win32_ComputerSystem
+          if(($vm.Manufacturer+' '+$vm.Model) -notmatch '(?i)virtual machine|hyper-v|vmware|qemu|kvm'){throw 'Disposable VM not verified'}
+          $name='VOLVE-LAB-CATALOG-'+[Guid]::NewGuid().ToString('N')
+          function ReadFixture {
+            @(Get-ScheduledTask -TaskPath '\' -ErrorAction Stop | Where-Object {$_.TaskName -ceq $name})
+          }
+          if(@(ReadFixture).Count -ne 0){throw 'Synthetic task name collision'}
+          $exe=Join-Path $env:SystemRoot 'System32\cmd.exe'
+          $arguments='/d /c exit 0'
+          $identity=[Security.Principal.WindowsIdentity]::GetCurrent()
+          $principal=New-ScheduledTaskPrincipal -UserId $identity.Name -LogonType Interactive -RunLevel Limited
+          $action=New-ScheduledTaskAction -Execute $exe -Argument $arguments
+          $settings=New-ScheduledTaskSettingsSet -Disable -DisallowDemandStart
+          $definition=New-ScheduledTask -Action $action -Principal $principal -Settings $settings
+          function InspectFixture {
+            $rows=@(ReadFixture)
+            if($rows.Count -ne 1){throw 'Synthetic task identity missing or ambiguous'}
+            $task=$rows[0]
+            if([string]$task.State -ne 'Disabled' -or $task.Settings.Enabled -ne $false -or $task.Settings.AllowDemandStart -ne $false){throw 'Synthetic task is not inert'}
+            if(@($task.Triggers|Where-Object {$_}).Count -ne 0 -or @($task.Actions).Count -ne 1){throw 'Synthetic task structure changed'}
+            if($task.Actions[0].Execute -ine $exe -or $task.Actions[0].Arguments -cne $arguments){throw 'Synthetic task action changed'}
+            $sid=([Security.Principal.NTAccount]$task.Principal.UserId).Translate([Security.Principal.SecurityIdentifier]).Value
+            if($sid -ne $identity.User.Value -or [string]$task.Principal.LogonType -ne 'Interactive' -or [string]$task.Principal.RunLevel -ne 'Limited'){throw 'Synthetic principal changed'}
+            $xml=Export-ScheduledTask -TaskName $name -TaskPath '\' -ErrorAction Stop
+            if([string]::IsNullOrWhiteSpace($xml)){throw 'Synthetic task XML unavailable'}
+            return [string]$xml
+          }
+          $passed=$false
+          try{
+            Register-ScheduledTask -TaskName $name -TaskPath '\' -InputObject $definition -ErrorAction Stop | Out-Null
+            $original=InspectFixture
+            $sha=[Security.Cryptography.SHA256]::Create()
+            try{
+              $pin=[Convert]::ToBase64String($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($original)))
+              Unregister-ScheduledTask -TaskName $name -TaskPath '\' -Confirm:$false -ErrorAction Stop
+              if(@(ReadFixture).Count -ne 0){throw 'Synthetic task removal not verified'}
+              Register-ScheduledTask -TaskName $name -TaskPath '\' -Xml $original -ErrorAction Stop | Out-Null
+              $recovered=InspectFixture
+              $pin2=[Convert]::ToBase64String($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($recovered)))
+              if($pin -cne $pin2){throw 'Task Scheduler normalized or changed exported XML; exact reconstruction not verified'}
+              $passed=$true
+            }finally{$sha.Dispose()}
+          }finally{
+            if(@(ReadFixture).Count -eq 1){Unregister-ScheduledTask -TaskName $name -TaskPath '\' -Confirm:$false -ErrorAction Stop}
+            if(@(ReadFixture).Count -ne 0){throw 'Synthetic task cleanup failed'}
+            $identity.Dispose()
+          }
+          if(!$passed){throw 'Synthetic task reconstruction unverified'}
+          Write-Host 'PASS VOLVE_SYNTHETIC_CATALOG_XML_REIMPORT_AND_CLEANUP'
