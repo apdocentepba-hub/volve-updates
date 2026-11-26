@@ -148,6 +148,14 @@ function ConvertTo-VolvCIPidDecimal {
     return ([int64]::Parse($clean,[Globalization.CultureInfo]::InvariantCulture)).ToString([Globalization.CultureInfo]::InvariantCulture)
 }
 
+# Match only the exact standard Edge Update image path, never a basename,
+# suffix or process-name guess. This remains a path lead, NOT attribution.
+function Test-VolvCIStandardEdgeUpdateImage {
+    param([string]$Image)
+    if([string]::IsNullOrWhiteSpace($Image)){return $false}
+    return [string]::Equals($Image,'C:\Program Files (x86)\Microsoft\EdgeUpdate\MicrosoftEdgeUpdate.exe',[StringComparison]::OrdinalIgnoreCase)
+}
+
 # Current on-disk signer is a separate investigative observation, not proof
 # that those bytes ran at the event time. Never emit paths or certificate data.
 # Only called from the already-attested disposable CI investigation.
@@ -157,8 +165,10 @@ function Get-VolvCICurrentWindowsImageClass {
         if([string]::IsNullOrWhiteSpace($Image) -or $Image -cnotmatch '^[A-Za-z]:\\' -or [IO.Path]::GetExtension($Image) -ine '.exe'){return 'unknown'}
         $root=[IO.Path]::GetFullPath($env:WINDIR).TrimEnd('\')+'\'
         $full=[IO.Path]::GetFullPath($Image)
-        if(-not $full.StartsWith($root,[StringComparison]::OrdinalIgnoreCase)){return 'outside_windows'}
+        $edge=Test-VolvCIStandardEdgeUpdateImage -Image $Image
+        if(-not $full.StartsWith($root,[StringComparison]::OrdinalIgnoreCase) -and -not $edge){return 'outside_windows'}
         if(-not [string]::Equals($full,$Image,[StringComparison]::OrdinalIgnoreCase)){return 'unknown'}
+        if($edge){$root=[IO.Path]::GetPathRoot($full)}
         $file=Get-Item -LiteralPath $full -ErrorAction Stop
         if($file.PSIsContainer -or ($file.Attributes -band [IO.FileAttributes]::ReparsePoint)){return 'unknown'}
         # Do not follow reparse points anywhere under the Windows directory.
@@ -170,7 +180,14 @@ function Get-VolvCICurrentWindowsImageClass {
         }
         if($null -eq $parent){return 'unknown'}
         $signature=Get-AuthenticodeSignature -LiteralPath $full -ErrorAction Stop
-        if($signature.Status -ne 'Valid' -or $null -eq $signature.SignerCertificate){return 'windows_signature_unverified'}
+        if($signature.Status -ne 'Valid' -or $null -eq $signature.SignerCertificate){
+            if($edge){return 'edge_update_path_signature_unverified'}
+            return 'windows_signature_unverified'
+        }
+        if($edge){
+            if($signature.SignerCertificate.Subject -match '(?:^|,\s*)O=Microsoft Corporation(?:,|$)'){return 'edge_update_microsoft_signed_current_file'}
+            return 'edge_update_other_signed_current_file'
+        }
         if($signature.SignerCertificate.Subject -match '(?:^|,\s*)O=Microsoft Corporation(?:,|$)'){return 'windows_microsoft_signed_current_file'}
         return 'windows_other_signed_current_file'
     }catch{return 'unknown'}
@@ -365,6 +382,13 @@ if($Mode -ceq 'Test'){
     $differentBirth=$birth4688.Replace('SecretProgram.exe','AnotherProgram.exe')
     $otherImage=Get-VolvCIProcessCreationCorrelation -TaskIdentity $fixture -UpdateEventXML @($valid4702) -CreationEventXML @($differentBirth)
     if($otherImage.candidateImageIds[0] -ceq $match.candidateImageIds[0]){throw 'NOT VERIFIED: distinct image candidates share identity'}
+    $edgeImage='C:\Program Files (x86)\Microsoft\EdgeUpdate\MicrosoftEdgeUpdate.exe'
+    if(-not (Test-VolvCIStandardEdgeUpdateImage -Image $edgeImage)){throw 'Known Edge Update path not recognized'}
+    if((Get-VolvCITaskPseudonym -Identity $edgeImage.ToLowerInvariant()) -cne '725AAF9503CF81FA'){throw 'Edge Update diagnostic path digest regression'}
+    foreach($foreign in @('MicrosoftEdgeUpdate.exe','C:\Temp\MicrosoftEdgeUpdate.exe','C:\Program Files (x86)\Microsoft\EdgeUpdate\MicrosoftEdgeUpdate.exe.bak','C:\Program Files (x86)\Microsoft\EdgeUpdate\..\EdgeUpdate\MicrosoftEdgeUpdate.exe')){
+        if(Test-VolvCIStandardEdgeUpdateImage -Image $foreign){throw 'Non-exact Edge Update image incorrectly classified'}
+    }
+    Write-Host 'PASS: exact Edge Update path classification; no causal attribution or baseline exemption'
     Write-Host 'PASS: SECURITY_4702_4688_CORRELATION synthetic time/PID candidate, missing/ambiguous/future/stale/reused PID rejection; process identity remains UNPROVEN'
     Write-Host 'PASS: SECURITY_4702_READ_ONLY classifies valid/missing/invalid PID fields, refuses duplicate PID, wrong provider, wrong task, malformed XML and never outputs private event data'
     Write-Host 'PASS: CI_TASK_EVENT_DIAGNOSTIC matches synthetic events 106/140/141, classifies actor accounts, and rejects wrong task, unlisted ID and malformed XML'
