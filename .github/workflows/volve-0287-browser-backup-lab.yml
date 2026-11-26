@@ -67,6 +67,7 @@ jobs:
           if(@($result|Where-Object {$_ -match 'PASS VOLVE_BROWSER_SYNTHETIC_HKCU_REGSZ_ROUNDTRIP_AND_CLEANUP'}).Count -ne 1){throw 'Missing native synthetic registry roundtrip evidence'}
           if(@($result|Where-Object {$_ -match 'PASS VOLVE_BROWSER_NATIVE_CAPTURE_FORMAT_SYNTHETIC_THREE_STATES'}).Count -ne 1){throw 'Missing native capture format reconstruction evidence'}
           if(@($result|Where-Object {$_ -match 'PASS VOLVE_BROWSER_SYNTHETIC_REBUILD_INDEPENDENT_FINGERPRINT_AND_CLEANUP'}).Count -ne 1){throw 'Missing independent native reconstruction and cleanup evidence'}
+          if(@($result|Where-Object {$_ -match 'PASS VOLVE_BROWSER_ARCHIVE_TO_NATIVE_REBUILD_NTFS'}).Count -ne 1){throw 'Missing persistent browser archive reconstruction evidence'}
       - name: Verify catalog original XML capture against independently observed definition
         working-directory: build/codigo
         shell: pwsh
@@ -116,15 +117,30 @@ jobs:
             return [string]$xml
           }
           $passed=$false
+          $archiveDir=Join-Path $env:RUNNER_TEMP ('volve-catalog-xml-'+[Guid]::NewGuid().ToString('N'))
+          $archiveCreated=$false
           try{
+            if(Test-Path -LiteralPath $archiveDir){throw 'Synthetic archive collision'}
+            New-Item -ItemType Directory -Path $archiveDir -ErrorAction Stop | Out-Null
+            $archiveCreated=$true
+            $archiveFile=Join-Path $archiveDir 'catalog.xml'
+            $utf8=New-Object System.Text.UTF8Encoding($false,$true)
             Register-ScheduledTask -TaskName $name -TaskPath '\' -InputObject $definition -ErrorAction Stop | Out-Null
             $original=InspectFixture
             $sha=[Security.Cryptography.SHA256]::Create()
             try{
               $pin=[Convert]::ToBase64String($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($original)))
+              $bytes=$utf8.GetBytes($original)
+              $stream=[IO.File]::Open($archiveFile,[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::None)
+              try{$stream.Write($bytes,0,$bytes.Length);$stream.Flush($true)}finally{$stream.Dispose()}
+              $original=$null;$bytes=$null
               Unregister-ScheduledTask -TaskName $name -TaskPath '\' -Confirm:$false -ErrorAction Stop
               if(@(ReadFixture).Count -ne 0){throw 'Synthetic task removal not verified'}
-              Register-ScheduledTask -TaskName $name -TaskPath '\' -Xml $original -ErrorAction Stop | Out-Null
+              $diskBytes=[IO.File]::ReadAllBytes($archiveFile)
+              if($diskBytes.Length -lt 1 -or $diskBytes.Length -gt 1048576){throw 'Synthetic archive size invalid'}
+              if([Convert]::ToBase64String($sha.ComputeHash($diskBytes)) -cne $pin){throw 'Synthetic disk archive changed'}
+              $fromDisk=$utf8.GetString($diskBytes)
+              Register-ScheduledTask -TaskName $name -TaskPath '\' -Xml $fromDisk -ErrorAction Stop | Out-Null
               $recovered=InspectFixture
               $pin2=[Convert]::ToBase64String($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($recovered)))
               if($pin -cne $pin2){throw 'Task Scheduler normalized or changed exported XML; exact reconstruction not verified'}
@@ -133,7 +149,9 @@ jobs:
           }finally{
             if(@(ReadFixture).Count -eq 1){Unregister-ScheduledTask -TaskName $name -TaskPath '\' -Confirm:$false -ErrorAction Stop}
             if(@(ReadFixture).Count -ne 0){throw 'Synthetic task cleanup failed'}
+            if($archiveCreated){Remove-Item -LiteralPath $archiveFile -ErrorAction SilentlyContinue;Remove-Item -LiteralPath $archiveDir -ErrorAction Stop;if(Test-Path -LiteralPath $archiveDir){throw 'Synthetic archive cleanup failed'}}
             $identity.Dispose()
           }
           if(!$passed){throw 'Synthetic task reconstruction unverified'}
+          Write-Host 'PASS VOLVE_SYNTHETIC_CATALOG_XML_DISK_REIMPORT_AND_CLEANUP'
           Write-Host 'PASS VOLVE_SYNTHETIC_CATALOG_XML_REIMPORT_AND_CLEANUP'
