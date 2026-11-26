@@ -384,3 +384,48 @@ func TestVOLVESyntheticCatalogArchiveBridge(t *testing.T){
  if n!=len(got.XML)||werr!=nil||syncErr!=nil||closeErr!=nil{t.Fatal("verified synthetic output not persisted")}
  t.Log("PASS VOLVE_SYNTHETIC_CATALOG_REAL_ARCHIVE_CODEC_BRIDGE")
 }
+
+func TestWindowsOriginalCatalogArchiveBoundTransaction(t *testing.T){
+ ctx:=context.Background()
+ src,snap,browser,hosts,policies:=makeOriginalProtectionPairFixture(t)
+ _=src
+ id:=strings.Repeat("a",32)
+ root:=filepath.Join(t.TempDir(),id)
+ parent:=filepath.Join(root,"original-protection-recovery")
+ dnsParent:=filepath.Join(root,"legacy-engine-recovery")
+ for _,dir:=range []string{root,parent,dnsParent}{if err:=os.Mkdir(dir,0700);err!=nil{t.Fatal(err)}}
+ observed,err:=InspectWindowsDNSAssignmentProvenanceReadOnly(ctx,protectionSnapshotDNSInspect)
+ if err!=nil{t.Fatal(err)}
+ journal,dnsPin,err:=BuildDNSOriginalJournal(ctx,observed.States)
+ if err!=nil{t.Fatal(err)}
+ snap.DNSAdaptersSHA256=observed.SHA256
+ sum:=sha256.Sum256([]byte(catalogTaskAbsentMarker))
+ snap.CatalogTaskDefinitionSHA256=hex.EncodeToString(sum[:])
+ inv:=WindowsFreshVOLVETaskInventory{}
+ allow:=func(string)error{return nil}
+ if err:=storeOriginalWindowsHostsBackupUnarmed(ctx,parent,hosts,WindowsHostsFileEvidence{SHA256:snap.HostsSHA256,BlockedRuleCount:snap.HostsBlockedRuleCount},allow,allow);err!=nil{t.Fatal(err)}
+ if err:=storeBrowserOriginalArchiveUnarmed(ctx,parent,browser,policies,allow,allow);err!=nil{t.Fatal(err)}
+ if _,err:=StoreDNSOriginalBackupUnarmed(ctx,dnsParent,journal,dnsPin,allow,allow);err!=nil{t.Fatal(err)}
+ if err:=storeOriginalCatalogArchiveUnarmed(ctx,parent,snap,inv,originalCatalogDefinition{},allow,allow);err!=nil{t.Fatal(err)}
+ pin,err:=originalRecoveryReviewPin(id,snap,dnsPin)
+ if err!=nil{t.Fatal(err)}
+ got,err:=verifyBoundOriginalRecoveryArchivesUnarmed(ctx,id,pin,parent,dnsParent,snap,browser,inv,dnsPin,allow)
+ if err!=nil||!got.HostsVerified||got.BrowserKeysVerified!=3||!got.DNSBackupVerified||!got.CatalogBackupVerified||got.CompleteRecoverySnapshot||got.InstallAuthorized||got.RestoreAuthorized{t.Fatal("bound review incorrect",err)}
+ changed:=snap;changed.HostsSHA256=strings.Repeat("f",64)
+ foreign:=strings.Repeat("b",32)
+ for _,tc:=range []struct{name,id,pin,parent,dns,digest string;snapshot ProtectionSnapshot}{
+  {"wrong-id",foreign,pin,parent,dnsParent,dnsPin,snap},
+  {"wrong-pin",id,strings.Repeat("0",64),parent,dnsParent,dnsPin,snap},
+  {"wrong-baseline",id,pin,parent,dnsParent,dnsPin,changed},
+  {"wrong-dns",id,pin,parent,dnsParent,strings.Repeat("f",64),snap},
+  {"wrong-directory",id,pin,filepath.Join(filepath.Dir(root),foreign,"original-protection-recovery"),dnsParent,dnsPin,snap},
+ }{
+  t.Run(tc.name,func(t *testing.T){
+   called:=false
+   check:=func(string)error{called=true;return nil}
+   got,err:=verifyBoundOriginalRecoveryArchivesUnarmed(ctx,tc.id,tc.pin,tc.parent,tc.dns,tc.snapshot,browser,inv,tc.digest,check)
+   if err==nil||called||got!=(originalProtectionPairReceipt{}){t.Fatal("foreign transaction reached archive inspection")}
+  })
+ }
+ t.Log("PASS VOLVE_BOUND_ORIGINAL_ARCHIVES_REJECT_FOREIGN_TRANSACTION")
+}
