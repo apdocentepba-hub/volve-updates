@@ -281,3 +281,24 @@ func readOriginalCatalogArchiveUnarmed(ctx context.Context,parent string,baselin
  if err:=verify();err!=nil{return denied,err}
  return captureOriginalCatalogDefinition(ctx,baseline,inventory,func(context.Context)([]byte,error){return raw,nil})
 }
+
+// Verifies all four original backup components, within the scope of the
+// existing census. This is strictly a read-only review, NOT proof of full
+// browser coverage, atomicity, restoration, or installation authorization.
+// A separately authenticated transaction controller must establish those
+// prerequisites. No private payload is included in the receipt.
+func verifyOriginalProtectionArchivesUnarmed(ctx context.Context,protectionParent,dnsParent string,
+ baseline ProtectionSnapshot,browser WindowsBrowserPolicyEvidence,inventory WindowsFreshVOLVETaskInventory,
+ dnsJournalPin string,check func(string)error)(originalProtectionPairReceipt,error){
+ var denied originalProtectionPairReceipt
+ if ctx==nil||check==nil{return denied,errors.New("archive review requires context and ACL verifier")}
+ if err:=ctx.Err();err!=nil{return denied,err}
+ receipt,err:=verifyOriginalProtectionTripleUnarmed(ctx,protectionParent,dnsParent,baseline,browser,dnsJournalPin,check)
+ if err!=nil{return denied,err}
+ if _,err:=readOriginalCatalogArchiveUnarmed(ctx,protectionParent,baseline,inventory,check);err!=nil{
+  return denied,errors.New("original catalog archive not verified")
+ }
+ if err:=ctx.Err();err!=nil{return denied,err}
+ receipt.CatalogBackupVerified=true
+ return receipt,nil
+}

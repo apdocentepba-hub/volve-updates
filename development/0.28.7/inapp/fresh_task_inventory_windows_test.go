@@ -180,3 +180,35 @@ func TestWindowsOriginalCatalogArchiveRealNTFS(t *testing.T){
  if err!=nil||!got.Present||string(got.XML)!=string(definition.XML){t.Fatal("native catalog archive readback mismatch",err)}
  t.Log("PASS VOLVE_CATALOG_ARCHIVE_REAL_NTFS_FIXTURE_NO_TASK_WRITES")
 }
+
+func TestWindowsOriginalCatalogArchiveFourComponentReview(t *testing.T){
+ ctx:=context.Background()
+ parent,snap,browser,hosts,policies:=makeOriginalProtectionPairFixture(t)
+ allow:=func(string)error{return nil}
+ observed,err:=InspectWindowsDNSAssignmentProvenanceReadOnly(ctx,protectionSnapshotDNSInspect)
+ if err!=nil{t.Fatal(err)}
+ journal,pin,err:=BuildDNSOriginalJournal(ctx,observed.States)
+ if err!=nil{t.Fatal(err)}
+ snap.DNSAdaptersSHA256=observed.SHA256
+ dnsParent:=filepath.Join(filepath.Dir(parent),"legacy-engine-recovery")
+ if err:=os.Mkdir(dnsParent,0700);err!=nil{t.Fatal(err)}
+ sum:=sha256.Sum256([]byte(catalogTaskAbsentMarker))
+ snap.CatalogTaskDefinitionSHA256=hex.EncodeToString(sum[:])
+ inv:=WindowsFreshVOLVETaskInventory{}
+ hostsPin:=WindowsHostsFileEvidence{SHA256:snap.HostsSHA256,BlockedRuleCount:snap.HostsBlockedRuleCount}
+ if err:=storeOriginalWindowsHostsBackupUnarmed(ctx,parent,hosts,hostsPin,allow,allow);err!=nil{t.Fatal(err)}
+ if err:=storeBrowserOriginalArchiveUnarmed(ctx,parent,browser,policies,allow,allow);err!=nil{t.Fatal(err)}
+ if _,err:=StoreDNSOriginalBackupUnarmed(ctx,dnsParent,journal,pin,allow,allow);err!=nil{t.Fatal(err)}
+ review:=func()(originalProtectionPairReceipt,error){
+  return verifyOriginalProtectionArchivesUnarmed(ctx,parent,dnsParent,snap,browser,inv,pin,allow)
+ }
+ if got,err:=review();err==nil||got!=(originalProtectionPairReceipt{}){t.Fatal("missing catalog archive accepted")}
+ if err:=storeOriginalCatalogArchiveUnarmed(ctx,parent,snap,inv,originalCatalogDefinition{},allow,allow);err!=nil{t.Fatal(err)}
+ got,err:=review()
+ if err!=nil||!got.HostsVerified||got.BrowserKeysVerified!=3||!got.DNSBackupVerified||!got.CatalogBackupVerified||
+  got.CompleteRecoverySnapshot||got.InstallAuthorized||got.RestoreAuthorized{t.Fatal("four-component review incorrectly reported",err)}
+ _,file,err:=catalogOriginalArchivePaths(parent);if err!=nil{t.Fatal(err)}
+ if err:=os.WriteFile(file,[]byte("{}"),0600);err!=nil{t.Fatal(err)}
+ if got,err:=review();err==nil||got!=(originalProtectionPairReceipt{}){t.Fatal("invalid catalog archive accepted")}
+ t.Log("PASS VOLVE_FOUR_ORIGINAL_ARCHIVES_FIXTURE_REVIEW_NO_AUTHORIZATION")
+}

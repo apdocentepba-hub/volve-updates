@@ -73,5 +73,6 @@ jobs:
           $result|Write-Host
           if($exit -ne 0){throw 'Catalog capture failed'}
           if(@($result|Where-Object {$_ -match '^--- PASS: TestWindowsOriginalCatalogCapture'}).Count -ne 2){throw 'Expected two catalog capture tests'}
-          if(@($result|Where-Object {$_ -match '^--- PASS: TestWindowsOriginalCatalogArchive'}).Count -ne 2){throw 'Expected two catalog archive tests'}
+          if(@($result|Where-Object {$_ -match '^--- PASS: TestWindowsOriginalCatalogArchive'}).Count -ne 3){throw 'Expected three catalog archive tests'}
           if(@($result|Where-Object {$_ -match 'PASS VOLVE_CATALOG_ARCHIVE_REAL_NTFS_FIXTURE_NO_TASK_WRITES'}).Count -ne 1){throw 'Missing real catalog archive NTFS evidence'}
+          if(@($result|Where-Object {$_ -match 'PASS VOLVE_FOUR_ORIGINAL_ARCHIVES_FIXTURE_REVIEW_NO_AUTHORIZATION'}).Count -ne 1){throw 'Missing four-component fixture review'}
