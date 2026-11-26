@@ -227,7 +227,10 @@ func TestCIConfiguredNativeTCPDNS(t *testing.T) {
 }
 
 // Native configured resolver must receive the exact upstream TCP-only A
-// record. This proves upstream completion, not a client-side TCP retry.
+// record. The CI upstream returns only TC over UDP; production handleTransport
+// completes it over upstream TCP ONLY for a downstream TCP client. Thus the
+// unique answer proves a downstream TCP exchange as well as upstream completion,
+// but without a downstream packet trace does not prove the initial UDP query.
 func TestCIConfiguredNativeUpstreamTruncation(t *testing.T){
  if os.Getenv("VOLVE_CI_FRESH_DNS53_PROBE")!="GITHUB-HOSTED-VM-ONLY" ||
     os.Getenv("VOLVE_CI_NESTED_GUEST_DNS")!="PRIVATE_GUEST_ONLY"{t.Skip("private nested guest only")}
@@ -470,6 +473,13 @@ func TestCIConfiguredNativeTCPReferenceControl(t *testing.T){
  if _,err:=rand.Read(nonce[:]);err!=nil{t.Fatal(err)}
  challenge:=fmt.Sprintf("%x.volve-motor-ci.test",nonce)
  fallbackChallenge:="fallback-"+challenge
+ // Compare the documented TCP-only flag alone and with WIRE_ONLY. Each
+ // unique name has independent counters, so no cached or unrelated answer
+ // can satisfy a successful observation.
+ variants:=[]struct{name string;flags uint32;udp,tcp,replies atomic.Int32}{
+  {name:"only-"+challenge,flags:0x2},
+  {name:"wire-"+challenge,flags:0x2|0x100},
+ }
  var listeners []net.Listener
  var packets []net.PacketConn
  var workers sync.WaitGroup
@@ -509,7 +519,16 @@ func TestCIConfiguredNativeTCPReferenceControl(t *testing.T){
       r,match,e:=ciReferenceDNSReply(q,challenge)
       fallback:=false
       if e!=nil{r,fallback,e=ciReferenceDNSReply(q,fallbackChallenge)}
+      variant:=-1
+      if e!=nil{
+       for i:=range variants{
+        var exact bool
+        r,exact,e=ciReferenceDNSReply(q,variants[i].name)
+        if e==nil&&exact{variant=i;break}
+       }
+      }
       if e!=nil{return}
+      if variant>=0{variants[variant].tcp.Add(1)}
       if match{queryTCP.Add(1)}
       if fallback{fallbackTCP.Add(1)}
       frame:=make([]byte,2+len(r))
@@ -519,6 +538,7 @@ func TestCIConfiguredNativeTCPReferenceControl(t *testing.T){
       }
       if match{replyTCP.Add(1)}
       if fallback{fallbackTCPReply.Add(1)}
+      if variant>=0{variants[variant].replies.Add(1)}
      }
     }()
    }
@@ -531,6 +551,13 @@ func TestCIConfiguredNativeTCPReferenceControl(t *testing.T){
     r,match,e:=ciReferenceDNSReply(buf[:n],challenge)
     fallback:=false
     if e!=nil{r,fallback,e=ciReferenceDNSReply(buf[:n],fallbackChallenge)}
+    if e!=nil{
+     for i:=range variants{
+      var exact bool
+      r,exact,e=ciReferenceDNSReply(buf[:n],variants[i].name)
+      if e==nil&&exact{variants[i].udp.Add(1);break}
+     }
+    }
     if e!=nil{continue}
     if fallback{
      // An exact reserved challenge receives a valid truncated UDP answer.
@@ -598,6 +625,27 @@ func TestCIConfiguredNativeTCPReferenceControl(t *testing.T){
  fallbackVerified:=fallbackErr==nil&&fallbackCount==1&&fallbackUDP.Load()>0&&fallbackTCReply.Load()>0&&fallbackTCP.Load()>0&&fallbackTCPReply.Load()>0
  t.Logf("VOLVE_REFERENCE_TCP_OBSERVATION automatic_fallback=true verified=%t native_error=%v udp_queries=%d truncated_replies=%d tcp_queries=%d tcp_replies=%d",fallbackVerified,fallbackErr,fallbackUDP.Load(),fallbackTCReply.Load(),fallbackTCP.Load(),fallbackTCPReply.Load())
  if fallbackErr==nil&&!fallbackVerified{t.Fatal("automatic fallback returned success without complete wire proof")}
+ for i:=range variants{
+  v:=&variants[i]
+  var result *syscall.DNSRecord
+  queryErr:=syscall.DnsQuery(v.name+".",syscall.DNS_TYPE_A,v.flags,nil,&result,nil)
+  matched:=0
+  func(){
+   if result!=nil{defer syscall.DnsRecordListFree(result,1)}
+   if queryErr!=nil{return}
+   for rec,n:=result,0;rec!=nil;rec,n=rec.Next,n+1{
+    if n>=64{t.Fatal("variant record chain excessive")}
+    if rec.Type==syscall.DNS_TYPE_A&&rec.Dw&3==syscall.DnsSectionAnswer{
+     if rec.Length!=4||!bytes.Equal(rec.Data[:4],[]byte{203,0,113,7}){t.Fatal("variant response unexpected")}
+     matched++
+    }
+   }
+  }()
+  time.Sleep(100*time.Millisecond)
+  verified:=queryErr==nil&&matched==1&&v.tcp.Load()>0&&v.replies.Load()>0&&v.udp.Load()==0
+  t.Logf("VOLVE_REFERENCE_TCP_OBSERVATION flags=0x%x verified=%t native_error=%v tcp_queries=%d tcp_replies=%d udp_queries=%d",v.flags,verified,queryErr,v.tcp.Load(),v.replies.Load(),v.udp.Load())
+  if queryErr==nil&&!verified{t.Fatal("variant result lacks exclusive TCP wire evidence")}
+ }
 }
 
 func TestCIReferenceDNSReplyRejectsUnexpectedNames(t *testing.T){
