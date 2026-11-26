@@ -379,3 +379,64 @@ func verifyBoundOriginalRecoveryArchivesUnarmed(ctx context.Context,transactionI
   filepath.Base(filepath.Dir(protectionParent))!=transactionID{return denied,errors.New("recovery archives outside bound transaction directory")}
  return verifyOriginalProtectionArchivesUnarmed(ctx,protectionParent,dnsParent,baseline,browser,inventory,dnsJournalPin,check)
 }
+
+const originalRecoveryReviewFile="original-recovery-review.json"
+type originalRecoveryReviewEvidence struct{
+ Schema int
+ Component string
+ TransactionID string
+ ReviewSHA256 string
+}
+
+func originalRecoveryEvidencePath(root,id string)(string,error){
+ if !filepath.IsAbs(root)||filepath.Clean(root)!=root||strings.HasPrefix(root,string(filepath.Separator)+string(filepath.Separator))||
+  filepath.Base(root)!=id||!residentNonce.MatchString(id)||id==strings.Repeat("0",32){return "",errors.New("invalid local recovery transaction root")}
+ return filepath.Join(root,originalRecoveryReviewFile),nil
+}
+
+// The independent expected pin must be retained by the trusted controller,
+// outside this record. The record alone cannot authenticate or arm recovery.
+// Caller must hold the appropriate transaction lease; no OS settings changed.
+func loadOriginalRecoveryReviewEvidenceUnarmed(ctx context.Context,root,id,expectedPin string,check func(string)error)error{
+ if ctx==nil||check==nil||!residentSHA.MatchString(expectedPin){return errors.New("independent recovery evidence pin required")}
+ if err:=ctx.Err();err!=nil{return err}
+ path,err:=originalRecoveryEvidencePath(root,id)
+ if err!=nil{return err}
+ verify:=func()error{
+  if err:=verifyOriginalHostsBackupNode(root,true,check);err!=nil{return err}
+  return verifyOriginalHostsBackupNode(path,false,check)
+ }
+ if err:=verify();err!=nil{return err}
+ before,err:=os.Lstat(path)
+ if err!=nil||!before.Mode().IsRegular()||before.Size()<2||before.Size()>residentJournalLimit{return errors.New("invalid recovery evidence file")}
+ raw,err:=residentFile(path)
+ if err!=nil{return err}
+ after,err:=os.Lstat(path)
+ if err!=nil||!os.SameFile(before,after)||before.Size()!=after.Size()||before.Size()!=int64(len(raw))||!before.ModTime().Equal(after.ModTime()){return errors.New("recovery evidence changed during read")}
+ var got originalRecoveryReviewEvidence
+ if err:=residentCanonical(raw,&got);err!=nil{return err}
+ if got!=(originalRecoveryReviewEvidence{1,"original-recovery-review-unarmed",id,expectedPin}){return errors.New("recovery evidence differs from independent pin")}
+ if err:=verify();err!=nil{return err}
+ return ctx.Err()
+}
+
+// Stage only after reviewing all four archives. Create-only journal semantics
+// leave partial writes refused; an existing slot is never repaired or reused.
+func persistOriginalRecoveryReviewEvidenceUnarmed(ctx context.Context,root,id,expectedPin string,
+ baseline ProtectionSnapshot,browser WindowsBrowserPolicyEvidence,inventory WindowsFreshVOLVETaskInventory,dnsPin string,
+ seal,check func(string)error)error{
+ if ctx==nil||seal==nil||check==nil{return errors.New("recovery evidence staging requires trusted ACL callbacks")}
+ if err:=ctx.Err();err!=nil{return err}
+ path,err:=originalRecoveryEvidencePath(root,id)
+ if err!=nil{return err}
+ if err:=verifyOriginalHostsBackupNode(root,true,check);err!=nil{return err}
+ receipt,err:=verifyBoundOriginalRecoveryArchivesUnarmed(ctx,id,expectedPin,filepath.Join(root,"original-protection-recovery"),filepath.Join(root,"legacy-engine-recovery"),baseline,browser,inventory,dnsPin,check)
+ if err!=nil||!receipt.HostsVerified||receipt.BrowserKeysVerified!=3||!receipt.DNSBackupVerified||!receipt.CatalogBackupVerified||
+  receipt.CompleteRecoverySnapshot||receipt.InstallAuthorized||receipt.RestoreAuthorized{return errors.New("four unarmed archives not verified")}
+ raw,err:=json.Marshal(originalRecoveryReviewEvidence{1,"original-recovery-review-unarmed",id,expectedPin})
+ if err!=nil{return err}
+ if err:=ctx.Err();err!=nil{return err}
+ if err:=verifyOriginalHostsBackupNode(root,true,check);err!=nil{return err}
+ if err:=residentCreate(path,raw,seal,check);err!=nil{return err}
+ return loadOriginalRecoveryReviewEvidenceUnarmed(ctx,root,id,expectedPin,check)
+}
