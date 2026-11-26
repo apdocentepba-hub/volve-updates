@@ -68,8 +68,10 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference='Stop'
-          $result=@(go test ./motorupdate -run '^TestWindowsOriginalCatalogCapture' -count=1 -v -timeout 2m)
+          $result=@(go test ./motorupdate -run '^TestWindowsOriginalCatalog(Capture|Archive)' -count=1 -v -timeout 2m)
           $exit=$LASTEXITCODE
           $result|Write-Host
           if($exit -ne 0){throw 'Catalog capture failed'}
           if(@($result|Where-Object {$_ -match '^--- PASS: TestWindowsOriginalCatalogCapture'}).Count -ne 2){throw 'Expected two catalog capture tests'}
+          if(@($result|Where-Object {$_ -match '^--- PASS: TestWindowsOriginalCatalogArchive'}).Count -ne 2){throw 'Expected two catalog archive tests'}
+          if(@($result|Where-Object {$_ -match 'PASS VOLVE_CATALOG_ARCHIVE_REAL_NTFS_FIXTURE_NO_TASK_WRITES'}).Count -ne 1){throw 'Missing real catalog archive NTFS evidence'}

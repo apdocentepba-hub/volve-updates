@@ -203,3 +203,81 @@ func captureOriginalCatalogDefinition(ctx context.Context,baseline ProtectionSna
  if err:=ctx.Err();err!=nil{return denied,err}
  return originalCatalogDefinition{Present:true,XML:payload},nil
 }
+
+// Local catalog definition archive. The bytes are solely for preserving the
+// pre-install state; this module cannot register or start a task. Existing
+// archives are never overwritten. Administrators retain repair access.
+const catalogOriginalArchiveDir="catalog-original-backup-v1"
+const catalogOriginalArchiveFile="original-catalog-definition.json"
+
+func catalogOriginalArchivePaths(parent string)(string,string,error){
+ if !filepath.IsAbs(parent)||filepath.Clean(parent)!=parent||
+  filepath.Base(parent)!="original-protection-recovery"||strings.HasPrefix(parent,`\\`){
+  return "","",errors.New("dedicated local recovery directory required")
+ }
+ dir:=filepath.Join(parent,catalogOriginalArchiveDir)
+ return dir,filepath.Join(dir,catalogOriginalArchiveFile),nil
+}
+
+func storeOriginalCatalogArchiveUnarmed(ctx context.Context,parent string,baseline ProtectionSnapshot,
+ inventory WindowsFreshVOLVETaskInventory,original originalCatalogDefinition,seal,check func(string)error)error{
+ if ctx==nil||seal==nil||check==nil{return errors.New("catalog archive requires context and ACL callbacks")}
+ if err:=ctx.Err();err!=nil{return err}
+ if len(original.XML)>catalogOriginalXMLLimit{return errors.New("catalog definition exceeds size bound")}
+ raw,err:=json.Marshal(struct{Present bool;PayloadBase64 string}{original.Present,base64.StdEncoding.EncodeToString(original.XML)})
+ if err!=nil{return errors.New("catalog archive encoding failed")}
+ if _,err:=captureOriginalCatalogDefinition(ctx,baseline,inventory,func(context.Context)([]byte,error){return raw,nil});err!=nil{return err}
+ dir,file,err:=catalogOriginalArchivePaths(parent);if err!=nil{return err}
+ if err:=verifyOriginalHostsBackupNode(parent,true,check);err!=nil{return err}
+ if err:=os.Mkdir(dir,0700);err!=nil{return errors.New("catalog archive stage must be new")}
+ if err:=seal(dir);err!=nil{return err}
+ if err:=verifyOriginalHostsBackupNode(dir,true,check);err!=nil{return err}
+ if err:=verifyOriginalHostsBackupNode(parent,true,check);err!=nil{return err}
+ if err:=ctx.Err();err!=nil{return err}
+ f,err:=os.OpenFile(file,os.O_CREATE|os.O_EXCL|os.O_WRONLY,0600)
+ if err!=nil{return err}
+ n,writeErr:=f.Write(raw)
+ if writeErr==nil&&n!=len(raw){writeErr=io.ErrShortWrite}
+ if writeErr==nil{writeErr=f.Sync()}
+ closeErr:=f.Close()
+ if writeErr!=nil{return writeErr}
+ if closeErr!=nil{return closeErr}
+ if err:=seal(file);err!=nil{return err}
+ _,err=readOriginalCatalogArchiveUnarmed(ctx,parent,baseline,inventory,check)
+ return err
+}
+
+func readOriginalCatalogArchiveUnarmed(ctx context.Context,parent string,baseline ProtectionSnapshot,
+ inventory WindowsFreshVOLVETaskInventory,check func(string)error)(originalCatalogDefinition,error){
+ var denied originalCatalogDefinition
+ if ctx==nil||check==nil{return denied,errors.New("catalog archive requires context and ACL verifier")}
+ if err:=ctx.Err();err!=nil{return denied,err}
+ dir,file,err:=catalogOriginalArchivePaths(parent);if err!=nil{return denied,err}
+ verify:=func()error{
+  if err:=verifyOriginalHostsBackupNode(parent,true,check);err!=nil{return err}
+  if err:=verifyOriginalHostsBackupNode(dir,true,check);err!=nil{return err}
+  if err:=verifyOriginalHostsBackupNode(file,false,check);err!=nil{return err}
+  nodes,err:=os.ReadDir(dir)
+  if err!=nil{return err}
+  if len(nodes)!=1||nodes[0].Name()!=catalogOriginalArchiveFile{return errors.New("unexpected catalog archive contents")}
+  return nil
+ }
+ if err:=verify();err!=nil{return denied,err}
+ before,err:=os.Lstat(file);if err!=nil{return denied,err}
+ if !before.Mode().IsRegular()||before.Size()<2||before.Size()>2*catalogOriginalXMLLimit{return denied,errors.New("catalog archive size or type invalid")}
+ f,err:=os.Open(file);if err!=nil{return denied,err}
+ opened,err:=f.Stat()
+ if err!=nil||!os.SameFile(before,opened){f.Close();return denied,errors.New("catalog archive replaced before read")}
+ raw,readErr:=io.ReadAll(io.LimitReader(f,2*catalogOriginalXMLLimit+1))
+ end,statErr:=f.Stat()
+ closeErr:=f.Close()
+ if readErr!=nil||statErr!=nil||closeErr!=nil{return denied,errors.New("catalog archive read failed")}
+ after,err:=os.Lstat(file);if err!=nil{return denied,err}
+ if !after.Mode().IsRegular()||!os.SameFile(before,after)||!os.SameFile(opened,end)||
+  before.Size()!=end.Size()||before.Size()!=after.Size()||before.Size()!=int64(len(raw))||
+  !before.ModTime().Equal(end.ModTime())||!before.ModTime().Equal(after.ModTime()){
+  return denied,errors.New("catalog archive changed during read")
+ }
+ if err:=verify();err!=nil{return denied,err}
+ return captureOriginalCatalogDefinition(ctx,baseline,inventory,func(context.Context)([]byte,error){return raw,nil})
+}

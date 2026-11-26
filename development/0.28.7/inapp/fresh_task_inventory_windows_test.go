@@ -9,6 +9,8 @@ import (
  "encoding/hex"
  "encoding/json"
  "errors"
+ "os"
+ "time"
  "path/filepath"
  "strings"
  "testing"
@@ -128,4 +130,53 @@ func TestWindowsOriginalCatalogCaptureAbsenceAndMissingEvidence(t *testing.T){
  }
  got,err:=captureOriginalCatalogDefinition(ctx,snap,inventory,func(context.Context)([]byte,error){return []byte(`{"Present":false,"PayloadBase64":""}`),nil})
  if err!=nil||got.Present||got.XML!=nil{t.Fatal("explicit absent task rejected",err)}
+}
+
+func TestWindowsOriginalCatalogArchivePresentAndAbsent(t *testing.T){
+ for _,present:=range []bool{true,false}{
+  name:="absent";if present{name="present"}
+  t.Run(name,func(t *testing.T){
+   ctx:=context.Background()
+   parent,snap,_,_,_:=makeOriginalProtectionPairFixture(t)
+   definition:=originalCatalogDefinition{}
+   inv:=WindowsFreshVOLVETaskInventory{}
+   sum:=sha256.Sum256([]byte(catalogTaskAbsentMarker))
+   if present{
+    definition=originalCatalogDefinition{Present:true,XML:[]byte("<Task>synthetic</Task>")}
+    sum=sha256.Sum256(definition.XML)
+    task:=freshTaskFixture();task.DefinitionSHA256=hex.EncodeToString(sum[:])
+    var err error
+    inv,err=InspectWindowsVOLVETasksReadOnly(ctx,task.Actions[0].Execute,task.Actions[0].Arguments,func(context.Context,string)([]byte,error){return freshWindowsTaskJSON(t,[]windowsVOLVETaskRecord{task}),nil})
+    if err!=nil{t.Fatal(err)}
+   }
+   snap.CatalogTaskDefinitionSHA256=hex.EncodeToString(sum[:])
+   allow:=func(string)error{return nil}
+   if err:=storeOriginalCatalogArchiveUnarmed(ctx,parent,snap,inv,definition,allow,allow);err!=nil{t.Fatal(err)}
+   got,err:=readOriginalCatalogArchiveUnarmed(ctx,parent,snap,inv,allow)
+   if err!=nil||got.Present!=present||string(got.XML)!=string(definition.XML){t.Fatal("catalog archive readback mismatch",err)}
+   if err:=storeOriginalCatalogArchiveUnarmed(ctx,parent,snap,inv,definition,allow,allow);err==nil{t.Fatal("archive overwrite accepted")}
+   _,file,err:=catalogOriginalArchivePaths(parent);if err!=nil{t.Fatal(err)}
+   if err:=os.WriteFile(file,[]byte("{}"),0600);err!=nil{t.Fatal(err)}
+   if _,err:=readOriginalCatalogArchiveUnarmed(ctx,parent,snap,inv,allow);err==nil{t.Fatal("corrupted archive accepted")}
+  })
+ }
+}
+
+func TestWindowsOriginalCatalogArchiveRealNTFS(t *testing.T){
+ if os.Getenv("GITHUB_ACTIONS")!="true"||os.Getenv("RUNNER_ENVIRONMENT")!="github-hosted"{t.Skip("disposable runner only")}
+ ctx,cancel:=context.WithTimeout(context.Background(),90*time.Second);defer cancel()
+ parent,snap,_,_,_:=makeOriginalProtectionPairFixture(t)
+ definition:=originalCatalogDefinition{Present:true,XML:[]byte("<Task>synthetic native fixture</Task>")}
+ sum:=sha256.Sum256(definition.XML)
+ snap.CatalogTaskDefinitionSHA256=hex.EncodeToString(sum[:])
+ task:=freshTaskFixture();task.DefinitionSHA256=snap.CatalogTaskDefinitionSHA256
+ inv,err:=InspectWindowsVOLVETasksReadOnly(ctx,task.Actions[0].Execute,task.Actions[0].Arguments,func(context.Context,string)([]byte,error){return freshWindowsTaskJSON(t,[]windowsVOLVETaskRecord{task}),nil})
+ if err!=nil{t.Fatal(err)}
+ seal:=func(path string)error{return sealDNSBackupLabNode(ctx,path)}
+ check:=func(path string)error{return nativeDNSOriginalBackupACL(ctx,path)}
+ if err:=seal(parent);err!=nil{t.Fatal(err)}
+ if err:=storeOriginalCatalogArchiveUnarmed(ctx,parent,snap,inv,definition,seal,check);err!=nil{t.Fatal(err)}
+ got,err:=readOriginalCatalogArchiveUnarmed(ctx,parent,snap,inv,check)
+ if err!=nil||!got.Present||string(got.XML)!=string(definition.XML){t.Fatal("native catalog archive readback mismatch",err)}
+ t.Log("PASS VOLVE_CATALOG_ARCHIVE_REAL_NTFS_FIXTURE_NO_TASK_WRITES")
 }
