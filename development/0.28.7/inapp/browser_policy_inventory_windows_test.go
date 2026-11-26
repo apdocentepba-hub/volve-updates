@@ -3,9 +3,11 @@
 package motorupdate
 
 import (
+ "bytes"
  "context"
  "crypto/sha256"
  "encoding/base64"
+ "encoding/binary"
  "encoding/hex"
  "encoding/json"
  "errors"
@@ -317,4 +319,48 @@ func TestVOLVEBrowserOriginalTripleRejectsDNSOrderAndModeDrift(t *testing.T){
   }
   if err:=originalDNSRecordsMatchProtectionBaseline(changed,snap);err==nil{t.Fatal("DNS baseline drift accepted",kind)}
  }
+}
+
+func browserStringDecodeFixture(t *testing.T,present bool,kind,encoded string)([]byte,WindowsBrowserPolicyRecord){
+ t.Helper()
+ var buf bytes.Buffer
+ put:=func(s string){
+  var lenBytes [10]byte
+  n:=binary.PutUvarint(lenBytes[:],uint64(len(s)))
+  buf.Write(lenBytes[:n]);buf.WriteString(s)
+ }
+ put("chrome")
+ record:=WindowsBrowserPolicyRecord{Name:"chrome",Present:present}
+ if present{
+  buf.WriteByte(1)
+  if err:=binary.Write(&buf,binary.LittleEndian,int32(1));err!=nil{t.Fatal(err)}
+  put("1");put(kind);put(encoded);record.NumberedEntries=1
+ }else{
+  buf.WriteByte(0)
+  if err:=binary.Write(&buf,binary.LittleEndian,int32(0));err!=nil{t.Fatal(err)}
+ }
+ raw:=buf.Bytes();sum:=sha256.Sum256(raw);record.ContentSHA256=hex.EncodeToString(sum[:])
+ return raw,record
+}
+func TestVOLVEBrowserOriginalDecodeStringAndAbsent(t *testing.T){
+ raw,record:=browserStringDecodeFixture(t,true,"String",`"https://example.test/área/😀"`)
+ got,err:=decodeOriginalBrowserStringKey(raw,record)
+ if err!=nil||!got.Present||len(got.Values)!=1||got.Values["1"]!="https://example.test/área/😀"{t.Fatal("original string was not reconstructed exactly",err)}
+ raw,record=browserStringDecodeFixture(t,false,"","")
+ got,err=decodeOriginalBrowserStringKey(raw,record)
+ if err!=nil||got.Present||len(got.Values)!=0{t.Fatal("absent key was not reconstructed",err)}
+}
+func TestVOLVEBrowserOriginalDecodeRefusesUnsupportedAndMalformed(t *testing.T){
+ for _,tc:=range []struct{kind,value string}{
+  {"DWord","1"},{"ExpandString",`"%TEMP%"`},{"String","null"},{"String",`"\uD800"`},{"String",`"\u0000"`},
+ }{
+  raw,record:=browserStringDecodeFixture(t,true,tc.kind,tc.value)
+  if _,err:=decodeOriginalBrowserStringKey(raw,record);err==nil{t.Fatal("uncertified value accepted")}
+ }
+ raw,record:=browserStringDecodeFixture(t,true,"String",`"fixture.test"`)
+ record.ContentSHA256=strings.Repeat("0",64)
+ if _,err:=decodeOriginalBrowserStringKey(raw,record);err==nil{t.Fatal("wrong digest accepted")}
+ raw,record=browserStringDecodeFixture(t,true,"String",`"fixture.test"`)
+ raw=append(raw,0);sum:=sha256.Sum256(raw);record.ContentSHA256=hex.EncodeToString(sum[:])
+ if _,err:=decodeOriginalBrowserStringKey(raw,record);err==nil{t.Fatal("trailing bytes accepted")}
 }

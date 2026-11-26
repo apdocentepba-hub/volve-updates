@@ -12,6 +12,7 @@ import (
  "context"
  "crypto/sha256"
  "encoding/base64"
+ "encoding/binary"
  "encoding/hex"
  "encoding/json"
  "errors"
@@ -22,6 +23,7 @@ import (
  "path/filepath"
  "sort"
  "strings"
+ "unicode/utf8"
 )
 
 const WindowsVOLVEBrowserPolicyQuery = `$ErrorActionPreference='Stop';$ProgressPreference='SilentlyContinue';
@@ -410,4 +412,58 @@ func verifyOriginalProtectionTripleUnarmed(ctx context.Context,protectionParent,
  if err:=ctx.Err();err!=nil{return denied,err}
  receipt.DNSBackupVerified=true
  return receipt,nil
+}
+
+// Strict local decoder for the string-only subset of the captured registry
+// stream. This is a restoration feasibility check, not a registry writer.
+// Unsupported kinds remain archived but are NOT certified recoverable.
+type originalBrowserStringKey struct{
+ Present bool
+ Values map[string]string
+}
+
+func decodeOriginalBrowserStringKey(raw []byte,expected WindowsBrowserPolicyRecord)(originalBrowserStringKey,error){
+ var denied originalBrowserStringKey
+ if len(raw)==0||len(raw)>browserOriginalPayloadLimit{return denied,errors.New("browser payload outside bound")}
+ if expected.Name!="chrome"&&expected.Name!="edge"&&expected.Name!="firefox"{return denied,errors.New("unknown browser key")}
+ sum:=sha256.Sum256(raw)
+ if !strings.EqualFold(hex.EncodeToString(sum[:]),expected.ContentSHA256){return denied,errors.New("browser payload fingerprint mismatch")}
+ r:=bytes.NewReader(raw)
+ // .NET BinaryWriter prefixes each UTF-8 string with a 7-bit length.
+ // Reject overlong/oversized encodings before allocation.
+ readString:=func()(string,error){
+  start:=r.Len()
+  n,err:=binary.ReadUvarint(r)
+  if err!=nil||n>uint64(r.Len())||n>browserOriginalPayloadLimit{return "",errors.New("invalid registry string length")}
+  var canonical [10]byte
+  if binary.PutUvarint(canonical[:],n)!=start-r.Len(){return "",errors.New("noncanonical registry string length")}
+  buf:=make([]byte,int(n))
+  if _,err:=io.ReadFull(r,buf);err!=nil||!utf8.Valid(buf){return "",errors.New("invalid registry UTF-8")}
+  return string(buf),nil
+ }
+ name,err:=readString()
+ if err!=nil||name!=expected.Name{return denied,errors.New("registry key identity mismatch")}
+ flag,err:=r.ReadByte()
+ if err!=nil||flag>1||(flag==1)!=expected.Present{return denied,errors.New("registry key presence mismatch")}
+ var count int32
+ if err:=binary.Read(r,binary.LittleEndian,&count);err!=nil||count<0||count>1000||
+  int(count)!=expected.NumberedEntries+expected.InvalidEntries+expected.UnexpectedEntries||
+  (flag==0&&count!=0){return denied,errors.New("registry value count mismatch")}
+ result:=originalBrowserStringKey{Present:flag==1,Values:make(map[string]string,int(count))}
+ names:=make([]string,0,int(count))
+ for i:=int32(0);i<count;i++{
+  key,err:=readString();if err!=nil||strings.ContainsRune(key,0){return denied,errors.New("invalid registry value name")}
+  for _,prior:=range names{if strings.EqualFold(prior,key){return denied,errors.New("duplicate registry value name")}}
+  names=append(names,key)
+  kind,err:=readString();if err!=nil||kind!="String"{return denied,errors.New("registry value kind not yet certified for recovery")}
+  encoded,err:=readString();if err!=nil{return denied,err}
+  // A JSON null is not an empty REG_SZ. Invalid surrogate escapes are
+  // rejected rather than silently mapped to a replacement character.
+  var value *string
+  if err:=json.Unmarshal([]byte(encoded),&value);err!=nil||value==nil||
+   strings.ContainsRune(*value,0)||strings.ContainsRune(*value,'\uFFFD'){return denied,errors.New("registry string not losslessly representable")}
+  result.Values[key]=*value
+ }
+ if r.Len()!=0{return denied,errors.New("trailing registry backup bytes")}
+ return result,nil
 }

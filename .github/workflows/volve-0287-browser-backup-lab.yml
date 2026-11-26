@@ -52,7 +52,7 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference='Stop'
-          $result=@(go test ./motorupdate -run '^TestVOLVEBrowser(Policy|OriginalCapture|OriginalArchive|OriginalPair|OriginalTriple)' -count=1 -v -timeout 5m)
+          $result=@(go test ./motorupdate -run '^TestVOLVEBrowser(Policy|OriginalCapture|OriginalArchive|OriginalPair|OriginalTriple|OriginalDecode)' -count=1 -v -timeout 5m)
           $exit=$LASTEXITCODE
           $result|Write-Host
           if($exit -ne 0){throw 'Browser capture regression failed'}
@@ -63,6 +63,7 @@ jobs:
           if(@($result|Where-Object {$_ -match '^--- PASS: TestVOLVEBrowserOriginalPair'}).Count -ne 2){throw 'Expected two paired backup tests'}
           if(@($result|Where-Object {$_ -match 'PASS VOLVE_ORIGINAL_PAIR_REAL_NTFS_NO_INSTALL'}).Count -ne 1){throw 'Missing paired backup native evidence'}
           if(@($result|Where-Object {$_ -match '^--- PASS: TestVOLVEBrowserOriginalTriple'}).Count -ne 2){throw 'Expected two DNS baseline integration tests'}
+          if(@($result|Where-Object {$_ -match '^--- PASS: TestVOLVEBrowserOriginalDecode'}).Count -ne 2){throw 'Expected two typed browser backup decode tests'}
       - name: Verify catalog original XML capture against independently observed definition
         working-directory: build/codigo
         shell: pwsh
