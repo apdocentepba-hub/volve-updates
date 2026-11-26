@@ -200,3 +200,37 @@ func TestResidentCompletionRejectsReplacementAfterSuccessfulHealthAudit(t *testi
   })
  }
 }
+
+func TestResidentCompletionRechecksTerminalWithoutWriting(t *testing.T){
+ ctx:=context.Background()
+ for _,outcome:=range []string{"committed","restored"}{
+  t.Run(outcome,func(t *testing.T){
+   dir:=t.TempDir()
+   original,err:=ArmResidentRecoveryIntent(ctx,dir,residentFixture(),residentLabACL,residentLabACL)
+   if err!=nil{t.Fatal(err)}
+   if _,err:=RecheckResidentTerminalOutcome(ctx,dir,outcome,original,residentLabACL,&residentCompletionLab{});err==nil{t.Fatal("pending accepted as terminal")}
+   if err:=ConfirmResidentRecoveryOutcome(ctx,dir,outcome,residentLabACL,residentLabACL,&residentCompletionLab{});err!=nil{t.Fatal(err)}
+   path:=filepath.Join(dir,ResidentResultFile)
+   before,err:=os.ReadFile(path);if err!=nil{t.Fatal(err)}
+   fake:=&residentCompletionLab{}
+   got,err:=RecheckResidentTerminalOutcome(ctx,dir,outcome,original,residentLabACL,fake)
+   if err!=nil||got!=original||fake.identityCalls!=2||fake.dnsCalls!=1||fake.connectivityCalls!=1{t.Fatalf("terminal recheck failed: %v %+v",err,fake)}
+   for _,stage:=range []string{"identity","dns","network","identity-recheck"}{
+    if _,err:=RecheckResidentTerminalOutcome(ctx,dir,outcome,original,residentLabACL,&residentCompletionLab{failOn:stage});err==nil{t.Fatal("accepted failed "+stage)}
+   }
+   wrong:=original;wrong.TargetVersion="99.99.99"
+   if _,err:=RecheckResidentTerminalOutcome(ctx,dir,outcome,wrong,residentLabACL,&residentCompletionLab{});err==nil{t.Fatal("stale identity accepted")}
+   wrongOutcome:="committed";if outcome=="committed"{wrongOutcome="restored"}
+   if _,err:=RecheckResidentTerminalOutcome(ctx,dir,wrongOutcome,original,residentLabACL,&residentCompletionLab{});err==nil{t.Fatal("wrong terminal outcome accepted")}
+   after,err:=os.ReadFile(path);if err!=nil||string(after)!=string(before){t.Fatal("terminal recheck modified receipt")}
+  })
+ }
+}
+func TestResidentCompletionTerminalRecheckRejectsDisappearingReceipt(t *testing.T){
+ ctx:=context.Background();dir:=t.TempDir()
+ original,err:=ArmResidentRecoveryIntent(ctx,dir,residentFixture(),residentLabACL,residentLabACL);if err!=nil{t.Fatal(err)}
+ if err:=ConfirmResidentRecoveryOutcome(ctx,dir,"restored",residentLabACL,residentLabACL,&residentCompletionLab{});err!=nil{t.Fatal(err)}
+ fake:=&residentCompletionLab{onConnectivity:func(){if err:=os.Remove(filepath.Join(dir,ResidentResultFile));err!=nil{t.Fatal(err)}}}
+ if _,err:=RecheckResidentTerminalOutcome(ctx,dir,"restored",original,residentLabACL,fake);err==nil{t.Fatal("disappearing receipt accepted")}
+ if _,err:=os.Stat(filepath.Join(dir,ResidentResultFile));!os.IsNotExist(err){t.Fatal("terminal receipt unexpectedly recreated")}
+}
