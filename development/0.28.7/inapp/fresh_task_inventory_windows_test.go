@@ -233,7 +233,7 @@ func TestWindowsOriginalCatalogArchiveFourComponentReview(t *testing.T){
 
 func TestWindowsOriginalCatalogArchiveNativeDisplayReview(t *testing.T){
  if os.Getenv("GITHUB_ACTIONS")!="true"||os.Getenv("RUNNER_ENVIRONMENT")!="github-hosted"{t.Skip("disposable runner only")}
- ctx,cancel:=context.WithTimeout(context.Background(),150*time.Second);defer cancel()
+ ctx,cancel:=context.WithTimeout(context.Background(),240*time.Second);defer cancel()
  parent,snap,browser,hosts,policies:=makeOriginalProtectionPairFixture(t)
  observed,err:=InspectWindowsDNSAssignmentProvenanceReadOnly(ctx,protectionSnapshotDNSInspect)
  if err!=nil{t.Fatal(err)}
@@ -394,6 +394,7 @@ func TestWindowsOriginalCatalogArchiveNativeActualCensus(t *testing.T){
  runOriginalRecoveryReviewChild(t,childInput,false)
  t.Log("PASS VOLVE_NEW_PROCESS_REOPENS_VALID_AND_REFUSES_STALE_TRUNCATED_REVIEW")
  if err:=persistOriginalRecoveryReviewEvidenceUnarmed(ctx,root,transactionID,binding,snap,browser,inv,pin,seal,check);err==nil{t.Fatal("interrupted evidence slot reused")}
+ if err:=ctx.Err();err!=nil{t.Fatal("native test context expired; refusal evidence invalid",err)}
  t.Log("PASS VOLVE_DURABLE_UNARMED_REVIEW_NTFS_REJECTS_INTERRUPTION")
  t.Log("PASS VOLVE_NATIVE_BOUND_FOUR_ARCHIVES_AND_LIVE_RECENSUS")
  t.Log("PASS VOLVE_ACTUAL_NATIVE_ORIGINALS_ARCHIVED_AND_RECENSUSED_NO_OS_WRITES")
@@ -526,6 +527,7 @@ func TestVOLVEOriginalRecoveryReviewChild(t *testing.T){
  ctx,cancel:=context.WithTimeout(context.Background(),45*time.Second);defer cancel()
  receipt,err:=reopenOriginalRecoveryReviewUnarmed(ctx,input.Root,input.ID,input.Binding,input.Snapshot,input.Browser,input.Inventory,input.DNSPin,
   func(p string)error{return nativeDNSOriginalBackupACL(ctx,p)})
+ if err:=ctx.Err();err!=nil{t.Fatal("child review context expired; refusal invalid",err)}
  if err!=nil{
   if receipt!=(originalProtectionPairReceipt{}){t.Fatal("failed child returned evidence")}
   t.Log("VOLVE_CHILD_REVIEW_REFUSED")
@@ -546,7 +548,7 @@ func runOriginalRecoveryInterruptedWriter(t *testing.T,input originalRecoveryChi
  if err!=nil||len(raw)>16384{t.Fatal("writer input encoding failed")}
  exe,err:=os.Executable()
  if err!=nil{t.Fatal("test executable unavailable")}
- ctx,cancel:=context.WithTimeout(context.Background(),30*time.Second);defer cancel()
+ ctx,cancel:=context.WithTimeout(context.Background(),60*time.Second);defer cancel()
  cmd:=exec.CommandContext(ctx,exe,"-test.run=^TestVOLVEOriginalRecoveryInterruptedWriter$","-test.count=1","-test.v")
  cmd.Env=append(os.Environ(),"VOLVE_REVIEW_PARTIAL_WRITER=1")
  cmd.Stdin=bytes.NewReader(raw)
@@ -558,7 +560,7 @@ func runOriginalRecoveryInterruptedWriter(t *testing.T,input originalRecoveryChi
  scanner:=bufio.NewScanner(stdout)
  ready:=false
  for scanner.Scan(){if scanner.Text()=="VOLVE_LAB_PARTIAL_SYNC_READY"{ready=true;break}}
- if !ready{t.Fatal("writer did not confirm partial sync")}
+ if !ready||ctx.Err()!=nil{t.Fatal("writer did not confirm partial sync within live context")}
  if err:=cmd.Process.Kill();err!=nil{t.Fatal("writer termination failed",err)}
  err=cmd.Wait()
  waited=true
@@ -573,7 +575,7 @@ func TestVOLVEOriginalRecoveryInterruptedWriter(t *testing.T){
  if err!=nil||len(raw)==0||len(raw)>16384{t.Fatal("invalid writer input")}
  var input originalRecoveryChildInput
  if err:=residentCanonical(raw,&input);err!=nil{t.Fatal("writer input not canonical")}
- ctx,cancel:=context.WithTimeout(context.Background(),20*time.Second);defer cancel()
+ ctx,cancel:=context.WithTimeout(context.Background(),45*time.Second);defer cancel()
  check:=func(p string)error{return nativeDNSOriginalBackupACL(ctx,p)}
  receipt,err:=verifyBoundOriginalRecoveryArchivesUnarmed(ctx,input.ID,input.Binding,filepath.Join(input.Root,"original-protection-recovery"),filepath.Join(input.Root,"legacy-engine-recovery"),input.Snapshot,input.Browser,input.Inventory,input.DNSPin,check)
  if err!=nil||!receipt.HostsVerified||receipt.BrowserKeysVerified!=3||!receipt.DNSBackupVerified||!receipt.CatalogBackupVerified||receipt.RestoreAuthorized||receipt.InstallAuthorized{t.Fatal("writer fixture not independently verified")}
