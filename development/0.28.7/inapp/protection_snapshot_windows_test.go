@@ -206,3 +206,58 @@ func TestWindowsHostsOriginalBackupRejectsNilAndCancelledContext(t *testing.T){
  cancelled,cancel:=context.WithCancel(ctx);cancel()
  if raw,err:=captureOriginalWindowsHostsBackup(cancelled,path,pin);!errors.Is(err,context.Canceled)||raw!=nil{t.Fatal("cancelled capture accepted")}
 }
+
+func TestWindowsHostsOriginalBackupStoreCreateOnly(t *testing.T){
+ ctx:=context.Background()
+ parent:=filepath.Join(t.TempDir(),"original-protection-recovery")
+ if err:=os.Mkdir(parent,0700);err!=nil{t.Fatal(err)}
+ source:=filepath.Join(t.TempDir(),"hosts")
+ raw:=[]byte("# original\r\n0.0.0.0 fixture.example\r\n")
+ if err:=os.WriteFile(source,raw,0600);err!=nil{t.Fatal(err)}
+ pin,err:=inspectWindowsHostsFileAtReadOnly(ctx,source);if err!=nil{t.Fatal(err)}
+ data,err:=captureOriginalWindowsHostsBackup(ctx,source,pin);if err!=nil{t.Fatal(err)}
+ // Synthetic ACL callbacks exercise ordering only, not actual NTFS ACLs.
+ sealed:=map[string]bool{parent:true}
+ seal:=func(path string)error{sealed[path]=true;return nil}
+ check:=func(path string)error{if !sealed[path]{return errors.New("unsealed fixture")};return nil}
+ if err:=storeOriginalWindowsHostsBackupUnarmed(ctx,parent,data,pin,seal,check);err!=nil{t.Fatal(err)}
+ got,err:=readOriginalWindowsHostsBackupUnarmed(ctx,parent,pin,check)
+ if err!=nil||string(got)!=string(raw){t.Fatal("durable fixture readback failed",err)}
+ if err:=storeOriginalWindowsHostsBackupUnarmed(ctx,parent,data,pin,seal,check);err==nil{t.Fatal("existing backup overwritten")}
+ _,file,err:=originalHostsBackupPaths(parent);if err!=nil{t.Fatal(err)}
+ if err:=os.WriteFile(file,[]byte("tampered"),0600);err!=nil{t.Fatal(err)}
+ if got,err:=readOriginalWindowsHostsBackupUnarmed(ctx,parent,pin,check);err==nil||got!=nil{t.Fatal("altered persisted bytes accepted")}
+}
+func TestWindowsHostsOriginalBackupStoreRefusesUnprotectedParentAndPartialStage(t *testing.T){
+ ctx:=context.Background()
+ parent:=filepath.Join(t.TempDir(),"original-protection-recovery")
+ if err:=os.Mkdir(parent,0700);err!=nil{t.Fatal(err)}
+ raw:=[]byte("# original\n")
+ sum:=sha256.Sum256(raw)
+ pin:=WindowsHostsFileEvidence{SHA256:hex.EncodeToString(sum[:])}
+ deny:=func(string)error{return errors.New("fixture ACL refused")}
+ allow:=func(string)error{return nil}
+ dir,file,err:=originalHostsBackupPaths(parent);if err!=nil{t.Fatal(err)}
+ if err:=storeOriginalWindowsHostsBackupUnarmed(ctx,parent,raw,pin,allow,deny);err==nil{t.Fatal("unprotected parent accepted")}
+ if _,err:=os.Lstat(dir);!os.IsNotExist(err){t.Fatal("wrote before parent verified")}
+ if err:=storeOriginalWindowsHostsBackupUnarmed(ctx,parent,raw,pin,deny,allow);err==nil{t.Fatal("failed directory seal ignored")}
+ if _,err:=os.Lstat(file);!os.IsNotExist(err){t.Fatal("payload created before directory seal")}
+ if err:=storeOriginalWindowsHostsBackupUnarmed(ctx,parent,raw,pin,allow,allow);err==nil{t.Fatal("interrupted stage reused")}
+ if got,err:=readOriginalWindowsHostsBackupUnarmed(ctx,parent,pin,allow);err==nil||got!=nil{t.Fatal("partial stage accepted")}
+}
+func TestWindowsHostsOriginalBackupStoreRejectsExtraNodesAndACLDrift(t *testing.T){
+ ctx:=context.Background()
+ parent:=filepath.Join(t.TempDir(),"original-protection-recovery")
+ if err:=os.Mkdir(parent,0700);err!=nil{t.Fatal(err)}
+ raw:=[]byte("# original\n")
+ sum:=sha256.Sum256(raw)
+ pin:=WindowsHostsFileEvidence{SHA256:hex.EncodeToString(sum[:])}
+ allow:=func(string)error{return nil}
+ if err:=storeOriginalWindowsHostsBackupUnarmed(ctx,parent,raw,pin,allow,allow);err!=nil{t.Fatal(err)}
+ calls:=0
+ drift:=func(string)error{calls++;if calls>3{return errors.New("fixture ACL drift")};return nil}
+ if got,err:=readOriginalWindowsHostsBackupUnarmed(ctx,parent,pin,drift);err==nil||got!=nil{t.Fatal("ACL drift accepted")}
+ dir,_,err:=originalHostsBackupPaths(parent);if err!=nil{t.Fatal(err)}
+ if err:=os.WriteFile(filepath.Join(dir,"unexpected.bin"),[]byte{},0600);err!=nil{t.Fatal(err)}
+ if got,err:=readOriginalWindowsHostsBackupUnarmed(ctx,parent,pin,allow);err==nil||got!=nil{t.Fatal("ambiguous stage accepted")}
+}

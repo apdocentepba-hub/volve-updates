@@ -223,3 +223,80 @@ func DefaultWindowsProtectionSnapshotInspectors()WindowsProtectionSnapshotInspec
   DNS:DefaultWindowsReadOnlyPowerShell,
  }
 }
+
+// An original hosts backup is a sensitive local file, not a release permit.
+// The callbacks belong to a future independently trusted NTFS adapter.
+// No OS policy, live hosts file, ACL, registry or task is modified here.
+// Existing or interrupted staging directories are never reused or deleted.
+const originalHostsBackupDir = "hosts-original-backup-v1"
+const originalHostsBackupFile = "original-hosts.bin"
+
+func originalHostsBackupPaths(parent string)(string,string,error){
+ if !filepath.IsAbs(parent)||filepath.Clean(parent)!=parent||
+  filepath.Base(parent)!="original-protection-recovery"||strings.HasPrefix(parent,`\\`){
+  return "","",errors.New("original protection backup parent must be a dedicated local absolute directory")
+ }
+ dir:=filepath.Join(parent,originalHostsBackupDir)
+ return dir,filepath.Join(dir,originalHostsBackupFile),nil
+}
+
+func verifyOriginalHostsBackupNode(path string,directory bool,check func(string)error)error{
+ st,err:=os.Lstat(path)
+ if err!=nil{return err}
+ if st.Mode()&os.ModeSymlink!=0|| (directory&&!st.IsDir())||(!directory&&!st.Mode().IsRegular()){
+  return errors.New("original hosts backup node has unexpected type")
+ }
+ return check(path)
+}
+
+func storeOriginalWindowsHostsBackupUnarmed(ctx context.Context,parent string,raw []byte,
+ expected WindowsHostsFileEvidence,seal,check func(string)error)error{
+ if ctx==nil||seal==nil||check==nil{return errors.New("original hosts storage requires context and trusted ACL callbacks")}
+ if err:=ctx.Err();err!=nil{return err}
+ if raw==nil{return errors.New("missing original hosts payload")}
+ // Take ownership of a local copy before verifying and writing.
+ data:=make([]byte,len(raw));copy(data,raw)
+ if err:=verifyOriginalWindowsHostsBackup(data,expected);err!=nil{return err}
+ dir,file,err:=originalHostsBackupPaths(parent);if err!=nil{return err}
+ if err:=verifyOriginalHostsBackupNode(parent,true,check);err!=nil{return err}
+ if err:=os.Mkdir(dir,0700);err!=nil{return fmt.Errorf("original hosts stage must be new: %w",err)}
+ if err:=seal(dir);err!=nil{return err}
+ if err:=verifyOriginalHostsBackupNode(dir,true,check);err!=nil{return err}
+ if err:=verifyOriginalHostsBackupNode(parent,true,check);err!=nil{return err}
+ if err:=ctx.Err();err!=nil{return err}
+ f,err:=os.OpenFile(file,os.O_CREATE|os.O_EXCL|os.O_WRONLY,0600)
+ if err!=nil{return err}
+ n,writeErr:=f.Write(data)
+ if writeErr==nil&&n!=len(data){writeErr=io.ErrShortWrite}
+ if writeErr==nil{writeErr=f.Sync()}
+ closeErr:=f.Close()
+ if writeErr!=nil{return writeErr}
+ if closeErr!=nil{return closeErr}
+ if err:=seal(file);err!=nil{return err}
+ _,err=readOriginalWindowsHostsBackupUnarmed(ctx,parent,expected,check)
+ return err
+}
+
+func readOriginalWindowsHostsBackupUnarmed(ctx context.Context,parent string,
+ expected WindowsHostsFileEvidence,check func(string)error)([]byte,error){
+ if ctx==nil||check==nil{return nil,errors.New("original hosts readback requires context and trusted ACL verifier")}
+ if err:=ctx.Err();err!=nil{return nil,err}
+ dir,file,err:=originalHostsBackupPaths(parent);if err!=nil{return nil,err}
+ verify:=func()error{
+  if err:=verifyOriginalHostsBackupNode(parent,true,check);err!=nil{return err}
+  if err:=verifyOriginalHostsBackupNode(dir,true,check);err!=nil{return err}
+  return verifyOriginalHostsBackupNode(file,false,check)
+ }
+ if err:=verify();err!=nil{return nil,err}
+ nodes,err:=os.ReadDir(dir)
+ if err!=nil{return nil,err}
+ if len(nodes)!=1||nodes[0].Name()!=originalHostsBackupFile{return nil,errors.New("unexpected original hosts stage contents")}
+ raw,err:=captureOriginalWindowsHostsBackup(ctx,file,expected)
+ if err!=nil{return nil,err}
+ if err:=verify();err!=nil{return nil,err}
+ nodes,err=os.ReadDir(dir)
+ if err!=nil{return nil,err}
+ if len(nodes)!=1||nodes[0].Name()!=originalHostsBackupFile{return nil,errors.New("original hosts stage changed during read")}
+ if err:=ctx.Err();err!=nil{return nil,err}
+ return raw,nil
+}

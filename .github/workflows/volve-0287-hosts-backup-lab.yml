@@ -55,5 +55,5 @@ jobs:
           $exit=$LASTEXITCODE
           $result|Write-Host
           if($exit -ne 0){throw 'Hosts capture regression failed'}
-          if(@($result|Where-Object {$_ -match '^--- PASS: TestWindowsHostsOriginalBackup'}).Count -ne 3){throw 'Expected exactly three new backup tests'}
+          if(@($result|Where-Object {$_ -match '^--- PASS: TestWindowsHostsOriginalBackup'}).Count -ne 6){throw 'Expected exactly six original hosts backup tests'}
           Write-Host 'PASS: exact original bytes, independent hash, drift rejection and local readback; synthetic fixtures only; NO INSTALL'
