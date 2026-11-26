@@ -148,6 +148,18 @@ function ConvertTo-VolvCIPidDecimal {
     return ([int64]::Parse($clean,[Globalization.CultureInfo]::InvariantCulture)).ToString([Globalization.CultureInfo]::InvariantCulture)
 }
 
+# Classify only the two exact standard machine task identities. Dynamic
+# or suffixed names remain unattributed, and no baseline exemption exists.
+function Get-VolvCIKnownTaskClass {
+    param([string]$Identity)
+    switch -CaseSensitive ($Identity) {
+        '\MicrosoftEdgeUpdateTaskMachineCore' {return 'edge-update-machine-core'}
+        '\MicrosoftEdgeUpdateTaskMachineUA' {return 'edge-update-machine-ua'}
+        '\Microsoft\Windows\SoftwareProtectionPlatform\SvcRestartTask' {return 'windows-software-protection-service-restart'}
+        default {return 'unattributed'}
+    }
+}
+
 # Match only the exact standard Edge Update image path, never a basename,
 # suffix or process-name guess. This remains a path lead, NOT attribution.
 function Test-VolvCIStandardEdgeUpdateImage {
@@ -388,6 +400,17 @@ if($Mode -ceq 'Test'){
     foreach($foreign in @('MicrosoftEdgeUpdate.exe','C:\Temp\MicrosoftEdgeUpdate.exe','C:\Program Files (x86)\Microsoft\EdgeUpdate\MicrosoftEdgeUpdate.exe.bak','C:\Program Files (x86)\Microsoft\EdgeUpdate\..\EdgeUpdate\MicrosoftEdgeUpdate.exe')){
         if(Test-VolvCIStandardEdgeUpdateImage -Image $foreign){throw 'Non-exact Edge Update image incorrectly classified'}
     }
+    if((Get-VolvCITaskPseudonym -Identity '\MicrosoftEdgeUpdateTaskMachineCore') -cne 'DB1B7F6A43E41B9C' -or
+       (Get-VolvCITaskPseudonym -Identity '\MicrosoftEdgeUpdateTaskMachineUA') -cne 'F2B3566A9AECF9C9'){
+        throw 'Edge task diagnostic hash regression'
+    }
+    if((Get-VolvCIKnownTaskClass -Identity '\MicrosoftEdgeUpdateTaskMachineCore') -cne 'edge-update-machine-core' -or
+       (Get-VolvCIKnownTaskClass -Identity '\MicrosoftEdgeUpdateTaskMachineUA') -cne 'edge-update-machine-ua'){
+        throw 'Exact known Edge task classification regression'
+    }
+    foreach($foreign in @('\Other\MicrosoftEdgeUpdateTaskMachineCore','\MicrosoftEdgeUpdateTaskMachineUA-extra','\MicrosoftEdgeUpdateTaskMachineCore{GUID}')){
+        if((Get-VolvCIKnownTaskClass -Identity $foreign) -cne 'unattributed'){throw 'Unrecognized task falsely classified'}
+    }
     Write-Host 'PASS: exact Edge Update path classification; no causal attribution or baseline exemption'
     Write-Host 'PASS: SECURITY_4702_4688_CORRELATION synthetic time/PID candidate, missing/ambiguous/future/stale/reused PID rejection; process identity remains UNPROVEN'
     Write-Host 'PASS: SECURITY_4702_READ_ONLY classifies valid/missing/invalid PID fields, refuses duplicate PID, wrong provider, wrong task, malformed XML and never outputs private event data'
@@ -413,11 +436,7 @@ if($matchingTasks.Count -ne 1){
     return
 }
 $fullIdentity=[string]$matchingTasks[0].TaskPath+[string]$matchingTasks[0].TaskName
-$expectedSPP='\Microsoft\Windows\SoftwareProtectionPlatform\SvcRestartTask'
-$identityClass='unattributed'
-if([string]::Equals($fullIdentity,$expectedSPP,[StringComparison]::Ordinal)){
-    $identityClass='windows-software-protection-service-restart'
-}
+$identityClass=Get-VolvCIKnownTaskClass -Identity $fullIdentity
 if($AfterSecurityRecordId -lt 0 -or $AfterSchedulerRecordId -lt 0){throw 'Invalid event cursor'}
 $eventXml=@()
 try {
