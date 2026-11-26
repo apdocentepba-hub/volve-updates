@@ -342,3 +342,40 @@ func InspectOriginalBackupArchivesNativeReadOnly(ctx context.Context,protectionP
  return WindowsOriginalBackupReview{Status:"FOUR_ARCHIVES_VERIFIED_READ_ONLY",HostsVerified:true,BrowserKeysVerified:3,
   DNSBackupVerified:true,CatalogBackupVerified:true},nil
 }
+
+// originalRecoveryReviewPin binds the independent census and DNS journal
+// digest to a caller-supplied transaction identifier. This is a consistency
+// check only: the trusted controller must persist and authenticate the pin
+// independently, hold its transaction lock and recheck live state.
+// A digest alone is never installation or restoration authorization.
+func originalRecoveryReviewPin(transactionID string,baseline ProtectionSnapshot,dnsJournalPin string)(string,error){
+ if len(transactionID)!=32||strings.ToLower(transactionID)!=transactionID{return "",errors.New("canonical transaction identity required")}
+ if b,err:=hex.DecodeString(transactionID);err!=nil||len(b)!=16||transactionID==strings.Repeat("0",32){return "",errors.New("invalid transaction identity")}
+ if !validProtectionSnapshot(baseline)||!protectionDigest.MatchString(dnsJournalPin){return "",errors.New("independent recovery pins incomplete")}
+ raw,err:=json.Marshal(struct{
+  Domain string
+  TransactionID string
+  Baseline ProtectionSnapshot
+  DNSJournalSHA256 string
+ }{"VOLVE-original-recovery-review-v1",transactionID,baseline,dnsJournalPin})
+ if err!=nil{return "",errors.New("recovery binding encoding failed")}
+ sum:=sha256.Sum256(raw)
+ return hex.EncodeToString(sum[:]),nil
+}
+
+// verifyBoundOriginalRecoveryArchivesUnarmed rejects mixed transaction
+// identifiers or census pins before opening any archive. A successful
+// result remains an unarmed four-component observation.
+func verifyBoundOriginalRecoveryArchivesUnarmed(ctx context.Context,transactionID,expectedPin,protectionParent,dnsParent string,
+ baseline ProtectionSnapshot,browser WindowsBrowserPolicyEvidence,inventory WindowsFreshVOLVETaskInventory,dnsJournalPin string,check func(string)error)(originalProtectionPairReceipt,error){
+ var denied originalProtectionPairReceipt
+ if ctx==nil||check==nil{return denied,errors.New("bound review requires context and ACL verifier")}
+ if err:=ctx.Err();err!=nil{return denied,err}
+ got,err:=originalRecoveryReviewPin(transactionID,baseline,dnsJournalPin)
+ if err!=nil||got!=expectedPin{return denied,errors.New("independent recovery transaction pin mismatch")}
+ if !filepath.IsAbs(protectionParent)||!filepath.IsAbs(dnsParent)||
+  filepath.Clean(protectionParent)!=protectionParent||filepath.Clean(dnsParent)!=dnsParent||
+  !strings.EqualFold(filepath.Dir(protectionParent),filepath.Dir(dnsParent))||
+  filepath.Base(filepath.Dir(protectionParent))!=transactionID{return denied,errors.New("recovery archives outside bound transaction directory")}
+ return verifyOriginalProtectionArchivesUnarmed(ctx,protectionParent,dnsParent,baseline,browser,inventory,dnsJournalPin,check)
+}
