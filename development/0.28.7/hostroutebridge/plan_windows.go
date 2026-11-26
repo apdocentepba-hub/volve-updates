@@ -51,6 +51,7 @@ var mandatoryBeforeAnyMutation = []string{
     "signed-original-and-recovery-snapshot",
     "durable-independent-boot-watchdog",
     "compatibility-and-live-state-recheck-under-lock",
+    "verify-configured-resolver-TCP-with-actual-motor-and-safe-original-DNS-recovery",
     "native-NTFS-ACL-and-rollback-restart-evidence",
  "durable-hosts-browser-catalog-and-original-DNS-snapshot",
  "persist-and-seal-original-DNS-source-and-exact-adapter-identity",

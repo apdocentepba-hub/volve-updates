@@ -58,6 +58,9 @@ func TestAllWindowsInstallRoutesHaveNonAuthorizingPlans(t *testing.T) {
                 for _,item:=range plan.Prerequisites{if item==required{present=true;break}}
                 if !present{t.Fatalf("route %s omitted mandatory safety gate %q",tc.route,required)}
             }
+            count:=0
+            for _,item:=range plan.Prerequisites{if item=="verify-configured-resolver-TCP-with-actual-motor-and-safe-original-DNS-recovery"{count++}}
+            if count!=1{t.Fatalf("configured resolver TCP requirement absent or duplicated: %v",plan.Prerequisites)}
             if plan.Notes==""{t.Fatal("planning route must explain risk")}
         })
     }

@@ -12,7 +12,7 @@ on:
       - 'development/0.28.7/taskrecoverygate/**'
       - '.github/workflows/volve-0287-one-exe-pr.yml'
   push:
-    branches: [work/0287-installer-progress-20261124]
+    branches: [work/0287-installer-progress-20261124, work/0287-preview-dns-compatibility-20261126]
     paths:
       - 'development/0.28.7/hostroutebridge/**'
       - '.github/workflows/volve-0287-one-exe-pr.yml'
@@ -625,6 +625,9 @@ jobs:
                $report.can_upgrade -ne $false -or
                $report.can_change_dns -ne $false -or
                $report.can_change_tasks -ne $false -or
+               $report.configured_resolver_tcp_verified -cne $false -or
+               $report.dns_compatibility_status -cne 'UNVERIFIED_ACTUAL_CONFIGURED_RESOLVER_TCP' -or
+               @($report.unmet_production_prerequisites) -cnotcontains 'verify-configured-resolver-TCP-with-actual-motor-and-safe-original-DNS-recovery' -or
                @($report.unmet_production_prerequisites).Count -lt 7){
               throw ('Unsafe or incomplete native Windows preinstallation preview: '+$raw)
             }
@@ -673,6 +676,9 @@ jobs:
                  $protected.can_upgrade -ne $false -or
                  $protected.can_change_dns -ne $false -or
                  $protected.can_change_tasks -ne $false -or
+                 $protected.configured_resolver_tcp_verified -cne $false -or
+                 $protected.dns_compatibility_status -cne 'UNVERIFIED_ACTUAL_CONFIGURED_RESOLVER_TCP' -or
+                 @($protected.unmet_production_prerequisites) -cnotcontains 'verify-configured-resolver-TCP-with-actual-motor-and-safe-original-DNS-recovery' -or
                  $protected.status -ne 'NO_INSTALL_OR_DNS_CHANGE_AUTHORIZED'){
                 throw 'Protected preflight JSON granted an unauthorized write or omitted a required native check'
               }
