@@ -440,3 +440,19 @@ func persistOriginalRecoveryReviewEvidenceUnarmed(ctx context.Context,root,id,ex
  if err:=residentCreate(path,raw,seal,check);err!=nil{return err}
  return loadOriginalRecoveryReviewEvidenceUnarmed(ctx,root,id,expectedPin,check)
 }
+
+// A durable review is historical evidence only. Reopening it for a current
+// observation must also reverify the four underlying archives, and reread the
+// review afterward. The external expected pin and transaction lease remain
+// prerequisites; this function cannot arm or authorize restoration.
+func reopenOriginalRecoveryReviewUnarmed(ctx context.Context,root,id,expectedPin string,
+ baseline ProtectionSnapshot,browser WindowsBrowserPolicyEvidence,inventory WindowsFreshVOLVETaskInventory,dnsPin string,
+ check func(string)error)(originalProtectionPairReceipt,error){
+ var denied originalProtectionPairReceipt
+ if err:=loadOriginalRecoveryReviewEvidenceUnarmed(ctx,root,id,expectedPin,check);err!=nil{return denied,err}
+ receipt,err:=verifyBoundOriginalRecoveryArchivesUnarmed(ctx,id,expectedPin,filepath.Join(root,"original-protection-recovery"),filepath.Join(root,"legacy-engine-recovery"),baseline,browser,inventory,dnsPin,check)
+ if err!=nil||!receipt.HostsVerified||receipt.BrowserKeysVerified!=3||!receipt.DNSBackupVerified||!receipt.CatalogBackupVerified||
+  receipt.CompleteRecoverySnapshot||receipt.InstallAuthorized||receipt.RestoreAuthorized{return denied,errors.New("current original archives not verified")}
+ if err:=loadOriginalRecoveryReviewEvidenceUnarmed(ctx,root,id,expectedPin,check);err!=nil{return denied,err}
+ return receipt,nil
+}
