@@ -161,8 +161,8 @@ func ExecuteWindowsDNSRestoreBatch(
     ctx context.Context, records []DNSRestoreRecord,
     inspect WindowsReadOnlyPowerShell, write WindowsDNSRestoreWriter,
 ) error {
-    if len(records) == 0 || inspect == nil || write == nil {
-        return errors.New("missing protected DNS recovery records or trusted backend")
+    if ctx == nil || len(records) == 0 || inspect == nil || write == nil {
+        return errors.New("missing protected DNS recovery context, records or trusted backend")
     }
     if err := ctx.Err(); err != nil { return err }
     ordered := append([]DNSRestoreRecord(nil), records...)
@@ -172,21 +172,45 @@ func ExecuteWindowsDNSRestoreBatch(
             strings.ToLower(b.InterfaceGUID)+string(b.Family)
     })
     seen := map[string]bool{}
+    originalIndexes := map[string]uint32{}
     for _,r := range ordered {
         if err:=validateWindowsDNSRecoveryRecord(r);err!=nil{return err}
         key:=strings.ToLower(r.Original.InterfaceGUID)+string(r.Original.Family)
         if seen[key] {return errors.New("duplicate interface/family in protected DNS recovery journal")}
         seen[key]=true
-        if _,_,err:=observeWindowsDNSRestoreStage(ctx,r,inspect);err!=nil {
+        index,_,err:=observeWindowsDNSRestoreStage(ctx,r,inspect)
+        if err!=nil {
             return fmt.Errorf("all-adapter preflight refused %s %s: %w",r.Original.InterfaceGUID,r.Original.Family,err)
         }
+        guid:=strings.ToLower(r.Original.InterfaceGUID)
+        if old,ok:=originalIndexes[guid];ok&&old!=index{return errors.New("adapter index changed during recovery preflight")}
+        originalIndexes[guid]=index
     }
     for _,r := range ordered {
         if err:=ExecuteWindowsDNSRestore(ctx,r,inspect,write);err!=nil {
             return fmt.Errorf("recovery incomplete for %s %s: %w",r.Original.InterfaceGUID,r.Original.Family,err)
         }
     }
-    return nil
+    // Obtain one independent final provenance census. A later write may
+    // have disturbed a previously verified family. Never repair unexpected
+    // changes merely to manufacture a successful recovery receipt.
+    final,err:=InspectWindowsDNSAssignmentProvenanceReadOnly(ctx,inspect)
+    if err!=nil{return fmt.Errorf("final native DNS recovery census unavailable: %w",err)}
+    for _,r:=range ordered{
+        guid:=strings.ToLower(r.Original.InterfaceGUID)
+        if final.interfaceIndexes[guid]!=originalIndexes[guid]{
+            return errors.New("adapter identity changed before final native DNS recovery census; recovery remains pending")
+        }
+        matched:=0
+        for _,state:=range final.States{
+            if strings.EqualFold(state.InterfaceGUID,guid)&&state.Family==r.Original.Family{
+                if !sameDNSState(state,r.Original){return errors.New("final native DNS recovery census differs from original; recovery remains pending")}
+                matched++
+            }
+        }
+        if matched!=1{return errors.New("final native DNS recovery census missing original adapter family; recovery remains pending")}
+    }
+    return ctx.Err()
 }
 
  

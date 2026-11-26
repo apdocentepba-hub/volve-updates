@@ -126,3 +126,24 @@ func TestNativeDNSRecoveryResumesAfterAutomaticDriverFailedPostMutation(t *testi
   t.Fatal("recovery retry issued an unnecessary extra Windows DNS mutation")
  }
 }
+
+func TestNativeDNSRecoveryBatchRejectsDriftAfterLaterFamilyWrite(t *testing.T){
+ f:=makeAutomaticDNSRecoveryFixture()
+ ctx:=context.Background()
+ writer,err:=NewWindowsPinnedDNSRecoveryWriter(ctx,f.records,f.host.inspect,
+  func(ctx context.Context,args []string)error{
+   if err:=f.invoke(ctx,args);err!=nil{return err}
+   if len(args)==6&&args[1]=="ipv6"&&args[5]=="source=dhcp"{
+    state:=copyWindowsActivationDNSState(f.records[0].Original)
+    state.Servers=[]string{"192.0.2.99"}
+    f.host.states[DNSIPv4]=state
+   }
+   return nil
+  })
+ if err!=nil{t.Fatal(err)}
+ err=ExecuteWindowsDNSRestoreBatch(ctx,f.records,f.host.inspect,writer)
+ if err==nil||!strings.Contains(err.Error(),"final native DNS recovery census"){t.Fatalf("later family drift not detected: %v",err)}
+ if len(f.invoked)!=3||!reflect.DeepEqual(f.host.states[DNSIPv4].Servers,[]string{"192.0.2.99"}){
+  t.Fatal("external DNS was overwritten after recovery drift")
+ }
+}
