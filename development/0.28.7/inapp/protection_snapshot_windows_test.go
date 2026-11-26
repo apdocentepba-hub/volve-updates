@@ -164,3 +164,45 @@ func TestWindowsProtectionSnapshotCannotPassIfHostBaselineIsMalformed(t *testing
   })
  if err==nil{t.Fatal("malformed hosts baseline accepted")}
 }
+
+func TestWindowsHostsOriginalBackupExactBytesAndReadback(t *testing.T){
+ ctx:=context.Background()
+ path:=filepath.Join(t.TempDir(),"hosts")
+ raw:=[]byte("# original\r\n127.0.0.1 localhost\r\n0.0.0.0 test.example\r\n")
+ if err:=os.WriteFile(path,raw,0600);err!=nil{t.Fatal(err)}
+ pin,err:=inspectWindowsHostsFileAtReadOnly(ctx,path);if err!=nil{t.Fatal(err)}
+ got,err:=captureOriginalWindowsHostsBackup(ctx,path,pin);if err!=nil{t.Fatal(err)}
+ if string(got)!=string(raw){t.Fatal("original bytes changed")}
+ // A separate temporary fixture models a closed/reopened backup only;
+ // this is not a production ACL-protected store.
+ saved:=filepath.Join(t.TempDir(),"original-hosts.bin")
+ if err:=os.WriteFile(saved,got,0600);err!=nil{t.Fatal(err)}
+ readback,err:=os.ReadFile(saved);if err!=nil{t.Fatal(err)}
+ if err:=verifyOriginalWindowsHostsBackup(readback,pin);err!=nil{t.Fatal(err)}
+ readback[0]^=1
+ if err:=verifyOriginalWindowsHostsBackup(readback,pin);err==nil{t.Fatal("modified backup accepted")}
+ unchanged,err:=os.ReadFile(path);if err!=nil||string(unchanged)!=string(raw){t.Fatal("source changed")}
+}
+func TestWindowsHostsOriginalBackupRejectsDriftAndMissingPin(t *testing.T){
+ ctx:=context.Background()
+ path:=filepath.Join(t.TempDir(),"hosts")
+ if err:=os.WriteFile(path,[]byte("# original\n"),0600);err!=nil{t.Fatal(err)}
+ pin,err:=inspectWindowsHostsFileAtReadOnly(ctx,path);if err!=nil{t.Fatal(err)}
+ bad:=pin;bad.BlockedRuleCount++
+ for _,p:=range []WindowsHostsFileEvidence{{},bad}{
+  if raw,err:=captureOriginalWindowsHostsBackup(ctx,path,p);err==nil||raw!=nil{t.Fatal("bad original evidence accepted")}
+ }
+ if err:=os.WriteFile(path,[]byte("# modified\n"),0600);err!=nil{t.Fatal(err)}
+ if raw,err:=captureOriginalWindowsHostsBackup(ctx,path,pin);err==nil||raw!=nil{t.Fatal("source drift accepted")}
+}
+func TestWindowsHostsOriginalBackupRejectsNilAndCancelledContext(t *testing.T){
+ path:=filepath.Join(t.TempDir(),"hosts")
+ if err:=os.WriteFile(path,[]byte{},0600);err!=nil{t.Fatal(err)}
+ ctx:=context.Background()
+ pin,err:=inspectWindowsHostsFileAtReadOnly(ctx,path);if err!=nil{t.Fatal(err)}
+ raw,err:=captureOriginalWindowsHostsBackup(ctx,path,pin);if err!=nil||raw==nil||len(raw)!=0{t.Fatal("empty original file not preserved")}
+ if err:=verifyOriginalWindowsHostsBackup(nil,pin);err==nil{t.Fatal("absent backup accepted as empty original")}
+ if raw,err:=captureOriginalWindowsHostsBackup(nil,path,pin);err==nil||raw!=nil{t.Fatal("nil context accepted")}
+ cancelled,cancel:=context.WithCancel(ctx);cancel()
+ if raw,err:=captureOriginalWindowsHostsBackup(cancelled,path,pin);!errors.Is(err,context.Canceled)||raw!=nil{t.Fatal("cancelled capture accepted")}
+}

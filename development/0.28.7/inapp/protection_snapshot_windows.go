@@ -38,6 +38,7 @@ type WindowsProtectionSnapshotInspectors struct {
 
 func DefaultWindowsHostsFileInspect(ctx context.Context)(WindowsHostsFileEvidence,error){
  var empty WindowsHostsFileEvidence
+ if ctx==nil{return empty,errors.New("hosts inspection requires non-nil context")}
  if err:=ctx.Err();err!=nil{return empty,err}
  root:=os.Getenv("SystemRoot")
  if !filepath.IsAbs(root)||strings.HasPrefix(root,`\\`){
@@ -50,44 +51,87 @@ func DefaultWindowsHostsFileInspect(ctx context.Context)(WindowsHostsFileEvidenc
 // inspectWindowsHostsFileAtReadOnly hashes the exact bytes while checking
 // that the path still identifies the same regular file after reading.
 func inspectWindowsHostsFileAtReadOnly(ctx context.Context,path string)(WindowsHostsFileEvidence,error){
+ evidence,_,err:=captureWindowsHostsFileAtReadOnly(ctx,path)
+ return evidence,err
+}
+
+// captureOriginalWindowsHostsBackup is deliberately local and read-only.
+// The caller must provide the independently verified before-state; merely
+// hashing newly read bytes does not establish that they are the original.
+// The returned bytes are sensitive and must never enter JSON, logs or a
+// remote artifact. A separate protected durable store is still required.
+func captureOriginalWindowsHostsBackup(ctx context.Context,path string,expected WindowsHostsFileEvidence)([]byte,error){
+ if ctx==nil{return nil,errors.New("hosts backup requires non-nil context")}
+ if err:=ctx.Err();err!=nil{return nil,err}
+ if !protectionDigest.MatchString(strings.ToLower(expected.SHA256))||
+  expected.BlockedRuleCount<0||expected.BlockedRuleCount>1_000_000{
+  return nil,errors.New("independent original hosts evidence missing or malformed")
+ }
+ observed,raw,err:=captureWindowsHostsFileAtReadOnly(ctx,path)
+ if err!=nil{return nil,err}
+ if !strings.EqualFold(observed.SHA256,expected.SHA256)||observed.BlockedRuleCount!=expected.BlockedRuleCount{
+  return nil,errors.New("hosts differs from independently observed original")
+ }
+ if err:=verifyOriginalWindowsHostsBackup(raw,expected);err!=nil{return nil,err}
+ if err:=ctx.Err();err!=nil{return nil,err}
+ return raw,nil
+}
+
+// Reuse after reopening a protected backup. No restoration or file writes.
+func verifyOriginalWindowsHostsBackup(raw []byte,expected WindowsHostsFileEvidence)error{
+ if raw==nil||len(raw)>windowsHostsFileMaxBytes||
+  !protectionDigest.MatchString(strings.ToLower(expected.SHA256))||
+  expected.BlockedRuleCount<0||expected.BlockedRuleCount>1_000_000{
+  return errors.New("original hosts backup or independent evidence invalid")
+ }
+ sum:=sha256.Sum256(raw)
+ if !strings.EqualFold(hex.EncodeToString(sum[:]),expected.SHA256)||
+  countWindowsHostsBlockedRules(raw)!=expected.BlockedRuleCount{
+  return errors.New("original hosts backup integrity mismatch")
+ }
+ return nil
+}
+
+func captureWindowsHostsFileAtReadOnly(ctx context.Context,path string)(WindowsHostsFileEvidence,[]byte,error){
  var empty WindowsHostsFileEvidence
- if err:=ctx.Err();err!=nil{return empty,err}
+ if ctx==nil{return empty,nil,errors.New("hosts capture requires non-nil context")}
+ if err:=ctx.Err();err!=nil{return empty,nil,err}
  if !filepath.IsAbs(path)||filepath.Clean(path)!=path||strings.HasPrefix(path,`\\`){
-  return empty,errors.New("hosts file path must be canonical and local")
+  return empty,nil,errors.New("hosts file path must be canonical and local")
  }
  before,err:=os.Lstat(path)
- if err!=nil{return empty,fmt.Errorf("Windows hosts file unavailable: %w",err)}
+ if err!=nil{return empty,nil,fmt.Errorf("Windows hosts file unavailable: %w",err)}
  if !before.Mode().IsRegular()||before.Mode()&os.ModeSymlink!=0||
   before.Size()<0||before.Size()>windowsHostsFileMaxBytes{
-  return empty,errors.New("hosts file is linked, special or oversized")
+  return empty,nil,errors.New("hosts file is linked, special or oversized")
  }
  f,err:=os.Open(path)
- if err!=nil{return empty,err}
+ if err!=nil{return empty,nil,err}
  defer f.Close()
  opened,err:=f.Stat()
- if err!=nil{return empty,err}
+ if err!=nil{return empty,nil,err}
  if !opened.Mode().IsRegular()||!os.SameFile(before,opened){
-  return empty,errors.New("hosts file identity changed before read")
+  return empty,nil,errors.New("hosts file identity changed before read")
  }
  raw,err:=io.ReadAll(io.LimitReader(f,windowsHostsFileMaxBytes+1))
- if err!=nil{return empty,err}
- if len(raw)>windowsHostsFileMaxBytes{return empty,errors.New("hosts file grew beyond read limit")}
+ if err!=nil{return empty,nil,err}
+ if len(raw)>windowsHostsFileMaxBytes{return empty,nil,errors.New("hosts file grew beyond read limit")}
  afterHandle,err:=f.Stat()
- if err!=nil{return empty,err}
+ if err!=nil{return empty,nil,err}
  afterPath,err:=os.Lstat(path)
- if err!=nil{return empty,err}
+ if err!=nil{return empty,nil,err}
  if !afterPath.Mode().IsRegular()||afterPath.Mode()&os.ModeSymlink!=0||
   !os.SameFile(opened,afterHandle)||!os.SameFile(opened,afterPath)||
   opened.Size()!=afterHandle.Size()||opened.Size()!=afterPath.Size()||
   !opened.ModTime().Equal(afterHandle.ModTime())||!opened.ModTime().Equal(afterPath.ModTime())||
   int64(len(raw))!=afterPath.Size(){
-  return empty,errors.New("hosts file changed or was replaced during read")
+  return empty,nil,errors.New("hosts file changed or was replaced during read")
  }
- if err:=ctx.Err();err!=nil{return empty,err}
+ if err:=ctx.Err();err!=nil{return empty,nil,err}
  sum:=sha256.Sum256(raw)
  count:=countWindowsHostsBlockedRules(raw)
- if count<0||count>1_000_000{return empty,errors.New("hosts file candidate rule count outside safe range")}
- return WindowsHostsFileEvidence{SHA256:hex.EncodeToString(sum[:]),BlockedRuleCount:count},nil
+ if count<0||count>1_000_000{return empty,nil,errors.New("hosts file candidate rule count outside safe range")}
+ return WindowsHostsFileEvidence{SHA256:hex.EncodeToString(sum[:]),BlockedRuleCount:count},raw,nil
 }
 
 // countWindowsHostsBlockedRules counts non-localhost names mapped to loopback
