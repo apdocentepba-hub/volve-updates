@@ -39,7 +39,7 @@ jobs:
           $env:VOLVE_LAB_READY=Join-Path $env:RUNNER_TEMP ('volve-dual-'+$env:VOLVE_LAB_PREFIX+'.ready')
           $fixture=Join-Path $env:GITHUB_WORKSPACE 'development/0.28.7/lab/ci_dns_dual_loopback_reference.py'
           $netsh=Join-Path $env:SystemRoot 'System32\netsh.exe'
-          $proc=$null;$changed4=$false;$changed6=$false;$restored=$false;$observations=@()
+          $proc=$null;$changed4=$false;$changed6=$false;$restored=$false;$observations=@();$nativeObservations=@()
           function AssertIdentity {
             if(([guid](Get-NetAdapter -InterfaceIndex $idx).InterfaceGuid).ToString('B') -cne $guid){throw 'Adapter identity changed'}
           }
@@ -55,6 +55,53 @@ jobs:
             $wire=@(if(Test-Path -LiteralPath $env:VOLVE_LAB_LOG){Get-Content -LiteralPath $env:VOLVE_LAB_LOG|ForEach-Object {ConvertFrom-Json $_}|Where-Object {$_.name -ceq $name}})
             [pscustomobject]@{mode=$label;answer_verified=$verified;ipv4_tcp=@($wire|Where-Object {$_.host -ceq 'ipv4-loopback' -and $_.transport -ceq 'tcp'}).Count;ipv6_tcp=@($wire|Where-Object {$_.host -ceq 'ipv6-loopback' -and $_.transport -ceq 'tcp'}).Count;udp=@($wire|Where-Object {$_.transport -ceq 'udp'}).Count;error_id=$errorId}
           }
+          # Independently call the documented Win32 API, not the PowerShell DNS cmdlet.
+          Add-Type -TypeDefinition @'
+          using System;
+          using System.Runtime.InteropServices;
+          public static class VolveNativeDns {
+            [StructLayout(LayoutKind.Sequential)]
+            private struct RecordA {
+              public IntPtr Next, Name;
+              public ushort Type, Length;
+              public uint Flags, Ttl, Reserved, Address;
+            }
+            [DllImport("dnsapi.dll", CharSet=CharSet.Unicode, ExactSpelling=true)]
+            private static extern int DnsQuery_W(string name, ushort type, uint options, IntPtr extra, out IntPtr records, IntPtr reserved);
+            [DllImport("dnsapi.dll", ExactSpelling=true)]
+            private static extern void DnsFree(IntPtr data, int type);
+            public static int Query(string name, bool tcp, out bool verified) {
+              verified=false;
+              IntPtr list=IntPtr.Zero;
+              try {
+                // BYPASS_CACHE | NO_HOSTS_FILE | NO_NETBT | WIRE_ONLY, plus USE_TCP_ONLY.
+                int status=DnsQuery_W(name,1,0x1c8u | (tcp ? 2u : 0u),IntPtr.Zero,out list,IntPtr.Zero);
+                if(status!=0) return status;
+                int count=0, matches=0, visited=0;
+                for(IntPtr p=list;p!=IntPtr.Zero;) {
+                  if(++visited>64) return -1;
+                  RecordA r=(RecordA)Marshal.PtrToStructure(p,typeof(RecordA));
+                  if(r.Type==1 && (r.Flags&3)==1) {
+                    count++;
+                    if(r.Length==4 && r.Address==0x077100cbu && r.Name!=IntPtr.Zero &&
+                      String.Equals(Marshal.PtrToStringUni(r.Name).TrimEnd('.'),name.TrimEnd('.'),StringComparison.OrdinalIgnoreCase)) matches++;
+                  }
+                  p=r.Next;
+                }
+                verified=count==1 && matches==1;
+                return status;
+              } finally { if(list!=IntPtr.Zero) DnsFree(list,1); }
+            }
+          }
+          '@
+          function ObserveNative([string]$label,[bool]$forceTCP){
+            $name=$env:VOLVE_LAB_PREFIX+'-'+[guid]::NewGuid().ToString('N').Substring(0,16)+'.test'
+            $verified=$false
+            $status=[VolveNativeDns]::Query(($name+'.'),$forceTCP,[ref]$verified)
+            Start-Sleep -Milliseconds 150
+            $wire=@(if(Test-Path -LiteralPath $env:VOLVE_LAB_LOG){Get-Content -LiteralPath $env:VOLVE_LAB_LOG|ForEach-Object {ConvertFrom-Json $_}|Where-Object {$_.name -ceq $name}})
+            [pscustomobject]@{mode=$label;answer_verified=$verified;ipv4_tcp=@($wire|Where-Object {$_.host -ceq 'ipv4-loopback' -and $_.transport -ceq 'tcp'}).Count;ipv6_tcp=@($wire|Where-Object {$_.host -ceq 'ipv6-loopback' -and $_.transport -ceq 'tcp'}).Count;udp=@($wire|Where-Object {$_.transport -ceq 'udp'}).Count;error_id=$status}
+          }
           try{
             $proc=Start-Process -FilePath (Get-Command python -ErrorAction Stop).Source -ArgumentList @('-u',('"'+$fixture+'"')) -PassThru
             for($i=0;$i -lt 50 -and !(Test-Path -LiteralPath $env:VOLVE_LAB_READY);$i++){if($proc.HasExited){throw 'Fixture failed to bind'};Start-Sleep -Milliseconds 100}
@@ -68,12 +115,16 @@ jobs:
             if($LASTEXITCODE -ne 0 -or (@((Get-DnsClientServerAddress -InterfaceIndex $idx -AddressFamily IPv4).ServerAddresses) -join ',') -cne '127.0.0.1'){throw 'IPv4 configuration failed'}
             $observations+=Observe 'configured-v4-default' '' $false
             $observations+=Observe 'configured-v4-tcp' '' $true
+            $nativeObservations+=ObserveNative 'native-v4-default' $false
+            $nativeObservations+=ObserveNative 'native-v4-tcp' $true
             AssertIdentity
             $changed6=$true
             & $netsh interface ipv6 set dnsservers "name=$idx" source=static address=::1 validate=no | Out-Null
             if($LASTEXITCODE -ne 0 -or (@((Get-DnsClientServerAddress -InterfaceIndex $idx -AddressFamily IPv6).ServerAddresses) -join ',') -cne '::1'){throw 'IPv6 configuration failed'}
             $observations+=Observe 'configured-dual-default' '' $false
             $observations+=Observe 'configured-dual-tcp' '' $true
+            $nativeObservations+=ObserveNative 'native-dual-default' $false
+            $nativeObservations+=ObserveNative 'native-dual-tcp' $true
           }finally{
             try{
               AssertIdentity
@@ -86,10 +137,12 @@ jobs:
               if(!$restored){throw 'Exact original DNS restoration not verified'}
             }finally{
               if($proc -and !$proc.HasExited){Stop-Process -Id $proc.Id -Force -ErrorAction Stop;$proc.WaitForExit()}
-              Write-Host ('VOLVE_DUAL_LOOPBACK_DIFFERENTIAL='+([ordered]@{scope='HOSTED_SERVER2022_REFERENCE_ONLY';build=(Get-CimInstance Win32_OperatingSystem).BuildNumber;dnsapi_version=(Get-Item (Join-Path $env:SystemRoot 'System32\dnsapi.dll')).VersionInfo.FileVersion;observations=$observations;original_dns_restored=$restored;release_authorized=$false}|ConvertTo-Json -Depth 5 -Compress))
+              Write-Host ('VOLVE_DUAL_LOOPBACK_DIFFERENTIAL='+([ordered]@{scope='HOSTED_SERVER2022_REFERENCE_ONLY';build=(Get-CimInstance Win32_OperatingSystem).BuildNumber;dnsapi_version=(Get-Item (Join-Path $env:SystemRoot 'System32\dnsapi.dll')).VersionInfo.FileVersion;observations=$observations;native_observations=$nativeObservations;original_dns_restored=$restored;release_authorized=$false}|ConvertTo-Json -Depth 5 -Compress))
             }
           }
-          if($observations.Count -ne 6 -or !$restored){throw 'Incomplete diagnostic'}
+          if($observations.Count -ne 6 -or $nativeObservations.Count -ne 4 -or !$restored){throw 'Incomplete diagnostic'}
+          $nativeForced=@($nativeObservations|Where-Object {$_.mode -like '*tcp' -and $_.answer_verified -and $_.error_id -eq 0 -and ($_.ipv4_tcp+$_.ipv6_tcp) -gt 0 -and $_.udp -eq 0})
+          Write-Host ('NATIVE_FORCED_TCP_VERIFIED='+$nativeForced.Count+'/2')
           $forced=@($observations|Where-Object {$_.mode -like '*tcp' -and $_.answer_verified -and ($_.ipv4_tcp+$_.ipv6_tcp) -gt 0 -and $_.udp -eq 0})
           if($forced.Count -ne 4){throw 'Configured forced TCP reference still unverified; NO RELEASE'}
           Write-Host 'PASS: exact forced TCP answers for both configurations; reference only, no release'
