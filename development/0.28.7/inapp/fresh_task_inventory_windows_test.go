@@ -3,7 +3,10 @@
 package motorupdate
 
 import (
+ "bytes"
  "context"
+ "io"
+ "os/exec"
  "crypto/sha256"
  "encoding/base64"
  "encoding/hex"
@@ -360,6 +363,8 @@ func TestWindowsOriginalCatalogArchiveNativeActualCensus(t *testing.T){
  if err:=loadOriginalRecoveryReviewEvidenceUnarmed(ctx,root,transactionID,binding,check);err!=nil{t.Fatal("durable review reopen failed",err)}
  reopened,err:=reopenOriginalRecoveryReviewUnarmed(ctx,root,transactionID,binding,snap,browser,inv,pin,check)
  if err!=nil||reopened!=report{t.Fatal("fresh four-archive review failed",err)}
+ childInput:=originalRecoveryChildInput{root,transactionID,binding,snap,browser,inv,pin}
+ runOriginalRecoveryReviewChild(t,childInput,true)
  _,archiveFile,err:=catalogOriginalArchivePaths(parent)
  if err!=nil{t.Fatal(err)}
  priorArchive,err:=os.ReadFile(archiveFile)
@@ -368,6 +373,7 @@ func TestWindowsOriginalCatalogArchiveNativeActualCensus(t *testing.T){
  if err:=loadOriginalRecoveryReviewEvidenceUnarmed(ctx,root,transactionID,binding,check);err!=nil{t.Fatal("historical record unexpectedly changed",err)}
  stale,err:=reopenOriginalRecoveryReviewUnarmed(ctx,root,transactionID,binding,snap,browser,inv,pin,check)
  if err==nil||stale!=(originalProtectionPairReceipt{}){t.Fatal("stale historical review accepted as current evidence")}
+ runOriginalRecoveryReviewChild(t,childInput,false)
  if err:=os.WriteFile(archiveFile,priorArchive,0600);err!=nil{t.Fatal(err)}
  reopened,err=reopenOriginalRecoveryReviewUnarmed(ctx,root,transactionID,binding,snap,browser,inv,pin,check)
  if err!=nil||reopened!=report{t.Fatal("intact fixture rejected after reset",err)}
@@ -378,6 +384,8 @@ func TestWindowsOriginalCatalogArchiveNativeActualCensus(t *testing.T){
  if err!=nil{t.Fatal(err)}
  if err:=os.WriteFile(path,[]byte("{"),0600);err!=nil{t.Fatal("synthetic evidence interruption injection failed",err)}
  if err:=loadOriginalRecoveryReviewEvidenceUnarmed(ctx,root,transactionID,binding,check);err==nil{t.Fatal("truncated evidence accepted")}
+ runOriginalRecoveryReviewChild(t,childInput,false)
+ t.Log("PASS VOLVE_NEW_PROCESS_REOPENS_VALID_AND_REFUSES_STALE_TRUNCATED_REVIEW")
  if err:=persistOriginalRecoveryReviewEvidenceUnarmed(ctx,root,transactionID,binding,snap,browser,inv,pin,seal,check);err==nil{t.Fatal("interrupted evidence slot reused")}
  t.Log("PASS VOLVE_DURABLE_UNARMED_REVIEW_NTFS_REJECTS_INTERRUPTION")
  t.Log("PASS VOLVE_NATIVE_BOUND_FOUR_ARCHIVES_AND_LIVE_RECENSUS")
@@ -470,4 +478,53 @@ func TestWindowsOriginalCatalogArchiveBoundTransaction(t *testing.T){
   })
  }
  t.Log("PASS VOLVE_BOUND_ORIGINAL_ARCHIVES_REJECT_FOREIGN_TRANSACTION")
+}
+
+
+// Pass independent census evidence via stdin to a new test executable process.
+// No environment secrets, raw archive payloads or real system mutations.
+type originalRecoveryChildInput struct{
+ Root,ID,Binding string
+ Snapshot ProtectionSnapshot
+ Browser WindowsBrowserPolicyEvidence
+ Inventory WindowsFreshVOLVETaskInventory
+ DNSPin string
+}
+
+func runOriginalRecoveryReviewChild(t *testing.T,input originalRecoveryChildInput,wantVerified bool){
+ t.Helper()
+ raw,err:=json.Marshal(input)
+ if err!=nil||len(raw)>16384{t.Fatal("child input encoding failed")}
+ exe,err:=os.Executable()
+ if err!=nil{t.Fatal("test executable unavailable")}
+ ctx,cancel:=context.WithTimeout(context.Background(),60*time.Second);defer cancel()
+ cmd:=exec.CommandContext(ctx,exe,"-test.run=^TestVOLVEOriginalRecoveryReviewChild$","-test.count=1","-test.v")
+ cmd.Env=append(os.Environ(),"VOLVE_REVIEW_CHILD=1")
+ cmd.Stdin=bytes.NewReader(raw)
+ out,err:=cmd.CombinedOutput()
+ if err!=nil{t.Fatal("independent review process failed",err)}
+ want:="VOLVE_CHILD_REVIEW_REFUSED"
+ other:="VOLVE_CHILD_REVIEW_VERIFIED"
+ if wantVerified{want,other=other,want}
+ if strings.Count(string(out),want)!=1||strings.Contains(string(out),other){t.Fatal("independent process result differs from expected")}
+}
+
+func TestVOLVEOriginalRecoveryReviewChild(t *testing.T){
+ if os.Getenv("VOLVE_REVIEW_CHILD")!="1"{t.Skip("explicit subprocess only")}
+ if os.Getenv("GITHUB_ACTIONS")!="true"||os.Getenv("RUNNER_ENVIRONMENT")!="github-hosted"{t.Fatal("hosted lab only")}
+ raw,err:=io.ReadAll(io.LimitReader(os.Stdin,16385))
+ if err!=nil||len(raw)==0||len(raw)>16384{t.Fatal("invalid child input")}
+ var input originalRecoveryChildInput
+ if err:=residentCanonical(raw,&input);err!=nil{t.Fatal("child evidence not canonical")}
+ ctx,cancel:=context.WithTimeout(context.Background(),45*time.Second);defer cancel()
+ receipt,err:=reopenOriginalRecoveryReviewUnarmed(ctx,input.Root,input.ID,input.Binding,input.Snapshot,input.Browser,input.Inventory,input.DNSPin,
+  func(p string)error{return nativeDNSOriginalBackupACL(ctx,p)})
+ if err!=nil{
+  if receipt!=(originalProtectionPairReceipt{}){t.Fatal("failed child returned evidence")}
+  t.Log("VOLVE_CHILD_REVIEW_REFUSED")
+  return
+ }
+ if !receipt.HostsVerified||receipt.BrowserKeysVerified!=3||!receipt.DNSBackupVerified||!receipt.CatalogBackupVerified||
+  receipt.CompleteRecoverySnapshot||receipt.InstallAuthorized||receipt.RestoreAuthorized{t.Fatal("invalid child receipt")}
+ t.Log("VOLVE_CHILD_REVIEW_VERIFIED")
 }
