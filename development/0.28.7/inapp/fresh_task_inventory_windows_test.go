@@ -341,3 +341,46 @@ func TestWindowsOriginalCatalogArchiveNativeActualCensus(t *testing.T){
  if err!=nil||after!=snap{t.Fatal("live Windows original state differs after temporary archive rehearsal")}
  t.Log("PASS VOLVE_ACTUAL_NATIVE_ORIGINALS_ARCHIVED_AND_RECENSUSED_NO_OS_WRITES")
 }
+
+// Lab-only bridge: route a native, inert synthetic task export through the
+// actual VOLVE catalog archive codec and ACL checks. The catalog identity
+// metadata below is a synthetic fixture, NOT evidence about a live catalog.
+// The workflow owns the random temporary directory and task lifecycle.
+func TestVOLVESyntheticCatalogArchiveBridge(t *testing.T){
+ if os.Getenv("GITHUB_ACTIONS")!="true"||os.Getenv("RUNNER_ENVIRONMENT")!="github-hosted"{t.Skip("hosted lab only")}
+ dir:=os.Getenv("VOLVE_LAB_CATALOG_DIR")
+ root:=os.Getenv("RUNNER_TEMP")
+ if !filepath.IsAbs(root)||!filepath.IsAbs(dir)||filepath.Clean(dir)!=dir||
+  !strings.EqualFold(filepath.Dir(dir),filepath.Clean(root))||
+  !strings.HasPrefix(filepath.Base(dir),"volve-catalog-xml-")||len(filepath.Base(dir))!=len("volve-catalog-xml-")+32{t.Fatal("invalid synthetic bridge directory")}
+ suffix:=strings.TrimPrefix(filepath.Base(dir),"volve-catalog-xml-")
+ if b,err:=hex.DecodeString(suffix);err!=nil||len(b)!=16{t.Fatal("invalid synthetic directory identity")}
+ source:=filepath.Join(dir,"catalog.xml")
+ before,err:=os.Lstat(source)
+ if err!=nil||!before.Mode().IsRegular()||before.Size()<1||before.Size()>catalogOriginalXMLLimit{t.Fatal("invalid synthetic XML input")}
+ xml,err:=os.ReadFile(source)
+ if err!=nil||int64(len(xml))!=before.Size(){t.Fatal("synthetic XML read failed",err)}
+ sum:=sha256.Sum256(xml)
+ pin:=hex.EncodeToString(sum[:])
+ if pin!=os.Getenv("VOLVE_LAB_CATALOG_SHA256"){t.Fatal("independent synthetic XML digest mismatch")}
+ ctx,cancel:=context.WithTimeout(context.Background(),90*time.Second);defer cancel()
+ parent,snap,_,_,_:=makeOriginalProtectionPairFixture(t)
+ snap.CatalogTaskDefinitionSHA256=pin
+ task:=freshTaskFixture();task.DefinitionSHA256=pin
+ inv,err:=InspectWindowsVOLVETasksReadOnly(ctx,task.Actions[0].Execute,task.Actions[0].Arguments,func(context.Context,string)([]byte,error){return freshWindowsTaskJSON(t,[]windowsVOLVETaskRecord{task}),nil})
+ if err!=nil{t.Fatal(err)}
+ seal:=func(p string)error{return sealDNSBackupLabNode(ctx,p)}
+ check:=func(p string)error{return nativeDNSOriginalBackupACL(ctx,p)}
+ if err:=seal(parent);err!=nil{t.Fatal(err)}
+ if err:=storeOriginalCatalogArchiveUnarmed(ctx,parent,snap,inv,originalCatalogDefinition{Present:true,XML:xml},seal,check);err!=nil{t.Fatal("catalog codec archive failed",err)}
+ xml=nil
+ got,err:=readOriginalCatalogArchiveUnarmed(ctx,parent,snap,inv,check)
+ if err!=nil||!got.Present||sha256.Sum256(got.XML)!=sum{t.Fatal("catalog codec readback failed",err)}
+ out,err:=os.OpenFile(filepath.Join(dir,"verified-catalog.xml"),os.O_WRONLY|os.O_CREATE|os.O_EXCL,0600)
+ if err!=nil{t.Fatal(err)}
+ n,werr:=out.Write(got.XML)
+ syncErr:=out.Sync()
+ closeErr:=out.Close()
+ if n!=len(got.XML)||werr!=nil||syncErr!=nil||closeErr!=nil{t.Fatal("verified synthetic output not persisted")}
+ t.Log("PASS VOLVE_SYNTHETIC_CATALOG_REAL_ARCHIVE_CODEC_BRIDGE")
+}
