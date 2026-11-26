@@ -83,6 +83,7 @@ jobs:
           if(@($result|Where-Object {$_ -match 'PASS VOLVE_NATIVE_BOUND_FOUR_ARCHIVES_AND_LIVE_RECENSUS'}).Count -ne 1){throw 'Missing native bound archive evidence'}
           if(@($result|Where-Object {$_ -match 'PASS VOLVE_DURABLE_UNARMED_REVIEW_NTFS_REJECTS_INTERRUPTION'}).Count -ne 1){throw 'Missing durable review interruption rejection evidence'}
           if(@($result|Where-Object {$_ -match 'PASS VOLVE_DURABLE_REOPEN_REJECTS_STALE_ARCHIVE'}).Count -ne 1){throw 'Missing stale recovery evidence rejection'}
+          if(@($result|Where-Object {$_ -match 'PASS VOLVE_NEW_PROCESS_REOPENS_VALID_AND_REFUSES_STALE_TRUNCATED_REVIEW'}).Count -ne 1){throw 'Missing independent process recovery evidence'}
           if(@($result|Where-Object {$_ -match 'PASS VOLVE_CATALOG_ARCHIVE_REAL_NTFS_FIXTURE_NO_TASK_WRITES'}).Count -ne 1){throw 'Missing real catalog archive NTFS evidence'}
           if(@($result|Where-Object {$_ -match 'PASS VOLVE_FOUR_ORIGINAL_ARCHIVES_FIXTURE_REVIEW_NO_AUTHORIZATION'}).Count -ne 1){throw 'Missing four-component fixture review'}
           if(@($result|Where-Object {$_ -match 'PASS VOLVE_FOUR_ARCHIVES_REAL_NTFS_DISPLAY_ONLY'}).Count -ne 1){throw 'Missing native four-archive display review'}
