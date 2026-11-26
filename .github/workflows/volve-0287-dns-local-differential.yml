@@ -6,7 +6,7 @@ permissions:
   contents: read
 jobs:
   local-reference:
-    runs-on: windows-2025
+    runs-on: windows-2022
     timeout-minutes: 8
     steps:
       - uses: actions/checkout@v4
@@ -109,4 +109,6 @@ jobs:
           }
           if($observations.Count -ne 8 -or !$restored){throw 'Incomplete diagnostic'}
           if(@($observations|Where-Object {$_.mode -eq 'configured-default' -and $_.answer_verified -and $_.wire_verified}).Count -ne 2){throw 'Configured normal DNS control failed'}
-          Write-Host 'DIAGNOSTIC COMPLETE; interpret TCP observations; NO RELEASE'
+          $verified=@($observations|Where-Object {$_.answer_verified -and $_.wire_verified -and ($_.mode -notlike '*tcp' -or ($_.tcp_replies -ge 1 -and $_.udp_replies -eq 0))})
+          if($verified.Count -ne 8){throw 'Strict independent reference matrix did not pass 8/8; NO RELEASE'}
+          Write-Host 'PASS: eight exact reference answers and exclusive TCP wire responses; NO RELEASE'
