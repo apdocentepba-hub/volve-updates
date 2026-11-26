@@ -149,11 +149,7 @@ jobs:
           if($observations.Count -ne 6 -or $nativeObservations.Count -ne 10 -or !$restored){throw 'Incomplete diagnostic'}
           $nativeForced=@($nativeObservations|Where-Object {$_.mode -like '*tcp' -and $_.answer_verified -and $_.error_id -eq 0 -and ($_.ipv4_tcp+$_.ipv6_tcp) -gt 0 -and $_.udp -eq 0})
           Write-Host ('NATIVE_FORCED_TCP_VERIFIED='+$nativeForced.Count+'/2')
-          $variants=@($nativeObservations|Where-Object {$_.mode -match '-tcp-(minimal|no-cache|wire-only)
-          $forced=@($observations|Where-Object {$_.mode -like '*tcp' -and $_.answer_verified -and ($_.ipv4_tcp+$_.ipv6_tcp) -gt 0 -and $_.udp -eq 0})
-          if($forced.Count -ne 4){throw 'Configured forced TCP reference still unverified; NO RELEASE'}
-          Write-Host 'PASS: exact forced TCP answers for both configurations; reference only, no release'
- -and $_.answer_verified -and $_.error_id -eq 0 -and ($_.ipv4_tcp+$_.ipv6_tcp) -gt 0 -and $_.udp -eq 0})
+          $variants=@($nativeObservations|Where-Object {$_.mode -match '-tcp-(minimal|no-cache|wire-only)$' -and $_.answer_verified -and $_.error_id -eq 0 -and ($_.ipv4_tcp+$_.ipv6_tcp) -gt 0 -and $_.udp -eq 0})
           Write-Host ('NATIVE_TCP_OPTION_VARIANTS_VERIFIED='+$variants.Count+'/6')
           $forced=@($observations|Where-Object {$_.mode -like '*tcp' -and $_.answer_verified -and ($_.ipv4_tcp+$_.ipv6_tcp) -gt 0 -and $_.udp -eq 0})
           if($forced.Count -ne 4){throw 'Configured forced TCP reference still unverified; NO RELEASE'}
