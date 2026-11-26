@@ -3,6 +3,7 @@
 package motorupdate
 
 import (
+ "bufio"
  "bytes"
  "context"
  "io"
@@ -382,7 +383,13 @@ func TestWindowsOriginalCatalogArchiveNativeActualCensus(t *testing.T){
  if err:=persistOriginalRecoveryReviewEvidenceUnarmed(ctx,root,transactionID,binding,snap,browser,inv,pin,seal,check);err==nil{t.Fatal("existing durable evidence overwritten")}
  path,err:=originalRecoveryEvidencePath(root,transactionID)
  if err!=nil{t.Fatal(err)}
- if err:=os.WriteFile(path,[]byte("{"),0600);err!=nil{t.Fatal("synthetic evidence interruption injection failed",err)}
+ // Reset only the disposable fixture's review slot, never a real journal.
+ if err:=os.Remove(path);err!=nil{t.Fatal("lab review reset failed",err)}
+ if _,err:=os.Lstat(path);!os.IsNotExist(err){t.Fatal("lab review reset not verified")}
+ runOriginalRecoveryInterruptedWriter(t,childInput)
+ partial,err:=os.ReadFile(path)
+ if err!=nil||string(partial)!="{"{t.Fatal("terminated writer did not leave the expected durable partial record",err)}
+ t.Log("PASS VOLVE_LAB_WRITER_TERMINATED_AFTER_PARTIAL_SYNC")
  if err:=loadOriginalRecoveryReviewEvidenceUnarmed(ctx,root,transactionID,binding,check);err==nil{t.Fatal("truncated evidence accepted")}
  runOriginalRecoveryReviewChild(t,childInput,false)
  t.Log("PASS VOLVE_NEW_PROCESS_REOPENS_VALID_AND_REFUSES_STALE_TRUNCATED_REVIEW")
@@ -527,4 +534,60 @@ func TestVOLVEOriginalRecoveryReviewChild(t *testing.T){
  if !receipt.HostsVerified||receipt.BrowserKeysVerified!=3||!receipt.DNSBackupVerified||!receipt.CatalogBackupVerified||
   receipt.CompleteRecoverySnapshot||receipt.InstallAuthorized||receipt.RestoreAuthorized{t.Fatal("invalid child receipt")}
  t.Log("VOLVE_CHILD_REVIEW_VERIFIED")
+}
+
+
+// Fault injection uses a test-only partial writer rather than changing the
+// production journal writer. The parent kills exactly its own subprocess
+// after a confirmed flush; no Windows shutdown or system mutation.
+func runOriginalRecoveryInterruptedWriter(t *testing.T,input originalRecoveryChildInput){
+ t.Helper()
+ raw,err:=json.Marshal(input)
+ if err!=nil||len(raw)>16384{t.Fatal("writer input encoding failed")}
+ exe,err:=os.Executable()
+ if err!=nil{t.Fatal("test executable unavailable")}
+ ctx,cancel:=context.WithTimeout(context.Background(),30*time.Second);defer cancel()
+ cmd:=exec.CommandContext(ctx,exe,"-test.run=^TestVOLVEOriginalRecoveryInterruptedWriter$","-test.count=1","-test.v")
+ cmd.Env=append(os.Environ(),"VOLVE_REVIEW_PARTIAL_WRITER=1")
+ cmd.Stdin=bytes.NewReader(raw)
+ stdout,err:=cmd.StdoutPipe()
+ if err!=nil{t.Fatal(err)}
+ if err:=cmd.Start();err!=nil{t.Fatal(err)}
+ waited:=false
+ defer func(){if !waited{_ = cmd.Process.Kill();_ = cmd.Wait()}}()
+ scanner:=bufio.NewScanner(stdout)
+ ready:=false
+ for scanner.Scan(){if scanner.Text()=="VOLVE_LAB_PARTIAL_SYNC_READY"{ready=true;break}}
+ if !ready{t.Fatal("writer did not confirm partial sync")}
+ if err:=cmd.Process.Kill();err!=nil{t.Fatal("writer termination failed",err)}
+ err=cmd.Wait()
+ waited=true
+ var exit *exec.ExitError
+ if !errors.As(err,&exit)||exit.Success(){t.Fatal("writer termination not observed")}
+}
+
+func TestVOLVEOriginalRecoveryInterruptedWriter(t *testing.T){
+ if os.Getenv("VOLVE_REVIEW_PARTIAL_WRITER")!="1"{t.Skip("explicit fault injection subprocess only")}
+ if os.Getenv("GITHUB_ACTIONS")!="true"||os.Getenv("RUNNER_ENVIRONMENT")!="github-hosted"{t.Fatal("hosted lab only")}
+ raw,err:=io.ReadAll(io.LimitReader(os.Stdin,16385))
+ if err!=nil||len(raw)==0||len(raw)>16384{t.Fatal("invalid writer input")}
+ var input originalRecoveryChildInput
+ if err:=residentCanonical(raw,&input);err!=nil{t.Fatal("writer input not canonical")}
+ ctx,cancel:=context.WithTimeout(context.Background(),20*time.Second);defer cancel()
+ check:=func(p string)error{return nativeDNSOriginalBackupACL(ctx,p)}
+ receipt,err:=verifyBoundOriginalRecoveryArchivesUnarmed(ctx,input.ID,input.Binding,filepath.Join(input.Root,"original-protection-recovery"),filepath.Join(input.Root,"legacy-engine-recovery"),input.Snapshot,input.Browser,input.Inventory,input.DNSPin,check)
+ if err!=nil||!receipt.HostsVerified||receipt.BrowserKeysVerified!=3||!receipt.DNSBackupVerified||!receipt.CatalogBackupVerified||receipt.RestoreAuthorized||receipt.InstallAuthorized{t.Fatal("writer fixture not independently verified")}
+ path,err:=originalRecoveryEvidencePath(input.Root,input.ID)
+ if err!=nil{t.Fatal(err)}
+ if err:=verifyOriginalHostsBackupNode(input.Root,true,check);err!=nil{t.Fatal("writer fixture root not protected")}
+ file,err:=os.OpenFile(path,os.O_WRONLY|os.O_CREATE|os.O_EXCL,0600)
+ if err!=nil{t.Fatal("fault injection slot unavailable")}
+ defer file.Close()
+ n,err:=file.Write([]byte("{"))
+ if err!=nil||n!=1{t.Fatal("partial write failed")}
+ if err:=file.Sync();err!=nil{t.Fatal("partial sync failed")}
+ if _,err:=os.Stdout.WriteString("VOLVE_LAB_PARTIAL_SYNC_READY\n");err!=nil{t.Fatal("writer handshake failed")}
+ // No success exit is permitted. The parent must terminate this process.
+ time.Sleep(60*time.Second)
+ t.Fatal("writer was not terminated")
 }
