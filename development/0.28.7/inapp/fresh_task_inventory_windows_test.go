@@ -233,7 +233,7 @@ func TestWindowsOriginalCatalogArchiveFourComponentReview(t *testing.T){
 
 func TestWindowsOriginalCatalogArchiveNativeDisplayReview(t *testing.T){
  if os.Getenv("GITHUB_ACTIONS")!="true"||os.Getenv("RUNNER_ENVIRONMENT")!="github-hosted"{t.Skip("disposable runner only")}
- ctx,cancel:=context.WithTimeout(context.Background(),240*time.Second);defer cancel()
+ ctx,cancel:=context.WithTimeout(context.Background(),150*time.Second);defer cancel()
  parent,snap,browser,hosts,policies:=makeOriginalProtectionPairFixture(t)
  observed,err:=InspectWindowsDNSAssignmentProvenanceReadOnly(ctx,protectionSnapshotDNSInspect)
  if err!=nil{t.Fatal(err)}
@@ -274,7 +274,7 @@ func TestWindowsOriginalCatalogArchiveNativeDisplayReview(t *testing.T){
 // all live OS queries are read-only. The temporary data is not published.
 func TestWindowsOriginalCatalogArchiveNativeActualCensus(t *testing.T){
  if os.Getenv("GITHUB_ACTIONS")!="true"||os.Getenv("RUNNER_ENVIRONMENT")!="github-hosted"{t.Skip("disposable hosted runner only")}
- ctx,cancel:=context.WithTimeout(context.Background(),150*time.Second);defer cancel()
+ ctx,cancel:=context.WithTimeout(context.Background(),240*time.Second);defer cancel()
  // Preserve the first failed census stage, but never log GUIDs, paths,
  // task names, DNS addresses or arbitrary native exception text.
  readers:=DefaultWindowsProtectionSnapshotInspectors()
