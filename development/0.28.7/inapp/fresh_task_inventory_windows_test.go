@@ -386,7 +386,7 @@ func TestWindowsOriginalCatalogArchiveNativeActualCensus(t *testing.T){
  // Reset only the disposable fixture's review slot, never a real journal.
  if err:=os.Remove(path);err!=nil{t.Fatal("lab review reset failed",err)}
  if _,err:=os.Lstat(path);!os.IsNotExist(err){t.Fatal("lab review reset not verified")}
- runOriginalRecoveryInterruptedWriter(t,childInput)
+ runOriginalRecoveryInterruptedWriter(t,childInput,false)
  partial,err:=os.ReadFile(path)
  if err!=nil||string(partial)!="{"{t.Fatal("terminated writer did not leave the expected durable partial record",err)}
  t.Log("PASS VOLVE_LAB_WRITER_TERMINATED_AFTER_PARTIAL_SYNC")
@@ -444,7 +444,7 @@ func TestVOLVESyntheticCatalogArchiveBridge(t *testing.T){
 }
 
 func TestWindowsOriginalCatalogArchiveBoundTransaction(t *testing.T){
- ctx:=context.Background()
+ ctx,cancel:=context.WithTimeout(context.Background(),150*time.Second);defer cancel()
  src,snap,browser,hosts,policies:=makeOriginalProtectionPairFixture(t)
  _=src
  id:=strings.Repeat("a",32)
@@ -461,10 +461,17 @@ func TestWindowsOriginalCatalogArchiveBoundTransaction(t *testing.T){
  snap.CatalogTaskDefinitionSHA256=hex.EncodeToString(sum[:])
  inv:=WindowsFreshVOLVETaskInventory{}
  allow:=func(string)error{return nil}
- if err:=storeOriginalWindowsHostsBackupUnarmed(ctx,parent,hosts,WindowsHostsFileEvidence{SHA256:snap.HostsSHA256,BlockedRuleCount:snap.HostsBlockedRuleCount},allow,allow);err!=nil{t.Fatal(err)}
- if err:=storeBrowserOriginalArchiveUnarmed(ctx,parent,browser,policies,allow,allow);err!=nil{t.Fatal(err)}
- if _,err:=StoreDNSOriginalBackupUnarmed(ctx,dnsParent,journal,dnsPin,allow,allow);err!=nil{t.Fatal(err)}
- if err:=storeOriginalCatalogArchiveUnarmed(ctx,parent,snap,inv,originalCatalogDefinition{},allow,allow);err!=nil{t.Fatal(err)}
+ seal:=allow
+ hosted:=os.Getenv("GITHUB_ACTIONS")=="true"&&os.Getenv("RUNNER_ENVIRONMENT")=="github-hosted"
+ if hosted{
+  seal=func(p string)error{return sealDNSBackupLabNode(ctx,p)}
+  allow=func(p string)error{return nativeDNSOriginalBackupACL(ctx,p)}
+  for _,dir:=range []string{root,parent,dnsParent}{if err:=seal(dir);err!=nil{t.Fatal(err)}}
+ }
+ if err:=storeOriginalWindowsHostsBackupUnarmed(ctx,parent,hosts,WindowsHostsFileEvidence{SHA256:snap.HostsSHA256,BlockedRuleCount:snap.HostsBlockedRuleCount},seal,allow);err!=nil{t.Fatal(err)}
+ if err:=storeBrowserOriginalArchiveUnarmed(ctx,parent,browser,policies,seal,allow);err!=nil{t.Fatal(err)}
+ if _,err:=StoreDNSOriginalBackupUnarmed(ctx,dnsParent,journal,dnsPin,seal,allow);err!=nil{t.Fatal(err)}
+ if err:=storeOriginalCatalogArchiveUnarmed(ctx,parent,snap,inv,originalCatalogDefinition{},seal,allow);err!=nil{t.Fatal(err)}
  pin,err:=originalRecoveryReviewPin(id,snap,dnsPin)
  if err!=nil{t.Fatal(err)}
  got,err:=verifyBoundOriginalRecoveryArchivesUnarmed(ctx,id,pin,parent,dnsParent,snap,browser,inv,dnsPin,allow)
@@ -486,6 +493,17 @@ func TestWindowsOriginalCatalogArchiveBoundTransaction(t *testing.T){
   })
  }
  t.Log("PASS VOLVE_BOUND_ORIGINAL_ARCHIVES_REJECT_FOREIGN_TRANSACTION")
+ if hosted{
+  input:=originalRecoveryChildInput{root,id,pin,snap,browser,inv,dnsPin}
+  runOriginalRecoveryInterruptedWriter(t,input,true)
+  // A complete sealed record can be re-observed, even when the original
+  // writer never returned success. It still cannot grant permission.
+  runOriginalRecoveryReviewChild(t,input,true)
+  if err:=persistOriginalRecoveryReviewEvidenceUnarmed(ctx,root,id,pin,snap,browser,inv,dnsPin,seal,allow);err==nil{t.Fatal("terminated real writer slot reused")}
+  if err:=ctx.Err();err!=nil{t.Fatal("real writer test expired",err)}
+  t.Log("PASS VOLVE_REAL_REVIEW_WRITER_TERMINATED_AFTER_SEAL")
+ }
+
 }
 
 
@@ -542,7 +560,7 @@ func TestVOLVEOriginalRecoveryReviewChild(t *testing.T){
 // Fault injection uses a test-only partial writer rather than changing the
 // production journal writer. The parent kills exactly its own subprocess
 // after a confirmed flush; no Windows shutdown or system mutation.
-func runOriginalRecoveryInterruptedWriter(t *testing.T,input originalRecoveryChildInput){
+func runOriginalRecoveryInterruptedWriter(t *testing.T,input originalRecoveryChildInput,realWriter bool){
  t.Helper()
  raw,err:=json.Marshal(input)
  if err!=nil||len(raw)>16384{t.Fatal("writer input encoding failed")}
@@ -551,6 +569,8 @@ func runOriginalRecoveryInterruptedWriter(t *testing.T,input originalRecoveryChi
  ctx,cancel:=context.WithTimeout(context.Background(),60*time.Second);defer cancel()
  cmd:=exec.CommandContext(ctx,exe,"-test.run=^TestVOLVEOriginalRecoveryInterruptedWriter$","-test.count=1","-test.v")
  cmd.Env=append(os.Environ(),"VOLVE_REVIEW_PARTIAL_WRITER=1")
+ marker:="VOLVE_LAB_PARTIAL_SYNC_READY"
+ if realWriter{cmd.Env=append(cmd.Env,"VOLVE_REVIEW_REAL_WRITER=1");marker="VOLVE_LAB_REAL_SEAL_READY"}
  cmd.Stdin=bytes.NewReader(raw)
  stdout,err:=cmd.StdoutPipe()
  if err!=nil{t.Fatal(err)}
@@ -559,7 +579,7 @@ func runOriginalRecoveryInterruptedWriter(t *testing.T,input originalRecoveryChi
  defer func(){if !waited{_ = cmd.Process.Kill();_ = cmd.Wait()}}()
  scanner:=bufio.NewScanner(stdout)
  ready:=false
- for scanner.Scan(){if scanner.Text()=="VOLVE_LAB_PARTIAL_SYNC_READY"{ready=true;break}}
+ for scanner.Scan(){if scanner.Text()==marker{ready=true;break}}
  if !ready||ctx.Err()!=nil{t.Fatal("writer did not confirm partial sync within live context")}
  if err:=cmd.Process.Kill();err!=nil{t.Fatal("writer termination failed",err)}
  err=cmd.Wait()
@@ -577,6 +597,17 @@ func TestVOLVEOriginalRecoveryInterruptedWriter(t *testing.T){
  if err:=residentCanonical(raw,&input);err!=nil{t.Fatal("writer input not canonical")}
  ctx,cancel:=context.WithTimeout(context.Background(),45*time.Second);defer cancel()
  check:=func(p string)error{return nativeDNSOriginalBackupACL(ctx,p)}
+ if os.Getenv("VOLVE_REVIEW_REAL_WRITER")=="1"{
+  seal:=func(p string)error{
+   if err:=sealDNSBackupLabNode(ctx,p);err!=nil{return err}
+   if err:=check(p);err!=nil{return err}
+   if _,err:=os.Stdout.WriteString("VOLVE_LAB_REAL_SEAL_READY\n");err!=nil{return err}
+   time.Sleep(60*time.Second)
+   return errors.New("real writer was not terminated")
+  }
+  if err:=persistOriginalRecoveryReviewEvidenceUnarmed(ctx,input.Root,input.ID,input.Binding,input.Snapshot,input.Browser,input.Inventory,input.DNSPin,seal,check);err!=nil{t.Fatal("real writer exited before termination",err)}
+  t.Fatal("real writer unexpectedly completed")
+ }
  receipt,err:=verifyBoundOriginalRecoveryArchivesUnarmed(ctx,input.ID,input.Binding,filepath.Join(input.Root,"original-protection-recovery"),filepath.Join(input.Root,"legacy-engine-recovery"),input.Snapshot,input.Browser,input.Inventory,input.DNSPin,check)
  if err!=nil||!receipt.HostsVerified||receipt.BrowserKeysVerified!=3||!receipt.DNSBackupVerified||!receipt.CatalogBackupVerified||receipt.RestoreAuthorized||receipt.InstallAuthorized{t.Fatal("writer fixture not independently verified")}
  path,err:=originalRecoveryEvidencePath(input.Root,input.ID)
