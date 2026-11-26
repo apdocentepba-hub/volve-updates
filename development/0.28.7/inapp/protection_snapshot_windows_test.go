@@ -9,9 +9,11 @@ import (
  "encoding/json"
  "errors"
  "os"
+ "os/exec"
  "path/filepath"
  "strings"
  "testing"
+ "time"
 )
 
 func TestCountWindowsHostsBlockedRulesDoesNotReturnNames(t *testing.T){
@@ -260,4 +262,65 @@ func TestWindowsHostsOriginalBackupStoreRejectsExtraNodesAndACLDrift(t *testing.
  dir,_,err:=originalHostsBackupPaths(parent);if err!=nil{t.Fatal(err)}
  if err:=os.WriteFile(filepath.Join(dir,"unexpected.bin"),[]byte{},0600);err!=nil{t.Fatal(err)}
  if got,err:=readOriginalWindowsHostsBackupUnarmed(ctx,parent,pin,allow);err==nil||got!=nil{t.Fatal("ambiguous stage accepted")}
+}
+
+func TestWindowsHostsOriginalBackupRealNTFSAndRecoveryFixture(t *testing.T){
+ if os.Getenv("GITHUB_ACTIONS")!="true"||os.Getenv("RUNNER_ENVIRONMENT")!="github-hosted"{
+  t.Skip("disposable GitHub-hosted runner only")
+ }
+ ctx,cancel:=context.WithTimeout(context.Background(),90*time.Second)
+ defer cancel()
+ // Every modified path is allocated by t.TempDir. Never touch live hosts.
+ parent:=filepath.Join(t.TempDir(),"original-protection-recovery")
+ if err:=os.Mkdir(parent,0700);err!=nil{t.Fatal(err)}
+ if err:=sealDNSBackupLabNode(ctx,parent);err!=nil{t.Fatal(err)}
+ source:=filepath.Join(t.TempDir(),"hosts-fixture")
+ raw:=[]byte("# original\r\n127.0.0.1 localhost\r\n0.0.0.0 fixture.test\r\n")
+ if err:=os.WriteFile(source,raw,0600);err!=nil{t.Fatal(err)}
+ pin,err:=inspectWindowsHostsFileAtReadOnly(ctx,source);if err!=nil{t.Fatal(err)}
+ data,err:=captureOriginalWindowsHostsBackup(ctx,source,pin);if err!=nil{t.Fatal(err)}
+ check:=func(path string)error{return nativeDNSOriginalBackupACL(ctx,path)}
+ seal:=func(path string)error{return sealDNSBackupLabNode(ctx,path)}
+ if err:=storeOriginalWindowsHostsBackupUnarmed(ctx,parent,data,pin,seal,check);err!=nil{t.Fatal(err)}
+ dir,file,err:=originalHostsBackupPaths(parent);if err!=nil{t.Fatal(err)}
+ for _,path:=range []string{parent,dir,file}{
+  if err:=check(path);err!=nil{t.Fatal("real NTFS owner/DACL rejected",err)}
+ }
+ if err:=storeOriginalWindowsHostsBackupUnarmed(ctx,parent,data,pin,seal,check);err==nil{t.Fatal("existing sealed backup overwritten")}
+ // Simulate an interrupted installation changing only this synthetic file.
+ if err:=os.WriteFile(source,[]byte("# interrupted fixture\n"),0600);err!=nil{t.Fatal(err)}
+ restored,err:=readOriginalWindowsHostsBackupUnarmed(ctx,parent,pin,check);if err!=nil{t.Fatal(err)}
+ if string(restored)!=string(raw){t.Fatal("independent reopened bytes differ")}
+ // Restore to the synthetic file and independently re-inspect its contents.
+ // This is a lab write, not a production restore implementation.
+ if err:=os.WriteFile(source,restored,0600);err!=nil{t.Fatal(err)}
+ got,err:=inspectWindowsHostsFileAtReadOnly(ctx,source)
+ if err!=nil||got!=pin{t.Fatal("recovered fixture differs from independently pinned original",err)}
+ t.Log("PASS VOLVE_HOSTS_NTFS_REAL_ACL_AND_FIXTURE_RECOVERY")
+ // Weaken only the disposable backup's DACL; valid bytes must be refused.
+ out,err:=exec.CommandContext(ctx,"icacls.exe",file,"/grant","*S-1-1-0:W").CombinedOutput()
+ if err!=nil{t.Fatalf("could not weaken disposable backup DACL: %v %s",err,string(out))}
+ if data,err:=readOriginalWindowsHostsBackupUnarmed(ctx,parent,pin,check);err==nil||data!=nil{t.Fatal("writable Everyone DACL accepted")}
+ t.Log("PASS VOLVE_HOSTS_NTFS_REAL_ACL_DRIFT_REJECTED")
+}
+
+func TestWindowsHostsOriginalBackupRealNTFSRejectsUnprotectedParent(t *testing.T){
+ if os.Getenv("GITHUB_ACTIONS")!="true"||os.Getenv("RUNNER_ENVIRONMENT")!="github-hosted"{
+  t.Skip("disposable GitHub-hosted runner only")
+ }
+ ctx,cancel:=context.WithTimeout(context.Background(),45*time.Second)
+ defer cancel()
+ parent:=filepath.Join(t.TempDir(),"original-protection-recovery")
+ if err:=os.Mkdir(parent,0700);err!=nil{t.Fatal(err)}
+ raw:=[]byte("# synthetic\n")
+ sum:=sha256.Sum256(raw)
+ pin:=WindowsHostsFileEvidence{SHA256:hex.EncodeToString(sum[:])}
+ seal:=func(path string)error{return sealDNSBackupLabNode(ctx,path)}
+ check:=func(path string)error{return nativeDNSOriginalBackupACL(ctx,path)}
+ // Establish that the fixture really is unprotected; no mocked ACL result.
+ if err:=check(parent);err==nil{t.Fatal("fixture inherited DACL unexpectedly accepted")}
+ if err:=storeOriginalWindowsHostsBackupUnarmed(ctx,parent,raw,pin,seal,check);err==nil{t.Fatal("unprotected parent accepted")}
+ dir,_,err:=originalHostsBackupPaths(parent);if err!=nil{t.Fatal(err)}
+ if _,err:=os.Lstat(dir);!errors.Is(err,os.ErrNotExist){t.Fatal("staging created before actual ACL verification")}
+ t.Log("PASS VOLVE_HOSTS_NTFS_REAL_UNPROTECTED_PARENT_REFUSED")
 }

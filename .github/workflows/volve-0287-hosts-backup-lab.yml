@@ -51,9 +51,12 @@ jobs:
         run: |
           $ErrorActionPreference='Stop'
           $pattern='^TestWindowsHosts(OriginalBackup|FileReadOnly)'
-          $result=@(go test ./motorupdate -run $pattern -count=1 -v -timeout 2m)
+          $result=@(go test ./motorupdate -run $pattern -count=1 -v -timeout 4m)
           $exit=$LASTEXITCODE
           $result|Write-Host
           if($exit -ne 0){throw 'Hosts capture regression failed'}
-          if(@($result|Where-Object {$_ -match '^--- PASS: TestWindowsHostsOriginalBackup'}).Count -ne 6){throw 'Expected exactly six original hosts backup tests'}
+          if(@($result|Where-Object {$_ -match '^--- PASS: TestWindowsHostsOriginalBackup'}).Count -ne 8){throw 'Expected exactly eight original hosts backup tests'}
+          foreach($marker in @('PASS VOLVE_HOSTS_NTFS_REAL_ACL_AND_FIXTURE_RECOVERY','PASS VOLVE_HOSTS_NTFS_REAL_ACL_DRIFT_REJECTED','PASS VOLVE_HOSTS_NTFS_REAL_UNPROTECTED_PARENT_REFUSED')){
+            if(@($result|Where-Object {$_ -match [regex]::Escape($marker)}).Count -ne 1){throw ('Missing real NTFS evidence: '+$marker)}
+          }
           Write-Host 'PASS: exact original bytes, independent hash, drift rejection and local readback; synthetic fixtures only; NO INSTALL'
