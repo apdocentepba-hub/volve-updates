@@ -459,9 +459,11 @@ func TestVOLVEBrowserOriginalDecodeNativeCaptureFormat(t *testing.T){
  if err!=nil{t.Fatal("fixture census failed",err)}
  payload,err:=captureOriginalBrowserPolicyBytes(ctx,baseline,func(context.Context)([]byte,error){return []byte(envelope.Capture),nil})
  if err!=nil{t.Fatal("fixture independent capture failed",err)}
+ reconstructed:=make(map[string]originalBrowserStringKey,3)
  for _,record:=range baseline.Records{
   decoded,err:=decodeOriginalBrowserStringKey(payload[record.Name],record)
   if err!=nil{t.Fatal("native BinaryWriter stream not decoded",err)}
+  reconstructed[record.Name]=decoded
   switch record.Name{
   case "chrome":
    if !decoded.Present||len(decoded.Values)!=2||decoded.Values["1"]!=value||decoded.Values["2"]!="fixture-two.test"{t.Fatal("native strings not reconstructed exactly")}
@@ -471,5 +473,48 @@ func TestVOLVEBrowserOriginalDecodeNativeCaptureFormat(t *testing.T){
    if decoded.Present||len(decoded.Values)!=0{t.Fatal("absent key not preserved")}
   }
  }
+ // Re-create the decoded synthetic states under a SECOND random HKCU root.
+ // Compare a fresh native fingerprint to the original independent census.
+ // No production registry path, installer, or restoration adapter is used.
+ fixtureJSON,err:=json.Marshal(reconstructed)
+ if err!=nil{t.Fatal("fixture serialization failed")}
+ const rebuildSetup = `$ErrorActionPreference='Stop';$ProgressPreference='SilentlyContinue';
+ if($env:GITHUB_ACTIONS -cne 'true' -or $env:RUNNER_ENVIRONMENT -ne 'github-hosted'){throw 'Hosted fixture only'};
+ $name='Software\VOLVE-REGSZ-REBUILD-'+[Guid]::NewGuid().ToString('N');
+ $root=[Microsoft.Win32.Registry]::CurrentUser;
+ if($null -ne ($existing=$root.OpenSubKey($name))){$existing.Dispose();throw 'Fixture collision'};
+ $inputStates=ConvertFrom-Json -InputObject ([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($env:VOLVE_SYNTHETIC_STATES)));
+ $created=$false;
+ try{
+  $parent=$root.CreateSubKey($name);$created=$true;$parent.Dispose();
+  foreach($browser in @('chrome','edge','firefox')){
+   $state=$inputStates.$browser;
+   if($null -eq $state){throw 'Missing synthetic state'};
+   if(-not $state.Present){continue};
+   $key=$root.CreateSubKey($name+'\'+$browser);
+   try{
+    foreach($entry in $state.Values.PSObject.Properties){
+     $key.SetValue([string]$entry.Name,[string]$entry.Value,[Microsoft.Win32.RegistryValueKind]::String)
+    };
+    $key.Flush()
+   }finally{$key.Dispose()}
+  }
+ `
+ rebuildScript:=rebuildSetup+"\n& {"+fixtureQuery(WindowsVOLVEBrowserPolicyQuery)+"}\n"+` }finally{if($created){$root.DeleteSubKeyTree($name)}};
+ if($null -ne ($left=$root.OpenSubKey($name))){$left.Dispose();throw 'Rebuild fixture cleanup failed'}`
+ rebuildCtx,rebuildCancel:=context.WithTimeout(context.Background(),45*time.Second);defer rebuildCancel()
+ rebuildCmd:=exec.CommandContext(rebuildCtx,ps,"-NoLogo","-NoProfile","-NonInteractive","-Command",rebuildScript)
+ rebuildCmd.Env=append(os.Environ(),"VOLVE_SYNTHETIC_STATES="+base64.StdEncoding.EncodeToString(fixtureJSON))
+ rebuiltRaw,err:=rebuildCmd.Output()
+ if err!=nil{t.Fatal("native synthetic reconstruction or cleanup failed",err)}
+ rebuilt,err:=InspectWindowsBrowserPoliciesReadOnly(rebuildCtx,func(context.Context,string)([]byte,error){return rebuiltRaw,nil})
+ if err!=nil{t.Fatal("independent reconstructed census failed",err)}
+ if rebuilt.TotalNumberedEntries!=baseline.TotalNumberedEntries||len(rebuilt.Records)!=len(baseline.Records){t.Fatal("reconstructed policy totals differ")}
+ for _,expected:=range baseline.Records{
+  found:=false
+  for _,observed:=range rebuilt.Records{if observed.Name==expected.Name{found=true;if observed!=expected{t.Fatal("reconstructed native policy fingerprint or metadata differs")}}}
+  if !found{t.Fatal("reconstructed policy missing")}
+ }
+ t.Log("PASS VOLVE_BROWSER_SYNTHETIC_REBUILD_INDEPENDENT_FINGERPRINT_AND_CLEANUP")
  t.Log("PASS VOLVE_BROWSER_NATIVE_CAPTURE_FORMAT_SYNTHETIC_THREE_STATES")
 }
