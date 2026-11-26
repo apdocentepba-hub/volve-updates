@@ -148,6 +148,26 @@ function ConvertTo-VolvCIPidDecimal {
     return ([int64]::Parse($clean,[Globalization.CultureInfo]::InvariantCulture)).ToString([Globalization.CultureInfo]::InvariantCulture)
 }
 
+# Classify only the two exact standard machine task identities. Dynamic
+# or suffixed names remain unattributed, and no baseline exemption exists.
+function Get-VolvCIKnownTaskClass {
+    param([string]$Identity)
+    switch -CaseSensitive ($Identity) {
+        '\MicrosoftEdgeUpdateTaskMachineCore' {return 'edge-update-machine-core'}
+        '\MicrosoftEdgeUpdateTaskMachineUA' {return 'edge-update-machine-ua'}
+        '\Microsoft\Windows\SoftwareProtectionPlatform\SvcRestartTask' {return 'windows-software-protection-service-restart'}
+        default {return 'unattributed'}
+    }
+}
+
+# Match only the exact standard Edge Update image path, never a basename,
+# suffix or process-name guess. This remains a path lead, NOT attribution.
+function Test-VolvCIStandardEdgeUpdateImage {
+    param([string]$Image)
+    if([string]::IsNullOrWhiteSpace($Image)){return $false}
+    return [string]::Equals($Image,'C:\Program Files (x86)\Microsoft\EdgeUpdate\MicrosoftEdgeUpdate.exe',[StringComparison]::OrdinalIgnoreCase)
+}
+
 # Current on-disk signer is a separate investigative observation, not proof
 # that those bytes ran at the event time. Never emit paths or certificate data.
 # Only called from the already-attested disposable CI investigation.
@@ -157,8 +177,10 @@ function Get-VolvCICurrentWindowsImageClass {
         if([string]::IsNullOrWhiteSpace($Image) -or $Image -cnotmatch '^[A-Za-z]:\\' -or [IO.Path]::GetExtension($Image) -ine '.exe'){return 'unknown'}
         $root=[IO.Path]::GetFullPath($env:WINDIR).TrimEnd('\')+'\'
         $full=[IO.Path]::GetFullPath($Image)
-        if(-not $full.StartsWith($root,[StringComparison]::OrdinalIgnoreCase)){return 'outside_windows'}
+        $edge=Test-VolvCIStandardEdgeUpdateImage -Image $Image
+        if(-not $full.StartsWith($root,[StringComparison]::OrdinalIgnoreCase) -and -not $edge){return 'outside_windows'}
         if(-not [string]::Equals($full,$Image,[StringComparison]::OrdinalIgnoreCase)){return 'unknown'}
+        if($edge){$root=[IO.Path]::GetPathRoot($full)}
         $file=Get-Item -LiteralPath $full -ErrorAction Stop
         if($file.PSIsContainer -or ($file.Attributes -band [IO.FileAttributes]::ReparsePoint)){return 'unknown'}
         # Do not follow reparse points anywhere under the Windows directory.
@@ -170,7 +192,14 @@ function Get-VolvCICurrentWindowsImageClass {
         }
         if($null -eq $parent){return 'unknown'}
         $signature=Get-AuthenticodeSignature -LiteralPath $full -ErrorAction Stop
-        if($signature.Status -ne 'Valid' -or $null -eq $signature.SignerCertificate){return 'windows_signature_unverified'}
+        if($signature.Status -ne 'Valid' -or $null -eq $signature.SignerCertificate){
+            if($edge){return 'edge_update_path_signature_unverified'}
+            return 'windows_signature_unverified'
+        }
+        if($edge){
+            if($signature.SignerCertificate.Subject -match '(?:^|,\s*)O=Microsoft Corporation(?:,|$)'){return 'edge_update_microsoft_signed_current_file'}
+            return 'edge_update_other_signed_current_file'
+        }
         if($signature.SignerCertificate.Subject -match '(?:^|,\s*)O=Microsoft Corporation(?:,|$)'){return 'windows_microsoft_signed_current_file'}
         return 'windows_other_signed_current_file'
     }catch{return 'unknown'}
@@ -222,9 +251,10 @@ function Get-VolvCIProcessCreationCorrelation {
         # usable candidate. Never emit the executable field to CI output.
         $exe=Read-OnlyField $event 'NewProcessName'
         if($null -eq $clientProcessNumber -or [string]::IsNullOrWhiteSpace($exe)){continue}
-        $births+=([pscustomobject]@{pid=$clientProcessNumber;when=$event.when;imageId=(Get-VolvCITaskPseudonym -Identity $exe.ToLowerInvariant()); image=$exe})
+        $creator=ConvertTo-VolvCIPidDecimal (Read-OnlyField $event 'ProcessId')
+        $births+=([pscustomobject]@{pid=$clientProcessNumber;creator=$creator;when=$event.when;imageId=(Get-VolvCITaskPseudonym -Identity $exe.ToLowerInvariant()); image=$exe})
     }
-    $counts=[ordered]@{taskUpdateEvents=0;creationCandidate=0;creationMissing=0;creationAmbiguous=0;invalidUpdateEvidence=0;candidateImageIds=@();currentImageClasses=@()}
+    $counts=[ordered]@{taskUpdateEvents=0;creationCandidate=0;creationMissing=0;creationAmbiguous=0;invalidUpdateEvidence=0;parentPidMatch=0;parentPidMismatch=0;parentPidUnavailable=0;candidateImageIds=@();currentImageClasses=@()}
     foreach($raw in $UpdateEventXML){
         $event=Read-CIEvent $raw
         if($event.event -cne '4702' -or
@@ -243,6 +273,12 @@ function Get-VolvCIProcessCreationCorrelation {
         })
         if($matches.Count -eq 1){
             $counts.creationCandidate++
+            # Corroboration only: 4702 ParentProcessId vs 4688 creator PID.
+            # Even equality cannot exclude PID reuse or prove causal identity.
+            $parent=ConvertTo-VolvCIPidDecimal (Read-OnlyField $event 'ParentProcessId')
+            if($null -eq $parent -or $null -eq $matches[0].creator){$counts.parentPidUnavailable++}
+            elseif($parent -ceq $matches[0].creator){$counts.parentPidMatch++}
+            else{$counts.parentPidMismatch++}
             $counts.candidateImageIds=@(($counts.candidateImageIds+@($matches[0].imageId))|Sort-Object -Unique)
             if($InspectCurrentImage){
                 $class=Get-VolvCICurrentWindowsImageClass -Image $matches[0].image
@@ -329,6 +365,13 @@ if($Mode -ceq 'Test'){
     if($match.taskUpdateEvents -ne 1 -or $match.creationCandidate -ne 1 -or
        $match.creationMissing -ne 0 -or $match.creationAmbiguous -ne 0 -or
        $match.invalidUpdateEvidence -ne 0){throw 'NOT VERIFIED: 4702/4688 synthetic correlation failed'}
+    $withParent=$valid4702.Replace('</EventData>','<Data Name="ParentProcessId">264</Data></EventData>')
+    $withCreator=$birth4688.Replace('</EventData>','<Data Name="ProcessId">0x108</Data></EventData>')
+    $parentMatch=Get-VolvCIProcessCreationCorrelation -TaskIdentity $fixture -UpdateEventXML @($withParent) -CreationEventXML @($withCreator)
+    if($parentMatch.parentPidMatch -ne 1 -or $parentMatch.parentPidMismatch -ne 0 -or $parentMatch.parentPidUnavailable -ne 0){throw 'Parent/creator PID corroboration failed'}
+    $parentMismatch=Get-VolvCIProcessCreationCorrelation -TaskIdentity $fixture -UpdateEventXML @($withParent) -CreationEventXML @($withCreator.Replace('0x108','0x109'))
+    if($parentMismatch.parentPidMismatch -ne 1 -or $parentMismatch.parentPidMatch -ne 0){throw 'Different parent PID falsely corroborated'}
+    if($match.parentPidUnavailable -ne 1 -or $match.parentPidMatch -ne 0){throw 'Missing parent evidence falsely corroborated'}
     $miss=Get-VolvCIProcessCreationCorrelation -TaskIdentity $fixture -UpdateEventXML @($valid4702) -CreationEventXML @()
     if($miss.creationMissing -ne 1 -or $miss.creationCandidate -ne 0){throw 'NOT VERIFIED: missing birth event falsely matched'}
     $afterBirth=$birth4688.Replace('11:00:00Z','11:02:00Z')
@@ -365,6 +408,24 @@ if($Mode -ceq 'Test'){
     $differentBirth=$birth4688.Replace('SecretProgram.exe','AnotherProgram.exe')
     $otherImage=Get-VolvCIProcessCreationCorrelation -TaskIdentity $fixture -UpdateEventXML @($valid4702) -CreationEventXML @($differentBirth)
     if($otherImage.candidateImageIds[0] -ceq $match.candidateImageIds[0]){throw 'NOT VERIFIED: distinct image candidates share identity'}
+    $edgeImage='C:\Program Files (x86)\Microsoft\EdgeUpdate\MicrosoftEdgeUpdate.exe'
+    if(-not (Test-VolvCIStandardEdgeUpdateImage -Image $edgeImage)){throw 'Known Edge Update path not recognized'}
+    if((Get-VolvCITaskPseudonym -Identity $edgeImage.ToLowerInvariant()) -cne '725AAF9503CF81FA'){throw 'Edge Update diagnostic path digest regression'}
+    foreach($foreign in @('MicrosoftEdgeUpdate.exe','C:\Temp\MicrosoftEdgeUpdate.exe','C:\Program Files (x86)\Microsoft\EdgeUpdate\MicrosoftEdgeUpdate.exe.bak','C:\Program Files (x86)\Microsoft\EdgeUpdate\..\EdgeUpdate\MicrosoftEdgeUpdate.exe')){
+        if(Test-VolvCIStandardEdgeUpdateImage -Image $foreign){throw 'Non-exact Edge Update image incorrectly classified'}
+    }
+    if((Get-VolvCITaskPseudonym -Identity '\MicrosoftEdgeUpdateTaskMachineCore') -cne 'DB1B7F6A43E41B9C' -or
+       (Get-VolvCITaskPseudonym -Identity '\MicrosoftEdgeUpdateTaskMachineUA') -cne 'F2B3566A9AECF9C9'){
+        throw 'Edge task diagnostic hash regression'
+    }
+    if((Get-VolvCIKnownTaskClass -Identity '\MicrosoftEdgeUpdateTaskMachineCore') -cne 'edge-update-machine-core' -or
+       (Get-VolvCIKnownTaskClass -Identity '\MicrosoftEdgeUpdateTaskMachineUA') -cne 'edge-update-machine-ua'){
+        throw 'Exact known Edge task classification regression'
+    }
+    foreach($foreign in @('\Other\MicrosoftEdgeUpdateTaskMachineCore','\MicrosoftEdgeUpdateTaskMachineUA-extra','\MicrosoftEdgeUpdateTaskMachineCore{GUID}')){
+        if((Get-VolvCIKnownTaskClass -Identity $foreign) -cne 'unattributed'){throw 'Unrecognized task falsely classified'}
+    }
+    Write-Host 'PASS: exact Edge Update path classification; no causal attribution or baseline exemption'
     Write-Host 'PASS: SECURITY_4702_4688_CORRELATION synthetic time/PID candidate, missing/ambiguous/future/stale/reused PID rejection; process identity remains UNPROVEN'
     Write-Host 'PASS: SECURITY_4702_READ_ONLY classifies valid/missing/invalid PID fields, refuses duplicate PID, wrong provider, wrong task, malformed XML and never outputs private event data'
     Write-Host 'PASS: CI_TASK_EVENT_DIAGNOSTIC matches synthetic events 106/140/141, classifies actor accounts, and rejects wrong task, unlisted ID and malformed XML'
@@ -389,11 +450,7 @@ if($matchingTasks.Count -ne 1){
     return
 }
 $fullIdentity=[string]$matchingTasks[0].TaskPath+[string]$matchingTasks[0].TaskName
-$expectedSPP='\Microsoft\Windows\SoftwareProtectionPlatform\SvcRestartTask'
-$identityClass='unattributed'
-if([string]::Equals($fullIdentity,$expectedSPP,[StringComparison]::Ordinal)){
-    $identityClass='windows-software-protection-service-restart'
-}
+$identityClass=Get-VolvCIKnownTaskClass -Identity $fullIdentity
 if($AfterSecurityRecordId -lt 0 -or $AfterSchedulerRecordId -lt 0){throw 'Invalid event cursor'}
 $eventXml=@()
 try {
@@ -434,7 +491,7 @@ try {
 # Optional process creation audit is not enabled here: this is READ-ONLY.
 # A timestamp/PID match alone is an investigative lead, not actor proof.
 $creationAudit='unavailable'
-$processCandidates=[pscustomobject]@{taskUpdateEvents=0;creationCandidate=0;creationMissing=0;creationAmbiguous=0;invalidUpdateEvidence=0;candidateImageIds=@();currentImageClasses=@()}
+$processCandidates=[pscustomobject]@{taskUpdateEvents=0;creationCandidate=0;creationMissing=0;creationAmbiguous=0;invalidUpdateEvidence=0;parentPidMatch=0;parentPidMismatch=0;parentPidUnavailable=0;candidateImageIds=@();currentImageClasses=@()}
 if($securityStatus -ceq 'available'){
     try {
         $creationEvents=@(Get-WinEvent -FilterHashtable @{
@@ -467,6 +524,9 @@ Write-Host ('CI TASK EVENT POSTMORTEM: identityId='+$IdentityId.ToUpperInvariant
     '; pidTemporalCandidate='+$processCandidates.creationCandidate+
     '; pidBirthAbsent='+$processCandidates.creationMissing+
     '; pidBirthAmbiguous='+$processCandidates.creationAmbiguous+
+    '; parentPidMatch='+$processCandidates.parentPidMatch+
+    '; parentPidMismatch='+$processCandidates.parentPidMismatch+
+    '; parentPidUnavailable='+$processCandidates.parentPidUnavailable+
     '; candidateImageIds='+($processCandidates.candidateImageIds -join ',')+
     '; currentImageClasses='+($processCandidates.currentImageClasses -join ',')+
     '; cursorScoped='+($AfterSecurityRecordId -gt 0 -and $AfterSchedulerRecordId -gt 0)+
