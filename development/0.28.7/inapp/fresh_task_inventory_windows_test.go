@@ -324,12 +324,14 @@ func TestWindowsOriginalCatalogArchiveNativeActualCensus(t *testing.T){
  if err!=nil{t.Fatal("native original DNS journal not representable")}
  definition,err:=captureOriginalCatalogDefinition(ctx,snap,inv,readOriginalCatalogDefinitionLocal)
  if err!=nil||definition.Present{t.Fatal("native catalog absence not independently verified")}
- root:=t.TempDir()
+ // The random outer temp directory isolates this synthetic transaction ID.
+ transactionID:=strings.Repeat("c",32)
+ root:=filepath.Join(t.TempDir(),transactionID)
  parent:=filepath.Join(root,"original-protection-recovery")
  dnsParent:=filepath.Join(root,"legacy-engine-recovery")
  seal:=func(path string)error{return sealDNSBackupLabNode(ctx,path)}
  check:=func(path string)error{return nativeDNSOriginalBackupACL(ctx,path)}
- for _,dir:=range []string{parent,dnsParent}{
+ for _,dir:=range []string{root,parent,dnsParent}{
   if err:=os.Mkdir(dir,0700);err!=nil{t.Fatal("local archive directory unavailable")}
   if err:=seal(dir);err!=nil{t.Fatal("local archive directory ACL unavailable")}
  }
@@ -337,14 +339,22 @@ func TestWindowsOriginalCatalogArchiveNativeActualCensus(t *testing.T){
  if err:=storeBrowserOriginalArchiveUnarmed(ctx,parent,browser,policies,seal,check);err!=nil{t.Fatal("native registry staging failed")}
  if _,err:=StoreDNSOriginalBackupUnarmed(ctx,dnsParent,journal,pin,seal,check);err!=nil{t.Fatal("native DNS staging failed")}
  if err:=storeOriginalCatalogArchiveUnarmed(ctx,parent,snap,inv,definition,seal,check);err!=nil{t.Fatal("native catalog staging failed")}
- report,err:=InspectOriginalBackupArchivesNativeReadOnly(ctx,parent,dnsParent,snap,browser,inv,pin)
- if err!=nil||report.Status!="FOUR_ARCHIVES_VERIFIED_READ_ONLY"||!report.HostsVerified||
-  report.BrowserKeysVerified!=3||!report.DNSBackupVerified||!report.CatalogBackupVerified||
+ // Use real native census pins in the transaction-bound review; the pin
+ // remains in the test controller and is not an installation permit.
+ binding,err:=originalRecoveryReviewPin(transactionID,snap,pin)
+ if err!=nil{t.Fatal("native recovery binding unavailable",err)}
+ if err:=verifyOriginalHostsBackupNode(root,true,check);err!=nil{t.Fatal("transaction root ACL invalid",err)}
+ report,err:=verifyBoundOriginalRecoveryArchivesUnarmed(ctx,transactionID,binding,parent,dnsParent,snap,browser,inv,pin,check)
+ if err!=nil||!report.HostsVerified||report.BrowserKeysVerified!=3||!report.DNSBackupVerified||!report.CatalogBackupVerified||
   report.CompleteRecoverySnapshot||report.InstallAuthorized||report.RestoreAuthorized{
-  t.Fatal("actual Windows archive review failed")
+  t.Fatal("actual Windows bound archive review failed",err)
  }
+ if err:=verifyOriginalHostsBackupNode(root,true,check);err!=nil{t.Fatal("transaction root changed",err)}
+ bad,err:=verifyBoundOriginalRecoveryArchivesUnarmed(ctx,transactionID,strings.Repeat("f",64),parent,dnsParent,snap,browser,inv,pin,check)
+ if err==nil||bad!=(originalProtectionPairReceipt{}){t.Fatal("foreign native transaction pin accepted")}
  after,_,err:=InspectWindowsProtectionSnapshotReadOnly(ctx,"","",DefaultWindowsProtectionSnapshotInspectors())
  if err!=nil||after!=snap{t.Fatal("live Windows original state differs after temporary archive rehearsal")}
+ t.Log("PASS VOLVE_NATIVE_BOUND_FOUR_ARCHIVES_AND_LIVE_RECENSUS")
  t.Log("PASS VOLVE_ACTUAL_NATIVE_ORIGINALS_ARCHIVED_AND_RECENSUSED_NO_OS_WRITES")
 }
 
