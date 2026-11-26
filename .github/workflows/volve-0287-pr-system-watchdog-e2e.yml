@@ -287,6 +287,22 @@ jobs:
           foreach($testName in $dnsTests){if($dnsListed -cnotcontains $testName){throw ('Required DNS provenance test missing: '+$testName)}}
           go test ./motorupdate -run $dnsRegex -count=1 -timeout 2m -v
           if($LASTEXITCODE -ne 0){throw 'DNS provenance regression failed; refuse guest trial'}
+          # Both restoration implementations must execute their in-memory
+          # regressions before the VM starts. A compiled or skipped test
+          # alone cannot count as evidence of restored DNS.
+          $restoreTests=@('TestVOLVEDNSRollbackRejectsLaterFamilyDrift','TestVOLVEDNSRollbackRejectsMissingContext','TestNativeDNSRecoveryRestoresStaticIPv4AndAutomaticIPv6ThroughPinnedWriter','TestNativeDNSRecoveryResumesAfterAutomaticDriverFailedPostMutation','TestNativeDNSRecoveryBatchRejectsDriftAfterLaterFamilyWrite')
+          $restoreRegex='^('+($restoreTests -join '|')+')$'
+          $restoreListed=@(go test ./motorupdate -list $restoreRegex)
+          if($LASTEXITCODE -ne 0){throw 'DNS restoration test census failed'}
+          foreach($required in $restoreTests){if($restoreListed -cnotcontains $required){throw ('Required DNS restoration test missing: '+$required)}}
+          $restoreEvents=@(go test ./motorupdate -run $restoreRegex -count=1 -timeout 2m -json)
+          if($LASTEXITCODE -ne 0){$restoreEvents | Write-Host;throw 'DNS restoration regression failed; refuse guest trial'}
+          $restorePassed=@(foreach($line in $restoreEvents){
+            $event=ConvertFrom-Json -InputObject $line
+            if($event.Action -ceq 'pass' -and $event.PSObject.Properties['Test']){[string]$event.Test}
+          })
+          foreach($required in $restoreTests){if(@($restorePassed | Where-Object {$_ -ceq $required}).Count -ne 1){throw ('DNS restoration test did not execute and pass exactly once: '+$required)}}
+          Write-Host ('PASS: '+$restoreTests.Count+' required in-memory DNS restoration regressions; NO NATIVE DNS WRITES')
           $name='TestNestedGuestDNSIsolationScriptParsesWithoutExecution'
           $listed=@(go test ./motorupdate -list ('^'+$name+'$'))
           if($LASTEXITCODE -ne 0 -or $listed -cnotcontains $name){throw 'Mandatory guest PowerShell syntax test is missing'}
