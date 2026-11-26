@@ -80,6 +80,8 @@ jobs:
           if(@($result|Where-Object {$_ -match '^--- PASS: TestWindowsOriginalCatalogCapture'}).Count -ne 2){throw 'Expected two catalog capture tests'}
           if(@($result|Where-Object {$_ -match '^--- PASS: TestWindowsOriginalCatalogArchive'}).Count -ne 6){throw 'Expected six catalog archive tests'}
           if(@($result|Where-Object {$_ -match 'PASS VOLVE_BOUND_ORIGINAL_ARCHIVES_REJECT_FOREIGN_TRANSACTION'}).Count -ne 1){throw 'Missing transaction binding regression evidence'}
+          if(@($result|Where-Object {$_ -match 'PASS VOLVE_NATIVE_BOUND_FOUR_ARCHIVES_AND_LIVE_RECENSUS'}).Count -ne 1){throw 'Missing native bound archive evidence'}
+          if(@($result|Where-Object {$_ -match 'PASS VOLVE_DURABLE_UNARMED_REVIEW_NTFS_REJECTS_INTERRUPTION'}).Count -ne 1){throw 'Missing durable review interruption rejection evidence'}
           if(@($result|Where-Object {$_ -match 'PASS VOLVE_CATALOG_ARCHIVE_REAL_NTFS_FIXTURE_NO_TASK_WRITES'}).Count -ne 1){throw 'Missing real catalog archive NTFS evidence'}
           if(@($result|Where-Object {$_ -match 'PASS VOLVE_FOUR_ORIGINAL_ARCHIVES_FIXTURE_REVIEW_NO_AUTHORIZATION'}).Count -ne 1){throw 'Missing four-component fixture review'}
           if(@($result|Where-Object {$_ -match 'PASS VOLVE_FOUR_ARCHIVES_REAL_NTFS_DISPLAY_ONLY'}).Count -ne 1){throw 'Missing native four-archive display review'}
