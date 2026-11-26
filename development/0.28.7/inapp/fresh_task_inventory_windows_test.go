@@ -354,6 +354,18 @@ func TestWindowsOriginalCatalogArchiveNativeActualCensus(t *testing.T){
  if err==nil||bad!=(originalProtectionPairReceipt{}){t.Fatal("foreign native transaction pin accepted")}
  after,_,err:=InspectWindowsProtectionSnapshotReadOnly(ctx,"","",DefaultWindowsProtectionSnapshotInspectors())
  if err!=nil||after!=snap{t.Fatal("live Windows original state differs after temporary archive rehearsal")}
+ // A separate reader must reopen the durable, unarmed evidence with the
+ // independent pin. An interrupted/truncated record is never accepted.
+ if err:=persistOriginalRecoveryReviewEvidenceUnarmed(ctx,root,transactionID,binding,snap,browser,inv,pin,seal,check);err!=nil{t.Fatal("durable review evidence failed",err)}
+ if err:=loadOriginalRecoveryReviewEvidenceUnarmed(ctx,root,transactionID,binding,check);err!=nil{t.Fatal("durable review reopen failed",err)}
+ if err:=loadOriginalRecoveryReviewEvidenceUnarmed(ctx,root,transactionID,strings.Repeat("f",64),check);err==nil{t.Fatal("foreign durable pin accepted")}
+ if err:=persistOriginalRecoveryReviewEvidenceUnarmed(ctx,root,transactionID,binding,snap,browser,inv,pin,seal,check);err==nil{t.Fatal("existing durable evidence overwritten")}
+ path,err:=originalRecoveryEvidencePath(root,transactionID)
+ if err!=nil{t.Fatal(err)}
+ if err:=os.WriteFile(path,[]byte("{"),0600);err!=nil{t.Fatal("synthetic evidence interruption injection failed",err)}
+ if err:=loadOriginalRecoveryReviewEvidenceUnarmed(ctx,root,transactionID,binding,check);err==nil{t.Fatal("truncated evidence accepted")}
+ if err:=persistOriginalRecoveryReviewEvidenceUnarmed(ctx,root,transactionID,binding,snap,browser,inv,pin,seal,check);err==nil{t.Fatal("interrupted evidence slot reused")}
+ t.Log("PASS VOLVE_DURABLE_UNARMED_REVIEW_NTFS_REJECTS_INTERRUPTION")
  t.Log("PASS VOLVE_NATIVE_BOUND_FOUR_ARCHIVES_AND_LIVE_RECENSUS")
  t.Log("PASS VOLVE_ACTUAL_NATIVE_ORIGINALS_ARCHIVED_AND_RECENSUSED_NO_OS_WRITES")
 }
