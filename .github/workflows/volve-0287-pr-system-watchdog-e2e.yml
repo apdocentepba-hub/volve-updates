@@ -948,8 +948,71 @@ jobs:
               })
             }catch{$report.task_audit_error='Clean task audit unavailable; no exemption'}
             if(-not $report.clean_boot_control.hosts_equal -or -not $report.clean_boot_control.dns_equal){throw 'Clean reboot changed network baseline; refuse to arm recovery'}
-            # Use the fresh control boot as the actual preparation boot.
-            # No changes in the control are exempted from the later strict gate.
+            # Controlled strict-reboot arm: preserve the uncontrolled negative
+            # control above. On this throwaway offline VHD only, hold the
+            # specifically observed, Microsoft-signed Edge Update actors BEFORE
+            # taking the full strict baseline. No XML differences are ignored.
+            # This is a fixture preparation step, NOT an install prerequisite,
+            # NOT a recommendation for a real PC, and NOT production evidence.
+            if(@(Get-VM -Id $vm.Id -ErrorAction Stop|Get-VMNetworkAdapter -ErrorAction Stop).Count -ne 0){throw 'Refuse controlled reboot on network-attached VM'}
+            $report['strict_reboot_scope']='CONTROLLED_OFFLINE_FIXTURE_NOT_PRODUCTION'
+            $report['edge_fixture_isolation']=Invoke-Command -Session $session -ArgumentList (($report.clean_boot_control.changed_ids)-join ',') -ErrorAction Stop -ScriptBlock {
+              param($changedCsv)
+              $ErrorActionPreference='Stop'
+              $cs=Get-CimInstance Win32_ComputerSystem -ErrorAction Stop
+              if(($cs.Manufacturer+' '+$cs.Model) -notmatch '(?i)virtual machine|hyper-v'){throw 'Controlled reboot requires positively identified Hyper-V guest'}
+              if(@(Get-NetRoute -ErrorAction Stop|Where-Object {$_.DestinationPrefix -in @('0.0.0.0/0','::/0')}).Count -ne 0){throw 'Controlled reboot requires no default route'}
+              if(@(Get-NetAdapter -ErrorAction SilentlyContinue|Where-Object {$_.Status -eq 'Up'}).Count -ne 0){throw 'Controlled reboot requires no active network adapter'}
+              if(@(Get-ScheduledTask -ErrorAction Stop|Where-Object {$_.TaskName -like 'VOLVE*'}).Count -ne 0){throw 'Controlled reboot requires clean guest with no VOLVE task'}
+              $known='C:\Program Files (x86)\Microsoft\EdgeUpdate\MicrosoftEdgeUpdate.exe'
+              $file=Get-Item -LiteralPath $known -ErrorAction Stop
+              if($file.PSIsContainer -or ($file.Attributes -band [IO.FileAttributes]::ReparsePoint)){throw 'Unexpected Edge fixture executable'}
+              $parent=$file.Directory
+              while($null -ne $parent){
+                if($parent.Attributes -band [IO.FileAttributes]::ReparsePoint){throw 'Unexpected redirected Edge fixture directory'}
+                $parent=$parent.Parent
+              }
+              $signature=Get-AuthenticodeSignature -LiteralPath $known -ErrorAction Stop
+              if($signature.Status -ne 'Valid' -or $null -eq $signature.SignerCertificate -or $signature.SignerCertificate.Subject -notmatch '(?:^|,\s*)O=Microsoft Corporation(?:,|$)'){throw 'Edge fixture signer not verified'}
+              $changed=@($changedCsv.Split(',')|Where-Object {$_ -cmatch '^[A-F0-9]{16}$'})
+              $tasks=@()
+              foreach($t in Get-ScheduledTask -ErrorAction Stop){
+                if($t.TaskPath -cne '\' -or $t.TaskName -cnotmatch '^MicrosoftEdgeUpdateTaskMachine(?:Core|UA)(?:[A-Za-z0-9{}._-]*)$'){continue}
+                if(@($t.Actions).Count -ne 1 -or [string]$t.Actions[0].Execute -ine $known){continue}
+                $hash=[Security.Cryptography.SHA256]::Create()
+                try{$id=[BitConverter]::ToString($hash.ComputeHash([Text.Encoding]::UTF8.GetBytes([string]$t.TaskPath+[string]$t.TaskName))).Replace('-','').Substring(0,16)}finally{$hash.Dispose()}
+                if($id -in $changed){$tasks+=@($t)}
+              }
+              if($tasks.Count -ne 2 -or @($tasks|Where-Object {$_.TaskName -cmatch '^MicrosoftEdgeUpdateTaskMachineCore'}).Count -ne 1 -or @($tasks|Where-Object {$_.TaskName -cmatch '^MicrosoftEdgeUpdateTaskMachineUA'}).Count -ne 1){throw 'Refuse fixture isolation without two exact observed Edge task actions'}
+              $services=@(Get-CimInstance Win32_Service -ErrorAction Stop|Where-Object {$_.Name -in @('edgeupdate','edgeupdatem')})
+              if($services.Count -lt 1 -or $services.Count -gt 2){throw 'Unexpected Edge service census'}
+              $servicePattern='^\s*"?' + [regex]::Escape($known) + '"?\s+/(?:svc|medsvc)\s*$'
+              foreach($svc in $services){
+                if([string]$svc.PathName -notmatch $servicePattern){throw 'Refuse unrelated Edge-named service'}
+              }
+              # All identities validated before making any fixture change.
+              foreach($t in $tasks){
+                Disable-ScheduledTask -TaskName $t.TaskName -TaskPath '\' -ErrorAction Stop|Out-Null
+                $current=Get-ScheduledTask -TaskName $t.TaskName -TaskPath '\' -ErrorAction Stop
+                if($current.State -eq 'Running'){Stop-ScheduledTask -TaskName $t.TaskName -TaskPath '\' -ErrorAction Stop}
+              }
+              foreach($svc in $services){Set-Service -Name $svc.Name -StartupType Disabled -ErrorAction Stop}
+              foreach($svc in $services){if((Get-Service -Name $svc.Name -ErrorAction Stop).Status -ne 'Stopped'){Stop-Service -Name $svc.Name -ErrorAction Stop}}
+              foreach($t in $tasks){
+                $current=Get-ScheduledTask -TaskName $t.TaskName -TaskPath '\' -ErrorAction Stop
+                if($current.State -ne 'Disabled' -or @($current.Actions).Count -ne 1 -or [string]$current.Actions[0].Execute -ine $known){throw 'Edge fixture task hold not verified'}
+              }
+              foreach($svc in $services){
+                $current=Get-CimInstance Win32_Service -Filter ("Name='"+$svc.Name+"'") -ErrorAction Stop
+                if($current.StartMode -ne 'Disabled' -or $current.State -ne 'Stopped' -or [string]$current.PathName -notmatch $servicePattern){throw 'Edge fixture service hold not verified'}
+              }
+              [pscustomobject]@{scope='DISPOSABLE_OFFLINE_VM_ONLY';signed_image_verified=$true;tasks_held=$tasks.Count;services_held=$services.Count;production_change=$false;strict_baseline_exemptions=0}
+            }
+            if($report.edge_fixture_isolation.tasks_held -ne 2 -or -not $report.edge_fixture_isolation.signed_image_verified -or $report.edge_fixture_isolation.strict_baseline_exemptions -ne 0){throw 'Controlled fixture isolation not verified'}
+            # The strict baseline is captured AFTER controlled fixture setup.
+            # Every subsequent task, HOSTS and DNS difference still fails.
+            # The isolated disk is destroyed by the existing VM cleanup;
+            # never perform these holds on a persistent/user Windows host.
             $before.boot=$controlAfter.boot
             $report.guest_boot_before=$controlAfter.boot
             $report.stage='prepare_strict_system_recovery_kit'
