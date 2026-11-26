@@ -1,0 +1,101 @@
+name: VOLVE local DNS reference differential (DISPOSABLE CI ONLY NO INSTALL)
+on:
+  push:
+    branches: [work/0287-dns-local-differential-20261126]
+permissions:
+  contents: read
+jobs:
+  local-reference:
+    runs-on: windows-2022
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Compare loopback and local interface on independent DNS fixture
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          if($env:GITHUB_ACTIONS -cne 'true' -or $env:RUNNER_ENVIRONMENT -cne 'github-hosted'){throw 'Hosted runner only'}
+          $vm=Get-CimInstance Win32_ComputerSystem
+          if(($vm.Manufacturer+' '+$vm.Model) -notmatch '(?i)virtual machine|hyper-v|vmware|qemu|kvm'){throw 'Disposable VM not verified'}
+          if(@(Get-NetTCPConnection -LocalPort 53 -State Listen -ErrorAction SilentlyContinue).Count -or @(Get-NetUDPEndpoint -LocalPort 53 -ErrorAction SilentlyContinue).Count){throw 'Port 53 already occupied; refuse to modify'}
+          $routes=@(Get-NetRoute -AddressFamily IPv4 -DestinationPrefix '0.0.0.0/0' | Sort-Object RouteMetric,InterfaceMetric)
+          if($routes.Count -ne 1){throw 'Ambiguous default route; no changes'}
+          $idx=$routes[0].InterfaceIndex
+          $adapter=Get-NetAdapter -InterfaceIndex $idx
+          $ips=@(Get-NetIPAddress -InterfaceIndex $idx -AddressFamily IPv4 | Where-Object {$_.AddressState -eq 'Preferred' -and $_.IPAddress -notmatch '^(127\.|169\.254\.)'})
+          if($ips.Count -ne 1){throw 'Ambiguous local IPv4; no changes'}
+          $local=[string]$ips[0].IPAddress
+          $key='HKLM:\SYSTEM\CurrentControlSet\Services\Tcpip\Parameters\Interfaces\'+([guid]$adapter.InterfaceGuid).ToString('B')
+          $reg=Get-ItemProperty -LiteralPath $key
+          $original=@((Get-DnsClientServerAddress -InterfaceIndex $idx -AddressFamily IPv4).ServerAddresses)
+          $original6=@((Get-DnsClientServerAddress -InterfaceIndex $idx -AddressFamily IPv6).ServerAddresses)
+          $dhcp=@(([string]$reg.DhcpNameServer -split '[,\s]+') | Where-Object {$_})
+          if(([string]$reg.NameServer).Trim() -or !$original.Count -or ($original -join ',') -cne ($dhcp -join ',')){throw 'Only unambiguous original DHCP DNS accepted; no changes'}
+          $env:VOLVE_LAB_IP=$local
+          $env:VOLVE_LAB_PREFIX=[guid]::NewGuid().ToString('N')
+          $env:VOLVE_LAB_LOG=Join-Path $env:RUNNER_TEMP 'volve-local-dns-wire.jsonl'
+          $env:VOLVE_LAB_READY=Join-Path $env:RUNNER_TEMP 'volve-local-dns-ready.txt'
+          $fixture=Join-Path $env:GITHUB_WORKSPACE 'development/0.28.7/lab/ci_dns_local_reference.py'
+          $proc=$null
+          $changed=$false
+          $restored=$false
+          $observations=@()
+          $netsh=Join-Path $env:SystemRoot 'System32\netsh.exe'
+          function Observe([string]$label,[string]$target,[bool]$tcp,[bool]$explicit){
+            $name=$env:VOLVE_LAB_PREFIX+'-'+[guid]::NewGuid().ToString('N').Substring(0,16)+'.test'
+            $query=@{Name=($name+'.');Type='A';DnsOnly=$true;NoHostsFile=$true;QuickTimeout=$true;ErrorAction='Stop'}
+            if($tcp){$query.TcpOnly=$true}
+            if($explicit){$query.Server=$target}
+            $verified=$false;$errorId=$null
+            try {$a=@(Resolve-DnsName @query | Where-Object {$_.Type -eq 'A'});$verified=($a.Count -eq 1 -and $a[0].IPAddress -ceq '203.0.113.7')}
+            catch {$errorId=([string]$_.FullyQualifiedErrorId -split ',')[0]}
+            Start-Sleep -Milliseconds 150
+            $wire=@(if(Test-Path -LiteralPath $env:VOLVE_LAB_LOG){Get-Content -LiteralPath $env:VOLVE_LAB_LOG | ForEach-Object {ConvertFrom-Json $_} | Where-Object {$_.name -ceq $name}})
+            $hostLabel=if($target -eq '127.0.0.1'){'loopback'}else{'local'}
+            $matching=@($wire | Where-Object {$_.host -ceq $hostLabel -and (!$tcp -or $_.transport -ceq 'tcp')})
+            [pscustomobject]@{mode=$label;endpoint=$hostLabel;answer_verified=$verified;wire_verified=($matching.Count -gt 0);tcp_replies=@($wire|Where-Object {$_.transport -eq 'tcp'}).Count;udp_replies=@($wire|Where-Object {$_.transport -eq 'udp'}).Count;error_id=$errorId}
+          }
+          try{
+            $proc=Start-Process -FilePath (Get-Command python -ErrorAction Stop).Source -ArgumentList @('-u',('"'+$fixture+'"')) -PassThru -RedirectStandardOutput (Join-Path $env:RUNNER_TEMP 'volve-reference-out.txt') -RedirectStandardError (Join-Path $env:RUNNER_TEMP 'volve-reference-err.txt')
+            for($i=0;$i -lt 50 -and !(Test-Path -LiteralPath $env:VOLVE_LAB_READY);$i++){
+              if($proc.HasExited){throw 'Reference fixture exited before readiness'}
+              Start-Sleep -Milliseconds 100
+            }
+            if(!(Test-Path -LiteralPath $env:VOLVE_LAB_READY)){throw 'Reference fixture not ready'}
+            foreach($target in @('127.0.0.1',$local)){
+              $observations+=Observe 'explicit-default' $target $false $true
+              $observations+=Observe 'explicit-tcp' $target $true $true
+            }
+            if(@($observations|Where-Object {$_.answer_verified -and $_.wire_verified}).Count -ne 4){throw 'Independent explicit controls failed; no DNS changes'}
+            foreach($target in @('127.0.0.1',$local)){
+              if(([guid](Get-NetAdapter -InterfaceIndex $idx).InterfaceGuid) -ne ([guid]$adapter.InterfaceGuid)){throw 'Adapter identity changed'}
+              $changed=$true
+              & $netsh interface ipv4 set dnsservers "name=$idx" source=static "address=$target" validate=no | Out-Null
+              if($LASTEXITCODE -ne 0){throw 'Fixture DNS configuration failed'}
+              $now=@((Get-DnsClientServerAddress -InterfaceIndex $idx -AddressFamily IPv4).ServerAddresses)
+              if($now.Count -ne 1 -or $now[0] -cne $target){throw 'Fixture DNS readback failed'}
+              $observations+=Observe 'configured-default' $target $false $false
+              $observations+=Observe 'configured-tcp' $target $true $false
+            }
+          }finally{
+            try{
+              if($changed){
+                if(([guid](Get-NetAdapter -InterfaceIndex $idx).InterfaceGuid) -ne ([guid]$adapter.InterfaceGuid)){throw 'Adapter identity changed; refuse wrong-adapter recovery'}
+                & $netsh interface ipv4 set dnsservers "name=$idx" source=dhcp | Out-Null
+                if($LASTEXITCODE -ne 0){throw 'DHCP restoration failed'}
+              }
+              $after=@((Get-DnsClientServerAddress -InterfaceIndex $idx -AddressFamily IPv4).ServerAddresses)
+              $after6=@((Get-DnsClientServerAddress -InterfaceIndex $idx -AddressFamily IPv6).ServerAddresses)
+              $regAfter=Get-ItemProperty -LiteralPath $key
+              $restored=(($after -join ',') -ceq ($original -join ',') -and ($after6 -join ',') -ceq ($original6 -join ',') -and !([string]$regAfter.NameServer).Trim())
+              if(!$restored){throw 'Original DNS configuration not verified'}
+            }finally{
+              if($proc -and !$proc.HasExited){Stop-Process -Id $proc.Id -Force -ErrorAction Stop;$proc.WaitForExit()}
+              Write-Host ('VOLVE_LOCAL_REFERENCE='+([ordered]@{scope='DISPOSABLE_HOSTED_VM_REFERENCE_ONLY';observations=$observations;original_dns_restored=$restored;release_authorized=$false}|ConvertTo-Json -Depth 6 -Compress))
+            }
+          }
+          if($observations.Count -ne 8 -or !$restored){throw 'Incomplete diagnostic'}
+          if(@($observations|Where-Object {$_.mode -eq 'configured-default' -and $_.answer_verified -and $_.wire_verified}).Count -ne 2){throw 'Configured normal DNS control failed'}
+          Write-Host 'DIAGNOSTIC COMPLETE; interpret TCP observations; NO RELEASE'
