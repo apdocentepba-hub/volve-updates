@@ -6,6 +6,8 @@ on:
       - '.github/workflows/volve-0287-browser-backup-lab.yml'
       - 'development/0.28.7/inapp/browser_policy_inventory_windows.go'
       - 'development/0.28.7/inapp/browser_policy_inventory_windows_test.go'
+      - 'development/0.28.7/inapp/fresh_task_inventory_windows.go'
+      - 'development/0.28.7/inapp/fresh_task_inventory_windows_test.go'
 permissions:
   contents: read
 jobs:
@@ -61,3 +63,13 @@ jobs:
           if(@($result|Where-Object {$_ -match '^--- PASS: TestVOLVEBrowserOriginalPair'}).Count -ne 2){throw 'Expected two paired backup tests'}
           if(@($result|Where-Object {$_ -match 'PASS VOLVE_ORIGINAL_PAIR_REAL_NTFS_NO_INSTALL'}).Count -ne 1){throw 'Missing paired backup native evidence'}
           if(@($result|Where-Object {$_ -match '^--- PASS: TestVOLVEBrowserOriginalTriple'}).Count -ne 2){throw 'Expected two DNS baseline integration tests'}
+      - name: Verify catalog original XML capture against independently observed definition
+        working-directory: build/codigo
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $result=@(go test ./motorupdate -run '^TestWindowsOriginalCatalogCapture' -count=1 -v -timeout 2m)
+          $exit=$LASTEXITCODE
+          $result|Write-Host
+          if($exit -ne 0){throw 'Catalog capture failed'}
+          if(@($result|Where-Object {$_ -match '^--- PASS: TestWindowsOriginalCatalogCapture'}).Count -ne 2){throw 'Expected two catalog capture tests'}

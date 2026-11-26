@@ -9,6 +9,9 @@ package motorupdate
 import (
  "bytes"
  "context"
+ "crypto/sha256"
+ "encoding/base64"
+ "encoding/hex"
  "encoding/json"
  "errors"
  "fmt"
@@ -129,4 +132,74 @@ func InspectWindowsVOLVETasksReadOnly(ctx context.Context,
   result.VerifiedCatalogTask=verified
  }
  return result,nil
+}
+
+// Read-only capture of the exact fixed catalog task definition. The original
+// trusted census must already have verified its action and identity. No task
+// is registered, executed, repaired or removed by this module.
+const catalogOriginalXMLLimit=1<<20
+const catalogOriginalCaptureQuery=`$ErrorActionPreference='Stop';$ProgressPreference='SilentlyContinue';
+$tasks=@(Get-ScheduledTask -ErrorAction Stop | Where-Object {$_.TaskName -ceq 'VOLVE-CATALOGO-0230' -and $_.TaskPath -ceq '\'});
+if($tasks.Count -gt 1){throw 'Ambiguous catalog task'};
+if($tasks.Count -eq 0){
+ [pscustomobject]@{Present=$false;PayloadBase64=''} | ConvertTo-Json -Compress
+}else{
+ $xml=Export-ScheduledTask -TaskName 'VOLVE-CATALOGO-0230' -TaskPath '\' -ErrorAction Stop;
+ $bytes=[Text.Encoding]::UTF8.GetBytes($xml);
+ if($bytes.Length -lt 1 -or $bytes.Length -gt 1048576){throw 'Catalog definition size invalid'};
+ [pscustomobject]@{Present=$true;PayloadBase64=[Convert]::ToBase64String($bytes)} | ConvertTo-Json -Compress
+}`
+
+type originalCatalogDefinition struct{
+ Present bool
+ // Private XML, never exported to diagnostic JSON.
+ XML []byte `json:"-"`
+}
+
+func readOriginalCatalogDefinitionLocal(ctx context.Context)([]byte,error){
+ if ctx==nil{return nil,errors.New("catalog capture context required")}
+ if err:=ctx.Err();err!=nil{return nil,err}
+ root:=os.Getenv("SystemRoot")
+ if !filepath.IsAbs(root)||strings.HasPrefix(root,`\\`){return nil,errors.New("local Windows SystemRoot unavailable")}
+ ps:=filepath.Join(root,"System32","WindowsPowerShell","v1.0","powershell.exe")
+ raw,err:=exec.CommandContext(ctx,ps,"-NoLogo","-NoProfile","-NonInteractive","-Command",catalogOriginalCaptureQuery).Output()
+ if err!=nil{return nil,errors.New("local catalog definition capture failed")}
+ return raw,nil
+}
+
+func captureOriginalCatalogDefinition(ctx context.Context,baseline ProtectionSnapshot,
+ taskInventory WindowsFreshVOLVETaskInventory,reader func(context.Context)([]byte,error))(originalCatalogDefinition,error){
+ var denied originalCatalogDefinition
+ if ctx==nil||reader==nil{return denied,errors.New("catalog backup requires context and local reader")}
+ if err:=ctx.Err();err!=nil{return denied,err}
+ if !validProtectionSnapshot(baseline)||len(taskInventory.UnknownTaskNames)!=0{return denied,errors.New("independent original task census required")}
+ absentHash:=sha256.Sum256([]byte(catalogTaskAbsentMarker))
+ absent:=hex.EncodeToString(absentHash[:])
+ expectedPresent:=false
+ switch{
+ case taskInventory.VOLVETaskCount==0&&taskInventory.VerifiedCatalogTask==nil:
+  if !strings.EqualFold(baseline.CatalogTaskDefinitionSHA256,absent){return denied,errors.New("catalog absence differs from original census")}
+ case taskInventory.VOLVETaskCount==1&&allowedFreshAuxiliaryTask(taskInventory.VerifiedCatalogTask):
+  expectedPresent=true
+  if strings.EqualFold(baseline.CatalogTaskDefinitionSHA256,absent)||!strings.EqualFold(baseline.CatalogTaskDefinitionSHA256,taskInventory.VerifiedCatalogTask.DefinitionSHA256){return denied,errors.New("catalog task differs from original census")}
+ default:return denied,errors.New("catalog task identity or action unverified")
+ }
+ raw,err:=reader(ctx)
+ if err!=nil||len(raw)<2||len(raw)>2*catalogOriginalXMLLimit{return denied,errors.New("local catalog capture unavailable")}
+ dec:=json.NewDecoder(bytes.NewReader(raw));dec.DisallowUnknownFields()
+ var row struct{Present *bool;PayloadBase64 *string}
+ if err:=dec.Decode(&row);err!=nil||row.Present==nil||row.PayloadBase64==nil{return denied,errors.New("catalog capture evidence incomplete")}
+ var trailing any
+ if err:=dec.Decode(&trailing);err!=io.EOF||*row.Present!=expectedPresent{return denied,errors.New("catalog presence changed after original census")}
+ if !expectedPresent{
+  if *row.PayloadBase64!=""{return denied,errors.New("absent catalog supplied unexpected bytes")}
+  if err:=ctx.Err();err!=nil{return denied,err}
+  return originalCatalogDefinition{Present:false},nil
+ }
+ payload,err:=base64.StdEncoding.Strict().DecodeString(*row.PayloadBase64)
+ if err!=nil||len(payload)==0||len(payload)>catalogOriginalXMLLimit{return denied,errors.New("invalid local catalog bytes")}
+ sum:=sha256.Sum256(payload)
+ if !strings.EqualFold(hex.EncodeToString(sum[:]),baseline.CatalogTaskDefinitionSHA256){return denied,errors.New("catalog definition changed since original census")}
+ if err:=ctx.Err();err!=nil{return denied,err}
+ return originalCatalogDefinition{Present:true,XML:payload},nil
 }

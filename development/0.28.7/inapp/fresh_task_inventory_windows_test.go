@@ -4,6 +4,9 @@ package motorupdate
 
 import (
  "context"
+ "crypto/sha256"
+ "encoding/base64"
+ "encoding/hex"
  "encoding/json"
  "errors"
  "path/filepath"
@@ -95,4 +98,34 @@ func TestWindowsFreshTaskInventoryRealTaskSchedulerReadOnly(t *testing.T){
  }
  t.Logf("READ ONLY: enumerated %d VOLVE tasks, catalog verified=%t, unknown task count=%d (NO task/DNS writes)",
   result.VOLVETaskCount,result.VerifiedCatalogTask!=nil&&result.VerifiedCatalogTask.ActionVerified,len(result.UnknownTaskNames))
+}
+
+func TestWindowsOriginalCatalogCaptureExactXMLAndDrift(t *testing.T){
+ ctx:=context.Background()
+ original:=[]byte("<Task><RegistrationInfo><Description>fixture</Description></RegistrationInfo></Task>")
+ sum:=sha256.Sum256(original)
+ task:=freshTaskFixture();task.DefinitionSHA256=hex.EncodeToString(sum[:])
+ inventory,err:=InspectWindowsVOLVETasksReadOnly(ctx,task.Actions[0].Execute,task.Actions[0].Arguments,func(context.Context,string)([]byte,error){return freshWindowsTaskJSON(t,[]windowsVOLVETaskRecord{task}),nil})
+ if err!=nil{t.Fatal(err)}
+ snap:=ProtectionSnapshot{HostsSHA256:strings.Repeat("a",64),ChromePoliciesSHA256:strings.Repeat("b",64),EdgePoliciesSHA256:strings.Repeat("c",64),FirefoxPoliciesSHA256:strings.Repeat("d",64),CatalogTaskDefinitionSHA256:task.DefinitionSHA256,DNSAdaptersSHA256:strings.Repeat("e",64)}
+ reader:=func(payload []byte)func(context.Context)([]byte,error){return func(context.Context)([]byte,error){
+  return json.Marshal(map[string]any{"Present":true,"PayloadBase64":base64.StdEncoding.EncodeToString(payload)})
+ }}
+ got,err:=captureOriginalCatalogDefinition(ctx,snap,inventory,reader(original))
+ if err!=nil||!got.Present||string(got.XML)!=string(original){t.Fatal("original catalog capture failed",err)}
+ public,err:=json.Marshal(got);if err!=nil||strings.Contains(string(public),"fixture"){t.Fatal("private XML exported")}
+ if _,err:=captureOriginalCatalogDefinition(ctx,snap,inventory,reader([]byte("changed")));err==nil{t.Fatal("changed definition accepted")}
+ bad:=inventory;bad.UnknownTaskNames=[]string{"unknown"}
+ if _,err:=captureOriginalCatalogDefinition(ctx,snap,bad,reader(original));err==nil{t.Fatal("unknown task accepted")}
+}
+func TestWindowsOriginalCatalogCaptureAbsenceAndMissingEvidence(t *testing.T){
+ ctx:=context.Background()
+ sum:=sha256.Sum256([]byte(catalogTaskAbsentMarker))
+ snap:=ProtectionSnapshot{HostsSHA256:strings.Repeat("a",64),ChromePoliciesSHA256:strings.Repeat("b",64),EdgePoliciesSHA256:strings.Repeat("c",64),FirefoxPoliciesSHA256:strings.Repeat("d",64),CatalogTaskDefinitionSHA256:hex.EncodeToString(sum[:]),DNSAdaptersSHA256:strings.Repeat("e",64)}
+ inventory:=WindowsFreshVOLVETaskInventory{}
+ for _,v:=range []string{`{}`,`{"Present":null,"PayloadBase64":""}`,`{"Present":false}`,`{"Present":true,"PayloadBase64":""}`,`{"Present":false,"PayloadBase64":"YWJj"}`}{
+  if _,err:=captureOriginalCatalogDefinition(ctx,snap,inventory,func(context.Context)([]byte,error){return []byte(v),nil});err==nil{t.Fatal("ambiguous absence accepted")}
+ }
+ got,err:=captureOriginalCatalogDefinition(ctx,snap,inventory,func(context.Context)([]byte,error){return []byte(`{"Present":false,"PayloadBase64":""}`),nil})
+ if err!=nil||got.Present||got.XML!=nil{t.Fatal("explicit absent task rejected",err)}
 }
