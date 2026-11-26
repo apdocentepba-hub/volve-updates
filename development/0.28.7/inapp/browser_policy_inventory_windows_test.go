@@ -364,3 +364,46 @@ func TestVOLVEBrowserOriginalDecodeRefusesUnsupportedAndMalformed(t *testing.T){
  raw=append(raw,0);sum:=sha256.Sum256(raw);record.ContentSHA256=hex.EncodeToString(sum[:])
  if _,err:=decodeOriginalBrowserStringKey(raw,record);err==nil{t.Fatal("trailing bytes accepted")}
 }
+
+// Native registry roundtrip restricted to a random synthetic HKCU fixture.
+// No actual browser policy is read or changed by this test. The entire key
+// is created and removed in the same PowerShell invocation.
+func TestVOLVEBrowserOriginalDecodeNativeStringRoundtrip(t *testing.T){
+ if os.Getenv("GITHUB_ACTIONS")!="true"||os.Getenv("RUNNER_ENVIRONMENT")!="github-hosted"{t.Skip("disposable hosted runner only")}
+ ctx,cancel:=context.WithTimeout(context.Background(),45*time.Second);defer cancel()
+ raw,record:=browserStringDecodeFixture(t,true,"String",`"https://example.test/área/😀"`)
+ got,err:=decodeOriginalBrowserStringKey(raw,record)
+ if err!=nil||!got.Present||len(got.Values)!=1{t.Fatal("fixture decoding failed",err)}
+ // Encode synthetic UTF-8 value to avoid PowerShell argument/encoding
+ // ambiguity. No real registry data or arbitrary paths are supplied.
+ ps:=filepath.Join(os.Getenv("SystemRoot"),"System32","WindowsPowerShell","v1.0","powershell.exe")
+ const script=`$ErrorActionPreference='Stop';$ProgressPreference='SilentlyContinue';
+ if($env:GITHUB_ACTIONS -ne 'true' -or $env:RUNNER_ENVIRONMENT -ne 'github-hosted'){throw 'Hosted fixture only'};
+ $name='Software\VOLVE-REGSZ-FIXTURE-'+[Guid]::NewGuid().ToString('N');
+ $root=[Microsoft.Win32.Registry]::CurrentUser;
+ if($null -ne ($existing=$root.OpenSubKey($name))){$existing.Dispose();throw 'Fixture collision'};
+ $created=$false;
+ try {
+  $key=$root.CreateSubKey($name);$created=$true;
+  try{
+   $value=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($env:VOLVE_SYNTHETIC_REGSZ));
+   $key.SetValue('1',$value,[Microsoft.Win32.RegistryValueKind]::String);
+   $key.Flush();
+  }finally{$key.Dispose()}
+  $key=$root.OpenSubKey($name,$false);
+  try{
+   if($key.GetValueKind('1') -ne [Microsoft.Win32.RegistryValueKind]::String){throw 'Registry kind changed'};
+   $value=$key.GetValue('1',$null,[Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames);
+   if(@($key.GetValueNames()).Count -ne 1 -or $key.SubKeyCount -ne 0){throw 'Fixture structure changed'};
+   $encoded=[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes([string]$value));
+   if($encoded -cne $env:VOLVE_SYNTHETIC_REGSZ){throw 'Registry string roundtrip mismatch'};
+  }finally{$key.Dispose()}
+ }finally{if($created){$root.DeleteSubKeyTree($name)}}
+ if($null -ne ($left=$root.OpenSubKey($name))){$left.Dispose();throw 'Fixture cleanup failed'};
+ Write-Output 'VOLVE_SYNTHETIC_REGSZ_ROUNDTRIP_OK'`
+ cmd:=exec.CommandContext(ctx,ps,"-NoLogo","-NoProfile","-NonInteractive","-Command",script)
+ cmd.Env=append(os.Environ(),"VOLVE_SYNTHETIC_REGSZ="+base64.StdEncoding.EncodeToString([]byte(got.Values["1"])))
+ out,err:=cmd.Output()
+ if err!=nil||strings.TrimSpace(string(out))!="VOLVE_SYNTHETIC_REGSZ_ROUNDTRIP_OK"{t.Fatal("native synthetic registry roundtrip or cleanup failed",err)}
+ t.Log("PASS VOLVE_BROWSER_SYNTHETIC_HKCU_REGSZ_ROUNDTRIP_AND_CLEANUP")
+}
