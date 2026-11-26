@@ -6,7 +6,7 @@ permissions:
   contents: read
 jobs:
   local-reference:
-    runs-on: windows-2022
+    runs-on: windows-2025
     timeout-minutes: 8
     steps:
       - uses: actions/checkout@v4
@@ -19,7 +19,6 @@ jobs:
           if($env:GITHUB_ACTIONS -cne 'true' -or $env:RUNNER_ENVIRONMENT -cne 'github-hosted'){throw 'Hosted runner only'}
           $vm=Get-CimInstance Win32_ComputerSystem
           if(($vm.Manufacturer+' '+$vm.Model) -notmatch '(?i)virtual machine|hyper-v|vmware|qemu|kvm'){throw 'Disposable VM not verified'}
-          if(@(Get-NetTCPConnection -LocalPort 53 -State Listen -ErrorAction SilentlyContinue).Count -or @(Get-NetUDPEndpoint -LocalPort 53 -ErrorAction SilentlyContinue).Count){throw 'Port 53 already occupied; refuse to modify'}
           $routes=@(Get-NetRoute -AddressFamily IPv4 -DestinationPrefix '0.0.0.0/0' | Sort-Object RouteMetric,InterfaceMetric)
           if($routes.Count -ne 1){throw 'Ambiguous default route; no changes'}
           $idx=$routes[0].InterfaceIndex
@@ -27,6 +26,18 @@ jobs:
           $ips=@(Get-NetIPAddress -InterfaceIndex $idx -AddressFamily IPv4 | Where-Object {$_.AddressState -eq 'Preferred' -and $_.IPAddress -notmatch '^(127\.|169\.254\.)'})
           if($ips.Count -ne 1){throw 'Ambiguous local IPv4; no changes'}
           $local=[string]$ips[0].IPAddress
+          # Report conflicts without exposing runner addresses or terminating any owner.
+          $tcp=@(Get-NetTCPConnection -LocalPort 53 -State Listen -ErrorAction SilentlyContinue)
+          $udp=@(Get-NetUDPEndpoint -LocalPort 53 -ErrorAction SilentlyContinue)
+          $ports=@(foreach($entry in @($tcp)+@($udp)){
+            $scope=if($entry.LocalAddress -in @('0.0.0.0','::')){'wildcard'}elseif($entry.LocalAddress -eq '127.0.0.1'){'loopback'}elseif($entry.LocalAddress -eq $local){'local-target'}else{'other-interface'}
+            [pscustomobject]@{scope=$scope;owner_present=([int]$entry.OwningProcess -gt 0)}
+          })
+          Write-Host ('VOLVE_PORT53_PREFLIGHT='+([ordered]@{tcp_count=$tcp.Count;udp_count=$udp.Count;bindings=$ports}|ConvertTo-Json -Depth 4 -Compress))
+          if(@($ports|Where-Object {$_.scope -ne 'other-interface'}).Count){throw 'Port 53 conflicts with reference endpoints; no DNS changes'}
+          # Unrelated exact-address bindings do not reserve these endpoints.
+          # The fixture still requires SO_EXCLUSIVEADDRUSE on all four sockets
+          # before readiness; any actual bind conflict stops before DNS writes.
           $key='HKLM:\SYSTEM\CurrentControlSet\Services\Tcpip\Parameters\Interfaces\'+([guid]$adapter.InterfaceGuid).ToString('B')
           $reg=Get-ItemProperty -LiteralPath $key
           $original=@((Get-DnsClientServerAddress -InterfaceIndex $idx -AddressFamily IPv4).ServerAddresses)
