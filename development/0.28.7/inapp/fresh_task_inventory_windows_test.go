@@ -250,3 +250,48 @@ func TestWindowsOriginalCatalogArchiveNativeDisplayReview(t *testing.T){
  if err==nil||refused!=(WindowsOriginalBackupReview{Status:"UNVERIFIED"}){t.Fatal("wrong original baseline received display credit")}
  t.Log("PASS VOLVE_FOUR_ARCHIVES_REAL_NTFS_DISPLAY_ONLY")
 }
+
+// This rehearsal uses actual independently observed Windows originals,
+// rather than fixture content. Only new temporary archive files are written;
+// all live OS queries are read-only. The temporary data is not published.
+func TestWindowsOriginalCatalogArchiveNativeActualCensus(t *testing.T){
+ if os.Getenv("GITHUB_ACTIONS")!="true"||os.Getenv("RUNNER_ENVIRONMENT")!="github-hosted"{t.Skip("disposable hosted runner only")}
+ ctx,cancel:=context.WithTimeout(context.Background(),150*time.Second);defer cancel()
+ snap,browser,err:=InspectWindowsProtectionSnapshotReadOnly(ctx,"","",DefaultWindowsProtectionSnapshotInspectors())
+ if err!=nil{t.Fatal("native original census unavailable")}
+ inv,err:=InspectWindowsVOLVETasksReadOnly(ctx,"","",DefaultWindowsFreshTaskInspect)
+ if err!=nil||inv.VOLVETaskCount!=0||len(inv.UnknownTaskNames)!=0||inv.VerifiedCatalogTask!=nil{t.Fatal("native clean-task observation unavailable")}
+ hostsPin:=WindowsHostsFileEvidence{SHA256:snap.HostsSHA256,BlockedRuleCount:snap.HostsBlockedRuleCount}
+ hosts,err:=captureOriginalWindowsHostsBackup(ctx,filepath.Join(os.Getenv("SystemRoot"),"System32","drivers","etc","hosts"),hostsPin)
+ if err!=nil{t.Fatal("native original hosts capture unavailable")}
+ policies,err:=captureOriginalBrowserPolicyBytes(ctx,browser,readOriginalBrowserPolicyLocal)
+ if err!=nil{t.Fatal("native original registry capture unavailable")}
+ observed,err:=InspectWindowsDNSAssignmentProvenanceReadOnly(ctx,DefaultWindowsReadOnlyPowerShell)
+ if err!=nil||observed.SHA256!=snap.DNSAdaptersSHA256{t.Fatal("native DNS source observation drifted")}
+ journal,pin,err:=BuildDNSOriginalJournal(ctx,observed.States)
+ if err!=nil{t.Fatal("native original DNS journal not representable")}
+ definition,err:=captureOriginalCatalogDefinition(ctx,snap,inv,readOriginalCatalogDefinitionLocal)
+ if err!=nil||definition.Present{t.Fatal("native catalog absence not independently verified")}
+ root:=t.TempDir()
+ parent:=filepath.Join(root,"original-protection-recovery")
+ dnsParent:=filepath.Join(root,"legacy-engine-recovery")
+ seal:=func(path string)error{return sealDNSBackupLabNode(ctx,path)}
+ check:=func(path string)error{return nativeDNSOriginalBackupACL(ctx,path)}
+ for _,dir:=range []string{parent,dnsParent}{
+  if err:=os.Mkdir(dir,0700);err!=nil{t.Fatal("local archive directory unavailable")}
+  if err:=seal(dir);err!=nil{t.Fatal("local archive directory ACL unavailable")}
+ }
+ if err:=storeOriginalWindowsHostsBackupUnarmed(ctx,parent,hosts,hostsPin,seal,check);err!=nil{t.Fatal("native hosts staging failed")}
+ if err:=storeBrowserOriginalArchiveUnarmed(ctx,parent,browser,policies,seal,check);err!=nil{t.Fatal("native registry staging failed")}
+ if _,err:=StoreDNSOriginalBackupUnarmed(ctx,dnsParent,journal,pin,seal,check);err!=nil{t.Fatal("native DNS staging failed")}
+ if err:=storeOriginalCatalogArchiveUnarmed(ctx,parent,snap,inv,definition,seal,check);err!=nil{t.Fatal("native catalog staging failed")}
+ report,err:=InspectOriginalBackupArchivesNativeReadOnly(ctx,parent,dnsParent,snap,browser,inv,pin)
+ if err!=nil||report.Status!="FOUR_ARCHIVES_VERIFIED_READ_ONLY"||!report.HostsVerified||
+  report.BrowserKeysVerified!=3||!report.DNSBackupVerified||!report.CatalogBackupVerified||
+  report.CompleteRecoverySnapshot||report.InstallAuthorized||report.RestoreAuthorized{
+  t.Fatal("actual Windows archive review failed")
+ }
+ after,_,err:=InspectWindowsProtectionSnapshotReadOnly(ctx,"","",DefaultWindowsProtectionSnapshotInspectors())
+ if err!=nil||after!=snap{t.Fatal("live Windows original state differs after temporary archive rehearsal")}
+ t.Log("PASS VOLVE_ACTUAL_NATIVE_ORIGINALS_ARCHIVED_AND_RECENSUSED_NO_OS_WRITES")
+}
