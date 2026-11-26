@@ -12,7 +12,7 @@ on:
       - 'development/0.28.7/taskrecoverygate/**'
       - '.github/workflows/volve-0287-one-exe-pr.yml'
   push:
-    branches: [work/0287-installer-progress-20261124, work/0287-preview-dns-compatibility-20261126]
+    branches: [work/0287-installer-progress-20261124, work/0287-preview-dns-compatibility-20261126, work/0287-browser-backup-capture-20261126]
     paths:
       - 'development/0.28.7/hostroutebridge/**'
       - '.github/workflows/volve-0287-one-exe-pr.yml'
@@ -625,6 +625,14 @@ jobs:
                $report.can_upgrade -ne $false -or
                $report.can_change_dns -ne $false -or
                $report.can_change_tasks -ne $false -or
+               $report.original_backup_review.status -cne 'NOT_CHECKED_NO_ARCHIVES' -or
+               $report.original_backup_review.hosts_verified -cne $false -or
+               $report.original_backup_review.browser_keys_verified -ne 0 -or
+               $report.original_backup_review.dns_backup_verified -cne $false -or
+               $report.original_backup_review.catalog_backup_verified -cne $false -or
+               $report.original_backup_review.complete_recovery_snapshot -cne $false -or
+               $report.original_backup_review.install_authorized -cne $false -or
+               $report.original_backup_review.restore_authorized -cne $false -or
                $report.configured_resolver_tcp_verified -cne $false -or
                $report.dns_compatibility_status -cne 'UNVERIFIED_ACTUAL_CONFIGURED_RESOLVER_TCP' -or
                @($report.unmet_production_prerequisites) -cnotcontains 'verify-configured-resolver-TCP-with-actual-motor-and-safe-original-DNS-recovery' -or
@@ -676,6 +684,14 @@ jobs:
                  $protected.can_upgrade -ne $false -or
                  $protected.can_change_dns -ne $false -or
                  $protected.can_change_tasks -ne $false -or
+                 $protected.original_backup_review.status -cne 'NOT_CHECKED_NO_ARCHIVES' -or
+                 $protected.original_backup_review.hosts_verified -cne $false -or
+                 $protected.original_backup_review.browser_keys_verified -ne 0 -or
+                 $protected.original_backup_review.dns_backup_verified -cne $false -or
+                 $protected.original_backup_review.catalog_backup_verified -cne $false -or
+                 $protected.original_backup_review.complete_recovery_snapshot -cne $false -or
+                 $protected.original_backup_review.install_authorized -cne $false -or
+                 $protected.original_backup_review.restore_authorized -cne $false -or
                  $protected.configured_resolver_tcp_verified -cne $false -or
                  $protected.dns_compatibility_status -cne 'UNVERIFIED_ACTUAL_CONFIGURED_RESOLVER_TCP' -or
                  @($protected.unmet_production_prerequisites) -cnotcontains 'verify-configured-resolver-TCP-with-actual-motor-and-safe-original-DNS-recovery' -or
