@@ -219,3 +219,53 @@ func TestVOLVEBrowserOriginalArchiveRealNTFS(t *testing.T){
  if got,err:=readBrowserOriginalArchiveUnarmed(ctx,parent,e,check);err==nil||got!=nil{t.Fatal("weakened backup ACL accepted")}
  t.Log("PASS VOLVE_BROWSER_ARCHIVE_REAL_NTFS_FIXTURE")
 }
+
+func makeOriginalProtectionPairFixture(t *testing.T)(string,ProtectionSnapshot,WindowsBrowserPolicyEvidence,[]byte,map[string][]byte){
+ t.Helper()
+ parent:=filepath.Join(t.TempDir(),"original-protection-recovery")
+ if err:=os.Mkdir(parent,0700);err!=nil{t.Fatal(err)}
+ browser,data:=browserArchiveFixture(t)
+ raw:=[]byte("# original fixture\r\n0.0.0.0 fixture.test\r\n")
+ sum:=sha256.Sum256(raw)
+ snap:=ProtectionSnapshot{HostsSHA256:hex.EncodeToString(sum[:]),HostsBlockedRuleCount:1,
+  CatalogTaskDefinitionSHA256:strings.Repeat("a",64),DNSAdaptersSHA256:strings.Repeat("b",64)}
+ for _,record:=range browser.Records{
+  switch record.Name{case "chrome":snap.ChromePoliciesSHA256=record.ContentSHA256
+  case "edge":snap.EdgePoliciesSHA256=record.ContentSHA256
+  case "firefox":snap.FirefoxPoliciesSHA256=record.ContentSHA256}
+ }
+ return parent,snap,browser,raw,data
+}
+func TestVOLVEBrowserOriginalPairRefusesIncompleteAndForeignBaseline(t *testing.T){
+ ctx:=context.Background()
+ parent,snap,browser,raw,data:=makeOriginalProtectionPairFixture(t)
+ allow:=func(string)error{return nil}
+ pin:=WindowsHostsFileEvidence{SHA256:snap.HostsSHA256,BlockedRuleCount:snap.HostsBlockedRuleCount}
+ if err:=storeOriginalWindowsHostsBackupUnarmed(ctx,parent,raw,pin,allow,allow);err!=nil{t.Fatal(err)}
+ if receipt,err:=verifyOriginalProtectionPairUnarmed(ctx,parent,snap,browser,allow);err==nil||receipt!=(originalProtectionPairReceipt{}){t.Fatal("partial backup accepted")}
+ if err:=storeBrowserOriginalArchiveUnarmed(ctx,parent,browser,data,allow,allow);err!=nil{t.Fatal(err)}
+ bad:=snap;bad.ChromePoliciesSHA256=strings.Repeat("f",64)
+ if receipt,err:=verifyOriginalProtectionPairUnarmed(ctx,parent,bad,browser,allow);err==nil||receipt!=(originalProtectionPairReceipt{}){t.Fatal("foreign baseline accepted")}
+ bad=snap;bad.DNSAdaptersSHA256=""
+ if receipt,err:=verifyOriginalProtectionPairUnarmed(ctx,parent,bad,browser,allow);err==nil||receipt!=(originalProtectionPairReceipt{}){t.Fatal("incomplete original census accepted")}
+ receipt,err:=verifyOriginalProtectionPairUnarmed(ctx,parent,snap,browser,allow)
+ if err!=nil||!receipt.HostsVerified||receipt.BrowserKeysVerified!=3||
+  receipt.CatalogBackupVerified||receipt.DNSBackupVerified||receipt.CompleteRecoverySnapshot||receipt.InstallAuthorized||receipt.RestoreAuthorized{t.Fatal("pair receipt incorrect",err)}
+}
+func TestVOLVEBrowserOriginalPairRealNTFS(t *testing.T){
+ if os.Getenv("GITHUB_ACTIONS")!="true"||os.Getenv("RUNNER_ENVIRONMENT")!="github-hosted"{t.Skip("disposable runner only")}
+ ctx,cancel:=context.WithTimeout(context.Background(),120*time.Second);defer cancel()
+ parent,snap,browser,raw,data:=makeOriginalProtectionPairFixture(t)
+ if err:=sealDNSBackupLabNode(ctx,parent);err!=nil{t.Fatal(err)}
+ seal:=func(path string)error{return sealDNSBackupLabNode(ctx,path)}
+ check:=func(path string)error{return nativeDNSOriginalBackupACL(ctx,path)}
+ pin:=WindowsHostsFileEvidence{SHA256:snap.HostsSHA256,BlockedRuleCount:snap.HostsBlockedRuleCount}
+ if err:=storeOriginalWindowsHostsBackupUnarmed(ctx,parent,raw,pin,seal,check);err!=nil{t.Fatal(err)}
+ if err:=storeBrowserOriginalArchiveUnarmed(ctx,parent,browser,data,seal,check);err!=nil{t.Fatal(err)}
+ receipt,err:=verifyOriginalProtectionPairUnarmed(ctx,parent,snap,browser,check)
+ if err!=nil||!receipt.HostsVerified||receipt.BrowserKeysVerified!=3||receipt.CompleteRecoverySnapshot||receipt.InstallAuthorized||receipt.RestoreAuthorized{t.Fatal("native pair verification failed",err)}
+ _,file,err:=originalHostsBackupPaths(parent);if err!=nil{t.Fatal(err)}
+ if err:=os.WriteFile(file,[]byte("changed"),0600);err!=nil{t.Fatal(err)}
+ if receipt,err:=verifyOriginalProtectionPairUnarmed(ctx,parent,snap,browser,check);err==nil||receipt!=(originalProtectionPairReceipt{}){t.Fatal("modified member accepted")}
+ t.Log("PASS VOLVE_ORIGINAL_PAIR_REAL_NTFS_NO_INSTALL")
+}

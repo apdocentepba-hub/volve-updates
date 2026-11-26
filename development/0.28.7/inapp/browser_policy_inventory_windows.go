@@ -311,3 +311,50 @@ func readBrowserOriginalArchiveUnarmed(ctx context.Context,parent string,baselin
  if err:=verify();err!=nil{return nil,err}
  return captureOriginalBrowserPolicyBytes(ctx,baseline,func(context.Context)([]byte,error){return raw,nil})
 }
+
+// A partial backup receipt intentionally excludes raw hosts and registry values.
+// A verified pair is NOT a complete restore snapshot: catalog, DNS, policy
+// coverage, transaction binding, and an authenticated recovery controller
+// are separate requirements. No install or restore authorization is issued.
+type originalProtectionPairReceipt struct {
+ HostsVerified bool
+ BrowserKeysVerified int
+ CatalogBackupVerified bool
+ DNSBackupVerified bool
+ CompleteRecoverySnapshot bool
+ InstallAuthorized bool
+ RestoreAuthorized bool
+}
+
+func verifyOriginalProtectionPairUnarmed(ctx context.Context,parent string,
+ baseline ProtectionSnapshot,browser WindowsBrowserPolicyEvidence,
+ check func(string)error)(originalProtectionPairReceipt,error){
+ var denied originalProtectionPairReceipt
+ if ctx==nil||check==nil{return denied,errors.New("paired backup verification requires context and trusted ACL verifier")}
+ if err:=ctx.Err();err!=nil{return denied,err}
+ if !validProtectionSnapshot(baseline){return denied,errors.New("independent protection baseline incomplete")}
+ // Bind both archives to the SAME original protection census rather than
+ // trusting a browser record from an unrelated operation.
+ public,err:=json.Marshal(browser.Records)
+ if err!=nil{return denied,errors.New("browser baseline encoding refused")}
+ validated,err:=InspectWindowsBrowserPoliciesReadOnly(ctx,func(context.Context,string)([]byte,error){return public,nil})
+ if err!=nil||validated.TotalNumberedEntries!=browser.TotalNumberedEntries||
+  browser.Schema!=1||browser.Component!="browser-policy-registry-read-only"||
+  !browser.NoRegistryValuesExported||browser.BrowserEnforcementVerified||browser.DNSMotorVerified{
+  return denied,errors.New("independent browser baseline invalid")
+ }
+ pins:=map[string]string{"chrome":baseline.ChromePoliciesSHA256,"edge":baseline.EdgePoliciesSHA256,"firefox":baseline.FirefoxPoliciesSHA256}
+ for _,record:=range validated.Records{
+  if !strings.EqualFold(record.ContentSHA256,pins[record.Name]){return denied,errors.New("browser backup belongs to a different protection baseline")}
+ }
+ hostsPin:=WindowsHostsFileEvidence{SHA256:baseline.HostsSHA256,BlockedRuleCount:baseline.HostsBlockedRuleCount}
+ if _,err:=readOriginalWindowsHostsBackupUnarmed(ctx,parent,hostsPin,check);err!=nil{return denied,fmt.Errorf("original hosts backup not verified: %w",err)}
+ policies,err:=readBrowserOriginalArchiveUnarmed(ctx,parent,browser,check)
+ if err!=nil||len(policies)!=3{return denied,errors.New("three original browser archives not verified")}
+ // Independently check the hosts archive again after browser I/O. This is
+ // not an atomic filesystem snapshot; the future controller must keep its
+ // authenticated transaction lock and validate live state before mutation.
+ if _,err:=readOriginalWindowsHostsBackupUnarmed(ctx,parent,hostsPin,check);err!=nil{return denied,errors.New("original hosts backup changed while verifying pair")}
+ if err:=ctx.Err();err!=nil{return denied,err}
+ return originalProtectionPairReceipt{HostsVerified:true,BrowserKeysVerified:3},nil
+}
