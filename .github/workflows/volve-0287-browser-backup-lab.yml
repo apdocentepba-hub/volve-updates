@@ -47,7 +47,7 @@ jobs:
           Expand-Archive $recovery -DestinationPath build -Force
           go run development/0.28.7/inapp/apply_overlay.go build/codigo
           if($LASTEXITCODE -ne 0){throw 'Source overlay failed'}
-      - name: Verify three local policy captures without registry writes
+      - name: Verify read-only policy captures and isolated synthetic HKCU reconstruction
         working-directory: build/codigo
         shell: pwsh
         run: |
@@ -66,6 +66,7 @@ jobs:
           if(@($result|Where-Object {$_ -match '^--- PASS: TestVOLVEBrowserOriginalDecode'}).Count -ne 4){throw 'Expected four typed browser backup decode tests'}
           if(@($result|Where-Object {$_ -match 'PASS VOLVE_BROWSER_SYNTHETIC_HKCU_REGSZ_ROUNDTRIP_AND_CLEANUP'}).Count -ne 1){throw 'Missing native synthetic registry roundtrip evidence'}
           if(@($result|Where-Object {$_ -match 'PASS VOLVE_BROWSER_NATIVE_CAPTURE_FORMAT_SYNTHETIC_THREE_STATES'}).Count -ne 1){throw 'Missing native capture format reconstruction evidence'}
+          if(@($result|Where-Object {$_ -match 'PASS VOLVE_BROWSER_SYNTHETIC_REBUILD_INDEPENDENT_FINGERPRINT_AND_CLEANUP'}).Count -ne 1){throw 'Missing independent native reconstruction and cleanup evidence'}
       - name: Verify catalog original XML capture against independently observed definition
         working-directory: build/codigo
         shell: pwsh
