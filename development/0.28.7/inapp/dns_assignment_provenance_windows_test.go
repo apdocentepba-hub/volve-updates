@@ -211,3 +211,45 @@ Write-Output 'VOLVE_LOOPBACK_PLACEHOLDER_GUARD_14_PASS'
  raw,err:=exec.CommandContext(ctx,ps,"-NoLogo","-NoProfile","-NonInteractive","-File",path).CombinedOutput()
  if err!=nil||strings.TrimSpace(string(raw))!="VOLVE_LOOPBACK_PLACEHOLDER_GUARD_14_PASS"{t.Fatalf("native loopback guard test failed: %v %s",err,raw)}
 }
+
+func TestWindowsDNSOverrideCensusStrictEvidence(t *testing.T){
+ base:=`{"schema":1,"component":"windows-dns-override-census-v1","local_nrpt_rules":0,"effective_nrpt_policies":0,"doh_cmdlet_available":true,"known_doh_servers":3,"dns_group_policy_key_present":false,"dns_group_policy_values":0,"dns_group_policy_subkeys":0}`
+ read:=func(raw string)(WindowsDNSOverrideCensus,error){
+  return InspectWindowsDNSOverrideCensusReadOnly(context.Background(),func(_ context.Context,q string)([]byte,error){
+   if q!=windowsDNSOverrideCensusQuery{t.Fatal("unexpected query")}
+   return []byte(raw),nil
+  })
+ }
+ got,err:=read(base)
+ if err!=nil||!got.DoHCmdletAvailable||got.KnownDoHServers!=3{t.Fatal("valid census refused",err)}
+ unavailable:=strings.Replace(strings.Replace(base,`"doh_cmdlet_available":true`,`"doh_cmdlet_available":false`,1),`"known_doh_servers":3`,`"known_doh_servers":0`,1)
+ got,err=read(unavailable)
+ if err!=nil||got.DoHCmdletAvailable{t.Fatal("unavailable cmdlet misclassified",err)}
+ for name,raw:=range map[string]string{
+  "missing":strings.Replace(base,`"local_nrpt_rules":0,`,"",1),
+  "null":strings.Replace(base,`"local_nrpt_rules":0`,`"local_nrpt_rules":null`,1),
+  "duplicate":strings.Replace(base,`"schema":1`,`"schema":1,"schema":1`,1),
+  "foreign":strings.Replace(base,"windows-dns-override-census-v1","other",1),
+  "negative":strings.Replace(base,`"local_nrpt_rules":0`,`"local_nrpt_rules":-1`,1),
+  "oversized":strings.Replace(base,`"local_nrpt_rules":0`,`"local_nrpt_rules":65537`,1),
+  "contradictory-doh":strings.Replace(base,`"doh_cmdlet_available":true`,`"doh_cmdlet_available":false`,1),
+  "contradictory-policy":strings.Replace(base,`"dns_group_policy_values":0`,`"dns_group_policy_values":1`,1),
+  "extra-private":strings.Replace(base,`"schema":1`,`"schema":1,"private_namespace":"fixture.test"`,1),
+ }{t.Run(name,func(t *testing.T){got,err:=read(raw);if err==nil||got!=(WindowsDNSOverrideCensus{}){t.Fatal("invalid census accepted")}})}
+ ctx,cancel:=context.WithCancel(context.Background());cancel()
+ got,err=InspectWindowsDNSOverrideCensusReadOnly(ctx,func(context.Context,string)([]byte,error){t.Fatal("cancelled query executed");return nil,nil})
+ if err==nil||got!=(WindowsDNSOverrideCensus{}){t.Fatal("cancelled census accepted")}
+ t.Log("PASS VOLVE_DNS_OVERRIDE_CENSUS_REJECTS_INCOMPLETE_AND_CONTRADICTORY_EVIDENCE")
+}
+
+func TestWindowsDNSOverrideCensusNativeReadOnly(t *testing.T){
+ if os.Getenv("GITHUB_ACTIONS")!="true"||os.Getenv("RUNNER_ENVIRONMENT")!="github-hosted"{t.Skip("disposable hosted Windows only")}
+ ctx,cancel:=context.WithTimeout(context.Background(),90*time.Second);defer cancel()
+ before,err:=InspectWindowsDNSOverrideCensusReadOnly(ctx,DefaultWindowsReadOnlyPowerShell)
+ if err!=nil{t.Fatal(err)}
+ after,err:=InspectWindowsDNSOverrideCensusReadOnly(ctx,DefaultWindowsReadOnlyPowerShell)
+ if err!=nil||before!=after{t.Fatal("native policy census unstable",err)}
+ if err:=ctx.Err();err!=nil{t.Fatal(err)}
+ t.Logf("Native counts only: local NRPT=%d effective NRPT=%d DoH cmdlet=%t known DoH=%d group policy present=%t",before.LocalNRPTRules,before.EffectiveNRPTPolicies,before.DoHCmdletAvailable,before.KnownDoHServers,before.GroupPolicyKeyPresent)
+ t.Log("PASS VOLVE_NATIVE_DNS_OVERRIDE_CENSUS_COUNTS_ONLY_NO_INSTALL")
+}
