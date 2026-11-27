@@ -77,3 +77,37 @@ func TestWindowsDNSActivationOverrideGuardRejectsDriftWithoutSuppressingRecovery
  if err:=g.RecoverIndependently(ctx,"pin");err!=nil||inner.recovered!=1{t.Fatal("policy drift blocked independent recovery",err)}
  t.Log("PASS VOLVE_DNS_ACTIVATION_POLICY_GUARD_REJECTS_DRIFT_PRESERVES_RECOVERY")
 }
+
+
+// Use the existing real transaction coordinator and native backend, with
+// memory-only DNS and policy observations. No netsh process is launched.
+func TestWindowsActivationPolicyDriftInsideAttestationPreventsCommit(t *testing.T){
+ for _,afterWrite:=range []bool{false,true}{
+  name:="before-first-write";if afterWrite{name="after-first-write"}
+  t.Run(name,func(t *testing.T){
+   ctx:=context.Background()
+   raw,pin:=windowsNativeActivationInput(t)
+   host:=windowsActivationHostFixture()
+   current:=WindowsDNSOverrideCensus{Schema:1,Component:"windows-dns-override-census-v1",DoHCmdletAvailable:true,KnownDoHServers:12,fingerprints:[4]string{strings.Repeat("a",64),strings.Repeat("b",64),strings.Repeat("c",64),strings.Repeat("d",64)}}
+   inner:=&windowsActivationIndependentGuard{h:host}
+   guard:=&dnsActivationOverrideGuard{inner:inner,observe:func(context.Context)(WindowsDNSOverrideCensus,error){return current,nil}}
+   if err:=guard.capture(ctx);err!=nil{t.Fatal(err)}
+   backend,err:=newWindowsPinnedDNSActivationBackend(ctx,raw,pin,host.inspect,host.invoke,guard)
+   if err!=nil{t.Fatal(err)}
+   // On the fifth attestation (Apply), or the first attestation after
+   // the first write, simulate a change DURING the inner guard call.
+   inner.onArm=func(n int){
+    if (!afterWrite&&n==5)||(afterWrite&&host.invocations==1){
+     current.fingerprints[2]=strings.Repeat("e",64)
+    }
+   }
+   err=activateVOLVEDNSWithRecovery(ctx,raw,pin,backend,guard)
+   wantWrites:=0;if afterWrite{wantWrites=1}
+   if err==nil||host.invocations!=wantWrites||inner.commitCount!=0||inner.recoverCount!=1{t.Fatalf("unexpected transition writes=%d commits=%d recovery=%d err=%v",host.invocations,inner.commitCount,inner.recoverCount,err)}
+   for fam,expected:=range windowsActivationHostFixture().states{
+    if !sameDNSState(host.states[fam],expected){t.Fatal("original memory DNS not recovered")}
+   }
+  })
+ }
+ t.Log("PASS VOLVE_DNS_POLICY_DRIFT_DURING_ATTESTATION_TRANSACTION_RECOVERY")
+}

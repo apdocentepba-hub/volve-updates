@@ -52,7 +52,11 @@ func(g *dnsActivationOverrideGuard)check(ctx context.Context)error{
 }
 func(g *dnsActivationOverrideGuard)VerifyArmed(ctx context.Context,pin string)error{
  if err:=g.check(ctx);err!=nil{return err}
- return g.inner.VerifyArmed(ctx,pin)
+ if err:=g.inner.VerifyArmed(ctx,pin);err!=nil{return err}
+ // The independent watchdog/publisher observation can take time or
+ // coincide with a policy change. Reobserve before the backend's final
+ // adapter read; do not insert another lengthy callback after that read.
+ return g.check(ctx)
 }
 func(g *dnsActivationOverrideGuard)VerifyLiveProtection(ctx context.Context,pin string)error{
  if err:=g.check(ctx);err!=nil{return err}
@@ -116,15 +120,12 @@ func activateWindowsDNSAsProtectedSYSTEM(
    // Factory is invoked only with the native transition lease already held.
    // Refuse unknown policy before any durable authorization is consumed.
    if err:=policyGuard.capture(ctx);err!=nil{return nil,err}
-   invoke:=func(c context.Context,args []string)error{
-    if err:=policyGuard.check(c);err!=nil{return err}
-    // Recheck publisher and watchdog after the added native observation.
-    if err:=publisherBound.VerifyArmed(c,independentlyPinnedSHA256);err!=nil{return err}
-    return runPinnedWindowsNativeDNS(c,args)
-   }
+   // The backend's existing final independent adapter read must follow
+   // all policy/watchdog attestation callbacks. A wrapper that reattests
+   // inside invoke would reopen the last-moment adapter race.
    backend,err:=newWindowsPinnedDNSActivationBackend(
     ctx,originalJournal,independentlyPinnedSHA256,
-    DefaultWindowsReadOnlyPowerShell,invoke,guarded,
+    DefaultWindowsReadOnlyPowerShell,runPinnedWindowsNativeDNS,guarded,
    )
    if err!=nil{return nil,err}
    exclusive,ok:=guarded.(*exclusiveDNSActivationGuard)
