@@ -162,8 +162,24 @@ jobs:
           $exObservations=@();$fallbackObservations=@()
           try{
             $proc=Start-Process -FilePath (Get-Command python -ErrorAction Stop).Source -ArgumentList @('-u',('"'+$fixture+'"')) -PassThru
-            for($i=0;$i -lt 50 -and !(Test-Path -LiteralPath $env:VOLVE_LAB_READY);$i++){if($proc.HasExited){throw 'Fixture failed to bind'};Start-Sleep -Milliseconds 100}
-            if(!(Test-Path -LiteralPath $env:VOLVE_LAB_READY)){throw 'Fixture not ready'}
+            # Bound readiness by elapsed wall-clock time, not filesystem polling count.
+            $startup=[Diagnostics.Stopwatch]::StartNew()
+            while(!(Test-Path -LiteralPath $env:VOLVE_LAB_READY)){
+              $proc.Refresh()
+              if($proc.HasExited){throw ('Fixture exited before readiness: '+$proc.ExitCode)}
+              if($startup.Elapsed.TotalSeconds -ge 90){throw 'Fixture readiness deadline exceeded; no DNS changes'}
+              Start-Sleep -Milliseconds 250
+            }
+            $proc.Refresh()
+            if($proc.HasExited -or (Get-Content -LiteralPath $env:VOLVE_LAB_READY -Raw) -cne 'READY'){throw 'Fixture readiness identity invalid'}
+            $fixtureTCP=@(Get-NetTCPConnection -LocalPort 53 -State Listen -ErrorAction Stop | Where-Object {$_.OwningProcess -eq $proc.Id})
+            $fixtureUDP=@(Get-NetUDPEndpoint -LocalPort 53 -ErrorAction Stop | Where-Object {$_.OwningProcess -eq $proc.Id})
+            function AssertFixtureEndpoints([object[]]$rows){
+              if($rows.Count -ne 2 -or @($rows|Where-Object {$_.LocalAddress -ceq '127.0.0.1'}).Count -ne 1 -or @($rows|Where-Object {$_.LocalAddress -ceq '::1'}).Count -ne 1){throw 'Fixture listener identity not independently verified; no DNS changes'}
+            }
+            AssertFixtureEndpoints $fixtureTCP
+            AssertFixtureEndpoints $fixtureUDP
+            Write-Host ('VOLVE_FIXTURE_READY_OWNED_FOUR_LOOPBACK_SOCKETS_MS='+[int]$startup.Elapsed.TotalMilliseconds)
             $observations+=Observe 'explicit-v4-tcp' '127.0.0.1' $true
             $observations+=Observe 'explicit-v6-tcp' '::1' $true
             if(!$observations[0].answer_verified -or $observations[0].ipv4_tcp -lt 1 -or !$observations[1].answer_verified -or $observations[1].ipv6_tcp -lt 1 -or @($observations|Where-Object {$_.udp -ne 0}).Count){throw 'Explicit controls failed; no DNS changes'}
