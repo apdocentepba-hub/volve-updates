@@ -288,7 +288,58 @@ func decodeCompleteWindowsDNSAssignmentRecord(raw []byte)(windowsDNSAssignmentRe
 // mutation. This is deliberately not a restore snapshot or a claim that
 // all encrypted DNS transports are disabled. Known DoH definitions alone
 // do not establish actual encrypted DNS use.
-const windowsDNSOverrideCensusQuery = `$ErrorActionPreference='Stop';$ProgressPreference='SilentlyContinue';
+const windowsDNSOverrideFingerprintHelpers = `
+function Get-VolvHash([string]$domain,[string[]]$rows){
+ if($rows.Count -gt 65536){throw 'DNS override row limit'}
+ [Array]::Sort($rows,[StringComparer]::Ordinal)
+ $sha=[Security.Cryptography.SHA256]::Create()
+ try{
+  $bytes=[Text.Encoding]::UTF8.GetBytes((ConvertTo-Json -InputObject ([ordered]@{domain=$domain;rows=@($rows)}) -Depth 4 -Compress))
+  if($bytes.Length -gt 4194304){throw 'DNS override content limit'}
+  return [BitConverter]::ToString($sha.ComputeHash($bytes)).Replace('-','').ToLowerInvariant()
+ }finally{$sha.Dispose()}
+}
+function Get-VolvTypedValue($value){
+ if($null -eq $value){return [ordered]@{type='null';value=$null}}
+ $type=$value.GetType()
+ if($type.IsArray){$element=$type.GetElementType()}else{$element=$type}
+ if(!$element.IsPrimitive -and $element -ne [string] -and !$element.IsEnum){throw 'Unsupported DNS override property type'}
+ return [ordered]@{type=$type.FullName;value=$value}
+}
+function Get-VolvCimRows([object[]]$items){
+ foreach($item in $items){
+  if($null -eq $item -or $null -eq $item.CimInstanceProperties){throw 'DNS policy item lacks CIM schema'}
+  $names=[string[]]@($item.CimInstanceProperties|ForEach-Object {$_.Name})
+  [Array]::Sort($names,[StringComparer]::Ordinal)
+  if(!$names.Count -or $names.Count -gt 128){throw 'DNS policy property limit'}
+  $record=[ordered]@{}
+  foreach($name in $names){
+   if($record.Contains($name)){throw 'Duplicate DNS policy property'}
+   $record[$name]=Get-VolvTypedValue $item.CimInstanceProperties[$name].Value
+  }
+  ConvertTo-Json -InputObject $record -Depth 5 -Compress
+ }
+}
+function Get-VolvRegistryRows($key,[string]$relative,[int]$depth,[ref]$budget){
+ if($depth -gt 16 -or $budget.Value -le 0){throw 'DNS policy registry limit'}
+ $budget.Value--
+ ConvertTo-Json -InputObject ([ordered]@{key=$relative;kind='key'}) -Compress
+ foreach($name in $key.GetValueNames()){
+  if($budget.Value -le 0){throw 'DNS policy registry limit'}
+  $budget.Value--
+  $kind=$key.GetValueKind($name).ToString()
+  if($kind -cnotin @('String','ExpandString','Binary','DWord','MultiString','QWord')){throw 'Unsupported DNS policy registry value'}
+  $data=$key.GetValue($name,$null,[Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
+  ConvertTo-Json -InputObject ([ordered]@{key=$relative;name=$name;kind=$kind;data=(Get-VolvTypedValue $data)}) -Depth 5 -Compress
+ }
+ foreach($name in $key.GetSubKeyNames()){
+  $child=$key.OpenSubKey($name,$false)
+  if($null -eq $child){throw 'DNS policy registry changed during read'}
+  try{Get-VolvRegistryRows $child ($relative+'/'+$name) ($depth+1) $budget}finally{$child.Close()}
+ }
+}
+`
+const windowsDNSOverrideCensusQuery = `$ErrorActionPreference='Stop';$ProgressPreference='SilentlyContinue';`+windowsDNSOverrideFingerprintHelpers+`
 $nrptLocal=@(Get-DnsClientNrptRule -ErrorAction Stop);
 $nrptEffective=@(Get-DnsClientNrptPolicy -Effective -ErrorAction Stop);
 $dohAvailable=($null -ne (Get-Command Get-DnsClientDohServerAddress -CommandType Cmdlet,Function -ErrorAction SilentlyContinue));
@@ -298,8 +349,12 @@ $policy=$null;
 try{
  $policy=$machine.OpenSubKey('SOFTWARE\Policies\Microsoft\Windows NT\DNSClient',$false);
  $policyPresent=($null -ne $policy);
- $policyValues=0;$policySubkeys=0;
- if($policyPresent){$policyValues=$policy.ValueCount;$policySubkeys=$policy.SubKeyCount};
+ $policyValues=0;$policySubkeys=0;$policyRows=@();
+ if($policyPresent){$policyValues=$policy.ValueCount;$policySubkeys=$policy.SubKeyCount;$budget=4096;$policyRows=@(Get-VolvRegistryRows $policy '' 0 ([ref]$budget))};
+ $localRows=@(Get-VolvCimRows $nrptLocal)
+ $effectiveRows=@(Get-VolvCimRows $nrptEffective)
+ $dohRows=@(Get-VolvCimRows $doh)
+ if($localRows.Count -ne $nrptLocal.Count -or $effectiveRows.Count -ne $nrptEffective.Count -or $dohRows.Count -ne $doh.Count){throw 'DNS policy row count mismatch'}
  [ordered]@{
   schema=1;
   component='windows-dns-override-census-v1';
@@ -309,7 +364,11 @@ try{
   known_doh_servers=[int]$doh.Count;
   dns_group_policy_key_present=[bool]$policyPresent;
   dns_group_policy_values=[int]$policyValues;
-  dns_group_policy_subkeys=[int]$policySubkeys
+  dns_group_policy_subkeys=[int]$policySubkeys;
+  local_nrpt_sha256=(Get-VolvHash 'local-nrpt' $localRows);
+  effective_nrpt_sha256=(Get-VolvHash 'effective-nrpt' $effectiveRows);
+  known_doh_sha256=(Get-VolvHash 'known-doh' $dohRows);
+  dns_group_policy_sha256=(Get-VolvHash 'dns-group-policy' $policyRows)
  }|ConvertTo-Json -Compress
 }finally{if($null -ne $policy){$policy.Close()};$machine.Close()}`
 
@@ -323,6 +382,15 @@ type WindowsDNSOverrideCensus struct{
  GroupPolicyKeyPresent bool `json:"dns_group_policy_key_present"`
  GroupPolicyValues int `json:"dns_group_policy_values"`
  GroupPolicySubkeys int `json:"dns_group_policy_subkeys"`
+ // Private comparison only; never serialized by the setup preview.
+ fingerprints [4]string
+}
+type windowsDNSOverrideWire struct{
+ WindowsDNSOverrideCensus
+ LocalSHA256 string `json:"local_nrpt_sha256"`
+ EffectiveSHA256 string `json:"effective_nrpt_sha256"`
+ DoHSHA256 string `json:"known_doh_sha256"`
+ PolicySHA256 string `json:"dns_group_policy_sha256"`
 }
 
 // InspectWindowsDNSOverrideCensusReadOnly returns only bounded counts;
@@ -336,8 +404,13 @@ func InspectWindowsDNSOverrideCensusReadOnly(ctx context.Context,inspect Windows
  raw,err:=inspect(ctx,windowsDNSOverrideCensusQuery)
  if err!=nil{return zero,errors.New("DNS override census unavailable")}
  if len(raw)<2||len(raw)>4096{return zero,errors.New("DNS override census size invalid")}
- var evidence WindowsDNSOverrideCensus
- if err:=residentCanonical(raw,&evidence);err!=nil{return zero,errors.New("DNS override census incomplete or noncanonical")}
+ var wire windowsDNSOverrideWire
+ if err:=residentCanonical(raw,&wire);err!=nil{return zero,errors.New("DNS override census incomplete or noncanonical")}
+ evidence:=wire.WindowsDNSOverrideCensus
+ evidence.fingerprints=[4]string{wire.LocalSHA256,wire.EffectiveSHA256,wire.DoHSHA256,wire.PolicySHA256}
+ for _,digest:=range evidence.fingerprints{
+  if !protectionDigest.MatchString(digest)||digest==strings.Repeat("0",64){return zero,errors.New("DNS override fingerprint missing or invalid")}
+ }
  if evidence.Schema!=1||evidence.Component!="windows-dns-override-census-v1"{return zero,errors.New("DNS override census identity invalid")}
  for _,n:=range []int{evidence.LocalNRPTRules,evidence.EffectiveNRPTPolicies,evidence.KnownDoHServers,evidence.GroupPolicyValues,evidence.GroupPolicySubkeys}{
   if n<0||n>65536{return zero,errors.New("DNS override census count invalid")}

@@ -4,6 +4,7 @@ package motorupdate
 
 import (
  "context"
+ "encoding/json"
  "errors"
  "os"
  "os/exec"
@@ -213,7 +214,7 @@ Write-Output 'VOLVE_LOOPBACK_PLACEHOLDER_GUARD_14_PASS'
 }
 
 func TestWindowsDNSOverrideCensusStrictEvidence(t *testing.T){
- base:=`{"schema":1,"component":"windows-dns-override-census-v1","local_nrpt_rules":0,"effective_nrpt_policies":0,"doh_cmdlet_available":true,"known_doh_servers":3,"dns_group_policy_key_present":false,"dns_group_policy_values":0,"dns_group_policy_subkeys":0}`
+ base:=`{"schema":1,"component":"windows-dns-override-census-v1","local_nrpt_rules":0,"effective_nrpt_policies":0,"doh_cmdlet_available":true,"known_doh_servers":3,"dns_group_policy_key_present":false,"dns_group_policy_values":0,"dns_group_policy_subkeys":0,"local_nrpt_sha256":"`+strings.Repeat("a",64)+`","effective_nrpt_sha256":"`+strings.Repeat("b",64)+`","known_doh_sha256":"`+strings.Repeat("c",64)+`","dns_group_policy_sha256":"`+strings.Repeat("d",64)+`"}`
  read:=func(raw string)(WindowsDNSOverrideCensus,error){
   return InspectWindowsDNSOverrideCensusReadOnly(context.Background(),func(_ context.Context,q string)([]byte,error){
    if q!=windowsDNSOverrideCensusQuery{t.Fatal("unexpected query")}
@@ -222,6 +223,10 @@ func TestWindowsDNSOverrideCensusStrictEvidence(t *testing.T){
  }
  got,err:=read(base)
  if err!=nil||!got.DoHCmdletAvailable||got.KnownDoHServers!=3{t.Fatal("valid census refused",err)}
+ changed,err:=read(strings.Replace(base,strings.Repeat("c",64),strings.Repeat("e",64),1))
+ if err!=nil||changed==got||changed.KnownDoHServers!=got.KnownDoHServers{t.Fatal("same-count content drift not detected",err)}
+ encoded,err:=json.Marshal(got)
+ if err!=nil||strings.Contains(string(encoded),"sha256")||strings.Contains(string(encoded),strings.Repeat("c",64)){t.Fatal("private fingerprint exported",err)}
  unavailable:=strings.Replace(strings.Replace(base,`"doh_cmdlet_available":true`,`"doh_cmdlet_available":false`,1),`"known_doh_servers":3`,`"known_doh_servers":0`,1)
  got,err=read(unavailable)
  if err!=nil||got.DoHCmdletAvailable{t.Fatal("unavailable cmdlet misclassified",err)}
@@ -234,6 +239,7 @@ func TestWindowsDNSOverrideCensusStrictEvidence(t *testing.T){
   "oversized":strings.Replace(base,`"local_nrpt_rules":0`,`"local_nrpt_rules":65537`,1),
   "contradictory-doh":strings.Replace(base,`"doh_cmdlet_available":true`,`"doh_cmdlet_available":false`,1),
   "contradictory-policy":strings.Replace(base,`"dns_group_policy_values":0`,`"dns_group_policy_values":1`,1),
+  "invalid-digest":strings.Replace(base,strings.Repeat("c",64),strings.Repeat("0",64),1),
   "extra-private":strings.Replace(base,`"schema":1`,`"schema":1,"private_namespace":"fixture.test"`,1),
  }{t.Run(name,func(t *testing.T){got,err:=read(raw);if err==nil||got!=(WindowsDNSOverrideCensus{}){t.Fatal("invalid census accepted")}})}
  ctx,cancel:=context.WithCancel(context.Background());cancel()
@@ -252,4 +258,31 @@ func TestWindowsDNSOverrideCensusNativeReadOnly(t *testing.T){
  if err:=ctx.Err();err!=nil{t.Fatal(err)}
  t.Logf("Native counts only: local NRPT=%d effective NRPT=%d DoH cmdlet=%t known DoH=%d group policy present=%t",before.LocalNRPTRules,before.EffectiveNRPTPolicies,before.DoHCmdletAvailable,before.KnownDoHServers,before.GroupPolicyKeyPresent)
  t.Log("PASS VOLVE_NATIVE_DNS_OVERRIDE_CENSUS_COUNTS_ONLY_NO_INSTALL")
+}
+
+
+// Run the same PowerShell canonicalization helpers with inert fixture values;
+// no real NRPT/DoH or registry setting is modified.
+func TestWindowsDNSOverrideFingerprintSyntheticContent(t *testing.T){
+ script:=windowsDNSOverrideFingerprintHelpers+`
+$ErrorActionPreference='Stop'
+$a=Get-VolvHash 'fixture' @('one','two')
+$b=Get-VolvHash 'fixture' @('two','one')
+$c=Get-VolvHash 'fixture' @('one','Three')
+$d=Get-VolvHash 'other' @('one','two')
+$e=Get-VolvHash 'fixture' @('one','two','two')
+if($a -cne $b -or $a -ceq $c -or $a -ceq $d -or $a -ceq $e){throw 'Fingerprint canonicalization failed'}
+$r1=ConvertTo-Json -InputObject (Get-VolvTypedValue ([int]7)) -Compress
+$r2=ConvertTo-Json -InputObject (Get-VolvTypedValue ([string]'7')) -Compress
+if($r1 -ceq $r2){throw 'Type distinction lost'}
+Write-Output 'VOLVE_DNS_OVERRIDE_FINGERPRINT_SYNTHETIC_PASS'
+`
+ path:=filepath.Join(t.TempDir(),"override-fingerprint.ps1")
+ if err:=os.WriteFile(path,[]byte(script),0600);err!=nil{t.Fatal(err)}
+ ps:=filepath.Join(os.Getenv("SystemRoot"),"System32","WindowsPowerShell","v1.0","powershell.exe")
+ if !filepath.IsAbs(ps){t.Fatal("Windows PowerShell unavailable")}
+ ctx,cancel:=context.WithTimeout(context.Background(),30*time.Second);defer cancel()
+ raw,err:=exec.CommandContext(ctx,ps,"-NoLogo","-NoProfile","-NonInteractive","-File",path).CombinedOutput()
+ if err!=nil||strings.TrimSpace(string(raw))!="VOLVE_DNS_OVERRIDE_FINGERPRINT_SYNTHETIC_PASS"{t.Fatalf("fingerprint fixture failed: %v",err)}
+ t.Log("PASS VOLVE_DNS_OVERRIDE_FINGERPRINT_SYNTHETIC_CONTENT_DRIFT")
 }

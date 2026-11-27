@@ -435,11 +435,11 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference='Stop'
-          $result=@(go test ./motorupdate -run '^TestWindowsDNSOverrideCensus(StrictEvidence|NativeReadOnly)$' -count=1 -v -timeout 2m)
+          $result=@(go test ./motorupdate -run '^TestWindowsDNSOverride(Census(StrictEvidence|NativeReadOnly)|FingerprintSyntheticContent)$' -count=1 -v -timeout 2m)
           $code=$LASTEXITCODE
           $result|Write-Host
           if($code -ne 0){throw 'DNS override census failed; no embedded motor build'}
-          foreach($marker in @('PASS VOLVE_DNS_OVERRIDE_CENSUS_REJECTS_INCOMPLETE_AND_CONTRADICTORY_EVIDENCE','PASS VOLVE_NATIVE_DNS_OVERRIDE_CENSUS_COUNTS_ONLY_NO_INSTALL')){
+          foreach($marker in @('PASS VOLVE_DNS_OVERRIDE_CENSUS_REJECTS_INCOMPLETE_AND_CONTRADICTORY_EVIDENCE','PASS VOLVE_NATIVE_DNS_OVERRIDE_CENSUS_COUNTS_ONLY_NO_INSTALL','PASS VOLVE_DNS_OVERRIDE_FINGERPRINT_SYNTHETIC_CONTENT_DRIFT')){
             if(@($result|Where-Object {$_ -match ([regex]::Escape($marker)+'$')}).Count -ne 1){throw ('Missing DNS override evidence: '+$marker)}
           }
           Write-Host 'PASS VOLVE_DNS_OVERRIDE_CENSUS_BEFORE_EMBEDDING NOT_A_RESTORE_SNAPSHOT NO_INSTALL'
@@ -701,6 +701,7 @@ jobs:
                $report.original_backup_review.install_authorized -cne $false -or
                $report.original_backup_review.restore_authorized -cne $false -or
                $report.dns_override_counts_stable_under_lock -cne $false -or
+               $report.dns_override_observed_content_stable_under_lock -cne $false -or
                $report.dns_override_preservation_verified -cne $false -or
                $null -ne $report.dns_override_census -or
                $report.configured_resolver_tcp_verified -cne $false -or
@@ -763,6 +764,8 @@ jobs:
                  $protected.original_backup_review.install_authorized -cne $false -or
                  $protected.original_backup_review.restore_authorized -cne $false -or
                  $protected.dns_override_counts_stable_under_lock -cne $true -or
+                 $protected.dns_override_observed_content_stable_under_lock -cne $true -or
+                 $protectedRaw -match 'local_nrpt_sha256|effective_nrpt_sha256|known_doh_sha256|dns_group_policy_sha256' -or
                  $protected.dns_override_preservation_verified -cne $false -or
                  $protected.dns_override_census.schema -ne 1 -or
                  $protected.dns_override_census.component -cne 'windows-dns-override-census-v1' -or
@@ -775,7 +778,7 @@ jobs:
                  $protected.status -ne 'NO_INSTALL_OR_DNS_CHANGE_AUTHORIZED'){
                 throw 'Protected preflight JSON granted an unauthorized write or omitted a required native check'
               }
-              Write-Host 'PASS VOLVE_NATIVE_PROTECTED_DNS_OVERRIDE_COUNTS_BEFORE_AFTER_NO_PRESERVATION_CLAIM'
+              Write-Host 'PASS VOLVE_NATIVE_PROTECTED_DNS_OVERRIDE_CONTENT_BEFORE_AFTER_NO_PRESERVATION_CLAIM'
               Write-Host 'PASS VOLVE_NATIVE_PROTECTED_SIGNED_HOST_PREFLIGHT SIX_INVENTORIES THREE_BROWSER_POLICIES DNS_ASSIGNMENT_BASELINE KERNEL_MUTEX EXCLUSIVE NO_INSTALL NO_DNS NO_TASKS'
             }
             $lockDNSAfter=Get-DnsClientServerAddress -ErrorAction Stop | Sort-Object InterfaceIndex,AddressFamily | Select-Object InterfaceIndex,AddressFamily,ServerAddresses | ConvertTo-Json -Depth 6 -Compress

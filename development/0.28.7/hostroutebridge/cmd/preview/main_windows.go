@@ -48,6 +48,7 @@ type setupPreviewReport struct {
  DNSCompatibilityStatus string `json:"dns_compatibility_status"`
  DNSOverrideCensus *motorupdate.WindowsDNSOverrideCensus `json:"dns_override_census,omitempty"`
  DNSOverrideCountsStable bool `json:"dns_override_counts_stable_under_lock"`
+ DNSOverrideObservedContentStable bool `json:"dns_override_observed_content_stable_under_lock"`
  DNSOverridePreservationVerified bool `json:"dns_override_preservation_verified"`
  MigrationBlockers []string `json:"migration_blockers,omitempty"`
  CanInstall bool `json:"can_install"`
@@ -163,6 +164,7 @@ func inspectCIHostWithProtectedOption(ctx context.Context, holdProtectedMutex bo
  return setupPreviewReport{
   DNSOverrideCensus:overrideReport,
   DNSOverrideCountsStable:holdProtectedMutex&&overrideReport!=nil,
+  DNSOverrideObservedContentStable:holdProtectedMutex&&overrideReport!=nil,
   DNSOverridePreservationVerified:false,
   ReviewProgressPercent:view.Percent,
   ReviewProgressNext:string(view.Next),
