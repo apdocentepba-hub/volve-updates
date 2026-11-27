@@ -570,3 +570,108 @@ func nativeSealNewOriginalRecoveryReviewNode(ctx context.Context,root,id,path st
  if err!=nil||!stat.Mode().IsRegular()||stat.Mode()&os.ModeSymlink!=0{return errors.New("review seal refused nonregular file")}
  return nativeSealApprovedOriginalBackupNode(ctx,path)
 }
+
+// One create-exclusive envelope avoids an independently replaceable
+// signature sidecar. A production caller must pin its trusted public key
+// independently. No private key or authorization is stored here.
+const signedOriginalRecoveryEnvelopeFile="original-recovery-review-signed.json"
+type signedOriginalRecoveryEnvelope struct{
+ Payload []byte `json:"payload"`
+ Signature []byte `json:"signature"`
+}
+
+func signedOriginalRecoveryEnvelopePath(root,id string)(string,error){
+ if _,err:=originalRecoveryEvidencePath(root,id);err!=nil{return "",err}
+ return filepath.Join(root,signedOriginalRecoveryEnvelopeFile),nil
+}
+
+// Caller holds the protected resident transition lease. Verify the
+// independently supplied key, the exact signed payload and the four
+// archives before reporting current evidence.
+func readSignedOriginalRecoveryEnvelopeUnderLease(ctx context.Context,root,id string,pub ed25519.PublicKey,
+ baseline ProtectionSnapshot,dnsPin string)(SignedOriginalRecoveryReview,error){
+ var denied SignedOriginalRecoveryReview
+ if err:=ctx.Err();err!=nil{return denied,err}
+ path,err:=signedOriginalRecoveryEnvelopePath(root,id)
+ if err!=nil{return denied,err}
+ check:=func(p string)error{return nativeDNSOriginalBackupACL(ctx,p)}
+ verify:=func()error{
+  if err:=verifyOriginalHostsBackupNode(root,true,check);err!=nil{return err}
+  return verifyOriginalHostsBackupNode(path,false,check)
+ }
+ if err:=verify();err!=nil{return denied,err}
+ before,err:=os.Lstat(path)
+ if err!=nil{return denied,err}
+ raw,err:=residentFile(path)
+ if err!=nil{return denied,err}
+ after,err:=os.Lstat(path)
+ if err!=nil||!os.SameFile(before,after)||before.Size()!=after.Size()||int64(len(raw))!=before.Size()||!before.ModTime().Equal(after.ModTime()){
+  return denied,errors.New("signed review envelope changed during read")
+ }
+ var env signedOriginalRecoveryEnvelope
+ if err:=residentCanonical(raw,&env);err!=nil{return denied,errors.New("signed review envelope invalid")}
+ got,err:=VerifySignedOriginalRecoveryReview(ctx,env.Payload,env.Signature,pub,id,baseline,dnsPin)
+ if err!=nil{return denied,err}
+ if err:=verify();err!=nil{return denied,err}
+ return got,ctx.Err()
+}
+
+// Caller already owns the lease; no nested acquisition.
+func inspectPersistedSignedReviewUnderLease(ctx context.Context,root,id string,pub ed25519.PublicKey,
+ baseline ProtectionSnapshot,browser WindowsBrowserPolicyEvidence,inventory WindowsFreshVOLVETaskInventory,dnsPin string)(WindowsOriginalBackupReview,error){
+ denied:=WindowsOriginalBackupReview{Status:"UNVERIFIED"}
+ evidence,err:=readSignedOriginalRecoveryEnvelopeUnderLease(ctx,root,id,pub,baseline,dnsPin)
+ if err!=nil{return denied,err}
+ receipt,err:=reopenOriginalRecoveryReviewUnarmed(ctx,root,id,evidence.ReviewSHA256,baseline,browser,inventory,dnsPin,
+  func(p string)error{return nativeDNSOriginalBackupACL(ctx,p)})
+ if err!=nil||!receipt.HostsVerified||receipt.BrowserKeysVerified!=3||!receipt.DNSBackupVerified||!receipt.CatalogBackupVerified||
+  receipt.CompleteRecoverySnapshot||receipt.InstallAuthorized||receipt.RestoreAuthorized{return denied,errors.New("signed durable review archives not verified")}
+ again,err:=readSignedOriginalRecoveryEnvelopeUnderLease(ctx,root,id,pub,baseline,dnsPin)
+ if err!=nil||again!=evidence{return denied,errors.New("signed review changed during verification")}
+ if err:=ctx.Err();err!=nil{return denied,err}
+ return WindowsOriginalBackupReview{Status:"SIGNED_BOUND_FOUR_ARCHIVES_VERIFIED_READ_ONLY",HostsVerified:true,BrowserKeysVerified:3,DNSBackupVerified:true,CatalogBackupVerified:true},nil
+}
+
+func InspectPersistedSignedOriginalRecoveryNativeReadOnly(ctx context.Context,root,id string,pub ed25519.PublicKey,
+ baseline ProtectionSnapshot,browser WindowsBrowserPolicyEvidence,inventory WindowsFreshVOLVETaskInventory,dnsPin string)(WindowsOriginalBackupReview,error){
+ denied:=WindowsOriginalBackupReview{Status:"UNVERIFIED"}
+ if ctx==nil||len(pub)!=ed25519.PublicKeySize{return denied,errors.New("trusted signed review context and key required")}
+ if _,err:=signedOriginalRecoveryEnvelopePath(root,id);err!=nil{return denied,err}
+ release,err:=AcquireProtectedResidentTransitionLease(ctx)
+ if err!=nil||release==nil{return denied,errors.New("protected signed review lease unavailable")}
+ defer release()
+ return inspectPersistedSignedReviewUnderLease(ctx,root,id,pub,baseline,browser,inventory,dnsPin)
+}
+
+// Stage an externally signed review only after verifying the existing
+// unarmed review and all four archives. Never replace a partial envelope.
+func PersistSignedOriginalRecoveryNativeUnarmed(ctx context.Context,root,id string,raw,signature []byte,pub ed25519.PublicKey,
+ baseline ProtectionSnapshot,browser WindowsBrowserPolicyEvidence,inventory WindowsFreshVOLVETaskInventory,dnsPin string)error{
+ evidence,err:=VerifySignedOriginalRecoveryReview(ctx,raw,signature,pub,id,baseline,dnsPin)
+ if err!=nil{return err}
+ path,err:=signedOriginalRecoveryEnvelopePath(root,id)
+ if err!=nil{return err}
+ release,err:=AcquireProtectedResidentTransitionLease(ctx)
+ if err!=nil||release==nil{return errors.New("protected signed staging lease unavailable")}
+ defer release()
+ check:=func(p string)error{return nativeDNSOriginalBackupACL(ctx,p)}
+ if err:=verifyOriginalHostsBackupNode(root,true,check);err!=nil{return err}
+ if _,err:=os.Lstat(path);!errors.Is(err,os.ErrNotExist){return errors.New("signed review envelope slot already exists or is unavailable")}
+ receipt,err:=reopenOriginalRecoveryReviewUnarmed(ctx,root,id,evidence.ReviewSHA256,baseline,browser,inventory,dnsPin,check)
+ if err!=nil||!receipt.HostsVerified||receipt.BrowserKeysVerified!=3||!receipt.DNSBackupVerified||!receipt.CatalogBackupVerified||
+  receipt.CompleteRecoverySnapshot||receipt.InstallAuthorized||receipt.RestoreAuthorized{return errors.New("unsigned original archives not verified")}
+ data,err:=json.Marshal(signedOriginalRecoveryEnvelope{raw,signature})
+ if err!=nil||len(data)>=residentJournalLimit{return errors.New("signed review envelope too large")}
+ seal:=func(p string)error{
+  if p!=path{return errors.New("signed review seal refused unrelated path")}
+  if err:=verifyOriginalHostsBackupNode(root,true,check);err!=nil{return err}
+  if err:=ctx.Err();err!=nil{return err}
+  stat,err:=os.Lstat(p)
+  if err!=nil||!stat.Mode().IsRegular()||stat.Mode()&os.ModeSymlink!=0{return errors.New("signed review seal refused nonregular file")}
+  return nativeSealApprovedOriginalBackupNode(ctx,p)
+ }
+ if err:=ctx.Err();err!=nil{return err}
+ if err:=residentCreate(path,data,seal,check);err!=nil{return err}
+ _,err=inspectPersistedSignedReviewUnderLease(ctx,root,id,pub,baseline,browser,inventory,dnsPin)
+ return err
+}
