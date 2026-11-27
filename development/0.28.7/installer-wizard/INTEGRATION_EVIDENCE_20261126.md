@@ -25,3 +25,7 @@ The existing fresh SYSTEM workflow now incorporates the exact tested final
 step from dee524f. Its original triggers, permissions, reconstruction, compile
 and required proof checks are retained. Combined-branch test execution is not
 claimed. Windows 10/11 and complete production installer remain unverified.
+
+## Integration candidate — 2026-11-27
+
+The verified recovery branch at d6d9397112baab960a98c615194b3f25103c9ff7 is a direct descendant of candidate 7f3ea59cd5d795daf4e31af992965619c2ef4312 (79 commits ahead, zero behind). The integrated one-EXE workflow at 62bb3c67ae51e27ade1d30ecb7d35961bae08e72 now checks exact SHA-256 equivalence of seven updated motorupdate source/test files after reconstructing the pinned source, executes the two native recovery tests on that same source and requires ten distinct real evidence markers before compiling the actual embedded motor. This is not yet an execution result. Recovery evidence remains read-only/unarmed; neither test fixtures nor synthetic certificate are production credentials. The existing signed bundle, real motor embedding, preview, tamper rejection and no-install gates remain unchanged. No release authorized. The configured forced TCP failure is still unresolved (Server 2022); Windows 10/11 evidence and full recovery authorization remain required. Nexo excluded at user request.
