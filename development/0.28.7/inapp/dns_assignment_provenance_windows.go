@@ -36,15 +36,19 @@ function Test-VolvUnmappedLoopbackPlaceholders([string]$family,[uint32]$index,[o
 `
 
 const windowsDNSAssignmentSourceQuery = `$ErrorActionPreference='Stop';$ProgressPreference='SilentlyContinue';` + windowsDNSLoopbackPlaceholderGuard + `
+$volveStage='loopback-enumeration';try {
 $loopbackIPv6Indexes=@(foreach($n in [Net.NetworkInformation.NetworkInterface]::GetAllNetworkInterfaces()){
  if($n.NetworkInterfaceType -ne [Net.NetworkInformation.NetworkInterfaceType]::Loopback){continue}
  if($n.Supports([Net.NetworkInformation.NetworkInterfaceComponent]::IPv6)){
   [uint32]$n.GetIPProperties().GetIPv6Properties().Index
  }
 });
+$volveStage='adapter-enumeration';
 $adapters=@(Get-NetAdapter -IncludeHidden -ErrorAction Stop | Where-Object {$_.InterfaceGuid -and $_.InterfaceIndex -gt 0});
+$volveStage='dns-client-enumeration';
 $dnsRows=@(Get-DnsClientServerAddress -ErrorAction Stop);
 $items=@(foreach($d in $dnsRows){
+ $volveStage='interface-mapping';
  $family=switch([string]$d.AddressFamily){
   '2' {'IPv4'} '23' {'IPv6'} 'IPv4' {'IPv4'} 'IPv6' {'IPv6'}
   'InterNetwork' {'IPv4'} 'InterNetworkV6' {'IPv6'}
@@ -61,9 +65,11 @@ $items=@(foreach($d in $dnsRows){
  $guid='{'+([string]$adapterGUIDs[0]).Trim('{}')+'}';
  $service=if($family -eq 'IPv4'){'Tcpip'}else{'Tcpip6'};
  $path='Registry::HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Services\'+$service+'\Parameters\Interfaces\'+$guid;
+ $volveStage='registry-open';
  if(-not (Test-Path -LiteralPath $path -PathType Container -ErrorAction Stop)){throw 'DNS assignment registry key missing'};
  $key=Get-Item -LiteralPath $path -ErrorAction Stop;
  try {
+  $volveStage='registry-read';
   $names=@($key.GetValueNames());
   $present=$names -contains 'NameServer';
   $kind='Missing';$nonEmpty=$false;$servers=@();
@@ -92,7 +98,13 @@ $items=@(foreach($d in $dnsRows){
   }
  } finally {$key.Close()}
 });
-ConvertTo-Json -InputObject $items -Compress -Depth 5`
+$volveStage='json-encoding';
+ConvertTo-Json -InputObject $items -Compress -Depth 5
+} catch {
+ $known=@('Unknown DNS client address family','DNS servers exist on an interface without a unique adapter GUID','DNS interface index maps to conflicting adapter GUIDs','DNS assignment registry key missing');
+ if($known -ccontains $_.Exception.Message){throw}
+ throw ('VOLVE_DNS_READ_STAGE:'+ $volveStage)
+}`
 
 type windowsDNSAssignmentRecord struct {
  InterfaceGUID string `json:"InterfaceGUID"`
