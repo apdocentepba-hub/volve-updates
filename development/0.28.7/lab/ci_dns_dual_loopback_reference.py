@@ -17,11 +17,11 @@ log = Path(os.environ["VOLVE_LAB_LOG"])
 ready = Path(os.environ["VOLVE_LAB_READY"])
 lock = threading.Lock()
 
-def record(name, host, transport):
+def record(name, host, transport, truncated=False):
     with lock, log.open("a", encoding="ascii") as f:
-        f.write(json.dumps({"name": name, "host": "ipv4-loopback" if host == "127.0.0.1" else "ipv6-loopback", "transport": transport}) + "\n")
+        f.write(json.dumps({"name": name, "host": "ipv4-loopback" if host == "127.0.0.1" else "ipv6-loopback", "transport": transport, "truncated": truncated}) + "\n")
 
-def answer(q):
+def answer(q, udp=False):
     if not 17 <= len(q) <= 4096:
         return None
     ident, flags, qd, an, ns, ar = struct.unpack("!6H", q[:12])
@@ -38,11 +38,13 @@ def answer(q):
         labels.append(q[pos:pos+size].decode("ascii", errors="replace").lower())
         pos += size
     name = ".".join(labels)
-    if not re.fullmatch(prefix + r"-[0-9a-f]{16}\.test", name):
+    if not re.fullmatch(prefix + r"-(?:tc-)?[0-9a-f]{16}\.test", name):
         return None
     if pos + 4 > len(q) or q[pos:pos+4] != b"\x00\x01\x00\x01":
         return None
     pos += 4
+    if udp and name.startswith(prefix + "-tc-"):
+        return name, struct.pack("!6H", ident, 0x8380, 1, 0, 0, 0) + q[12:pos]
     return name, struct.pack("!6H", ident, 0x8180, 1, 1, 0, 0) + q[12:pos] + bytes.fromhex("c00c00010001000000000004cb007107")
 
 def exact_read(c, size):
@@ -78,11 +80,11 @@ def serve_udp(s, host):
         q, peer = s.recvfrom(4096)
         if peer[0] not in ("127.0.0.1", "::1"):
             continue
-        result = answer(q)
+        result = answer(q, udp=True)
         if result:
             name, response = result
             s.sendto(response, peer)
-            record(name, host, "udp")
+            record(name, host, "udp", truncated=name.startswith(prefix + "-tc-"))
 
 sockets = []
 for host in ("127.0.0.1", "::1"):
