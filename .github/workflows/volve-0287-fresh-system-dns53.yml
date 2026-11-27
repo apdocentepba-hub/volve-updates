@@ -217,6 +217,15 @@ jobs:
           if(Test-Path -LiteralPath $root){throw 'CI root already exists'}
           $argument='--ci-fresh-dns53 "'+$root+'" VOLVE-CI-GITHUB-HOSTED-VM-DNS53-ONLY'
           $registered=$false
+          function Write-VolvStartupFailure {
+            $receipt=Join-Path $root 'ci-startup-failure.txt'
+            if(!(Test-Path -LiteralPath $receipt -PathType Leaf)){Write-Host 'VOLVE_SYSTEM_STARTUP_DIAGNOSTIC=missing';return}
+            $item=Get-Item -LiteralPath $receipt -Force
+            if(($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -or $item.Length -gt 160){throw 'Invalid CI startup diagnostic node'}
+            $line=(Get-Content -LiteralPath $receipt -Raw).Trim()
+            if($line -cnotmatch '^stage=(root-inspect|catalog-create|catalog-verify|upstream-tcp-bind|upstream-udp-bind|production-service|production-catalog|production-ipv4-start|production-ipv6-start|production-ipv4-timeout|production-ipv6-timeout|service-deadline|unknown);win32=[0-9]{1,10}$'){throw 'Invalid CI startup diagnostic'}
+            Write-Host ('VOLVE_SYSTEM_STARTUP_DIAGNOSTIC='+$line)
+          }
           try{
             $action=New-ScheduledTaskAction -Execute $exe -Argument $argument
             $trigger=New-ScheduledTaskTrigger -AtStartup
@@ -321,12 +330,17 @@ jobs:
                 throw 'Tampered DNS service opened port 53'
               }
             }
+            $tamperDiagnostic=Join-Path $root 'ci-startup-failure.txt'
+            if(!(Test-Path -LiteralPath $tamperDiagnostic -PathType Leaf)){throw 'Missing controlled catalog rejection diagnostic'}
+            if((Get-Content -LiteralPath $tamperDiagnostic -Raw).Trim() -cnotmatch '^stage=catalog-verify;win32=[0-9]{1,10}$'){throw 'Wrong startup failure reason after catalog tamper'}
+            Write-VolvStartupFailure
             Write-Host 'PASS: tampered catalog cannot restart the SYSTEM motor and does not open DNS/53'
           }catch{
             if($registered){
               $taskState=Get-ScheduledTask -TaskName $task -ErrorAction SilentlyContinue
               $taskInfo=Get-ScheduledTaskInfo -TaskName $task -ErrorAction SilentlyContinue
               Write-Host ('VOLVE_SYSTEM_FAILURE='+([ordered]@{task_state=[string]$taskState.State;last_task_result=$taskInfo.LastTaskResult;catalog_present=(Test-Path -LiteralPath (Join-Path $root 'catalog\feeds\hagezi_gambling_full.txt'))}|ConvertTo-Json -Compress))
+              Write-VolvStartupFailure
               @(Get-NetTCPConnection -LocalPort 53 -State Listen -ErrorAction SilentlyContinue)+@(Get-NetUDPEndpoint -LocalPort 53 -ErrorAction SilentlyContinue)|Select-Object LocalAddress,LocalPort,OwningProcess|Format-Table|Out-String|Write-Host
             }
             throw

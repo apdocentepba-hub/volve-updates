@@ -19,6 +19,7 @@ import (
  "path/filepath"
  "regexp"
  "strings"
+ "syscall"
  "time"
 )
 
@@ -47,9 +48,49 @@ func init(){
  duration:=95*time.Second
  if os.Args[1]=="--ci-boot-dns53"{duration=30*time.Minute}
  if err:=runCIFreshDNS53WithDuration(os.Args[2],os.Args[3],duration);err!=nil{
+  writeCIFreshFailureDiagnostic(os.Args[2],os.Args[3],err)
   fmt.Fprintln(os.Stderr,"CI DNS53 refused/failed:",err);os.Exit(1)
  }
  os.Exit(0)
+}
+
+// CI-only failure receipt. No raw errors, paths, addresses or catalog data
+// are exported. Only write into an existing dedicated, attested VM root.
+// The first failure is retained, never replaced by a subsequent attempt.
+type ciFreshStartupError struct{stage string;cause error}
+func(e *ciFreshStartupError)Error()string{return e.stage+": "+e.cause.Error()}
+func(e *ciFreshStartupError)Unwrap()error{return e.cause}
+func ciFreshStage(stage string,err error)error{if err==nil{return nil};return &ciFreshStartupError{stage,err}}
+func writeCIFreshFailureDiagnostic(root,token string,err error){
+ if token!=ciFreshToken||!filepath.IsAbs(root)||filepath.Clean(root)!=root||!ciFreshRootPattern.MatchString(filepath.Base(root)){return}
+ var failure *ciFreshStartupError
+ if !errors.As(err,&failure)||failure.stage=="vm-attestation"{return}
+ st,e:=os.Lstat(root)
+ if e!=nil||!st.IsDir()||st.Mode()&os.ModeSymlink!=0{return}
+ stage:=failure.stage
+ if stage=="production-service"{
+  msg:=failure.cause.Error()
+  switch{
+  case strings.HasPrefix(msg,"DNS Full catalog unavailable:"):stage="production-catalog"
+  case strings.HasPrefix(msg,"IPv4 DNS server did not start:"):stage="production-ipv4-start"
+  case strings.HasPrefix(msg,"IPv6 DNS server did not start:"):stage="production-ipv6-start"
+  case strings.HasPrefix(msg,"UDP IPv4 no inició"):stage="production-ipv4-timeout"
+  case strings.HasPrefix(msg,"UDP IPv6 no inició"):stage="production-ipv6-timeout"
+  case errors.Is(err,context.DeadlineExceeded):stage="service-deadline"
+  }
+ }
+ var native syscall.Errno
+ var code uint64
+ if errors.As(err,&native){code=uint64(native)}
+ switch stage{
+ case "root-inspect","catalog-create","catalog-verify","upstream-tcp-bind","upstream-udp-bind","production-service","production-catalog","production-ipv4-start","production-ipv6-start","production-ipv4-timeout","production-ipv6-timeout","service-deadline":
+ default:stage="unknown"
+ }
+ path:=filepath.Join(root,"ci-startup-failure.txt")
+ file,e:=os.OpenFile(path,os.O_WRONLY|os.O_CREATE|os.O_EXCL,0600)
+ if e!=nil{return}
+ defer file.Close()
+ if _,e=fmt.Fprintf(file,"stage=%s;win32=%d\\n",stage,code);e==nil{_ = file.Sync()}
 }
 
 func assertCIFreshVM(root, token string)error{
@@ -188,21 +229,21 @@ func runCIFreshDNS53WithDuration(root,token string,duration time.Duration)error{
  if duration<90*time.Second || duration>30*time.Minute {
   return errors.New("CI DNS53 test duration outside bounded laboratory window")
  }
- if err:=assertCIFreshVM(root,token);err!=nil{return err}
+ if err:=assertCIFreshVM(root,token);err!=nil{return ciFreshStage("vm-attestation",err)}
  // The scheduled task is intentionally restartable, like a real resident
  // installation. First launch prepares the full catalog; later starts verify
  // the exact same bytes and refuse any corruption before binding UDP/53.
  if info,err:=os.Lstat(root);err==nil {
-  if !info.IsDir() || info.Mode()&os.ModeSymlink!=0{return errors.New("invalid existing lab root")}
-  if err:=verifyCIFreshCatalog(root);err!=nil{return err}
+  if !info.IsDir() || info.Mode()&os.ModeSymlink!=0{return ciFreshStage("root-inspect",errors.New("invalid existing lab root"))}
+  if err:=verifyCIFreshCatalog(root);err!=nil{return ciFreshStage("catalog-verify",err)}
  }else if os.IsNotExist(err) {
-  if err:=writeCIFreshCatalog(root);err!=nil{return err}
- }else{return fmt.Errorf("cannot inspect lab root: %w",err)}
+  if err:=writeCIFreshCatalog(root);err!=nil{return ciFreshStage("catalog-create",err)}
+ }else{return ciFreshStage("root-inspect",err)}
  upstreamTCP,err:=net.Listen("tcp4","127.0.0.1:0")
- if err!=nil{return err}
+ if err!=nil{return ciFreshStage("upstream-tcp-bind",err)}
  defer upstreamTCP.Close()
  upstream,err:=net.ListenPacket("udp4",upstreamTCP.Addr().String())
- if err!=nil{return err}
+ if err!=nil{return ciFreshStage("upstream-udp-bind",err)}
  defer upstream.Close()
  go func(){
   for{
@@ -244,5 +285,5 @@ func runCIFreshDNS53WithDuration(root,token string,duration time.Duration)error{
  defer cancel()
  // This is the same production entrypoint used by --dns-service:
  // real 400k+ catalog and IPv4/IPv6 UDP/TCP on LOCAL port 53.
- return runDNSServiceAt(ctx,root,53,[]string{upstream.LocalAddr().String()},nil)
+ return ciFreshStage("production-service",runDNSServiceAt(ctx,root,53,[]string{upstream.LocalAddr().String()},nil))
 }
