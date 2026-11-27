@@ -23,7 +23,7 @@ concurrency:
 jobs:
   fresh-system-dns53:
     runs-on: windows-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -93,6 +93,79 @@ jobs:
           $binary=Join-Path $env:RUNNER_TEMP 'VOLVE_CI_FreshDNS53.exe'
           if(-not (Test-Path -LiteralPath $binary -PathType Leaf)){throw 'CI motor executable missing'}
           Get-FileHash $binary -Algorithm SHA256 | Format-List
+      - name: Stage signed CI motor through NSIS before SYSTEM task startup
+        timeout-minutes: 5
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          if($env:GITHUB_ACTIONS -cne 'true' -or $env:RUNNER_ENVIRONMENT -cne 'github-hosted' -or $env:GITHUB_RUN_ID -cnotmatch '^[0-9]{6,20}$'){throw 'Hosted CI only'}
+          $vm=Get-CimInstance Win32_ComputerSystem -ErrorAction Stop
+          if(($vm.Manufacturer+' '+$vm.Model) -notmatch '(?i:virtual machine|hyper-v|vmware|kvm|qemu|virtualbox)'){throw 'Not disposable VM'}
+          $principal=[Security.Principal.WindowsPrincipal]::new([Security.Principal.WindowsIdentity]::GetCurrent())
+          if(!$principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)){throw 'Elevated lab required'}
+          $root=Join-Path $env:RUNNER_TEMP ('VOLVE-CI-SYSTEM-Handoff-'+$env:GITHUB_RUN_ID)
+          if(Test-Path -LiteralPath $root){throw 'Handoff path collision'}
+          New-Item -ItemType Directory -Path $root -ErrorAction Stop|Out-Null
+          Add-Content -LiteralPath $env:GITHUB_ENV -Value "VOLVE_CI_HANDOFF_ROOT=$root"
+          $icacls=Join-Path $env:SystemRoot 'System32\icacls.exe'
+          & $icacls $root /inheritance:r /grant:r '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F' /setowner '*S-1-5-32-544' /q
+          if($LASTEXITCODE -ne 0){throw 'Protected handoff directory ACL failed'}
+          $cert=New-SelfSignedCertificate -Type CodeSigningCert -Subject 'CN=VOLVE CI SYSTEM HANDOFF ONLY' -CertStoreLocation 'Cert:\CurrentUser\My' -KeyAlgorithm RSA -KeyLength 2048 -Provider 'Microsoft Software Key Storage Provider' -NotAfter (Get-Date).AddDays(2)
+          if(!$cert.HasPrivateKey){throw 'Ephemeral lab certificate missing'}
+          Add-Content -LiteralPath $env:GITHUB_ENV -Value "VOLVE_CI_HANDOFF_THUMB=$($cert.Thumbprint)"
+          $der=Join-Path $root 'test-public.cer'
+          [IO.File]::WriteAllBytes($der,$cert.Export([Security.Cryptography.X509Certificates.X509ContentType]::Cert))
+          $certutil=Join-Path $env:SystemRoot 'System32\certutil.exe'
+          foreach($store in @('Root','TrustedPublisher')){
+            & $certutil -f -addstore $store $der
+            if($LASTEXITCODE -ne 0){throw 'Disposable CI signer trust failed'}
+          }
+          $input=Join-Path $env:RUNNER_TEMP 'VOLVE_CI_FreshDNS53.exe'
+          $signed=Join-Path $root 'signed-input.exe'
+          Copy-Item -LiteralPath $input -Destination $signed -ErrorAction Stop
+          $null=Set-AuthenticodeSignature -FilePath $signed -Certificate $cert -HashAlgorithm SHA256 -IncludeChain All
+          $sig=Get-AuthenticodeSignature -LiteralPath $signed
+          if($sig.Status -ne 'Valid' -or $sig.SignerCertificate.Thumbprint -cne $cert.Thumbprint){throw 'CI motor signing failed'}
+          $pin=(Get-FileHash -LiteralPath $signed -Algorithm SHA256).Hash
+          $compiler=@('C:\Program Files (x86)\NSIS\makensis.exe','C:\Program Files\NSIS\makensis.exe')|Where-Object {Test-Path -LiteralPath $_ -PathType Leaf}|Select-Object -First 1
+          if(!$compiler){
+            choco install nsis --yes --no-progress --limit-output --execution-timeout=90
+            if($LASTEXITCODE -ne 0){throw 'NSIS provisioning failed'}
+            $compiler=@('C:\Program Files (x86)\NSIS\makensis.exe','C:\Program Files\NSIS\makensis.exe')|Where-Object {Test-Path -LiteralPath $_ -PathType Leaf}|Select-Object -First 1
+          }
+          if(!$compiler -or $root -match '["$]'){throw 'Unsafe or unavailable NSIS path'}
+          $stage=Join-Path $root 'stage'
+          $nsi=@'
+          Unicode true
+          Name "VOLVE CI handoff - NO INSTALL"
+          OutFile "handoff.exe"
+          RequestExecutionLevel user
+          SilentInstall silent
+          Section
+            SetOutPath "__STAGE__"
+            File /oname=VOLVE_CI_FreshDNS53.exe "__SIGNED__"
+          SectionEnd
+          '@
+          $nsi=$nsi.Replace('__STAGE__',$stage).Replace('__SIGNED__',$signed)
+          [IO.File]::WriteAllText((Join-Path $root 'handoff.nsi'),$nsi,[Text.UTF8Encoding]::new($true))
+          Push-Location $root
+          try{
+            & $compiler '/V3' 'handoff.nsi'
+            if($LASTEXITCODE -ne 0){throw 'NSIS handoff compilation failed'}
+          }finally{Pop-Location}
+          $proc=Start-Process -FilePath (Join-Path $root 'handoff.exe') -ArgumentList '/S' -PassThru -ErrorAction Stop
+          try{
+            if(!$proc.WaitForExit(60000)){throw 'NSIS handoff timeout'}
+            if($proc.ExitCode -ne 0){throw 'NSIS handoff refused'}
+          }finally{if(!$proc.HasExited){Stop-Process -Id $proc.Id -Force -ErrorAction Stop};$proc.Dispose()}
+          $exe=Join-Path $stage 'VOLVE_CI_FreshDNS53.exe'
+          if(!(Test-Path -LiteralPath $exe -PathType Leaf) -or @(Get-ChildItem -LiteralPath $stage -Force).Count -ne 1){throw 'Unexpected NSIS staged contents'}
+          $verified=Get-AuthenticodeSignature -LiteralPath $exe
+          if($verified.Status -ne 'Valid' -or $verified.SignerCertificate.Thumbprint -cne $cert.Thumbprint -or (Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash -cne $pin){throw 'Extracted motor differs from signed original'}
+          Remove-Item -LiteralPath $input,$signed -Force -ErrorAction Stop
+          Add-Content -LiteralPath $env:GITHUB_ENV -Value "VOLVE_CI_HANDOFF_EXE=$exe"
+          Add-Content -LiteralPath $env:GITHUB_ENV -Value "VOLVE_CI_HANDOFF_SHA=$pin"
+          Write-Host 'PASS VOLVE_NSIS_EXTRACTED_SIGNED_CI_MOTOR_READY_FOR_SYSTEM NO_INSTALL'
       - name: Start real VOLVE DNS53 motor under Windows SYSTEM and query from separate process
         shell: pwsh
         working-directory: build/codigo
@@ -112,7 +185,13 @@ jobs:
           $task='VOLVE-CI-FreshMotor-'+$env:GITHUB_RUN_ID
           if($task -notmatch '^VOLVE-CI-FreshMotor-[0-9]{6,20}$'){throw 'Unexpected disposable task name'}
           $root=Join-Path $env:RUNNER_TEMP ('VOLVE-CI-FreshDNS53-'+$env:GITHUB_RUN_ID)
-          $exe=Join-Path $env:RUNNER_TEMP 'VOLVE_CI_FreshDNS53.exe'
+          $exe=$env:VOLVE_CI_HANDOFF_EXE
+          function Assert-ExtractedMotor {
+            if(!$exe -or $exe -cne (Join-Path $env:VOLVE_CI_HANDOFF_ROOT 'stage\VOLVE_CI_FreshDNS53.exe')){throw 'Unexpected motor handoff path'}
+            $sig=Get-AuthenticodeSignature -LiteralPath $exe -ErrorAction Stop
+            if($sig.Status -ne 'Valid' -or $sig.SignerCertificate.Thumbprint -cne $env:VOLVE_CI_HANDOFF_THUMB -or (Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash -cne $env:VOLVE_CI_HANDOFF_SHA){throw 'Extracted motor signature or hash changed'}
+          }
+          Assert-ExtractedMotor
           if(Test-Path -LiteralPath $root){throw 'CI root already exists'}
           $argument='--ci-fresh-dns53 "'+$root+'" VOLVE-CI-GITHUB-HOSTED-VM-DNS53-ONLY'
           $registered=$false
@@ -127,6 +206,7 @@ jobs:
             $taskXML=Export-ScheduledTask -TaskName $task -ErrorAction Stop
             $taskDocument=[xml]$taskXML
             if(@($taskDocument.SelectNodes("//*[local-name()='BootTrigger']")).Count -ne 1){throw 'SYSTEM motor has no startup trigger'}
+            Assert-ExtractedMotor
             Start-ScheduledTask -TaskName $task -ErrorAction Stop
             $deadline=(Get-Date).AddSeconds(25)
             do{
@@ -170,6 +250,7 @@ jobs:
               $bound=@(Get-NetUDPEndpoint -LocalPort 53 -LocalAddress $endpoint -ErrorAction Stop)
               if($bound.Count -ne 1 -or $bound[0].OwningProcess -ne $matched[0].ProcessId){throw 'Port 53 is not owned exclusively by verified SYSTEM motor'}
             }
+            Write-Host 'PASS VOLVE_NSIS_EXTRACTED_SIGNED_MOTOR_SYSTEM_DUAL_STACK_VERIFIED NO_ADAPTER_WRITES'
             Write-Host 'PASS: real compiled VOLVE runs under SYSTEM and serves dual-stack DNS/53; BetWarrior and stake.com blocked; example.org forwarded'
             # Verify that the SAME persistent startup task can stop and restart
             # without an installer re-creating it or mutating network settings.
@@ -182,6 +263,7 @@ jobs:
             if($leftProcesses.Count -ne 0){throw 'DNS motor did not stop before controlled restart'}
             $savedTask=Get-ScheduledTask -TaskName $task -ErrorAction Stop
             if($savedTask.Principal.UserId -notin @('SYSTEM','S-1-5-18') -or @($savedTask.Triggers).Count -ne 1){throw 'Installed startup task changed unexpectedly'}
+            Assert-ExtractedMotor
             Start-ScheduledTask -TaskName $task -ErrorAction Stop
             $restartProof=@(go test . -run '^TestCIFreshResidentSYSTEMPort53$' -count=1 -timeout 1m -v)
             $restartExit=$LASTEXITCODE
@@ -203,6 +285,7 @@ jobs:
             $fixture=Join-Path $root 'catalog\feeds\hagezi_gambling_full.txt'
             if(-not (Test-Path -LiteralPath $fixture -PathType Leaf)){throw 'Missing installed test catalog'}
             Add-Content -LiteralPath $fixture -Value 'tampered-lab.example' -Encoding ascii
+            Assert-ExtractedMotor
             Start-ScheduledTask -TaskName $task -ErrorAction Stop
             $badDeadline=(Get-Date).AddSeconds(12)
             do {
@@ -242,3 +325,25 @@ jobs:
             if($hosts -ne $hostsAfter){throw 'FATAL: hosts protection changed'}
             Write-Host 'PASS: disposable task removed and Windows hosts/DNS untouched'
           }
+      - name: Remove disposable handoff and CI-only trust
+        if: always()
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          if($env:GITHUB_ACTIONS -cne 'true' -or $env:RUNNER_ENVIRONMENT -cne 'github-hosted'){throw 'Hosted cleanup only'}
+          $thumb=$env:VOLVE_CI_HANDOFF_THUMB
+          if($thumb){
+            if($thumb -cnotmatch '^[A-F0-9]{40}$'){throw 'Unexpected CI signer pin'}
+            foreach($store in @('Cert:\LocalMachine\Root','Cert:\LocalMachine\TrustedPublisher','Cert:\CurrentUser\My')){
+              $p=Join-Path $store $thumb
+              if(Test-Path -LiteralPath $p){Remove-Item -LiteralPath $p -Force -ErrorAction Stop}
+              if(Test-Path -LiteralPath $p){throw 'CI certificate cleanup failed'}
+            }
+          }
+          $root=$env:VOLVE_CI_HANDOFF_ROOT
+          if($root){
+            $expected=Join-Path $env:RUNNER_TEMP ('VOLVE-CI-SYSTEM-Handoff-'+$env:GITHUB_RUN_ID)
+            if($root -cne $expected){throw 'Unexpected disposable handoff root'}
+            if(Test-Path -LiteralPath $root){Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction Stop}
+          }
+          Write-Host 'PASS VOLVE_CI_HANDOFF_CLEANUP NO_RELEASE'
