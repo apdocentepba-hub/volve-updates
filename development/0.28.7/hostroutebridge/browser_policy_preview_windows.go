@@ -90,6 +90,45 @@ func InspectAndPlanWithProtectionSnapshotUnderProtectedLeaseReadOnly(
  readers motorupdate.WindowsMotorRouteInspectors,
  snapshotInspectors motorupdate.WindowsProtectionSnapshotInspectors,
 ) (Review,InstallerPlanReadOnly,motorupdate.WindowsBrowserPolicyEvidence,motorupdate.ProtectionSnapshot,error) {
+ return inspectAndPlanWithSnapshotAndExtraReview(ctx,signedEXE,publisherPublicKey,windowsSignerCertSHA256,signedEXESHA256,installedRoot,readers,snapshotInspectors,nil)
+}
+
+// This fixed native review includes two DNS override count observations under
+// the same lease as the signed package and original protection baseline.
+// Identical counts do not prove identical values, active DoH use or restoration.
+func InspectAndPlanWithDNSOverrideCensusUnderProtectedLeaseReadOnly(
+ ctx context.Context,signedEXE string,publisherPublicKey ed25519.PublicKey,
+ windowsSignerCertSHA256,signedEXESHA256,installedRoot string,
+ readers motorupdate.WindowsMotorRouteInspectors,
+)(Review,InstallerPlanReadOnly,motorupdate.WindowsBrowserPolicyEvidence,motorupdate.ProtectionSnapshot,motorupdate.WindowsDNSOverrideCensus,error){
+ var census motorupdate.WindowsDNSOverrideCensus
+ calls:=0
+ observe:=func(c context.Context)error{
+  got,err:=motorupdate.InspectWindowsDNSOverrideCensusReadOnly(c,motorupdate.DefaultWindowsReadOnlyPowerShell)
+  if err!=nil{return err}
+  if calls==0{census=got}else if calls!=1||got!=census{return errors.New("DNS override counts changed during protected review")}
+  calls++
+  return nil
+ }
+ snapshotInspectors:=motorupdate.WindowsProtectionSnapshotInspectors{
+  Hosts:motorupdate.DefaultWindowsHostsFileInspect,
+  Browser:motorupdate.DefaultWindowsBrowserPolicyInspect,
+  Tasks:readers.Host.Tasks,
+  DNS:motorupdate.DefaultWindowsReadOnlyPowerShell,
+ }
+ review,plan,browser,snapshot,err:=inspectAndPlanWithSnapshotAndExtraReview(ctx,signedEXE,publisherPublicKey,windowsSignerCertSHA256,signedEXESHA256,installedRoot,readers,snapshotInspectors,observe)
+ if err!=nil{return Review{},InstallerPlanReadOnly{},motorupdate.WindowsBrowserPolicyEvidence{},motorupdate.ProtectionSnapshot{},motorupdate.WindowsDNSOverrideCensus{},err}
+ if calls!=2{return Review{},InstallerPlanReadOnly{},motorupdate.WindowsBrowserPolicyEvidence{},motorupdate.ProtectionSnapshot{},motorupdate.WindowsDNSOverrideCensus{},errors.New("protected DNS override census incomplete")}
+ return review,plan,browser,snapshot,census,nil
+}
+
+func inspectAndPlanWithSnapshotAndExtraReview(
+ ctx context.Context,signedEXE string,publisherPublicKey ed25519.PublicKey,
+ windowsSignerCertSHA256,signedEXESHA256,installedRoot string,
+ readers motorupdate.WindowsMotorRouteInspectors,
+ snapshotInspectors motorupdate.WindowsProtectionSnapshotInspectors,
+ extraReadOnlyReview func(context.Context)error,
+)(Review,InstallerPlanReadOnly,motorupdate.WindowsBrowserPolicyEvidence,motorupdate.ProtectionSnapshot,error){
  var emptyReview Review
  var emptyPlan InstallerPlanReadOnly
  var emptyPolicy motorupdate.WindowsBrowserPolicyEvidence
@@ -100,6 +139,9 @@ func InspectAndPlanWithProtectionSnapshotUnderProtectedLeaseReadOnly(
  release,err:=acquireReviewLease(ctx,motorupdate.AcquireProtectedResidentTransitionLease)
  if err!=nil{return emptyReview,emptyPlan,emptyPolicy,emptySnapshot,fmt.Errorf("protected SYSTEM/updater mutex denied: %w",err)}
  defer release()
+ if extraReadOnlyReview!=nil{
+  if err:=extraReadOnlyReview(ctx);err!=nil{return emptyReview,emptyPlan,emptyPolicy,emptySnapshot,fmt.Errorf("additional protected census before review failed: %w",err)}
+ }
 
  beforeSnapshot,beforeBrowser,err:=motorupdate.InspectWindowsProtectionSnapshotReadOnly(
   ctx,"","",snapshotInspectors,
@@ -126,6 +168,9 @@ func InspectAndPlanWithProtectionSnapshotUnderProtectedLeaseReadOnly(
   plan.CanInstall||plan.CanUpgrade||plan.CanChangeDNS||plan.CanChangeTasks||
   plan.Disposition!="READ_ONLY_PLAN_NOT_AN_INSTALLATION_PERMIT" {
   return emptyReview,emptyPlan,emptyPolicy,emptySnapshot,errors.New("preinstallation browser census unexpectedly authorized any write")
+ }
+ if extraReadOnlyReview!=nil{
+  if err:=extraReadOnlyReview(ctx);err!=nil{return emptyReview,emptyPlan,emptyPolicy,emptySnapshot,fmt.Errorf("additional protected census after review failed: %w",err)}
  }
  if err:=ctx.Err();err!=nil{return emptyReview,emptyPlan,emptyPolicy,emptySnapshot,err}
  return review,plan,afterBrowser,afterSnapshot,nil

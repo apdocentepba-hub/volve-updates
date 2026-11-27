@@ -46,6 +46,9 @@ type setupPreviewReport struct {
  Preconditions []string `json:"unmet_production_prerequisites"`
  ConfiguredResolverTCPVerified bool `json:"configured_resolver_tcp_verified"`
  DNSCompatibilityStatus string `json:"dns_compatibility_status"`
+ DNSOverrideCensus *motorupdate.WindowsDNSOverrideCensus `json:"dns_override_census,omitempty"`
+ DNSOverrideCountsStable bool `json:"dns_override_counts_stable_under_lock"`
+ DNSOverridePreservationVerified bool `json:"dns_override_preservation_verified"`
  MigrationBlockers []string `json:"migration_blockers,omitempty"`
  CanInstall bool `json:"can_install"`
  CanUpgrade bool `json:"can_upgrade"`
@@ -127,13 +130,13 @@ func inspectCIHostWithProtectedOption(ctx context.Context, holdProtectedMutex bo
  var plan bridge.InstallerPlanReadOnly
  var browser motorupdate.WindowsBrowserPolicyEvidence
  var protectionSnapshot motorupdate.ProtectionSnapshot
+ var dnsOverrides motorupdate.WindowsDNSOverrideCensus
  inspectors:=motorupdate.DefaultWindowsMotorRouteInspectors()
  if holdProtectedMutex {
-  review,plan,browser,protectionSnapshot,err=bridge.InspectAndPlanWithBrowserCensusUnderProtectedLeaseReadOnly(
+  review,plan,browser,protectionSnapshot,dnsOverrides,err=bridge.InspectAndPlanWithDNSOverrideCensusUnderProtectedLeaseReadOnly(
    ctx,exe,ed25519.PublicKey(pub),cert,fileHash,root,inspectors,
-   motorupdate.DefaultWindowsBrowserPolicyInspect,
   )
-  if err==nil && (len(browser.Records)!=3||!browser.NoRegistryValuesExported||
+  if err==nil && (dnsOverrides.Schema!=1||dnsOverrides.Component!="windows-dns-override-census-v1"||len(browser.Records)!=3||!browser.NoRegistryValuesExported||
    protectionSnapshot.HostsSHA256==""||protectionSnapshot.ChromePoliciesSHA256==""||
    protectionSnapshot.EdgePoliciesSHA256==""||protectionSnapshot.FirefoxPoliciesSHA256==""||
    protectionSnapshot.CatalogTaskDefinitionSHA256==""||
@@ -155,7 +158,12 @@ func inspectCIHostWithProtectedOption(ctx context.Context, holdProtectedMutex bo
  }
  view,err:=projectReadOnlyProgress(ctx,review,plan,holdProtectedMutex)
  if err!=nil{return refused,fmt.Errorf("read-only progress rejected: %w",err)}
+ var overrideReport *motorupdate.WindowsDNSOverrideCensus
+ if holdProtectedMutex {overrideReport=&dnsOverrides}
  return setupPreviewReport{
+  DNSOverrideCensus:overrideReport,
+  DNSOverrideCountsStable:holdProtectedMutex&&overrideReport!=nil,
+  DNSOverridePreservationVerified:false,
   ReviewProgressPercent:view.Percent,
   ReviewProgressNext:string(view.Next),
   ReviewProgressStatus:"REVIEW_ONLY_"+view.Status,

@@ -700,6 +700,9 @@ jobs:
                $report.original_backup_review.complete_recovery_snapshot -cne $false -or
                $report.original_backup_review.install_authorized -cne $false -or
                $report.original_backup_review.restore_authorized -cne $false -or
+               $report.dns_override_counts_stable_under_lock -cne $false -or
+               $report.dns_override_preservation_verified -cne $false -or
+               $null -ne $report.dns_override_census -or
                $report.configured_resolver_tcp_verified -cne $false -or
                $report.dns_compatibility_status -cne 'UNVERIFIED_ACTUAL_CONFIGURED_RESOLVER_TCP' -or
                @($report.unmet_production_prerequisites) -cnotcontains 'verify-configured-resolver-TCP-with-actual-motor-and-safe-original-DNS-recovery' -or
@@ -759,12 +762,20 @@ jobs:
                  $protected.original_backup_review.complete_recovery_snapshot -cne $false -or
                  $protected.original_backup_review.install_authorized -cne $false -or
                  $protected.original_backup_review.restore_authorized -cne $false -or
+                 $protected.dns_override_counts_stable_under_lock -cne $true -or
+                 $protected.dns_override_preservation_verified -cne $false -or
+                 $protected.dns_override_census.schema -ne 1 -or
+                 $protected.dns_override_census.component -cne 'windows-dns-override-census-v1' -or
+                 $protected.dns_override_census.known_doh_servers -lt 0 -or
+                 $protected.dns_override_census.local_nrpt_rules -lt 0 -or
+                 $protected.dns_override_census.effective_nrpt_policies -lt 0 -or
                  $protected.configured_resolver_tcp_verified -cne $false -or
                  $protected.dns_compatibility_status -cne 'UNVERIFIED_ACTUAL_CONFIGURED_RESOLVER_TCP' -or
                  @($protected.unmet_production_prerequisites) -cnotcontains 'verify-configured-resolver-TCP-with-actual-motor-and-safe-original-DNS-recovery' -or
                  $protected.status -ne 'NO_INSTALL_OR_DNS_CHANGE_AUTHORIZED'){
                 throw 'Protected preflight JSON granted an unauthorized write or omitted a required native check'
               }
+              Write-Host 'PASS VOLVE_NATIVE_PROTECTED_DNS_OVERRIDE_COUNTS_BEFORE_AFTER_NO_PRESERVATION_CLAIM'
               Write-Host 'PASS VOLVE_NATIVE_PROTECTED_SIGNED_HOST_PREFLIGHT SIX_INVENTORIES THREE_BROWSER_POLICIES DNS_ASSIGNMENT_BASELINE KERNEL_MUTEX EXCLUSIVE NO_INSTALL NO_DNS NO_TASKS'
             }
             $lockDNSAfter=Get-DnsClientServerAddress -ErrorAction Stop | Sort-Object InterfaceIndex,AddressFamily | Select-Object InterfaceIndex,AddressFamily,ServerAddresses | ConvertTo-Json -Depth 6 -Compress

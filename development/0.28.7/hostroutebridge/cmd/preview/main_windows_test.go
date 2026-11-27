@@ -107,3 +107,13 @@ func TestSetupPreviewOriginalBackupReviewIsNotBackupCompletion(t *testing.T){
   t.Fatal("read-only preview misrepresented archive verification")
  }
 }
+
+func TestDNSOverrideReportNeverConfusesCountsWithPreservation(t *testing.T){
+ report:=setupPreviewReport{DNSOverrideCensus:&motorupdate.WindowsDNSOverrideCensus{Schema:1,Component:"windows-dns-override-census-v1",DoHCmdletAvailable:true,KnownDoHServers:12},DNSOverrideCountsStable:true}
+ raw,err:=json.Marshal(report);if err!=nil{t.Fatal(err)}
+ var got setupPreviewReport
+ if err:=json.Unmarshal(raw,&got);err!=nil{t.Fatal(err)}
+ if got.DNSOverrideCensus==nil||got.DNSOverrideCensus.KnownDoHServers!=12||!got.DNSOverrideCountsStable||got.DNSOverridePreservationVerified||got.CanInstall||got.CanChangeDNS{t.Fatal("count census misrepresented")}
+ zero,err:=json.Marshal(setupPreviewReport{});if err!=nil{t.Fatal(err)}
+ if strings.Contains(string(zero),"\"dns_override_census\""){t.Fatal("uninspected report presented a census")}
+}
