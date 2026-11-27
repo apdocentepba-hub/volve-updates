@@ -209,9 +209,36 @@ func windowsSYSDNSWatchdog(t *testing.T){
  }
  // Mandatory independent SYSTEM + DACL + publisher (ephemeral CI) + crash
  // attestation under the same Windows OS-wide mutex AND before each command.
+ stage="verify-scoped-lab-provenance"
+ if err:=attestor.Verify(ctx,plan.Records);err!=nil{t.Fatal(err)}
+ // Only the CI test's unique nonrouting adapter may be restored. Use
+ // the existing exact-GUID lab query, NOT a change to production census.
+ // Outer workflow independently compares all preexisting host DNS/routes.
+ scoped,err:=windowsCrashLabPinnedProvenanceInspector(cfg.Alias,cfg.GUID,DefaultWindowsReadOnlyPowerShell)
+ if err!=nil{t.Fatal(err)}
+ evidence,err:=InspectWindowsDNSAssignmentProvenanceReadOnly(ctx,scoped)
+ if err!=nil||evidence.AdapterCount!=1||len(evidence.States)!=2||evidence.interfaceIndexes[strings.ToLower(cfg.GUID)]!=pinned{
+  t.Fatal("exact isolated adapter provenance unavailable",err)
+ }
+ for _,r:=range plan.Records{
+  found:=false
+  for _,state:=range evidence.States{if sameDNSState(state,r.Expected){found=true}}
+  if !found{t.Fatal("isolated initial localhost source not proven")}
+ }
  stage="execute-attested-real-dns-batch"
  if err:=runAttestedWindowsStaticDNSRecovery(ctx,plan.Records,
-  DefaultWindowsReadOnlyPowerShell,attestor,runPinnedWindowsNativeDNS,cfg.Lock);err!=nil{
+  scoped,attestor,runPinnedWindowsNativeDNS,cfg.Lock);err!=nil{
+  // Record a bounded reason category, not arbitrary native output.
+  for _,reason:=range []struct{match,code string}{
+   {"exclusive DNS recovery lease unavailable","lease"},
+   {"independent DNS recovery authorization expired","authorization"},
+   {"DNS assignment source unavailable","native-source"},
+   {"static NameServer registry list does not match","source-mismatch"},
+   {"unsupported profile-specific source","source-profile"},
+   {"all-adapter preflight refused","preflight"},
+   {"recovery incomplete","write-or-readback"},
+   {"final native DNS recovery census","final-census"},
+  }{if strings.Contains(err.Error(),reason.match){stage+=":"+reason.code;break}}
   t.Fatalf("true SYSTEM attested real IPv4/IPv6 recovery failed: %v",err)
  }
  stage="verify-restored-dns"

@@ -184,7 +184,15 @@ func windowsDNSCrashWaitForUpdater(ctx context.Context,pid int)error{
 // workflow snapshots and compares every pre-existing host DNS adapter before
 // and after the test. Production recovery keeps the all-adapter census.
 func windowsCrashLabProvenanceInspector(alias,guid string,base WindowsReadOnlyPowerShell)(WindowsReadOnlyPowerShell,error){
- if base==nil||os.Getenv("GITHUB_ACTIONS")!="true"||
+ if os.Getenv("GITHUB_ACTIONS")!="true"{return nil,errors.New("hosted crash lab required")}
+ return windowsCrashLabPinnedProvenanceInspector(alias,guid,base)
+}
+
+// Private test-only query builder. SYSTEM Scheduler children do not inherit
+// GitHub's environment. The SYSTEM test caller first verifies its real SID,
+// exact signed lab journal, crashed process handle and nonrouting vNIC.
+func windowsCrashLabPinnedProvenanceInspector(alias,guid string,base WindowsReadOnlyPowerShell)(WindowsReadOnlyPowerShell,error){
+ if base==nil||!windowsDisposableDNSAlias.MatchString(alias)||
   os.Getenv("VOLVE_CI_DNS_REAL_DISPOSABLE")!="INTERNAL_HYPERV_VM_ONLY"||
   alias==""||alias!=os.Getenv("VOLVE_CI_DNS_LAB_ALIAS")||
   guid==""||guid!=os.Getenv("VOLVE_CI_DNS_LAB_GUID"){
@@ -200,7 +208,7 @@ func windowsCrashLabProvenanceInspector(alias,guid string,base WindowsReadOnlyPo
  dnsPinned:="$dnsRows=@(Get-DnsClientServerAddress -InterfaceIndex ([uint32]$adapters[0].InterfaceIndex) -ErrorAction Stop);"
  scoped:=strings.Replace(windowsDNSAssignmentSourceQuery,adapterAll,adapterPinned,1)
  scoped=strings.Replace(scoped,dnsAll,dnsPinned,1)
- if scoped==windowsDNSAssignmentSourceQuery||!strings.Contains(scoped,adapterPinned)||!strings.Contains(scoped,dnsPinned){
+ if strings.Count(windowsDNSAssignmentSourceQuery,adapterAll)!=1||strings.Count(windowsDNSAssignmentSourceQuery,dnsAll)!=1||scoped==windowsDNSAssignmentSourceQuery||!strings.Contains(scoped,adapterPinned)||!strings.Contains(scoped,dnsPinned){
   return nil,errors.New("could not construct exact-GUID disposable provenance query")
  }
  return func(ctx context.Context,query string)([]byte,error){

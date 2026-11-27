@@ -333,6 +333,7 @@ jobs:
             [Management.Automation.Language.Parser]::ParseFile($recoveryScript,[ref]$tokens,[ref]$errors)|Out-Null
             if(@($errors).Count -ne 0){throw 'Recovery script syntax invalid'}
             & $recoveryScript
+            Write-Host 'PASS VOLVE_ISOLATED_RECOVERY_SCOPE_EXACT_GUID_NO_PRODUCTION_CENSUS_CHANGE'
             $afterRecovery=Get-VolvResidentIdentity
             if($beforeRecovery -cne $afterRecovery){throw 'Resident replaced during independent crash restoration'}
             $afterProof=@(go test . -run '^TestCIFreshResidentSYSTEMPort53$' -count=1 -timeout 1m -v)
