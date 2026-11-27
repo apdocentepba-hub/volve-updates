@@ -283,3 +283,68 @@ func decodeCompleteWindowsDNSAssignmentRecord(raw []byte)(windowsDNSAssignmentRe
  if err:=json.Unmarshal(raw,&record);err!=nil{return record,err}
  return record,nil
 }
+
+// Inventory additional DNS policy surfaces before considering any adapter
+// mutation. This is deliberately not a restore snapshot or a claim that
+// all encrypted DNS transports are disabled. Known DoH definitions alone
+// do not establish actual encrypted DNS use.
+const windowsDNSOverrideCensusQuery = `$ErrorActionPreference='Stop';$ProgressPreference='SilentlyContinue';
+$nrptLocal=@(Get-DnsClientNrptRule -ErrorAction Stop);
+$nrptEffective=@(Get-DnsClientNrptPolicy -Effective -ErrorAction Stop);
+$dohAvailable=($null -ne (Get-Command Get-DnsClientDohServerAddress -CommandType Cmdlet,Function -ErrorAction SilentlyContinue));
+$doh=@();if($dohAvailable){$doh=@(Get-DnsClientDohServerAddress -ErrorAction Stop)};
+$machine=[Microsoft.Win32.RegistryKey]::OpenBaseKey([Microsoft.Win32.RegistryHive]::LocalMachine,[Microsoft.Win32.RegistryView]::Registry64);
+$policy=$null;
+try{
+ $policy=$machine.OpenSubKey('SOFTWARE\Policies\Microsoft\Windows NT\DNSClient',$false);
+ $policyPresent=($null -ne $policy);
+ $policyValues=0;$policySubkeys=0;
+ if($policyPresent){$policyValues=$policy.ValueCount;$policySubkeys=$policy.SubKeyCount};
+ [ordered]@{
+  schema=1;
+  component='windows-dns-override-census-v1';
+  local_nrpt_rules=[int]$nrptLocal.Count;
+  effective_nrpt_policies=[int]$nrptEffective.Count;
+  doh_cmdlet_available=[bool]$dohAvailable;
+  known_doh_servers=[int]$doh.Count;
+  dns_group_policy_key_present=[bool]$policyPresent;
+  dns_group_policy_values=[int]$policyValues;
+  dns_group_policy_subkeys=[int]$policySubkeys
+ }|ConvertTo-Json -Compress
+}finally{if($null -ne $policy){$policy.Close()};$machine.Close()}`
+
+type WindowsDNSOverrideCensus struct{
+ Schema int `json:"schema"`
+ Component string `json:"component"`
+ LocalNRPTRules int `json:"local_nrpt_rules"`
+ EffectiveNRPTPolicies int `json:"effective_nrpt_policies"`
+ DoHCmdletAvailable bool `json:"doh_cmdlet_available"`
+ KnownDoHServers int `json:"known_doh_servers"`
+ GroupPolicyKeyPresent bool `json:"dns_group_policy_key_present"`
+ GroupPolicyValues int `json:"dns_group_policy_values"`
+ GroupPolicySubkeys int `json:"dns_group_policy_subkeys"`
+}
+
+// InspectWindowsDNSOverrideCensusReadOnly returns only bounded counts;
+// no namespace, IP, DoH template or registry value is returned. Missing
+// DoH cmdlet is explicitly unverified, never evidence of no DoH.
+// Even zero counts do not authorize installation or prove preservation.
+func InspectWindowsDNSOverrideCensusReadOnly(ctx context.Context,inspect WindowsReadOnlyPowerShell)(WindowsDNSOverrideCensus,error){
+ var zero WindowsDNSOverrideCensus
+ if ctx==nil||inspect==nil{return zero,errors.New("DNS override census requires context and read-only inspector")}
+ if err:=ctx.Err();err!=nil{return zero,err}
+ raw,err:=inspect(ctx,windowsDNSOverrideCensusQuery)
+ if err!=nil{return zero,errors.New("DNS override census unavailable")}
+ if len(raw)<2||len(raw)>4096{return zero,errors.New("DNS override census size invalid")}
+ var evidence WindowsDNSOverrideCensus
+ if err:=residentCanonical(raw,&evidence);err!=nil{return zero,errors.New("DNS override census incomplete or noncanonical")}
+ if evidence.Schema!=1||evidence.Component!="windows-dns-override-census-v1"{return zero,errors.New("DNS override census identity invalid")}
+ for _,n:=range []int{evidence.LocalNRPTRules,evidence.EffectiveNRPTPolicies,evidence.KnownDoHServers,evidence.GroupPolicyValues,evidence.GroupPolicySubkeys}{
+  if n<0||n>65536{return zero,errors.New("DNS override census count invalid")}
+ }
+ if (!evidence.DoHCmdletAvailable&&evidence.KnownDoHServers!=0)||(!evidence.GroupPolicyKeyPresent&&(evidence.GroupPolicyValues!=0||evidence.GroupPolicySubkeys!=0)){
+  return zero,errors.New("DNS override census contradicts observed source availability")
+ }
+ if err:=ctx.Err();err!=nil{return zero,err}
+ return evidence,nil
+}
