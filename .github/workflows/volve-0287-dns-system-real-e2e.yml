@@ -1,7 +1,7 @@
 name: VOLVE 0.28.7 REAL SYSTEM watchdog DNS crash restoration (CI ONLY)
 on:
   push:
-    branches: [feature/motor-updater-0287-pilot]
+    branches: [feature/motor-updater-0287-pilot, work/0287-activation-order-regression-20261127]
     paths:
       - '.github/workflows/volve-0287-dns-system-real-e2e.yml'
   workflow_dispatch:
@@ -16,11 +16,39 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: '1.23.x'
+      - name: Reconstruct and verify full VOLVE Go source
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $parts=@(Get-ChildItem 'development/0.28.7/complete-source-parts' -Filter 'part-*.bin' | Sort-Object Name)
+          if($parts.Count -ne 10){throw 'Source archive part count'}
+          $dest=[IO.File]::Create((Join-Path (Get-Location) 'source.zip'))
+          try {
+            for($i=0;$i -lt 10;$i++){
+              if($parts[$i].Name -ne ('part-{0:D2}.bin' -f $i)){throw 'Source archive order'}
+              $src=[IO.File]::OpenRead($parts[$i].FullName)
+              try{$src.CopyTo($dest)}finally{$src.Dispose()}
+            }
+          }finally{$dest.Dispose()}
+          if((Get-FileHash source.zip -Algorithm SHA256).Hash.ToLowerInvariant() -ne '92b3536559151260375b17a64eedd009df8399e45460637208027b7ca0587ba5'){throw 'Source SHA256 mismatch'}
+          Expand-Archive source.zip -DestinationPath build -Force
+          $old='development/0.28.7/VOLVE_0287_PRECHECK_RESCATE_OVERLAY_NO_INSTALAR.zip'
+          if((Get-FileHash $old -Algorithm SHA256).Hash.ToLowerInvariant() -ne 'fdfd31f21df81fe6da6075bfd442354297874576b6dc2c38f19bd35a681d95cd'){throw 'Preflight ZIP SHA256 mismatch'}
+          Expand-Archive $old -DestinationPath build -Force
+          $recovery='development/0.28.7/VOLVE_0287_RECUPERACION_INTERRUPCION_FORZADA_NO_INSTALAR_v3.zip'
+          if((Get-FileHash $recovery -Algorithm SHA256).Hash.ToLowerInvariant() -ne '773bd5eb5f1c4883021cc321856636354e964d3605dba9017e2fb5d1a7401b40'){throw 'Recovery ZIP SHA256 mismatch'}
+          Expand-Archive $recovery -DestinationPath build -Force
+          Copy-Item development/0.28.7/journal/*.go build/codigo/motorupdate/ -Force
+          go run development/0.28.7/inapp/apply_overlay.go build/codigo
+          if($LASTEXITCODE -ne 0){throw 'Source overlay failed'}
       - name: Prove SYSTEM boot-trigger watchdog is prearmed before any isolated DNS write and restores both families
         shell: pwsh
         run: |
           $ErrorActionPreference='Stop'
           $ProgressPreference='SilentlyContinue'
+          if($env:GITHUB_ACTIONS -cne 'true' -or $env:RUNNER_ENVIRONMENT -cne 'github-hosted'){throw 'Disposable hosted Windows required'}
+          $vm=Get-CimInstance Win32_ComputerSystem -ErrorAction Stop
+          if(($vm.Manufacturer+' '+$vm.Model) -notmatch '(?i:virtual machine|hyper-v|vmware|kvm|qemu|virtualbox)'){throw 'VM identity refused'}
           $alias='VOLVE-CI-DNS-LAB-'+$env:GITHUB_RUN_ID+'00000'
           if($alias -notmatch '^VOLVE-CI-DNS-LAB-[0-9]{12,20}$'){
             throw 'FATAL: invalid disposable adapter name'
@@ -84,18 +112,16 @@ jobs:
             $env:VOLVE_CI_DNS_LAB_ALIAS=$alias
             $env:VOLVE_CI_DNS_LAB_GUID=$guid
             Write-Host "Disposable internal switch created: alias=$alias, GUID=$guid, index=$($adapter.InterfaceIndex)"
-            $source='development/0.28.7/inapp'
-            $folder=Join-Path $env:RUNNER_TEMP 'volve-disposable-dns-real-e2e'
-            New-Item -ItemType Directory -Path $folder -Force | Out-Null
-            Copy-Item -Path (Join-Path $source 'dns_restore*.go') -Destination $folder -ErrorAction Stop
-            Copy-Item -LiteralPath (Join-Path $source 'resident_journal.go') -Destination $folder -ErrorAction Stop
-            Copy-Item -LiteralPath (Join-Path $source 'resident_journal_test.go') -Destination $folder -ErrorAction Stop
-            Push-Location $folder
+            # Exercise the same reconstructed motorupdate package as the
+            # approved NSIS-to-SYSTEM candidate, not a stale source subset.
+            Push-Location 'build/codigo'
             try {
-              go mod init volve-disposable-dns-real-e2e
-              if($LASTEXITCODE -ne 0){throw 'Go lab module setup failed'}
-              go test -count=1 -timeout 6m -v -run '^TestWindowsRealDNSSYSTEMWatchdogAfterUpdaterCrash$' ./...
-              if($LASTEXITCODE -ne 0){throw 'Real LocalSystem watchdog / NTFS lab DNS recovery FAILED'}
+              $proof=@(go test ./motorupdate -count=1 -timeout 6m -v -run '^TestWindowsRealDNSSYSTEMWatchdogAfterUpdaterCrash$')
+              $exit=$LASTEXITCODE
+              $proof|Write-Host
+              if($exit -ne 0){throw 'Real LocalSystem watchdog / NTFS lab DNS recovery FAILED'}
+              if(@($proof|Where-Object {$_ -match '^--- PASS: TestWindowsRealDNSSYSTEMWatchdogAfterUpdaterCrash '}).Count -ne 1){throw 'Real recovery test did not execute'}
+              Write-Host 'PASS VOLVE_CURRENT_CANDIDATE_ISOLATED_SYSTEM_DNS_CRASH_RESTORATION'
             }finally{Pop-Location}
           }finally{
             Remove-Item Env:\VOLVE_CI_DNS_REAL_DISPOSABLE -ErrorAction SilentlyContinue
