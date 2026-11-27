@@ -8,6 +8,7 @@ import (
  "context"
  "io"
  "os/exec"
+ "crypto/ed25519"
  "crypto/sha256"
  "encoding/base64"
  "encoding/hex"
@@ -496,6 +497,37 @@ func TestWindowsOriginalCatalogArchiveBoundTransaction(t *testing.T){
   })
  }
  t.Log("PASS VOLVE_BOUND_ORIGINAL_ARCHIVES_REJECT_FOREIGN_TRANSACTION")
+ pub,private,err:=ed25519.GenerateKey(nil)
+ if err!=nil{t.Fatal("ephemeral fixture key unavailable")}
+ signed:=SignedOriginalRecoveryReview{1,signedOriginalRecoveryReviewComponent,id,pin}
+ raw,err:=json.Marshal(signed)
+ if err!=nil{t.Fatal(err)}
+ sig:=ed25519.Sign(private,raw)
+ authenticated,err:=VerifySignedOriginalRecoveryReview(ctx,raw,sig,pub,id,snap,dnsPin)
+ if err!=nil||authenticated!=signed{t.Fatal("valid signed review refused",err)}
+ otherPub,_,err:=ed25519.GenerateKey(nil)
+ if err!=nil{t.Fatal(err)}
+ wrong:=signed;wrong.Component="volve-publisher-dns-original-binding-v1"
+ wrongRaw,err:=json.Marshal(wrong)
+ if err!=nil{t.Fatal(err)}
+ noncanonical:=append(append([]byte(nil),raw...),byte(' '))
+ badSig:=append([]byte(nil),sig...);badSig[0]^=1
+ for _,tc:=range []struct{name string;raw,sig []byte;key ed25519.PublicKey;id,dns string;baseline ProtectionSnapshot}{
+  {"wrong-key",raw,sig,otherPub,id,dnsPin,snap},
+  {"bad-signature",raw,badSig,pub,id,dnsPin,snap},
+  {"wrong-domain",wrongRaw,ed25519.Sign(private,wrongRaw),pub,id,dnsPin,snap},
+  {"noncanonical",noncanonical,ed25519.Sign(private,noncanonical),pub,id,dnsPin,snap},
+  {"foreign-id",raw,sig,pub,foreign,dnsPin,snap},
+  {"foreign-census",raw,sig,pub,id,dnsPin,changed},
+  {"foreign-dns",raw,sig,pub,id,strings.Repeat("f",64),snap},
+ }{
+  t.Run("signed-"+tc.name,func(t *testing.T){
+   got,err:=VerifySignedOriginalRecoveryReview(ctx,tc.raw,tc.sig,tc.key,tc.id,tc.baseline,tc.dns)
+   if err==nil||got!=(SignedOriginalRecoveryReview{}){t.Fatal("foreign signed evidence accepted")}
+  })
+ }
+ t.Log("PASS VOLVE_SIGNED_FOUR_ARCHIVE_REVIEW_REJECTS_FOREIGN_EVIDENCE")
+
  if hosted{
   input:=originalRecoveryChildInput{root,id,pin,snap,browser,inv,dnsPin}
   runOriginalRecoveryInterruptedWriter(t,input,true)
@@ -512,6 +544,12 @@ func TestWindowsOriginalCatalogArchiveBoundTransaction(t *testing.T){
   }()
   runOriginalRecoveryReviewChild(t,input,true)
   t.Log("PASS VOLVE_NATIVE_REVIEW_REFUSES_CROSS_PROCESS_CONTENTION_AND_RECOVERS")
+  signedReport,err:=InspectSignedBoundOriginalRecoveryNativeReadOnly(ctx,root,id,raw,sig,pub,snap,browser,inv,dnsPin)
+  if err!=nil||signedReport.Status!="BOUND_FOUR_ARCHIVES_VERIFIED_READ_ONLY"||!signedReport.HostsVerified||signedReport.BrowserKeysVerified!=3||!signedReport.DNSBackupVerified||!signedReport.CatalogBackupVerified||signedReport.InstallAuthorized||signedReport.RestoreAuthorized||signedReport.CompleteRecoverySnapshot{t.Fatal("native signed review failed",err)}
+  deniedSigned,err:=InspectSignedBoundOriginalRecoveryNativeReadOnly(ctx,root,id,raw,badSig,pub,snap,browser,inv,dnsPin)
+  if err==nil||deniedSigned!=(WindowsOriginalBackupReview{Status:"UNVERIFIED"}){t.Fatal("native invalid signature accepted")}
+  t.Log("PASS VOLVE_NATIVE_SIGNED_REVIEW_UNARMED")
+
   if err:=persistOriginalRecoveryReviewEvidenceUnarmed(ctx,root,id,pin,snap,browser,inv,dnsPin,seal,allow);err==nil{t.Fatal("terminated real writer slot reused")}
   if err:=ctx.Err();err!=nil{t.Fatal("real writer test expired",err)}
   t.Log("PASS VOLVE_REAL_REVIEW_WRITER_TERMINATED_AFTER_SEAL")
