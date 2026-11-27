@@ -42,7 +42,7 @@ const windowsEffectiveDNSQuery = `$ErrorActionPreference='Stop'; $items=@(Get-Dn
 
 func DefaultWindowsReadOnlyPowerShell(ctx context.Context,script string)([]byte,error){
  if script!=windowsAdapterInventoryQuery && script!=windowsEffectiveDNSQuery &&
-  script!=windowsDNSAssignmentSourceQuery {
+  script!=windowsDNSAssignmentSourceQuery && script!=windowsDNSOverrideCensusQuery {
   return nil,errors.New("unrecognized read-only Windows inventory request")
  }
  if err:=ctx.Err();err!=nil{return nil,err}
