@@ -9,6 +9,7 @@ package motorupdate
 import (
  "bytes"
  "context"
+ "crypto/ed25519"
  "crypto/sha256"
  "encoding/base64"
  "encoding/hex"
@@ -506,4 +507,50 @@ func PersistBoundOriginalRecoveryNativeUnarmed(ctx context.Context,root,id,expec
  if err!=nil||!receipt.HostsVerified||receipt.BrowserKeysVerified!=3||!receipt.DNSBackupVerified||!receipt.CatalogBackupVerified||
   receipt.CompleteRecoverySnapshot||receipt.InstallAuthorized||receipt.RestoreAuthorized{return errors.New("staged original archives not currently verified")}
  return ctx.Err()
+}
+
+// A publisher-authenticated four-archive review digest, NOT a migration or
+// recovery permit. The trusted public key must come from an independently
+// pinned controller; never read it from the transaction directory.
+const signedOriginalRecoveryReviewComponent="volve-publisher-original-recovery-review-v1"
+type SignedOriginalRecoveryReview struct{
+ Schema int `json:"schema"`
+ Component string `json:"component"`
+ TransactionID string `json:"transaction_id"`
+ ReviewSHA256 string `json:"review_sha256"`
+}
+
+// VerifySignedOriginalRecoveryReview accepts only the exact canonical bytes
+// signed by the trusted publisher and recomputes the transaction binding.
+// The verified digest cannot by itself authorize install or restore.
+func VerifySignedOriginalRecoveryReview(ctx context.Context,raw,signature []byte,pub ed25519.PublicKey,
+ id string,baseline ProtectionSnapshot,dnsPin string)(SignedOriginalRecoveryReview,error){
+ var denied SignedOriginalRecoveryReview
+ if ctx==nil{return denied,errors.New("signed review context required")}
+ if err:=ctx.Err();err!=nil{return denied,err}
+ if len(pub)!=ed25519.PublicKeySize||len(signature)!=ed25519.SignatureSize||len(raw)<2||len(raw)>residentJournalLimit{
+  return denied,errors.New("signed review input invalid")
+ }
+ if !ed25519.Verify(pub,raw,signature){return denied,errors.New("original recovery review signature invalid")}
+ var got SignedOriginalRecoveryReview
+ if err:=residentCanonical(raw,&got);err!=nil{return denied,errors.New("signed review encoding invalid")}
+ canonical,err:=json.Marshal(got)
+ if err!=nil||!bytes.Equal(raw,canonical){return denied,errors.New("signed review bytes not canonical")}
+ pin,err:=originalRecoveryReviewPin(id,baseline,dnsPin)
+ if err!=nil||got!=(SignedOriginalRecoveryReview{1,signedOriginalRecoveryReviewComponent,id,pin}){
+  return denied,errors.New("signed review not bound to independent transaction census")
+ }
+ if err:=ctx.Err();err!=nil{return denied,err}
+ return got,nil
+}
+
+// Review only; successful signature and current archive verification still
+// return false for every installation, restoration and completion flag.
+func InspectSignedBoundOriginalRecoveryNativeReadOnly(ctx context.Context,root,id string,
+ raw,signature []byte,pub ed25519.PublicKey,baseline ProtectionSnapshot,browser WindowsBrowserPolicyEvidence,
+ inventory WindowsFreshVOLVETaskInventory,dnsPin string)(WindowsOriginalBackupReview,error){
+ denied:=WindowsOriginalBackupReview{Status:"UNVERIFIED"}
+ evidence,err:=VerifySignedOriginalRecoveryReview(ctx,raw,signature,pub,id,baseline,dnsPin)
+ if err!=nil{return denied,err}
+ return InspectBoundOriginalRecoveryNativeReadOnly(ctx,root,id,evidence.ReviewSHA256,baseline,browser,inventory,dnsPin)
 }
