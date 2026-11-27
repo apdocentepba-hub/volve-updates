@@ -7,6 +7,7 @@ on:
       - 'development/0.28.7/inapp/browser_policy_inventory_windows.go'
       - 'development/0.28.7/inapp/browser_policy_inventory_windows_test.go'
       - 'development/0.28.7/inapp/fresh_task_inventory_windows.go'
+      - 'development/0.28.7/inapp/dns_recovery_store_native_windows.go'
       - 'development/0.28.7/inapp/fresh_task_inventory_windows_test.go'
 permissions:
   contents: read
@@ -89,6 +90,7 @@ jobs:
           if(@($result|Where-Object {$_ -match 'PASS VOLVE_NATIVE_LEASE_BOUND_REVIEW_CHILD'}).Count -ne 1){throw 'Missing locked native review evidence'}
           if(@($result|Where-Object {$_ -match 'PASS VOLVE_NATIVE_REVIEW_REFUSES_CROSS_PROCESS_CONTENTION_AND_RECOVERS'}).Count -ne 1){throw 'Missing cross-process contention evidence'}
           if(@($result|Where-Object {$_ -match 'PASS VOLVE_NATIVE_LEASED_CREATE_ONLY_REVIEW_STAGING'}).Count -ne 1){throw 'Missing native leased staging evidence'}
+          if(@($result|Where-Object {$_ -match 'PASS VOLVE_NATIVE_REVIEW_SEAL_EXACT_PATH_ONLY'}).Count -ne 1){throw 'Missing exact review seal path rejection evidence'}
           if(@($result|Where-Object {$_ -match 'PASS VOLVE_SIGNED_FOUR_ARCHIVE_REVIEW_REJECTS_FOREIGN_EVIDENCE'}).Count -ne 1){throw 'Missing signed review negative controls'}
           if(@($result|Where-Object {$_ -match 'PASS VOLVE_NATIVE_SIGNED_REVIEW_UNARMED'}).Count -ne 1){throw 'Missing native signed unarmed review evidence'}
           if(@($result|Where-Object {$_ -match 'PASS VOLVE_CATALOG_ARCHIVE_REAL_NTFS_FIXTURE_NO_TASK_WRITES'}).Count -ne 1){throw 'Missing real catalog archive NTFS evidence'}
