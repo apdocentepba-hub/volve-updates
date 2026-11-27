@@ -151,6 +151,65 @@ jobs:
             $wire=@(if(Test-Path -LiteralPath $env:VOLVE_LAB_LOG){Get-Content -LiteralPath $env:VOLVE_LAB_LOG|ForEach-Object {ConvertFrom-Json $_}|Where-Object {$_.name -ceq $name}})
             [pscustomobject]@{mode=$label;options=$options;answer_verified=$verified;ipv4_tcp=@($wire|Where-Object {$_.host -ceq 'ipv4-loopback' -and $_.transport -ceq 'tcp'}).Count;ipv6_tcp=@($wire|Where-Object {$_.host -ceq 'ipv6-loopback' -and $_.transport -ceq 'tcp'}).Count;udp=@($wire|Where-Object {$_.transport -ceq 'udp'}).Count;udp_truncated=@($wire|Where-Object {$_.transport -ceq 'udp' -and $_.truncated -eq $true}).Count;error_id=$status}
           }
+          # Independent TCP socket control: no DnsQuery, no DNS setting changes.
+          Add-Type -TypeDefinition @'
+          using System;
+          using System.IO;
+          using System.Net;
+          using System.Net.Sockets;
+          using System.Text;
+          public static class VolveWinsockProbe {
+            private static byte[] ReadExactly(Stream s,int n) {
+              byte[] b=new byte[n];int offset=0;
+              while(offset<n){int got=s.Read(b,offset,n-offset);if(got==0)throw new EndOfStreamException();offset+=got;}
+              return b;
+            }
+            public static int Query(string name,bool v6,int index,out bool verified,out string stage) {
+              verified=false;stage="socket";
+              try {
+                using(Socket socket=new Socket(v6?AddressFamily.InterNetworkV6:AddressFamily.InterNetwork,SocketType.Stream,ProtocolType.Tcp)){
+                  stage="interface";
+                  if(index!=0){
+                    // Winsock IP_UNICAST_IF / IPV6_UNICAST_IF = 31.
+                    // IPv4 requires network order, IPv6 host order.
+                    socket.SetSocketOption(v6?SocketOptionLevel.IPv6:SocketOptionLevel.IP,(SocketOptionName)31,v6?index:IPAddress.HostToNetworkOrder(index));
+                  }
+                  stage="connect";
+                  IAsyncResult pending=socket.BeginConnect(new IPEndPoint(v6?IPAddress.IPv6Loopback:IPAddress.Loopback,53),null,null);
+                  using(pending.AsyncWaitHandle){if(!pending.AsyncWaitHandle.WaitOne(3000))return 10060;socket.EndConnect(pending);}
+                  using(NetworkStream stream=new NetworkStream(socket)){
+                    stream.ReadTimeout=3000;stream.WriteTimeout=3000;
+                    byte[] query;
+                    using(MemoryStream m=new MemoryStream()){
+                      byte[] header={0x12,0x34,1,0,0,1,0,0,0,0,0,0};m.Write(header,0,header.Length);
+                      foreach(string label in name.Split('.')){byte[] b=Encoding.ASCII.GetBytes(label);m.WriteByte((byte)b.Length);m.Write(b,0,b.Length);}
+                      m.WriteByte(0);m.WriteByte(0);m.WriteByte(1);m.WriteByte(0);m.WriteByte(1);query=m.ToArray();
+                    }
+                    stage="write";stream.WriteByte((byte)(query.Length>>8));stream.WriteByte((byte)query.Length);stream.Write(query,0,query.Length);
+                    stage="read";byte[] length=ReadExactly(stream,2);int n=(length[0]<<8)|length[1];if(n!=query.Length+16)return -3;
+                    byte[] response=ReadExactly(stream,n);
+                    byte[] expected=new byte[n];Array.Copy(query,expected,query.Length);
+                    expected[2]=0x81;expected[3]=0x80;expected[7]=1;
+                    byte[] record={0xc0,0x0c,0,1,0,1,0,0,0,0,0,4,203,0,113,7};
+                    Array.Copy(record,0,expected,query.Length,record.Length);
+                    for(int i=0;i<n;i++){if(response[i]!=expected[i])return -4;}
+                    verified=true;stage="verified";return 0;
+                  }
+                }
+              }catch(SocketException e){return e.ErrorCode;}
+              catch(IOException e){SocketException se=e.InnerException as SocketException;return se==null?-5:se.ErrorCode;}
+              catch{return -6;}
+            }
+          }
+          '@
+          function ObserveSocket([string]$label,[bool]$v6,[int]$interfaceIndex){
+            $name=$env:VOLVE_LAB_PREFIX+'-'+[guid]::NewGuid().ToString('N').Substring(0,16)+'.test'
+            $verified=$false;$stage=''
+            $status=[VolveWinsockProbe]::Query($name,$v6,$interfaceIndex,[ref]$verified,[ref]$stage)
+            Start-Sleep -Milliseconds 150
+            $wire=@(if(Test-Path -LiteralPath $env:VOLVE_LAB_LOG){Get-Content -LiteralPath $env:VOLVE_LAB_LOG|ForEach-Object {ConvertFrom-Json $_}|Where-Object {$_.name -ceq $name}})
+            [pscustomobject]@{mode=$label;answer_verified=$verified;stage=$stage;error_id=$status;tcp=@($wire|Where-Object {$_.transport -ceq 'tcp'}).Count;udp=@($wire|Where-Object {$_.transport -ceq 'udp'}).Count}
+          }
           function ObserveEx([string]$label,[uint64]$options,[uint32]$interfaceIndex){
             $name=$env:VOLVE_LAB_PREFIX+'-'+[guid]::NewGuid().ToString('N').Substring(0,16)+'.test'
             $verified=$false
@@ -159,7 +218,7 @@ jobs:
             $wire=@(if(Test-Path -LiteralPath $env:VOLVE_LAB_LOG){Get-Content -LiteralPath $env:VOLVE_LAB_LOG|ForEach-Object {ConvertFrom-Json $_}|Where-Object {$_.name -ceq $name}})
             [pscustomobject]@{mode=$label;options=$options;interface_bound=($interfaceIndex -ne 0);answer_verified=$verified;ipv4_tcp=@($wire|Where-Object {$_.host -ceq 'ipv4-loopback' -and $_.transport -ceq 'tcp'}).Count;ipv6_tcp=@($wire|Where-Object {$_.host -ceq 'ipv6-loopback' -and $_.transport -ceq 'tcp'}).Count;udp=@($wire|Where-Object {$_.transport -ceq 'udp'}).Count;error_id=$status}
           }
-          $exObservations=@();$fallbackObservations=@()
+          $exObservations=@();$fallbackObservations=@();$socketObservations=@()
           try{
             $proc=Start-Process -FilePath (Get-Command python -ErrorAction Stop).Source -ArgumentList @('-u',('"'+$fixture+'"')) -PassThru
             # Bound readiness by elapsed wall-clock time, not filesystem polling count.
@@ -180,6 +239,19 @@ jobs:
             AssertFixtureEndpoints $fixtureTCP
             AssertFixtureEndpoints $fixtureUDP
             Write-Host ('VOLVE_FIXTURE_READY_OWNED_FOUR_LOOPBACK_SOCKETS_MS='+[int]$startup.Elapsed.TotalMilliseconds)
+            $loopbacks=@([Net.NetworkInformation.NetworkInterface]::GetAllNetworkInterfaces()|Where-Object {$_.NetworkInterfaceType -eq [Net.NetworkInformation.NetworkInterfaceType]::Loopback})
+            if($loopbacks.Count -ne 1){throw 'Ambiguous loopback identity; no DNS changes'}
+            $loop4=$loopbacks[0].GetIPProperties().GetIPv4Properties().Index
+            $loop6=$loopbacks[0].GetIPProperties().GetIPv6Properties().Index
+            if($loop4 -le 0 -or $loop6 -le 0 -or $loop4 -eq $idx -or $loop6 -eq $idx){throw 'Invalid independent loopback identity; no DNS changes'}
+            $socketObservations+=ObserveSocket 'socket-v4-default' $false 0
+            $socketObservations+=ObserveSocket 'socket-v6-default' $true 0
+            $socketObservations+=ObserveSocket 'socket-v4-loopback-index' $false $loop4
+            $socketObservations+=ObserveSocket 'socket-v6-loopback-index' $true $loop6
+            $socketObservations+=ObserveSocket 'socket-v4-adapter-index' $false $idx
+            $socketObservations+=ObserveSocket 'socket-v6-adapter-index' $true $idx
+            $rawDefault=@($socketObservations|Where-Object {$_.mode -like '*default' -and $_.answer_verified -and $_.tcp -gt 0 -and $_.udp -eq 0})
+            if($rawDefault.Count -ne 2){throw 'Independent raw TCP controls failed; no DNS changes'}
             $observations+=Observe 'explicit-v4-tcp' '127.0.0.1' $true
             $observations+=Observe 'explicit-v6-tcp' '::1' $true
             if(!$observations[0].answer_verified -or $observations[0].ipv4_tcp -lt 1 -or !$observations[1].answer_verified -or $observations[1].ipv6_tcp -lt 1 -or @($observations|Where-Object {$_.udp -ne 0}).Count){throw 'Explicit controls failed; no DNS changes'}
@@ -229,10 +301,10 @@ jobs:
               if(!$restored){throw 'Exact original DNS restoration not verified'}
             }finally{
               if($proc -and !$proc.HasExited){Stop-Process -Id $proc.Id -Force -ErrorAction Stop;$proc.WaitForExit()}
-              Write-Host ('VOLVE_DUAL_LOOPBACK_DIFFERENTIAL='+([ordered]@{scope='HOSTED_WINDOWS_REFERENCE_ONLY';os=(Get-CimInstance Win32_OperatingSystem).Caption;build=(Get-CimInstance Win32_OperatingSystem).BuildNumber;dnsapi_version=(Get-Item (Join-Path $env:SystemRoot 'System32\dnsapi.dll')).VersionInfo.FileVersion;observations=$observations;native_observations=$nativeObservations;ex_observations=$exObservations;fallback_observations=$fallbackObservations;original_dns_restored=$restored;release_authorized=$false}|ConvertTo-Json -Depth 5 -Compress))
+              Write-Host ('VOLVE_DUAL_LOOPBACK_DIFFERENTIAL='+([ordered]@{scope='HOSTED_WINDOWS_REFERENCE_ONLY';os=(Get-CimInstance Win32_OperatingSystem).Caption;build=(Get-CimInstance Win32_OperatingSystem).BuildNumber;dnsapi_version=(Get-Item (Join-Path $env:SystemRoot 'System32\dnsapi.dll')).VersionInfo.FileVersion;observations=$observations;native_observations=$nativeObservations;ex_observations=$exObservations;fallback_observations=$fallbackObservations;socket_observations=$socketObservations;original_dns_restored=$restored;release_authorized=$false}|ConvertTo-Json -Depth 5 -Compress))
             }
           }
-          if($observations.Count -ne 6 -or $nativeObservations.Count -ne 10 -or $exObservations.Count -ne 8 -or $fallbackObservations.Count -ne 4 -or !$restored){throw 'Incomplete diagnostic'}
+          if($observations.Count -ne 6 -or $nativeObservations.Count -ne 10 -or $exObservations.Count -ne 8 -or $fallbackObservations.Count -ne 4 -or $socketObservations.Count -ne 6 -or !$restored){throw 'Incomplete diagnostic'}
           $nativeForced=@($nativeObservations|Where-Object {$_.mode -like '*tcp' -and $_.answer_verified -and $_.error_id -eq 0 -and ($_.ipv4_tcp+$_.ipv6_tcp) -gt 0 -and $_.udp -eq 0})
           Write-Host ('NATIVE_FORCED_TCP_VERIFIED='+$nativeForced.Count+'/2')
           $variants=@($nativeObservations|Where-Object {$_.mode -match '-tcp-(minimal|no-cache|wire-only)$' -and $_.answer_verified -and $_.error_id -eq 0 -and ($_.ipv4_tcp+$_.ipv6_tcp) -gt 0 -and $_.udp -eq 0})
