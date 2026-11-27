@@ -480,3 +480,30 @@ func InspectBoundOriginalRecoveryNativeReadOnly(ctx context.Context,root,id,expe
  if err:=ctx.Err();err!=nil{return denied,err}
  return WindowsOriginalBackupReview{Status:"BOUND_FOUR_ARCHIVES_VERIFIED_READ_ONLY",HostsVerified:true,BrowserKeysVerified:3,DNSBackupVerified:true,CatalogBackupVerified:true},nil
 }
+
+// PersistBoundOriginalRecoveryNativeUnarmed is the staging counterpart to
+// InspectBoundOriginalRecoveryNativeReadOnly. It uses the existing protected
+// transition lease, exact native ACL checks and create-only persistence.
+// It requires an already protected transaction root with existing archives;
+// no system configuration is changed, no permit is issued. Call outside
+// any existing transition lease. The expected pin is independently trusted.
+func PersistBoundOriginalRecoveryNativeUnarmed(ctx context.Context,root,id,expectedPin string,
+ baseline ProtectionSnapshot,browser WindowsBrowserPolicyEvidence,inventory WindowsFreshVOLVETaskInventory,dnsPin string)error{
+ if ctx==nil{return errors.New("native recovery staging requires context")}
+ if err:=ctx.Err();err!=nil{return err}
+ pin,err:=originalRecoveryReviewPin(id,baseline,dnsPin)
+ if err!=nil||pin!=expectedPin{return errors.New("independent recovery pin mismatch")}
+ if _,err:=originalRecoveryEvidencePath(root,id);err!=nil{return err}
+ release,err:=AcquireProtectedResidentTransitionLease(ctx)
+ if err!=nil||release==nil{return errors.New("protected recovery staging lease unavailable")}
+ defer release()
+ check:=func(p string)error{return nativeDNSOriginalBackupACL(ctx,p)}
+ seal:=func(p string)error{return nativeSealNewDNSOriginalNode(ctx,root,p)}
+ if err:=persistOriginalRecoveryReviewEvidenceUnarmed(ctx,root,id,expectedPin,baseline,browser,inventory,dnsPin,seal,check);err!=nil{return err}
+ // Revalidate the full snapshot before reporting completion, without
+ // recursively acquiring the lease already held by this operation.
+ receipt,err:=reopenOriginalRecoveryReviewUnarmed(ctx,root,id,expectedPin,baseline,browser,inventory,dnsPin,check)
+ if err!=nil||!receipt.HostsVerified||receipt.BrowserKeysVerified!=3||!receipt.DNSBackupVerified||!receipt.CatalogBackupVerified||
+  receipt.CompleteRecoverySnapshot||receipt.InstallAuthorized||receipt.RestoreAuthorized{return errors.New("staged original archives not currently verified")}
+ return ctx.Err()
+}
