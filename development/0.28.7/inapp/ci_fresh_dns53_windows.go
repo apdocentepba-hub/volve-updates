@@ -90,7 +90,7 @@ func writeCIFreshFailureDiagnostic(root,token string,err error){
  file,e:=os.OpenFile(path,os.O_WRONLY|os.O_CREATE|os.O_EXCL,0600)
  if e!=nil{return}
  defer file.Close()
- if _,e=fmt.Fprintf(file,"stage=%s;win32=%d\\n",stage,code);e==nil{_ = file.Sync()}
+ if _,e=fmt.Fprintf(file,"stage=%s;win32=%d\n",stage,code);e==nil{_ = file.Sync()}
 }
 
 func assertCIFreshVM(root, token string)error{
