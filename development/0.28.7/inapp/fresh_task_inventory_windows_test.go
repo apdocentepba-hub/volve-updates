@@ -500,6 +500,16 @@ func TestWindowsOriginalCatalogArchiveBoundTransaction(t *testing.T){
   // A complete sealed record can be re-observed, even when the original
   // writer never returned success. It still cannot grant permission.
   runOriginalRecoveryReviewChild(t,input,true)
+  // Hold the same kernel mutex in this process; the separate reader must
+  // report explicit lease refusal and zero evidence before we release it.
+  func(){
+   release,err:=AcquireProtectedResidentTransitionLease(ctx)
+   if err!=nil||release==nil{t.Fatal("fixture lease unavailable",err)}
+   defer release()
+   runOriginalRecoveryContendedReader(t,input)
+  }()
+  runOriginalRecoveryReviewChild(t,input,true)
+  t.Log("PASS VOLVE_NATIVE_REVIEW_REFUSES_CROSS_PROCESS_CONTENTION_AND_RECOVERS")
   if err:=persistOriginalRecoveryReviewEvidenceUnarmed(ctx,root,id,pin,snap,browser,inv,dnsPin,seal,allow);err==nil{t.Fatal("terminated real writer slot reused")}
   if err:=ctx.Err();err!=nil{t.Fatal("real writer test expired",err)}
   t.Log("PASS VOLVE_REAL_REVIEW_WRITER_TERMINATED_AFTER_SEAL")
@@ -623,4 +633,38 @@ func TestVOLVEOriginalRecoveryInterruptedWriter(t *testing.T){
  // No success exit is permitted. The parent must terminate this process.
  time.Sleep(60*time.Second)
  t.Fatal("writer was not terminated")
+}
+
+
+// The fixture parent holds the real mutex throughout this child's lifetime.
+// Distinguish intentional lease deadline from any archive validation error.
+func runOriginalRecoveryContendedReader(t *testing.T,input originalRecoveryChildInput){
+ t.Helper()
+ raw,err:=json.Marshal(input)
+ if err!=nil||len(raw)>16384{t.Fatal("contention input encoding failed")}
+ exe,err:=os.Executable()
+ if err!=nil{t.Fatal("test executable unavailable")}
+ ctx,cancel:=context.WithTimeout(context.Background(),15*time.Second);defer cancel()
+ cmd:=exec.CommandContext(ctx,exe,"-test.run=^TestVOLVEOriginalRecoveryContendedReader$","-test.count=1","-test.v")
+ cmd.Env=append(os.Environ(),"VOLVE_REVIEW_CONTENDED_CHILD=1")
+ cmd.Stdin=bytes.NewReader(raw)
+ out,err:=cmd.CombinedOutput()
+ if err!=nil||ctx.Err()!=nil{t.Fatal("contended child failed to report",err)}
+ if strings.Count(string(out),"VOLVE_CHILD_LEASE_CONTENTION_CONFIRMED")!=1{t.Fatal("missing specific contention evidence")}
+}
+
+func TestVOLVEOriginalRecoveryContendedReader(t *testing.T){
+ if os.Getenv("VOLVE_REVIEW_CONTENDED_CHILD")!="1"{t.Skip("explicit contention subprocess only")}
+ if os.Getenv("GITHUB_ACTIONS")!="true"||os.Getenv("RUNNER_ENVIRONMENT")!="github-hosted"{t.Fatal("hosted lab only")}
+ raw,err:=io.ReadAll(io.LimitReader(os.Stdin,16385))
+ if err!=nil||len(raw)==0||len(raw)>16384{t.Fatal("invalid contention input")}
+ var input originalRecoveryChildInput
+ if err:=residentCanonical(raw,&input);err!=nil{t.Fatal("contention input not canonical")}
+ ctx,cancel:=context.WithTimeout(context.Background(),1200*time.Millisecond);defer cancel()
+ start:=time.Now()
+ report,err:=InspectBoundOriginalRecoveryNativeReadOnly(ctx,input.Root,input.ID,input.Binding,input.Snapshot,input.Browser,input.Inventory,input.DNSPin)
+ if err==nil||err.Error()!="protected recovery review lease unavailable"||
+  !errors.Is(ctx.Err(),context.DeadlineExceeded)||time.Since(start)<time.Second||
+  report!=(WindowsOriginalBackupReview{Status:"UNVERIFIED"}){t.Fatal("lease contention not specifically verified")}
+ t.Log("VOLVE_CHILD_LEASE_CONTENTION_CONFIRMED")
 }
