@@ -61,6 +61,10 @@ func DefaultWindowsReadOnlyPowerShell(ctx context.Context,script string)([]byte,
   safe:="PowerShell or Windows inventory command failed"
   if exitErr,ok:=err.(*exec.ExitError);ok{
    diagnostic:=string(exitErr.Stderr)
+   for _,stage:=range []string{"loopback-enumeration","adapter-enumeration","dns-client-enumeration","interface-mapping","registry-open","registry-read","json-encoding"}{
+    token:="VOLVE_DNS_READ_STAGE:"+stage
+    if strings.Contains(diagnostic,token){safe=token;break}
+   }
    for _,known:=range []string{
     "Unknown DNS client address family",
     "DNS interface index does not map to exactly one adapter GUID",
