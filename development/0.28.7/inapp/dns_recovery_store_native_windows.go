@@ -49,6 +49,13 @@ func nativeSealNewDNSOriginalNode(
  if path!=allowedDir&&path!=allowedFile&&path!=allowedBinding&&path!=allowedSignature{
   return errors.New("native DNS original seal refused unrelated file or folder")
  }
+ return nativeSealApprovedOriginalBackupNode(ctx,path)
+}
+
+// Internal mechanism only. Callers must enforce their own exact path,
+// protected parent, and create-only workflow before invoking this helper.
+func nativeSealApprovedOriginalBackupNode(ctx context.Context,path string)error{
+ if err:=ctx.Err();err!=nil{return err}
  stat,err:=os.Lstat(path)
  if err!=nil{return err}
  if stat.Mode()&os.ModeSymlink!=0||(!stat.IsDir()&&!stat.Mode().IsRegular()){
