@@ -360,7 +360,8 @@ func TestWindowsOriginalCatalogArchiveNativeActualCensus(t *testing.T){
  if err!=nil||after!=snap{t.Fatal("live Windows original state differs after temporary archive rehearsal")}
  // A separate reader must reopen the durable, unarmed evidence with the
  // independent pin. An interrupted/truncated record is never accepted.
- if err:=persistOriginalRecoveryReviewEvidenceUnarmed(ctx,root,transactionID,binding,snap,browser,inv,pin,seal,check);err!=nil{t.Fatal("durable review evidence failed",err)}
+ if err:=PersistBoundOriginalRecoveryNativeUnarmed(ctx,root,transactionID,binding,snap,browser,inv,pin);err!=nil{t.Fatal("native leased staging failed",err)}
+ t.Log("PASS VOLVE_NATIVE_LEASED_CREATE_ONLY_REVIEW_STAGING")
  if err:=loadOriginalRecoveryReviewEvidenceUnarmed(ctx,root,transactionID,binding,check);err!=nil{t.Fatal("durable review reopen failed",err)}
  reopened,err:=reopenOriginalRecoveryReviewUnarmed(ctx,root,transactionID,binding,snap,browser,inv,pin,check)
  if err!=nil||reopened!=report{t.Fatal("fresh four-archive review failed",err)}
@@ -380,7 +381,8 @@ func TestWindowsOriginalCatalogArchiveNativeActualCensus(t *testing.T){
  if err!=nil||reopened!=report{t.Fatal("intact fixture rejected after reset",err)}
  t.Log("PASS VOLVE_DURABLE_REOPEN_REJECTS_STALE_ARCHIVE")
  if err:=loadOriginalRecoveryReviewEvidenceUnarmed(ctx,root,transactionID,strings.Repeat("f",64),check);err==nil{t.Fatal("foreign durable pin accepted")}
- if err:=persistOriginalRecoveryReviewEvidenceUnarmed(ctx,root,transactionID,binding,snap,browser,inv,pin,seal,check);err==nil{t.Fatal("existing durable evidence overwritten")}
+ if err:=PersistBoundOriginalRecoveryNativeUnarmed(ctx,root,transactionID,binding,snap,browser,inv,pin);err==nil{t.Fatal("existing durable evidence overwritten")}
+ if err:=ctx.Err();err!=nil{t.Fatal("native staging retry context expired",err)}
  path,err:=originalRecoveryEvidencePath(root,transactionID)
  if err!=nil{t.Fatal(err)}
  // Reset only the disposable fixture's review slot, never a real journal.
@@ -394,7 +396,7 @@ func TestWindowsOriginalCatalogArchiveNativeActualCensus(t *testing.T){
  runOriginalRecoveryReviewChild(t,childInput,false)
  t.Log("PASS VOLVE_NATIVE_LEASE_BOUND_REVIEW_CHILD")
  t.Log("PASS VOLVE_NEW_PROCESS_REOPENS_VALID_AND_REFUSES_STALE_TRUNCATED_REVIEW")
- if err:=persistOriginalRecoveryReviewEvidenceUnarmed(ctx,root,transactionID,binding,snap,browser,inv,pin,seal,check);err==nil{t.Fatal("interrupted evidence slot reused")}
+ if err:=PersistBoundOriginalRecoveryNativeUnarmed(ctx,root,transactionID,binding,snap,browser,inv,pin);err==nil{t.Fatal("interrupted evidence slot reused")}
  if err:=ctx.Err();err!=nil{t.Fatal("native test context expired; refusal evidence invalid",err)}
  t.Log("PASS VOLVE_DURABLE_UNARMED_REVIEW_NTFS_REJECTS_INTERRUPTION")
  t.Log("PASS VOLVE_NATIVE_BOUND_FOUR_ARCHIVES_AND_LIVE_RECENSUS")
