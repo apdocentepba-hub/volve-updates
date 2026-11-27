@@ -361,7 +361,13 @@ func TestWindowsOriginalCatalogArchiveNativeActualCensus(t *testing.T){
  if err!=nil||after!=snap{t.Fatal("live Windows original state differs after temporary archive rehearsal")}
  // A separate reader must reopen the durable, unarmed evidence with the
  // independent pin. An interrupted/truncated record is never accepted.
+ // The new sealer must refuse every unrelated object, including the
+ // already protected transaction root and both component directories.
+ for _,unrelated:=range []string{root,parent,dnsParent,filepath.Join(root,"unrelated.json")}{
+  if err:=nativeSealNewOriginalRecoveryReviewNode(ctx,root,transactionID,unrelated);err==nil||err.Error()!="review seal refused unrelated path"{t.Fatal("review seal did not reject unrelated path")}
+ }
  if err:=PersistBoundOriginalRecoveryNativeUnarmed(ctx,root,transactionID,binding,snap,browser,inv,pin);err!=nil{t.Fatal("native leased staging failed",err)}
+ t.Log("PASS VOLVE_NATIVE_REVIEW_SEAL_EXACT_PATH_ONLY")
  t.Log("PASS VOLVE_NATIVE_LEASED_CREATE_ONLY_REVIEW_STAGING")
  if err:=loadOriginalRecoveryReviewEvidenceUnarmed(ctx,root,transactionID,binding,check);err!=nil{t.Fatal("durable review reopen failed",err)}
  reopened,err:=reopenOriginalRecoveryReviewUnarmed(ctx,root,transactionID,binding,snap,browser,inv,pin,check)
