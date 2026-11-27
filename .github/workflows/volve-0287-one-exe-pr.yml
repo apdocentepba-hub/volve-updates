@@ -12,7 +12,7 @@ on:
       - 'development/0.28.7/taskrecoverygate/**'
       - '.github/workflows/volve-0287-one-exe-pr.yml'
   push:
-    branches: [work/0287-installer-progress-20261124, work/0287-preview-dns-compatibility-20261126, work/0287-browser-backup-capture-20261126, work/0287-dns-overrides-preflight-20261127]
+    branches: [work/0287-installer-progress-20261124, work/0287-preview-dns-compatibility-20261126, work/0287-browser-backup-capture-20261126, work/0287-dns-overrides-preflight-20261127, work/0287-activation-order-regression-20261127]
     paths:
       - 'development/0.28.7/hostroutebridge/**'
       - '.github/workflows/volve-0287-one-exe-pr.yml'
@@ -25,7 +25,7 @@ concurrency:
 jobs:
   verify-windows-exe:
     runs-on: windows-latest
-    timeout-minutes: 45
+    timeout-minutes: 50
     steps:
       - uses: actions/checkout@v4
       - name: Fail-fast PowerShell parse gate for real-motor NSIS lab
@@ -484,7 +484,7 @@ jobs:
           & 'development/0.28.7/installer-wizard/test_ci_actual_motor_embedded.ps1' -GoodBundle $env:VOLVE_CI_AUTHENTICODE_OS_BINARY -MotorSourceRoot 'build/codigo'
           if(-not $?){throw 'Actual DNS motor NSIS embedded stage/negative tamper failed'}
       - name: Join real Windows six-inventory route to the already verified signed EXE
-        timeout-minutes: 8
+        timeout-minutes: 13
         shell: pwsh
         run: |
           $ErrorActionPreference='Stop'
@@ -783,6 +783,19 @@ jobs:
               }
               Write-Host 'PASS VOLVE_NATIVE_PROTECTED_DNS_OVERRIDE_CONTENT_BEFORE_AFTER_NO_PRESERVATION_CLAIM'
               Write-Host 'PASS VOLVE_NATIVE_PROTECTED_SIGNED_HOST_PREFLIGHT SIX_INVENTORIES THREE_BROWSER_POLICIES DNS_ASSIGNMENT_BASELINE KERNEL_MUTEX EXCLUSIVE NO_INSTALL NO_DNS NO_TASKS'
+              $archiveRaw=(& $reviewExe --review-with-temporary-archives 2>&1|Out-String).Trim()
+              if($LASTEXITCODE -ne 0){throw 'Signed host preview could not capture and reopen four original archives'}
+              $archive=$archiveRaw|ConvertFrom-Json -ErrorAction Stop
+              if($archive.component -cne $protected.component -or $archive.synthetic_ci_signed_container_verified -ne $true -or $archive.protected_transition_mutex_held_during_review -ne $true -or
+                 $archive.original_backup_review.status -cne 'FOUR_TEMPORARY_ARCHIVES_VERIFIED_UNARMED' -or $archive.original_backup_review.hosts_verified -ne $true -or
+                 $archive.original_backup_review.browser_keys_verified -ne 3 -or $archive.original_backup_review.dns_backup_verified -ne $true -or $archive.original_backup_review.catalog_backup_verified -ne $true -or
+                 $archive.original_backup_review.complete_recovery_snapshot -ne $false -or $archive.original_backup_review.install_authorized -ne $false -or $archive.original_backup_review.restore_authorized -ne $false -or
+                 $archive.can_install -ne $false -or $archive.can_upgrade -ne $false -or $archive.can_change_dns -ne $false -or $archive.can_change_tasks -ne $false -or
+                 $archive.review_progress_percent -gt 25 -or $archive.configured_resolver_tcp_verified -ne $false -or $archive.dns_override_preservation_verified -ne $false){
+                throw 'Temporary archive rehearsal granted unexpected capability or omitted verified components'
+              }
+              if(@(Get-ChildItem -LiteralPath $env:RUNNER_TEMP -Filter 'VOLVE-CI-ArchiveReview-*' -Directory -ErrorAction Stop).Count -ne 0){throw 'Temporary recovery archives were not removed'}
+              Write-Host 'PASS VOLVE_SIGNED_PREVIEW_FOUR_NATIVE_ARCHIVES_CAPTURE_REOPEN_CLEANUP_UNARMED NO_INSTALL'
             }
             $lockDNSAfter=Get-DnsClientServerAddress -ErrorAction Stop | Sort-Object InterfaceIndex,AddressFamily | Select-Object InterfaceIndex,AddressFamily,ServerAddresses | ConvertTo-Json -Depth 6 -Compress
             $lockTasksAfter=@(Get-ScheduledTask -ErrorAction Stop | Where-Object {$_.TaskName -match '^(?i:VOLVE[-_])'}).Count

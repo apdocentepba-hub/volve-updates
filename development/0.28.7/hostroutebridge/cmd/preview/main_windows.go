@@ -93,6 +93,10 @@ func inspectCIHostUnderProtectedMutexReadOnly(ctx context.Context) (setupPreview
 }
 
 func inspectCIHostWithProtectedOption(ctx context.Context, holdProtectedMutex bool) (setupPreviewReport,error) {
+ return inspectCIHostWithOptions(ctx,holdProtectedMutex,false)
+}
+
+func inspectCIHostWithOptions(ctx context.Context,holdProtectedMutex,rehearseArchives bool)(setupPreviewReport,error){
  var refused setupPreviewReport
  if ctx==nil{return refused,errors.New("a non-nil Windows inspection context is required")}
  if err:=ctx.Err();err!=nil{return refused,err}
@@ -159,6 +163,12 @@ func inspectCIHostWithProtectedOption(ctx context.Context, holdProtectedMutex bo
  }
  view,err:=projectReadOnlyProgress(ctx,review,plan,holdProtectedMutex)
  if err!=nil{return refused,fmt.Errorf("read-only progress rejected: %w",err)}
+ originalBackup:=motorupdate.WindowsOriginalBackupReview{Status:"NOT_CHECKED_NO_ARCHIVES"}
+ if rehearseArchives{
+  if !holdProtectedMutex{return refused,errors.New("archive rehearsal requires protected signed review")}
+  originalBackup,err=motorupdate.RehearseNativeOriginalArchiveReviewCI(ctx,protectionSnapshot,browser,dnsOverrides)
+  if err!=nil{return refused,fmt.Errorf("temporary original archive rehearsal refused: %w",err)}
+ }
  var overrideReport *motorupdate.WindowsDNSOverrideCensus
  if holdProtectedMutex {overrideReport=&dnsOverrides}
  return setupPreviewReport{
@@ -181,7 +191,7 @@ func inspectCIHostWithProtectedOption(ctx context.Context, holdProtectedMutex bo
   BrowserRegistryKeysChecked:len(browser.Records),
   BrowserRegistryNumberedEntries:browser.TotalNumberedEntries,
   BrowserPolicyCensusStable:holdProtectedMutex&&len(browser.Records)==3,
-  OriginalBackupReview:motorupdate.WindowsOriginalBackupReview{Status:"NOT_CHECKED_NO_ARCHIVES"},
+  OriginalBackupReview:originalBackup,
   HostsBaselineChecked:holdProtectedMutex&&protectionSnapshot.HostsSHA256!="",
   CatalogTaskBaselineChecked:holdProtectedMutex&&protectionSnapshot.CatalogTaskDefinitionSHA256!="",
   DNSAdapterAssignmentBaselineChecked:holdProtectedMutex&&protectionSnapshot.DNSAdaptersSHA256!="",
@@ -201,15 +211,19 @@ func inspectCIHostWithProtectedOption(ctx context.Context, holdProtectedMutex bo
 }
 
 func main() {
- if len(os.Args)!=2||(os.Args[1]!="--review-only"&&os.Args[1]!="--review-under-protected-lock"){
-  fmt.Fprintln(os.Stderr,"VOLVE setup preview: --review-only | --review-under-protected-lock (CI ONLY; NO INSTALL)")
+ if len(os.Args)!=2||(os.Args[1]!="--review-only"&&os.Args[1]!="--review-under-protected-lock"&&os.Args[1]!="--review-with-temporary-archives"){
+  fmt.Fprintln(os.Stderr,"VOLVE setup preview: --review-only | --review-under-protected-lock | --review-with-temporary-archives (CI ONLY; NO INSTALL)")
   os.Exit(2)
  }
- ctx,cancel:=context.WithTimeout(context.Background(),125*time.Second)
+ timeout:=125*time.Second
+ if os.Args[1]=="--review-with-temporary-archives"{timeout=300*time.Second}
+ ctx,cancel:=context.WithTimeout(context.Background(),timeout)
  defer cancel()
  var report setupPreviewReport
  var err error
- if os.Args[1]=="--review-under-protected-lock"{
+ if os.Args[1]=="--review-with-temporary-archives"{
+  report,err=inspectCIHostWithOptions(ctx,true,true)
+ }else if os.Args[1]=="--review-under-protected-lock"{
   report,err=inspectCIHostUnderProtectedMutexReadOnly(ctx)
  }else{
   report,err=inspectCIHostReadOnly(ctx)

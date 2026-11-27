@@ -10,6 +10,7 @@ import (
  "bytes"
  "context"
  "crypto/ed25519"
+ "crypto/rand"
  "crypto/sha256"
  "encoding/base64"
  "encoding/hex"
@@ -20,6 +21,7 @@ import (
  "os"
  "os/exec"
  "path/filepath"
+ "reflect"
  "strings"
 )
 
@@ -674,4 +676,77 @@ func PersistSignedOriginalRecoveryNativeUnarmed(ctx context.Context,root,id stri
  if err:=residentCreate(path,data,seal,check);err!=nil{return err}
  _,err=inspectPersistedSignedReviewUnderLease(ctx,root,id,pub,baseline,browser,inventory,dnsPin)
  return err
+}
+
+
+// RehearseNativeOriginalArchiveReviewCI captures the four actual original
+// components against the independently observed signed-package preview.
+// Only a disposable hosted runner with no installed VOLVE task is supported.
+// The protected mutex is reacquired here and the earlier baseline must still
+// match before any archive is written. The temporary unarmed archives are
+// reopened, verified and removed; no restore authority or production backup
+// completion is issued. Never call while already holding the native mutex.
+func RehearseNativeOriginalArchiveReviewCI(ctx context.Context,baseline ProtectionSnapshot,browser WindowsBrowserPolicyEvidence,overrides WindowsDNSOverrideCensus)(report WindowsOriginalBackupReview,err error){
+ denied:=WindowsOriginalBackupReview{Status:"UNVERIFIED"}
+ if ctx==nil||os.Getenv("GITHUB_ACTIONS")!="true"||os.Getenv("RUNNER_ENVIRONMENT")!="github-hosted"{return denied,errors.New("original archive rehearsal requires disposable hosted CI")}
+ if err:=ctx.Err();err!=nil{return denied,err}
+ runner:=os.Getenv("RUNNER_TEMP")
+ if !filepath.IsAbs(runner)||filepath.Clean(runner)!=runner||strings.HasPrefix(runner,string(filepath.Separator)+string(filepath.Separator)){return denied,errors.New("invalid hosted temporary root")}
+ release,err:=AcquireProtectedResidentTransitionLease(ctx)
+ if err!=nil||release==nil{return denied,errors.New("original archive rehearsal lease unavailable")}
+ defer release()
+ // Do not silently accept another baseline after a concurrent change.
+ recensus:=func()error{
+  snap,b,err:=InspectWindowsProtectionSnapshotReadOnly(ctx,"","",DefaultWindowsProtectionSnapshotInspectors())
+  if err!=nil{return fmt.Errorf("original archive rehearsal census failed: %w",err)}
+  if snap!=baseline||!reflect.DeepEqual(b,browser){return errors.New("original protection changed since signed preview")}
+  policy,err:=InspectWindowsDNSOverrideCensusReadOnly(ctx,DefaultWindowsReadOnlyPowerShell)
+  if err!=nil{return err}
+  if policy!=overrides{return errors.New("DNS override content changed since signed preview")}
+  return ctx.Err()
+ }
+ if err:=recensus();err!=nil{return denied,err}
+ inventory,err:=InspectWindowsVOLVETasksReadOnly(ctx,"","",DefaultWindowsFreshTaskInspect)
+ if err!=nil||inventory.VOLVETaskCount!=0||len(inventory.UnknownTaskNames)!=0||inventory.VerifiedCatalogTask!=nil{return denied,errors.New("archive rehearsal requires independently verified absence of VOLVE tasks")}
+ hostsPin:=WindowsHostsFileEvidence{SHA256:baseline.HostsSHA256,BlockedRuleCount:baseline.HostsBlockedRuleCount}
+ hosts,err:=captureOriginalWindowsHostsBackup(ctx,filepath.Join(os.Getenv("SystemRoot"),"System32","drivers","etc","hosts"),hostsPin)
+ if err!=nil{return denied,fmt.Errorf("original hosts capture failed: %w",err)}
+ policies,err:=captureOriginalBrowserPolicyBytes(ctx,browser,readOriginalBrowserPolicyLocal)
+ if err!=nil{return denied,fmt.Errorf("original browser capture failed: %w",err)}
+ observed,err:=InspectWindowsDNSAssignmentProvenanceReadOnly(ctx,DefaultWindowsReadOnlyPowerShell)
+ if err!=nil||observed.SHA256!=baseline.DNSAdaptersSHA256{return denied,errors.New("original DNS source changed before capture")}
+ journal,pin,err:=BuildDNSOriginalJournal(ctx,observed.States)
+ if err!=nil{return denied,err}
+ definition,err:=captureOriginalCatalogDefinition(ctx,baseline,inventory,readOriginalCatalogDefinitionLocal)
+ if err!=nil||definition.Present{return denied,errors.New("original catalog absence not proven")}
+ var nonce [16]byte
+ if _,err:=rand.Read(nonce[:]);err!=nil{return denied,err}
+ id:=hex.EncodeToString(nonce[:])
+ outer,err:=os.MkdirTemp(runner,"VOLVE-CI-ArchiveReview-")
+ if err!=nil{return denied,err}
+ defer func(){
+  if cleanup:=os.RemoveAll(outer);cleanup!=nil{report=denied;err=errors.Join(err,errors.New("temporary original archive cleanup failed"))}
+ }()
+ root:=filepath.Join(outer,id)
+ protection:=filepath.Join(root,"original-protection-recovery")
+ dns:=filepath.Join(root,"legacy-engine-recovery")
+ seal:=func(p string)error{return nativeSealApprovedOriginalBackupNode(ctx,p)}
+ check:=func(p string)error{return nativeDNSOriginalBackupACL(ctx,p)}
+ if err:=seal(outer);err!=nil{return denied,err}
+ for _,dir:=range []string{root,protection,dns}{
+  if err:=os.Mkdir(dir,0700);err!=nil{return denied,err}
+  if err:=seal(dir);err!=nil{return denied,err}
+ }
+ if err:=storeOriginalWindowsHostsBackupUnarmed(ctx,protection,hosts,hostsPin,seal,check);err!=nil{return denied,err}
+ if err:=storeBrowserOriginalArchiveUnarmed(ctx,protection,browser,policies,seal,check);err!=nil{return denied,err}
+ if _,err:=StoreDNSOriginalBackupUnarmed(ctx,dns,journal,pin,seal,check);err!=nil{return denied,err}
+ if err:=storeOriginalCatalogArchiveUnarmed(ctx,protection,baseline,inventory,definition,seal,check);err!=nil{return denied,err}
+ binding,err:=originalRecoveryReviewPin(id,baseline,pin)
+ if err!=nil{return denied,err}
+ if err:=persistOriginalRecoveryReviewEvidenceUnarmed(ctx,root,id,binding,baseline,browser,inventory,pin,
+  func(p string)error{return nativeSealNewOriginalRecoveryReviewNode(ctx,root,id,p)},check);err!=nil{return denied,err}
+ receipt,err:=reopenOriginalRecoveryReviewUnarmed(ctx,root,id,binding,baseline,browser,inventory,pin,check)
+ if err!=nil||!receipt.HostsVerified||receipt.BrowserKeysVerified!=3||!receipt.DNSBackupVerified||!receipt.CatalogBackupVerified||receipt.CompleteRecoverySnapshot||receipt.RestoreAuthorized||receipt.InstallAuthorized{return denied,errors.New("temporary original archive reopen refused")}
+ if err:=recensus();err!=nil{return denied,err}
+ return WindowsOriginalBackupReview{Status:"FOUR_TEMPORARY_ARCHIVES_VERIFIED_UNARMED",HostsVerified:true,BrowserKeysVerified:3,DNSBackupVerified:true,CatalogBackupVerified:true},nil
 }
