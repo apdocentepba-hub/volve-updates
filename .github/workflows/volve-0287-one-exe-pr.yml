@@ -435,12 +435,15 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference='Stop'
-          $result=@(go test ./motorupdate -run '^TestWindows(DNSOverride(Census(StrictEvidence|NativeReadOnly)|FingerprintSyntheticContent)|DNSActivationOverrideGuardRejectsDriftWithoutSuppressingRecovery|ProtectedDNSActivationLeaseRejectsNonSYSTEMEntry)$' -count=1 -v -timeout 2m)
+          $result=@(go test ./motorupdate -run '^TestWindows(DNSOverride(Census(StrictEvidence|NativeReadOnly)|FingerprintSyntheticContent)|DNSActivationOverrideGuardRejectsDriftWithoutSuppressingRecovery|ActivationPolicyDriftInsideAttestationPreventsCommit|PinnedDNSActivation.*|ProtectedDNSActivationLeaseRejectsNonSYSTEMEntry)$' -count=1 -v -timeout 2m)
           $code=$LASTEXITCODE
           $result|Write-Host
           if($code -ne 0){throw 'DNS override census failed; no embedded motor build'}
-          foreach($marker in @('PASS VOLVE_DNS_OVERRIDE_CENSUS_REJECTS_INCOMPLETE_AND_CONTRADICTORY_EVIDENCE','PASS VOLVE_NATIVE_DNS_OVERRIDE_CENSUS_COUNTS_ONLY_NO_INSTALL','PASS VOLVE_DNS_OVERRIDE_FINGERPRINT_SYNTHETIC_CONTENT_DRIFT','PASS VOLVE_DNS_ACTIVATION_POLICY_GUARD_REJECTS_DRIFT_PRESERVES_RECOVERY')){
+          foreach($marker in @('PASS VOLVE_DNS_OVERRIDE_CENSUS_REJECTS_INCOMPLETE_AND_CONTRADICTORY_EVIDENCE','PASS VOLVE_NATIVE_DNS_OVERRIDE_CENSUS_COUNTS_ONLY_NO_INSTALL','PASS VOLVE_DNS_OVERRIDE_FINGERPRINT_SYNTHETIC_CONTENT_DRIFT','PASS VOLVE_DNS_ACTIVATION_POLICY_GUARD_REJECTS_DRIFT_PRESERVES_RECOVERY','PASS VOLVE_DNS_POLICY_DRIFT_DURING_ATTESTATION_TRANSACTION_RECOVERY')){
             if(@($result|Where-Object {$_ -match ([regex]::Escape($marker)+'$')}).Count -ne 1){throw ('Missing DNS override evidence: '+$marker)}
+          }
+          foreach($test in @('TestWindowsPinnedDNSActivationRejectsConcurrentPostAttestationDNSChange','TestWindowsActivationPolicyDriftInsideAttestationPreventsCommit','TestWindowsPinnedDNSActivationNewAdapterDuringSwitchNeverCommits')){
+            if(@($result|Where-Object {$_ -match ('^--- PASS: '+$test+' \(')}).Count -ne 1){throw ('Missing activation regression '+$test)}
           }
           Write-Host 'PASS VOLVE_DNS_OVERRIDE_CENSUS_BEFORE_EMBEDDING NOT_A_RESTORE_SNAPSHOT NO_INSTALL'
       - name: Prepare NSIS compiler before early real motor handoff
