@@ -8,6 +8,8 @@ on:
       - 'development/0.28.7/inapp/browser_policy_inventory_windows_test.go'
       - 'development/0.28.7/inapp/fresh_task_inventory_windows.go'
       - 'development/0.28.7/inapp/dns_recovery_store_native_windows.go'
+      - 'development/0.28.7/inapp/dns_assignment_provenance_windows.go'
+      - 'development/0.28.7/inapp/dns_restore_adapter_inventory_windows.go'
       - 'development/0.28.7/inapp/fresh_task_inventory_windows_test.go'
 permissions:
   contents: read
