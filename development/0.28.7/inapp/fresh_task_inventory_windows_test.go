@@ -454,7 +454,7 @@ func TestVOLVESyntheticCatalogArchiveBridge(t *testing.T){
 }
 
 func TestWindowsOriginalCatalogArchiveBoundTransaction(t *testing.T){
- ctx,cancel:=context.WithTimeout(context.Background(),150*time.Second);defer cancel()
+ ctx,cancel:=context.WithTimeout(context.Background(),240*time.Second);defer cancel()
  src,snap,browser,hosts,policies:=makeOriginalProtectionPairFixture(t)
  _=src
  id:=strings.Repeat("a",32)
@@ -555,6 +555,28 @@ func TestWindowsOriginalCatalogArchiveBoundTransaction(t *testing.T){
   deniedSigned,err:=InspectSignedBoundOriginalRecoveryNativeReadOnly(ctx,root,id,raw,badSig,pub,snap,browser,inv,dnsPin)
   if err==nil||deniedSigned!=(WindowsOriginalBackupReview{Status:"UNVERIFIED"}){t.Fatal("native invalid signature accepted")}
   t.Log("PASS VOLVE_NATIVE_SIGNED_REVIEW_UNARMED")
+  signedPath,err:=signedOriginalRecoveryEnvelopePath(root,id)
+  if err!=nil{t.Fatal(err)}
+  if err:=PersistSignedOriginalRecoveryNativeUnarmed(ctx,root,id,raw,badSig,pub,snap,browser,inv,dnsPin);err==nil{t.Fatal("invalid signed envelope persisted")}
+  if _,err:=os.Lstat(signedPath);!os.IsNotExist(err){t.Fatal("invalid signature created a slot")}
+  if err:=PersistSignedOriginalRecoveryNativeUnarmed(ctx,root,id,raw,sig,pub,snap,browser,inv,dnsPin);err!=nil{t.Fatal("signed envelope staging failed",err)}
+  valid,err:=InspectPersistedSignedOriginalRecoveryNativeReadOnly(ctx,root,id,pub,snap,browser,inv,dnsPin)
+  if err!=nil||valid.Status!="SIGNED_BOUND_FOUR_ARCHIVES_VERIFIED_READ_ONLY"||!valid.HostsVerified||valid.BrowserKeysVerified!=3||!valid.DNSBackupVerified||!valid.CatalogBackupVerified||valid.InstallAuthorized||valid.RestoreAuthorized||valid.CompleteRecoverySnapshot{t.Fatal("durable signed review failed",err)}
+  denied,err:=InspectPersistedSignedOriginalRecoveryNativeReadOnly(ctx,root,id,otherPub,snap,browser,inv,dnsPin)
+  if err==nil||denied!=(WindowsOriginalBackupReview{Status:"UNVERIFIED"}){t.Fatal("foreign key accepted from disk")}
+  before,err:=os.ReadFile(signedPath)
+  if err!=nil{t.Fatal(err)}
+  if err:=PersistSignedOriginalRecoveryNativeUnarmed(ctx,root,id,raw,sig,pub,snap,browser,inv,dnsPin);err==nil{t.Fatal("signed envelope overwritten")}
+  after,err:=os.ReadFile(signedPath)
+  if err!=nil||!bytes.Equal(before,after){t.Fatal("signed envelope changed on retry")}
+  // Deliberately corrupt only the disposable lab fixture.
+  if err:=os.WriteFile(signedPath,[]byte("{"),0600);err!=nil{t.Fatal(err)}
+  denied,err=InspectPersistedSignedOriginalRecoveryNativeReadOnly(ctx,root,id,pub,snap,browser,inv,dnsPin)
+  if err==nil||denied!=(WindowsOriginalBackupReview{Status:"UNVERIFIED"}){t.Fatal("partial signed envelope accepted")}
+  if err:=PersistSignedOriginalRecoveryNativeUnarmed(ctx,root,id,raw,sig,pub,snap,browser,inv,dnsPin);err==nil{t.Fatal("partial signed envelope reused")}
+  if err:=ctx.Err();err!=nil{t.Fatal("signed durable test context expired",err)}
+  t.Log("PASS VOLVE_DURABLE_SIGNED_ENVELOPE_CREATE_ONLY_AND_REJECT_TAMPER")
+
 
   if err:=persistOriginalRecoveryReviewEvidenceUnarmed(ctx,root,id,pin,snap,browser,inv,dnsPin,seal,allow);err==nil{t.Fatal("terminated real writer slot reused")}
   if err:=ctx.Err();err!=nil{t.Fatal("real writer test expired",err)}
