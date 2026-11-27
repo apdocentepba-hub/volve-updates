@@ -14,7 +14,7 @@ permissions:
 jobs:
   browser-backup:
     runs-on: windows-2025
-    timeout-minutes: 12
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
         with:
@@ -74,7 +74,7 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference='Stop'
-          $result=@(go test ./motorupdate -run '^TestWindowsOriginalCatalog(Capture|Archive)' -count=1 -v -timeout 7m)
+          $result=@(go test ./motorupdate -run '^TestWindowsOriginalCatalog(Capture|Archive)' -count=1 -v -timeout 9m)
           $exit=$LASTEXITCODE
           $result|Write-Host
           if($exit -ne 0){throw 'Catalog capture failed'}
@@ -93,6 +93,7 @@ jobs:
           if(@($result|Where-Object {$_ -match 'PASS VOLVE_NATIVE_REVIEW_SEAL_EXACT_PATH_ONLY'}).Count -ne 1){throw 'Missing exact review seal path rejection evidence'}
           if(@($result|Where-Object {$_ -match 'PASS VOLVE_SIGNED_FOUR_ARCHIVE_REVIEW_REJECTS_FOREIGN_EVIDENCE'}).Count -ne 1){throw 'Missing signed review negative controls'}
           if(@($result|Where-Object {$_ -match 'PASS VOLVE_NATIVE_SIGNED_REVIEW_UNARMED'}).Count -ne 1){throw 'Missing native signed unarmed review evidence'}
+          if(@($result|Where-Object {$_ -match 'PASS VOLVE_DURABLE_SIGNED_ENVELOPE_CREATE_ONLY_AND_REJECT_TAMPER'}).Count -ne 1){throw 'Missing durable signed envelope evidence'}
           if(@($result|Where-Object {$_ -match 'PASS VOLVE_CATALOG_ARCHIVE_REAL_NTFS_FIXTURE_NO_TASK_WRITES'}).Count -ne 1){throw 'Missing real catalog archive NTFS evidence'}
           if(@($result|Where-Object {$_ -match 'PASS VOLVE_FOUR_ORIGINAL_ARCHIVES_FIXTURE_REVIEW_NO_AUTHORIZATION'}).Count -ne 1){throw 'Missing four-component fixture review'}
           if(@($result|Where-Object {$_ -match 'PASS VOLVE_FOUR_ARCHIVES_REAL_NTFS_DISPLAY_ONLY'}).Count -ne 1){throw 'Missing native four-archive display review'}
