@@ -1,7 +1,7 @@
 name: VOLVE pilot fresh motor SYSTEM DNS53 (DISPOSABLE VM ONLY)
 on:
   push:
-    branches: [feature/motor-updater-0287-pilot, work/0287-native-setup-preview-20261113, work/0287-installer-progress-20261124]
+    branches: [feature/motor-updater-0287-pilot, work/0287-native-setup-preview-20261113, work/0287-installer-progress-20261124, work/0287-activation-order-regression-20261127]
     paths:
       - 'development/0.28.7/inapp/ci_fresh_dns53_windows.go'
       - 'development/0.28.7/inapp/ci_fresh_dns53_windows_test.go'
@@ -59,10 +59,10 @@ jobs:
           $old='development/0.28.7/VOLVE_0287_PRECHECK_RESCATE_OVERLAY_NO_INSTALAR.zip'
           if((Get-FileHash $old -Algorithm SHA256).Hash.ToLowerInvariant() -ne 'fdfd31f21df81fe6da6075bfd442354297874576b6dc2c38f19bd35a681d95cd'){throw 'Preflight ZIP SHA256 mismatch'}
           Expand-Archive $old -DestinationPath build -Force
-          Copy-Item development/0.28.7/journal/*.go build/codigo/motorupdate/ -Force
           $recovery='development/0.28.7/VOLVE_0287_RECUPERACION_INTERRUPCION_FORZADA_NO_INSTALAR_v3.zip'
           if((Get-FileHash $recovery -Algorithm SHA256).Hash.ToLowerInvariant() -ne '773bd5eb5f1c4883021cc321856636354e964d3605dba9017e2fb5d1a7401b40'){throw 'Recovery ZIP SHA256 mismatch'}
           Expand-Archive $recovery -DestinationPath build -Force
+          Copy-Item development/0.28.7/journal/*.go build/codigo/motorupdate/ -Force
           go run development/0.28.7/inapp/apply_overlay.go build/codigo
           if($LASTEXITCODE -ne 0){throw 'Source overlay failed'}
       - name: Compile CI-tagged actual VOLVE motor and test safe preflight
@@ -74,6 +74,15 @@ jobs:
           if($LASTEXITCODE -ne 0){throw 'Fresh motor gates failed'}
           go test ./motorupdate -run '^(TestProtectedDNSActivation|TestWindowsPinnedDNSActivation|TestWindowsProtectedDNSActivationLease|TestPublisherSignedDNSActivation|TestPublisherScopedDNSActivation|TestWindowsNativeSignedDNSActivationNonce|TestWindowsSignedDNSActivationNonceAndRecoveryShareOneRealKernelLease|TestNativeDNSRecovery)' -count=1 -timeout 5m -v
           if($LASTEXITCODE -ne 0){throw 'Protected dual-stack activation and independent recovery transaction failed'}
+          # Require the same corrected policy/adapter transition in the source
+          # used to compile the actual CI-only SYSTEM DNS motor.
+          $order=@(go test ./motorupdate -run '^TestWindows(ActivationPolicyDriftInsideAttestationPreventsCommit|DNSActivationOverrideGuardRejectsDriftWithoutSuppressingRecovery|DNSOverride(Census(StrictEvidence|NativeReadOnly)|FingerprintSyntheticContent))$' -count=1 -timeout 2m -v)
+          $orderExit=$LASTEXITCODE
+          $order|Write-Host
+          if($orderExit -ne 0){throw 'Policy activation transition refused; do not compile real motor'}
+          foreach($marker in @('PASS VOLVE_DNS_POLICY_DRIFT_DURING_ATTESTATION_TRANSACTION_RECOVERY','PASS VOLVE_DNS_ACTIVATION_POLICY_GUARD_REJECTS_DRIFT_PRESERVES_RECOVERY','PASS VOLVE_NATIVE_DNS_OVERRIDE_CENSUS_COUNTS_ONLY_NO_INSTALL','PASS VOLVE_DNS_OVERRIDE_FINGERPRINT_SYNTHETIC_CONTENT_DRIFT')){
+            if(@($order|Where-Object {$_ -match ([regex]::Escape($marker)+'$')}).Count -ne 1){throw ('Missing activation proof '+$marker)}
+          }
           # Real NTFS ACL + Win32 mutex + multiple independent opens cost seconds each.
           # This is a separate integration suite: retain all assertions, avoid a
           # misleading combined 5-minute Go timeout on healthy Windows runners.
