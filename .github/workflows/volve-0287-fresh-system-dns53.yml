@@ -23,7 +23,7 @@ concurrency:
 jobs:
   fresh-system-dns53:
     runs-on: windows-latest
-    timeout-minutes: 25
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -219,7 +219,8 @@ jobs:
           }
           Assert-ExtractedMotor
           if(Test-Path -LiteralPath $root){throw 'CI root already exists'}
-          $argument='--ci-fresh-dns53 "'+$root+'" VOLVE-CI-GITHUB-HOSTED-VM-DNS53-ONLY'
+          # Existing VM-only extended service window, bounded again by Scheduler.
+          $argument='--ci-boot-dns53 "'+$root+'" VOLVE-CI-GITHUB-HOSTED-VM-DNS53-ONLY'
           $registered=$false
           function Write-VolvStartupFailure {
             $receipt=Join-Path $root 'ci-startup-failure.txt'
@@ -233,7 +234,7 @@ jobs:
           try{
             $action=New-ScheduledTaskAction -Execute $exe -Argument $argument
             $trigger=New-ScheduledTaskTrigger -AtStartup
-            $settings=New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Minutes 3) -AllowStartIfOnBatteries
+            $settings=New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Minutes 9) -AllowStartIfOnBatteries
             Register-ScheduledTask -TaskName $task -Action $action -Trigger $trigger -Settings $settings -User 'SYSTEM' -RunLevel Highest -ErrorAction Stop | Out-Null
             $registered=$true
             $record=Get-ScheduledTask -TaskName $task -ErrorAction Stop
@@ -308,6 +309,37 @@ jobs:
               throw 'Restarted DNS53 PASS without a verified allowed A record'
             }
             Write-Host 'PASS: persistent AtStartup SYSTEM task restarted with exact original 400k catalog and DNS blocking still works'
+            # Record the exact restarted resident before the independent
+            # recovery experiment. Never treat a replacement PID as survival.
+            function Get-VolvResidentIdentity {
+              $live=@(Get-CimInstance Win32_Process -Filter "Name='VOLVE_CI_FreshDNS53.exe'" -ErrorAction Stop|Where-Object {$_.ExecutablePath -ieq $exe})
+              if($live.Count -ne 1){throw 'Expected exactly one extracted resident'}
+              $process=$live[0]
+              $owner=Invoke-CimMethod -InputObject $process -MethodName GetOwnerSid -ErrorAction Stop
+              if($owner.ReturnValue -ne 0 -or $owner.Sid -ne 'S-1-5-18'){throw 'Resident is not SYSTEM'}
+              $t=Get-ScheduledTask -TaskName $task -ErrorAction Stop
+              if($t.State -ne 'Running' -or $t.Principal.UserId -notin @('SYSTEM','S-1-5-18') -or @($t.Actions).Count -ne 1 -or [string]$t.Actions[0].Execute -ine $exe -or [string]$t.Actions[0].Arguments -cne $argument){throw 'Resident task identity changed'}
+              foreach($address in @('127.0.0.1','::1')){
+                $tcp=@(Get-NetTCPConnection -LocalPort 53 -LocalAddress $address -State Listen -ErrorAction Stop)
+                $udp=@(Get-NetUDPEndpoint -LocalPort 53 -LocalAddress $address -ErrorAction Stop)
+                if($tcp.Count -ne 1 -or $udp.Count -ne 1 -or $tcp[0].OwningProcess -ne $process.ProcessId -or $udp[0].OwningProcess -ne $process.ProcessId){throw 'Resident does not own four DNS53 endpoints'}
+              }
+              Assert-ExtractedMotor
+              return ('{0}|{1:o}' -f $process.ProcessId,[datetime]$process.CreationDate)
+            }
+            $beforeRecovery=Get-VolvResidentIdentity
+            $recoveryScript=Join-Path $env:GITHUB_WORKSPACE 'development/0.28.7/installer-wizard/test_ci_isolated_system_dns_recovery.ps1'
+            $tokens=$null;$errors=$null
+            [Management.Automation.Language.Parser]::ParseFile($recoveryScript,[ref]$tokens,[ref]$errors)|Out-Null
+            if(@($errors).Count -ne 0){throw 'Recovery script syntax invalid'}
+            & $recoveryScript
+            $afterRecovery=Get-VolvResidentIdentity
+            if($beforeRecovery -cne $afterRecovery){throw 'Resident replaced during independent crash restoration'}
+            $afterProof=@(go test . -run '^TestCIFreshResidentSYSTEMPort53$' -count=1 -timeout 1m -v)
+            $afterExit=$LASTEXITCODE
+            $afterProof|Write-Host
+            if($afterExit -ne 0 -or @($afterProof|Where-Object {$_ -match '^--- PASS: TestCIFreshResidentSYSTEMPort53 '}).Count -ne 1 -or @($afterProof|Where-Object {$_ -match 'actually forwards an allowed A record'}).Count -ne 1){throw 'DNS proof after isolated restoration failed'}
+            Write-Host 'PASS VOLVE_SAME_NSIS_EXTRACTED_SYSTEM_MOTOR_SURVIVES_REAL_ISOLATED_DNS_CRASH_RESTORATION'
             # Corrupt the lab catalog after stopping, to prove the next start
             # refuses execution BEFORE opening DNS/53. This is VM-only.
             Stop-ScheduledTask -TaskName $task -ErrorAction Stop

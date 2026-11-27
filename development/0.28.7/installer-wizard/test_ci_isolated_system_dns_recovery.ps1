@@ -1,0 +1,115 @@
+# Reuse the independently approved real SYSTEM crash-restoration experiment.
+# Hosted disposable VM only; the parent motor must remain running throughout.
+$ErrorActionPreference='Stop'
+$ProgressPreference='SilentlyContinue'
+if($env:GITHUB_ACTIONS -cne 'true' -or $env:RUNNER_ENVIRONMENT -cne 'github-hosted'){throw 'Disposable hosted Windows required'}
+$vm=Get-CimInstance Win32_ComputerSystem -ErrorAction Stop
+if(($vm.Manufacturer+' '+$vm.Model) -notmatch '(?i:virtual machine|hyper-v|vmware|kvm|qemu|virtualbox)'){throw 'VM identity refused'}
+$alias='VOLVE-CI-DNS-LAB-'+$env:GITHUB_RUN_ID+'00000'
+if($alias -notmatch '^VOLVE-CI-DNS-LAB-[0-9]{12,20}$'){
+  throw 'FATAL: invalid disposable adapter name'
+}
+$created=$false
+$priorHosts=(Get-FileHash -LiteralPath (Join-Path $env:WINDIR 'System32\drivers\etc\hosts') -Algorithm SHA256).Hash
+$prior=Get-DnsClientServerAddress | Sort-Object InterfaceIndex,AddressFamily |
+  Select-Object InterfaceIndex,AddressFamily,ServerAddresses |
+  ConvertTo-Json -Compress -Depth 7
+$originalRoutes=Get-NetRoute -DestinationPrefix '0.0.0.0/0' |
+  Sort-Object InterfaceIndex,NextHop | Select-Object InterfaceIndex,DestinationPrefix,NextHop |
+  ConvertTo-Json -Compress -Depth 5
+try {
+  if(-not (Get-Command New-VMSwitch -ErrorAction SilentlyContinue)){
+    throw 'Hyper-V internal switch cmdlet unavailable; no DNS adapter writes performed'
+  }
+  if(Get-VMSwitch -Name $alias -ErrorAction SilentlyContinue){
+    throw 'Disposable switch alias was already present; no DNS adapter writes performed'
+  }
+  if(Get-NetAdapter -Name $alias -ErrorAction SilentlyContinue){
+    throw 'Disposable adapter alias already exists; refusing to touch any interface'
+  }
+  $switch=New-VMSwitch -Name $alias -SwitchType Internal -ErrorAction Stop
+  $created=$true
+  if([string]$switch.SwitchType -ne 'Internal'){
+    throw 'Created switch is not an isolated internal Hyper-V switch'
+  }
+  $autoName="vEthernet ($alias)"
+  $adapter=$null
+  for($i=0;$i -lt 15;$i++){
+    $adapter=Get-NetAdapter -Name $autoName -ErrorAction SilentlyContinue
+    if($adapter){break}
+    Start-Sleep -Seconds 1
+  }
+  if(-not $adapter){throw 'Hyper-V did not create the expected internal vNIC'}
+  Write-Host "Observed internal vNIC: name=$($adapter.Name); description=$($adapter.InterfaceDescription); hardware=$($adapter.HardwareInterface); ifindex=$($adapter.InterfaceIndex)"
+  if($adapter.InterfaceDescription -notmatch '^Hyper-V Virtual Ethernet Adapter( #[1-9][0-9]*)?$' -or
+     [bool]$adapter.HardwareInterface){
+    throw 'Hyper-V device did not have expected virtual-only identity'
+  }
+  Rename-NetAdapter -Name $autoName -NewName $alias -ErrorAction Stop
+  $adapter=Get-NetAdapter -Name $alias -ErrorAction Stop
+  if(-not $adapter -or [uint32]$adapter.InterfaceIndex -eq 0){
+    throw 'Pinned sacrificial adapter identity missing after rename'
+  }
+  $guid='{'+([string]$adapter.InterfaceGuid).Trim('{}').ToLowerInvariant()+'}'
+  $virtualDNS=Get-DnsClientServerAddress -InterfaceIndex $adapter.InterfaceIndex |
+    Select-Object InterfaceIndex,AddressFamily,ServerAddresses |
+    ConvertTo-Json -Compress -Depth 5
+  $virtualRoutes=Get-NetRoute -InterfaceIndex $adapter.InterfaceIndex |
+    Select-Object DestinationPrefix,NextHop | ConvertTo-Json -Compress -Depth 5
+  $virtualIPs=Get-NetIPAddress -InterfaceIndex $adapter.InterfaceIndex |
+    Select-Object IPAddress,AddressFamily | ConvertTo-Json -Compress -Depth 5
+  Write-Host "Newly created internal vNIC DNS=$virtualDNS"
+  Write-Host "Newly created internal vNIC routes=$virtualRoutes"
+  Write-Host "Newly created internal vNIC IPs=$virtualIPs"
+  # Strict Go preflight recognizes only exact Windows fec0::1-3
+  # automatic IPv6 placeholders and local multicast/link-local
+  # routes observed on a newly created isolated vNIC. It still
+  # refuses arbitrary resolvers, LAN routes and physical adapters.
+  $env:VOLVE_CI_DNS_REAL_DISPOSABLE='INTERNAL_HYPERV_VM_ONLY'
+  $env:VOLVE_CI_DNS_LAB_ALIAS=$alias
+  $env:VOLVE_CI_DNS_LAB_GUID=$guid
+  Write-Host "Disposable internal switch created: alias=$alias, GUID=$guid, index=$($adapter.InterfaceIndex)"
+  # Exercise the same reconstructed motorupdate package as the
+  # approved NSIS-to-SYSTEM candidate, not a stale source subset.
+  Push-Location (Join-Path $env:GITHUB_WORKSPACE 'build/codigo')
+  try {
+    $proof=@(go test ./motorupdate -count=1 -timeout 6m -v -run '^TestWindowsRealDNSSYSTEMWatchdogAfterUpdaterCrash$')
+    $exit=$LASTEXITCODE
+    $proof|Write-Host
+    if($exit -ne 0){throw 'Real LocalSystem watchdog / NTFS lab DNS recovery FAILED'}
+    if(@($proof|Where-Object {$_ -match '^--- PASS: TestWindowsRealDNSSYSTEMWatchdogAfterUpdaterCrash '}).Count -ne 1){throw 'Real recovery test did not execute'}
+    Write-Host 'PASS VOLVE_CURRENT_CANDIDATE_ISOLATED_SYSTEM_DNS_CRASH_RESTORATION'
+  }finally{Pop-Location}
+}finally{
+  Remove-Item Env:\VOLVE_CI_DNS_REAL_DISPOSABLE -ErrorAction SilentlyContinue
+  Remove-Item Env:\VOLVE_CI_DNS_LAB_ALIAS -ErrorAction SilentlyContinue
+  Remove-Item Env:\VOLVE_CI_DNS_LAB_GUID -ErrorAction SilentlyContinue
+  # Safety net if the Go test terminated before removing its task.
+  $sysTask='VOLVE-CI-DNS-SYSTEM-'+$env:GITHUB_RUN_ID+'00000'
+  if($sysTask -match '^VOLVE-CI-DNS-SYSTEM-[0-9]{12,20}$'){
+    $existing=Get-ScheduledTask -TaskName $sysTask -ErrorAction SilentlyContinue
+    if($null -ne $existing){
+      if($existing.TaskPath -ne '\' -or $existing.Principal.UserId -notin @('SYSTEM','S-1-5-18')){
+        throw 'FATAL: refusal to delete an unrelated task'
+      }
+      if($existing.State -eq 'Running'){Stop-ScheduledTask -TaskName $sysTask -ErrorAction Stop}
+      Unregister-ScheduledTask -TaskName $sysTask -Confirm:$false -ErrorAction Stop
+      Write-Host 'PASS: safety cleanup removed disposable SYSTEM watchdog task'
+    }
+  }
+  if($created){
+    Remove-VMSwitch -Name $alias -Force -ErrorAction Stop
+    Write-Host "PASS: disposable internal Hyper-V switch removed: $alias"
+    Start-Sleep -Seconds 2
+  }
+  $after=Get-DnsClientServerAddress | Sort-Object InterfaceIndex,AddressFamily |
+    Select-Object InterfaceIndex,AddressFamily,ServerAddresses |
+    ConvertTo-Json -Compress -Depth 7
+  $afterRoutes=Get-NetRoute -DestinationPrefix '0.0.0.0/0' |
+    Sort-Object InterfaceIndex,NextHop | Select-Object InterfaceIndex,DestinationPrefix,NextHop |
+    ConvertTo-Json -Compress -Depth 5
+  if($prior -cne $after){throw 'FATAL: preexisting Windows DNS adapters changed in disposable laboratory'}
+  if($originalRoutes -cne $afterRoutes){throw 'FATAL: host default routes changed in disposable laboratory'}
+  if((Get-FileHash -LiteralPath (Join-Path $env:WINDIR 'System32\drivers\etc\hosts') -Algorithm SHA256).Hash -cne $priorHosts){throw 'FATAL: host hosts file changed'}
+  Write-Host 'PASS: all preexisting Windows DNS adapters and default routes remained unchanged'
+}
