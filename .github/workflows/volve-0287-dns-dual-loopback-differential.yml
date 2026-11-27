@@ -11,7 +11,7 @@ jobs:
       matrix:
         runner: [windows-2022, windows-2025]
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 8
+    timeout-minutes: 12
     steps:
       - uses: actions/checkout@v4
         with:
@@ -96,6 +96,49 @@ jobs:
                 return status;
               } finally { if(list!=IntPtr.Zero) DnsFree(list,1); }
             }
+            [StructLayout(LayoutKind.Sequential, CharSet=CharSet.Unicode)]
+            private struct QueryRequest {
+              public uint Version;
+              [MarshalAs(UnmanagedType.LPWStr)] public string QueryName;
+              public ushort QueryType;
+              public ulong QueryOptions;
+              public IntPtr ServerList;
+              public uint InterfaceIndex;
+              public IntPtr Callback, Context;
+            }
+            [StructLayout(LayoutKind.Sequential)]
+            private struct QueryResult {
+              public uint Version;
+              public int QueryStatus;
+              public ulong QueryOptions;
+              public IntPtr Records, Reserved;
+            }
+            [DllImport("dnsapi.dll", ExactSpelling=true)]
+            private static extern int DnsQueryEx(ref QueryRequest request, ref QueryResult result, IntPtr cancel);
+            public static int QueryEx(string name, ulong options, uint index, out bool verified) {
+              verified=false;
+              if(IntPtr.Size!=8 || Marshal.SizeOf(typeof(QueryRequest))!=64 || Marshal.SizeOf(typeof(QueryResult))!=32) return -2;
+              QueryRequest q=new QueryRequest {Version=1,QueryName=name,QueryType=1,QueryOptions=options,InterfaceIndex=index};
+              QueryResult result=new QueryResult {Version=1};
+              try {
+                int status=DnsQueryEx(ref q,ref result,IntPtr.Zero);
+                if(status!=0) return status;
+                if(result.QueryStatus!=0) return result.QueryStatus;
+                int count=0,matches=0,visited=0;
+                for(IntPtr p=result.Records;p!=IntPtr.Zero;) {
+                  if(++visited>64) return -1;
+                  RecordA rr=(RecordA)Marshal.PtrToStructure(p,typeof(RecordA));
+                  if(rr.Type==1 && (rr.Flags&3)==1) {
+                    count++;
+                    if(rr.Length==4 && rr.Address==0x077100cbu && rr.Name!=IntPtr.Zero &&
+                      String.Equals(Marshal.PtrToStringUni(rr.Name).TrimEnd('.'),name.TrimEnd('.'),StringComparison.OrdinalIgnoreCase)) matches++;
+                  }
+                  p=rr.Next;
+                }
+                verified=count==1 && matches==1;
+                return 0;
+              } finally { if(result.Records!=IntPtr.Zero) DnsFree(result.Records,1); }
+            }
           }
           '@
           function ObserveNative([string]$label,[uint32]$options){
@@ -106,6 +149,15 @@ jobs:
             $wire=@(if(Test-Path -LiteralPath $env:VOLVE_LAB_LOG){Get-Content -LiteralPath $env:VOLVE_LAB_LOG|ForEach-Object {ConvertFrom-Json $_}|Where-Object {$_.name -ceq $name}})
             [pscustomobject]@{mode=$label;options=$options;answer_verified=$verified;ipv4_tcp=@($wire|Where-Object {$_.host -ceq 'ipv4-loopback' -and $_.transport -ceq 'tcp'}).Count;ipv6_tcp=@($wire|Where-Object {$_.host -ceq 'ipv6-loopback' -and $_.transport -ceq 'tcp'}).Count;udp=@($wire|Where-Object {$_.transport -ceq 'udp'}).Count;error_id=$status}
           }
+          function ObserveEx([string]$label,[uint64]$options,[uint32]$interfaceIndex){
+            $name=$env:VOLVE_LAB_PREFIX+'-'+[guid]::NewGuid().ToString('N').Substring(0,16)+'.test'
+            $verified=$false
+            $status=[VolveNativeDns]::QueryEx(($name+'.'),$options,$interfaceIndex,[ref]$verified)
+            Start-Sleep -Milliseconds 150
+            $wire=@(if(Test-Path -LiteralPath $env:VOLVE_LAB_LOG){Get-Content -LiteralPath $env:VOLVE_LAB_LOG|ForEach-Object {ConvertFrom-Json $_}|Where-Object {$_.name -ceq $name}})
+            [pscustomobject]@{mode=$label;options=$options;interface_bound=($interfaceIndex -ne 0);answer_verified=$verified;ipv4_tcp=@($wire|Where-Object {$_.host -ceq 'ipv4-loopback' -and $_.transport -ceq 'tcp'}).Count;ipv6_tcp=@($wire|Where-Object {$_.host -ceq 'ipv6-loopback' -and $_.transport -ceq 'tcp'}).Count;udp=@($wire|Where-Object {$_.transport -ceq 'udp'}).Count;error_id=$status}
+          }
+          $exObservations=@()
           try{
             $proc=Start-Process -FilePath (Get-Command python -ErrorAction Stop).Source -ArgumentList @('-u',('"'+$fixture+'"')) -PassThru
             for($i=0;$i -lt 50 -and !(Test-Path -LiteralPath $env:VOLVE_LAB_READY);$i++){if($proc.HasExited){throw 'Fixture failed to bind'};Start-Sleep -Milliseconds 100}
@@ -124,6 +176,10 @@ jobs:
             $nativeObservations+=ObserveNative 'native-v4-tcp-minimal' 0x2
             $nativeObservations+=ObserveNative 'native-v4-tcp-no-cache' 0xa
             $nativeObservations+=ObserveNative 'native-v4-tcp-wire-only' 0x102
+            $exObservations+=ObserveEx 'ex-v4-all-default' 0x1c8 0
+            $exObservations+=ObserveEx 'ex-v4-all-tcp' 0x1ca 0
+            $exObservations+=ObserveEx 'ex-v4-bound-default' 0x1c8 $idx
+            $exObservations+=ObserveEx 'ex-v4-bound-tcp' 0x1ca $idx
             AssertIdentity
             $changed6=$true
             & $netsh interface ipv6 set dnsservers "name=$idx" source=static address=::1 validate=no | Out-Null
@@ -135,6 +191,10 @@ jobs:
             $nativeObservations+=ObserveNative 'native-dual-tcp-minimal' 0x2
             $nativeObservations+=ObserveNative 'native-dual-tcp-no-cache' 0xa
             $nativeObservations+=ObserveNative 'native-dual-tcp-wire-only' 0x102
+            $exObservations+=ObserveEx 'ex-dual-all-default' 0x1c8 0
+            $exObservations+=ObserveEx 'ex-dual-all-tcp' 0x1ca 0
+            $exObservations+=ObserveEx 'ex-dual-bound-default' 0x1c8 $idx
+            $exObservations+=ObserveEx 'ex-dual-bound-tcp' 0x1ca $idx
           }finally{
             try{
               AssertIdentity
@@ -147,14 +207,19 @@ jobs:
               if(!$restored){throw 'Exact original DNS restoration not verified'}
             }finally{
               if($proc -and !$proc.HasExited){Stop-Process -Id $proc.Id -Force -ErrorAction Stop;$proc.WaitForExit()}
-              Write-Host ('VOLVE_DUAL_LOOPBACK_DIFFERENTIAL='+([ordered]@{scope='HOSTED_WINDOWS_REFERENCE_ONLY';os=(Get-CimInstance Win32_OperatingSystem).Caption;build=(Get-CimInstance Win32_OperatingSystem).BuildNumber;dnsapi_version=(Get-Item (Join-Path $env:SystemRoot 'System32\dnsapi.dll')).VersionInfo.FileVersion;observations=$observations;native_observations=$nativeObservations;original_dns_restored=$restored;release_authorized=$false}|ConvertTo-Json -Depth 5 -Compress))
+              Write-Host ('VOLVE_DUAL_LOOPBACK_DIFFERENTIAL='+([ordered]@{scope='HOSTED_WINDOWS_REFERENCE_ONLY';os=(Get-CimInstance Win32_OperatingSystem).Caption;build=(Get-CimInstance Win32_OperatingSystem).BuildNumber;dnsapi_version=(Get-Item (Join-Path $env:SystemRoot 'System32\dnsapi.dll')).VersionInfo.FileVersion;observations=$observations;native_observations=$nativeObservations;ex_observations=$exObservations;original_dns_restored=$restored;release_authorized=$false}|ConvertTo-Json -Depth 5 -Compress))
             }
           }
-          if($observations.Count -ne 6 -or $nativeObservations.Count -ne 10 -or !$restored){throw 'Incomplete diagnostic'}
+          if($observations.Count -ne 6 -or $nativeObservations.Count -ne 10 -or $exObservations.Count -ne 8 -or !$restored){throw 'Incomplete diagnostic'}
           $nativeForced=@($nativeObservations|Where-Object {$_.mode -like '*tcp' -and $_.answer_verified -and $_.error_id -eq 0 -and ($_.ipv4_tcp+$_.ipv6_tcp) -gt 0 -and $_.udp -eq 0})
           Write-Host ('NATIVE_FORCED_TCP_VERIFIED='+$nativeForced.Count+'/2')
           $variants=@($nativeObservations|Where-Object {$_.mode -match '-tcp-(minimal|no-cache|wire-only)$' -and $_.answer_verified -and $_.error_id -eq 0 -and ($_.ipv4_tcp+$_.ipv6_tcp) -gt 0 -and $_.udp -eq 0})
           Write-Host ('NATIVE_TCP_OPTION_VARIANTS_VERIFIED='+$variants.Count+'/6')
           $forced=@($observations|Where-Object {$_.mode -like '*tcp' -and $_.answer_verified -and ($_.ipv4_tcp+$_.ipv6_tcp) -gt 0 -and $_.udp -eq 0})
+          $exDefaults=@($exObservations|Where-Object {$_.mode -like '*default' -and $_.answer_verified -and $_.error_id -eq 0 -and ($_.udp+$_.ipv4_tcp+$_.ipv6_tcp) -gt 0})
+          $exForced=@($exObservations|Where-Object {$_.mode -like '*tcp' -and $_.answer_verified -and $_.error_id -eq 0 -and ($_.ipv4_tcp+$_.ipv6_tcp) -gt 0 -and $_.udp -eq 0})
+          Write-Host ('DNSQUERYEX_DEFAULT_VERIFIED='+$exDefaults.Count+'/4')
+          Write-Host ('DNSQUERYEX_FORCED_TCP_VERIFIED='+$exForced.Count+'/4')
+          if($exDefaults.Count -ne 4 -or $exForced.Count -ne 4){Write-Host 'DnsQueryEx differential incomplete or failed; not a replacement for configured TCP gate'}
           if($forced.Count -ne 4 -or $nativeForced.Count -ne 2){throw 'Configured forced TCP reference still unverified; NO RELEASE'}
           Write-Host 'PASS: exact forced TCP answers for both configurations; reference only, no release'
