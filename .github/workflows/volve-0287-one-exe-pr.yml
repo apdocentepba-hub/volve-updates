@@ -25,7 +25,7 @@ concurrency:
 jobs:
   verify-windows-exe:
     runs-on: windows-latest
-    timeout-minutes: 35
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - name: Fail-fast PowerShell parse gate for real-motor NSIS lab
@@ -376,6 +376,44 @@ jobs:
           go run development/0.28.7/inapp/apply_overlay.go build/codigo
           if($LASTEXITCODE -ne 0){throw 'Windows six-inventory source overlay failed'}
           if(-not (Test-Path -LiteralPath 'build/codigo/go.mod' -PathType Leaf)){throw 'Signed source reconstruction did not produce native module'}
+      - name: Gate actual embedded motor on native recovery evidence in reconstructed source
+        timeout-minutes: 10
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          if($env:GITHUB_ACTIONS -cne 'true' -or $env:RUNNER_ENVIRONMENT -cne 'github-hosted'){throw 'Hosted Windows integration required'}
+          $files=@('browser_policy_inventory_windows.go','browser_policy_inventory_windows_test.go','dns_assignment_provenance_windows.go','dns_recovery_store_native_windows.go','dns_restore_adapter_inventory_windows.go','fresh_task_inventory_windows.go','fresh_task_inventory_windows_test.go')
+          foreach($name in $files){
+            $source=Join-Path 'development/0.28.7/inapp' $name
+            $actual=Join-Path 'build/codigo/motorupdate' $name
+            if(!(Test-Path -LiteralPath $source -PathType Leaf) -or !(Test-Path -LiteralPath $actual -PathType Leaf)){throw ('Missing integrated source '+$name)}
+            if((Get-FileHash -LiteralPath $source -Algorithm SHA256).Hash -cne (Get-FileHash -LiteralPath $actual -Algorithm SHA256).Hash){throw ('Reconstructed source differs: '+$name)}
+          }
+          Push-Location 'build/codigo'
+          try{
+            $result=@(go test ./motorupdate -run '^TestWindowsOriginalCatalogArchive(NativeActualCensus|BoundTransaction)$' -count=1 -v -timeout 9m)
+            $code=$LASTEXITCODE
+            $result|Write-Host
+            if($code -ne 0){throw 'Native integrated recovery tests failed; do not compile embedded motor'}
+            foreach($test in @('TestWindowsOriginalCatalogArchiveNativeActualCensus','TestWindowsOriginalCatalogArchiveBoundTransaction')){
+              if(@($result|Where-Object {$_ -match ('^--- PASS: '+$test+' \(')}).Count -ne 1){throw ('Missing actual integrated test '+$test)}
+            }
+            foreach($marker in @(
+              'PASS VOLVE_ACTUAL_NATIVE_ORIGINALS_ARCHIVED_AND_RECENSUSED_NO_OS_WRITES',
+              'PASS VOLVE_NATIVE_REVIEW_SEAL_EXACT_PATH_ONLY',
+              'PASS VOLVE_NATIVE_LEASED_CREATE_ONLY_REVIEW_STAGING',
+              'PASS VOLVE_DURABLE_REOPEN_REJECTS_STALE_ARCHIVE',
+              'PASS VOLVE_LAB_WRITER_TERMINATED_AFTER_PARTIAL_SYNC',
+              'PASS VOLVE_REAL_REVIEW_WRITER_TERMINATED_AFTER_SEAL',
+              'PASS VOLVE_NATIVE_REVIEW_REFUSES_CROSS_PROCESS_CONTENTION_AND_RECOVERS',
+              'PASS VOLVE_SIGNED_FOUR_ARCHIVE_REVIEW_REJECTS_FOREIGN_EVIDENCE',
+              'PASS VOLVE_NATIVE_SIGNED_REVIEW_UNARMED',
+              'PASS VOLVE_DURABLE_SIGNED_ENVELOPE_CREATE_ONLY_AND_REJECT_TAMPER'
+            )){
+              if(@($result|Where-Object {$_ -match ([regex]::Escape($marker)+'$')}).Count -ne 1){throw ('Missing native recovery proof '+$marker)}
+            }
+          }finally{Pop-Location}
+          Write-Host 'PASS VOLVE_RECONSTRUCTED_MOTOR_RECOVERY_EVIDENCE_BEFORE_EMBEDDING NO_INSTALL NO_RESTORE NO_RELEASE'
       - name: Prepare NSIS compiler before early real motor handoff
         timeout-minutes: 8
         shell: pwsh
