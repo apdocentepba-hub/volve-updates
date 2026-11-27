@@ -108,8 +108,25 @@ jobs:
           New-Item -ItemType Directory -Path $root -ErrorAction Stop|Out-Null
           Add-Content -LiteralPath $env:GITHUB_ENV -Value "VOLVE_CI_HANDOFF_ROOT=$root"
           $icacls=Join-Path $env:SystemRoot 'System32\icacls.exe'
-          & $icacls $root /inheritance:r /grant:r '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F' /setowner '*S-1-5-32-544' /q
+          & $icacls $root /inheritance:r /grant:r '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F' /q
           if($LASTEXITCODE -ne 0){throw 'Protected handoff directory ACL failed'}
+          & $icacls $root /setowner '*S-1-5-32-544' /q
+          if($LASTEXITCODE -ne 0){throw 'Protected handoff directory ownership failed'}
+          function Assert-VolvCIHandoffACL([string]$path){
+            $item=Get-Item -LiteralPath $path -Force -ErrorAction Stop
+            if($item.Attributes -band [IO.FileAttributes]::ReparsePoint){throw 'Handoff path is a reparse point'}
+            $acl=Get-Acl -LiteralPath $path -ErrorAction Stop
+            $owner=$acl.GetOwner([Security.Principal.SecurityIdentifier]).Value
+            if($owner -cnotin @('S-1-5-18','S-1-5-32-544')){throw 'Unexpected handoff owner'}
+            $rules=@($acl.GetAccessRules($true,$true,[Security.Principal.SecurityIdentifier]))
+            foreach($rule in $rules){
+              if($rule.IdentityReference.Value -cnotin @('S-1-5-18','S-1-5-32-544') -or $rule.AccessControlType -ne 'Allow'){throw 'Unexpected handoff ACL principal'}
+            }
+            foreach($sid in @('S-1-5-18','S-1-5-32-544')){
+              if(!@($rules|Where-Object {$_.IdentityReference.Value -ceq $sid -and ($_.FileSystemRights -band [Security.AccessControl.FileSystemRights]::FullControl) -eq [Security.AccessControl.FileSystemRights]::FullControl}).Count){throw 'Missing protected principal full control'}
+            }
+          }
+          Assert-VolvCIHandoffACL $root
           $cert=New-SelfSignedCertificate -Type CodeSigningCert -Subject 'CN=VOLVE CI SYSTEM HANDOFF ONLY' -CertStoreLocation 'Cert:\CurrentUser\My' -KeyAlgorithm RSA -KeyLength 2048 -Provider 'Microsoft Software Key Storage Provider' -NotAfter (Get-Date).AddDays(2)
           if(!$cert.HasPrivateKey){throw 'Ephemeral lab certificate missing'}
           Add-Content -LiteralPath $env:GITHUB_ENV -Value "VOLVE_CI_HANDOFF_THUMB=$($cert.Thumbprint)"
@@ -120,9 +137,9 @@ jobs:
             & $certutil -f -addstore $store $der
             if($LASTEXITCODE -ne 0){throw 'Disposable CI signer trust failed'}
           }
-          $input=Join-Path $env:RUNNER_TEMP 'VOLVE_CI_FreshDNS53.exe'
+          $unsignedMotor=Join-Path $env:RUNNER_TEMP 'VOLVE_CI_FreshDNS53.exe'
           $signed=Join-Path $root 'signed-input.exe'
-          Copy-Item -LiteralPath $input -Destination $signed -ErrorAction Stop
+          Copy-Item -LiteralPath $unsignedMotor -Destination $signed -ErrorAction Stop
           $null=Set-AuthenticodeSignature -FilePath $signed -Certificate $cert -HashAlgorithm SHA256 -IncludeChain All
           $sig=Get-AuthenticodeSignature -LiteralPath $signed
           if($sig.Status -ne 'Valid' -or $sig.SignerCertificate.Thumbprint -cne $cert.Thumbprint){throw 'CI motor signing failed'}
@@ -160,9 +177,14 @@ jobs:
           }finally{if(!$proc.HasExited){Stop-Process -Id $proc.Id -Force -ErrorAction Stop};$proc.Dispose()}
           $exe=Join-Path $stage 'VOLVE_CI_FreshDNS53.exe'
           if(!(Test-Path -LiteralPath $exe -PathType Leaf) -or @(Get-ChildItem -LiteralPath $stage -Force).Count -ne 1){throw 'Unexpected NSIS staged contents'}
+          foreach($p in @($stage,$exe)){
+            & $icacls $p /setowner '*S-1-5-32-544' /q
+            if($LASTEXITCODE -ne 0){throw 'Handoff node ownership failed'}
+            Assert-VolvCIHandoffACL $p
+          }
           $verified=Get-AuthenticodeSignature -LiteralPath $exe
           if($verified.Status -ne 'Valid' -or $verified.SignerCertificate.Thumbprint -cne $cert.Thumbprint -or (Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash -cne $pin){throw 'Extracted motor differs from signed original'}
-          Remove-Item -LiteralPath $input,$signed -Force -ErrorAction Stop
+          Remove-Item -LiteralPath $unsignedMotor,$signed -Force -ErrorAction Stop
           Add-Content -LiteralPath $env:GITHUB_ENV -Value "VOLVE_CI_HANDOFF_EXE=$exe"
           Add-Content -LiteralPath $env:GITHUB_ENV -Value "VOLVE_CI_HANDOFF_SHA=$pin"
           Write-Host 'PASS VOLVE_NSIS_EXTRACTED_SIGNED_CI_MOTOR_READY_FOR_SYSTEM NO_INSTALL'
