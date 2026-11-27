@@ -52,10 +52,11 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference='Stop'
-          $result=@(go test ./motorupdate -run '^TestWindows(ActivationPolicyDriftInsideAttestationPreventsCommit|DNSActivationOverrideGuardRejectsDriftWithoutSuppressingRecovery|PinnedDNSActivation.*)$' -count=1 -v -timeout 3m)
+          $result=@(go test ./motorupdate -run '^(TestFreshActivationAdmissionSeparatesFreshFromMigration|TestWindows(ActivationPolicyDriftInsideAttestationPreventsCommit|DNSActivationOverrideGuardRejectsDriftWithoutSuppressingRecovery|PinnedDNSActivation.*))$' -count=1 -v -timeout 3m)
           $code=$LASTEXITCODE
           $result|Write-Host
           if($code -ne 0){throw 'Activation order regression failed'}
           if(@($result|Where-Object {$_ -match 'PASS VOLVE_DNS_POLICY_DRIFT_DURING_ATTESTATION_TRANSACTION_RECOVERY$'}).Count -ne 1){throw 'Missing transaction proof'}
           if(@($result|Where-Object {$_ -match '^--- PASS: TestWindowsPinnedDNSActivationRejectsConcurrentPostAttestationDNSChange '}).Count -ne 1){throw 'Missing adapter drift regression'}
+          if(@($result|Where-Object {$_ -match 'PASS VOLVE_FRESH_ADMISSION_BINDS_SEVEN_PINS_REJECTS_MIGRATION_AND_CATALOG$'}).Count -ne 1){throw 'Missing fresh admission scope proof'}
           Write-Host 'PASS VOLVE_ACTIVATION_ORDER_MEMORY_ONLY_NO_INSTALL_NO_RELEASE'
