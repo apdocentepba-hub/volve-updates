@@ -15,6 +15,61 @@ import (
  "time"
 )
 
+// The fixed DNS policy census is an additional restrictive guard, not a
+// publisher permit or a substitute for independently armed recovery. Reject
+// unhandled NRPT/group policy and missing DoH inspection rather than assuming
+// that an adapter-only backup covers those surfaces. Known DoH definitions
+// alone do not prove actual encrypted transport configuration.
+type dnsActivationOverrideGuard struct{
+ inner DNSActivationSafetyGuard
+ observe func(context.Context)(WindowsDNSOverrideCensus,error)
+ baseline WindowsDNSOverrideCensus
+ captured bool
+}
+func(g *dnsActivationOverrideGuard)capture(ctx context.Context)error{
+ if g==nil||g.inner==nil||g.observe==nil||ctx==nil||g.captured{return errors.New("DNS policy activation baseline unavailable")}
+ if err:=ctx.Err();err!=nil{return err}
+ current,err:=g.observe(ctx)
+ if err!=nil{return errors.New("DNS policy activation census unavailable")}
+ if current.Schema!=1||current.Component!="windows-dns-override-census-v1"||
+  current.LocalNRPTRules!=0||current.EffectiveNRPTPolicies!=0||
+  current.GroupPolicyKeyPresent||current.GroupPolicyValues!=0||current.GroupPolicySubkeys!=0||
+  !current.DoHCmdletAvailable||current.KnownDoHServers<0{
+  return errors.New("unhandled or unverified DNS policy prevents activation")
+ }
+ for _,pin:=range current.fingerprints{if !protectionDigest.MatchString(pin){return errors.New("DNS policy activation fingerprint unavailable")}}
+ if err:=ctx.Err();err!=nil{return err}
+ g.baseline=current
+ g.captured=true
+ return nil
+}
+func(g *dnsActivationOverrideGuard)check(ctx context.Context)error{
+ if g==nil||!g.captured||g.observe==nil||ctx==nil{return errors.New("protected DNS policy baseline not captured")}
+ if err:=ctx.Err();err!=nil{return err}
+ current,err:=g.observe(ctx)
+ if err!=nil||current!=g.baseline{return errors.New("DNS policy content changed or cannot be verified; activation refused")}
+ return ctx.Err()
+}
+func(g *dnsActivationOverrideGuard)VerifyArmed(ctx context.Context,pin string)error{
+ if err:=g.check(ctx);err!=nil{return err}
+ return g.inner.VerifyArmed(ctx,pin)
+}
+func(g *dnsActivationOverrideGuard)VerifyLiveProtection(ctx context.Context,pin string)error{
+ if err:=g.check(ctx);err!=nil{return err}
+ if err:=g.inner.VerifyLiveProtection(ctx,pin);err!=nil{return err}
+ return g.check(ctx)
+}
+func(g *dnsActivationOverrideGuard)CommitActive(ctx context.Context,pin string)error{
+ if err:=g.check(ctx);err!=nil{return err}
+ return g.inner.CommitActive(ctx,pin)
+}
+func(g *dnsActivationOverrideGuard)RecoverIndependently(ctx context.Context,pin string)error{
+ // Drift, loss of the observer or an expired activation admission MUST NOT
+ // suppress the separately authenticated emergency recovery.
+ if g==nil||g.inner==nil{return errors.New("independent DNS recovery guard absent")}
+ return g.inner.RecoverIndependently(ctx,pin)
+}
+
 // activateWindowsDNSAsProtectedSYSTEM ties together the real Windows
 // LocalSystem SID, native SYSTEM/Admin-only named mutex, GUID-pinned adapter
 // inventory, shell-free netsh, and the independent recovery handoff. An
@@ -51,13 +106,25 @@ func activateWindowsDNSAsProtectedSYSTEM(
  // nonce O_EXCL reservation and every DNS write occur under ONE protected
  // Windows kernel mutex, with no unlocked transition window. Recovery alone
  // can temporarily yield this mutex to the independent SYSTEM watchdog.
+ policyGuard:=&dnsActivationOverrideGuard{inner:publisherBound,observe:func(c context.Context)(WindowsDNSOverrideCensus,error){
+  return InspectWindowsDNSOverrideCensusReadOnly(c,DefaultWindowsReadOnlyPowerShell)
+ }}
  return activateVOLVEDNSUnderProtectedLease(
-  ctx,originalJournal,independentlyPinnedSHA256,publisherBound,
+  ctx,originalJournal,independentlyPinnedSHA256,policyGuard,
   AcquireProtectedResidentTransitionLease,
   func(ctx context.Context,guarded DNSActivationSafetyGuard)(DNSAdapterBackend,error){
+   // Factory is invoked only with the native transition lease already held.
+   // Refuse unknown policy before any durable authorization is consumed.
+   if err:=policyGuard.capture(ctx);err!=nil{return nil,err}
+   invoke:=func(c context.Context,args []string)error{
+    if err:=policyGuard.check(c);err!=nil{return err}
+    // Recheck publisher and watchdog after the added native observation.
+    if err:=publisherBound.VerifyArmed(c,independentlyPinnedSHA256);err!=nil{return err}
+    return runPinnedWindowsNativeDNS(c,args)
+   }
    backend,err:=newWindowsPinnedDNSActivationBackend(
     ctx,originalJournal,independentlyPinnedSHA256,
-    DefaultWindowsReadOnlyPowerShell,runPinnedWindowsNativeDNS,guarded,
+    DefaultWindowsReadOnlyPowerShell,invoke,guarded,
    )
    if err!=nil{return nil,err}
    exclusive,ok:=guarded.(*exclusiveDNSActivationGuard)
@@ -87,6 +154,7 @@ func activateWindowsDNSAsProtectedSYSTEM(
    }
    // No second lease acquisition here; the reserved nonce and the
    // activation's readback/commit must share one critical section.
+   if err:=policyGuard.check(ctx);err!=nil{return nil,err}
    if _,err:=reserveSignedDNSActivationOnceUnderHeldLeaseNativeWindows(
     ctx,protectedRecoveryParent,publisherAuthorization.GrantJSON,
     publisherAuthorization.Signature,publisherAuthorization.PinnedPublisherKey,

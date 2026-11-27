@@ -393,7 +393,7 @@ jobs:
           goroot=Path(subprocess.check_output(['go','env','GOROOT'],text=True).strip())
           gofmt=goroot/'bin/gofmt.exe'
           assert gofmt.is_file(), 'Go toolchain formatter missing'
-          files=('browser_policy_inventory_windows.go','browser_policy_inventory_windows_test.go','dns_assignment_provenance_windows.go','dns_assignment_provenance_windows_test.go','dns_recovery_store_native_windows.go','dns_restore_adapter_inventory_windows.go','fresh_task_inventory_windows.go','fresh_task_inventory_windows_test.go')
+          files=('browser_policy_inventory_windows.go','browser_policy_inventory_windows_test.go','dns_assignment_provenance_windows.go','dns_assignment_provenance_windows_test.go','dns_activation_system_windows.go','dns_activation_system_windows_test.go','dns_recovery_store_native_windows.go','dns_restore_adapter_inventory_windows.go','fresh_task_inventory_windows.go','fresh_task_inventory_windows_test.go')
           for name in files:
               source, actual=root/name, target/name
               assert source.is_file() and actual.is_file(), 'Missing integrated source '+name
@@ -401,7 +401,7 @@ jobs:
               observed=actual.read_bytes()
               assert expected and expected==observed, 'Reconstructed formatted source differs: '+name
               print('VOLVE_FORMATTED_SOURCE_SHA256 '+name+' '+hashlib.sha256(observed).hexdigest())
-          print('PASS VOLVE_EIGHT_FORMATTED_SOURCE_FILES_IDENTICAL')
+          print('PASS VOLVE_TEN_FORMATTED_SOURCE_FILES_IDENTICAL')
           '@ | python -
           if($LASTEXITCODE -ne 0){throw 'Exact formatted source verification failed; no embedded compilation'}
           Push-Location 'build/codigo'
@@ -435,11 +435,11 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference='Stop'
-          $result=@(go test ./motorupdate -run '^TestWindowsDNSOverride(Census(StrictEvidence|NativeReadOnly)|FingerprintSyntheticContent)$' -count=1 -v -timeout 2m)
+          $result=@(go test ./motorupdate -run '^TestWindows(DNSOverride(Census(StrictEvidence|NativeReadOnly)|FingerprintSyntheticContent)|DNSActivationOverrideGuardRejectsDriftWithoutSuppressingRecovery|ProtectedDNSActivationLeaseRejectsNonSYSTEMEntry)$' -count=1 -v -timeout 2m)
           $code=$LASTEXITCODE
           $result|Write-Host
           if($code -ne 0){throw 'DNS override census failed; no embedded motor build'}
-          foreach($marker in @('PASS VOLVE_DNS_OVERRIDE_CENSUS_REJECTS_INCOMPLETE_AND_CONTRADICTORY_EVIDENCE','PASS VOLVE_NATIVE_DNS_OVERRIDE_CENSUS_COUNTS_ONLY_NO_INSTALL','PASS VOLVE_DNS_OVERRIDE_FINGERPRINT_SYNTHETIC_CONTENT_DRIFT')){
+          foreach($marker in @('PASS VOLVE_DNS_OVERRIDE_CENSUS_REJECTS_INCOMPLETE_AND_CONTRADICTORY_EVIDENCE','PASS VOLVE_NATIVE_DNS_OVERRIDE_CENSUS_COUNTS_ONLY_NO_INSTALL','PASS VOLVE_DNS_OVERRIDE_FINGERPRINT_SYNTHETIC_CONTENT_DRIFT','PASS VOLVE_DNS_ACTIVATION_POLICY_GUARD_REJECTS_DRIFT_PRESERVES_RECOVERY')){
             if(@($result|Where-Object {$_ -match ([regex]::Escape($marker)+'$')}).Count -ne 1){throw ('Missing DNS override evidence: '+$marker)}
           }
           Write-Host 'PASS VOLVE_DNS_OVERRIDE_CENSUS_BEFORE_EMBEDDING NOT_A_RESTORE_SNAPSHOT NO_INSTALL'
