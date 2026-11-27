@@ -499,7 +499,7 @@ func PersistBoundOriginalRecoveryNativeUnarmed(ctx context.Context,root,id,expec
  if err!=nil||release==nil{return errors.New("protected recovery staging lease unavailable")}
  defer release()
  check:=func(p string)error{return nativeDNSOriginalBackupACL(ctx,p)}
- seal:=func(p string)error{return nativeSealNewDNSOriginalNode(ctx,root,p)}
+ seal:=func(p string)error{return nativeSealNewOriginalRecoveryReviewNode(ctx,root,id,p)}
  if err:=persistOriginalRecoveryReviewEvidenceUnarmed(ctx,root,id,expectedPin,baseline,browser,inventory,dnsPin,seal,check);err!=nil{return err}
  // Revalidate the full snapshot before reporting completion, without
  // recursively acquiring the lease already held by this operation.
@@ -553,4 +553,20 @@ func InspectSignedBoundOriginalRecoveryNativeReadOnly(ctx context.Context,root,i
  evidence,err:=VerifySignedOriginalRecoveryReview(ctx,raw,signature,pub,id,baseline,dnsPin)
  if err!=nil{return denied,err}
  return InspectBoundOriginalRecoveryNativeReadOnly(ctx,root,id,evidence.ReviewSHA256,baseline,browser,inventory,dnsPin)
+}
+
+
+// This wrapper authorizes ACL changes only to the exact newly created
+// review record, never to the transaction root or another component.
+// It is internal to the create-exclusive staging workflow.
+func nativeSealNewOriginalRecoveryReviewNode(ctx context.Context,root,id,path string)error{
+ if ctx==nil{return errors.New("review seal context required")}
+ if err:=ctx.Err();err!=nil{return err}
+ expected,err:=originalRecoveryEvidencePath(root,id)
+ if err!=nil||path!=expected{return errors.New("review seal refused unrelated path")}
+ if err:=residentCurrentIsPrivileged();err!=nil{return err}
+ if err:=verifyOriginalHostsBackupNode(root,true,func(p string)error{return nativeDNSOriginalBackupACL(ctx,p)});err!=nil{return err}
+ stat,err:=os.Lstat(path)
+ if err!=nil||!stat.Mode().IsRegular()||stat.Mode()&os.ModeSymlink!=0{return errors.New("review seal refused nonregular file")}
+ return nativeSealApprovedOriginalBackupNode(ctx,path)
 }
