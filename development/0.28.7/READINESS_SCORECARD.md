@@ -355,3 +355,10 @@ La puerta 7 no está pendiente por ausencia absoluta de restaurador. Existe cód
 **La integración productiva sigue bloqueada:** el CLI pinned actualmente construye `motorOnlyPinnedBootOps`, exige alcance de permiso `MotorOnly` y rechaza cualquier evidencia de snapshot/binding DNS. El driver DNS-aware existe en `motorupdate` pero permanece privado y no está conectado al CLI; tampoco se registra el watchdog desde NSIS como tarea de inicio/servicio productivo. La implementación pendiente es la composición segura de restauración EXE+tarea+arranque con el driver DNS-aware, fence del candidato, comprobación de DNS/Internet y recibo terminal.
 
 Esta precisión no modifica el crédito de aceptación: **50% (5/10 puertas)**. La revisión fue estática y no ejecutó pruebas, VM ni reinicio.
+
+
+## Nuevo bloqueo de secuencia DNS-aware — 28/11/2026
+
+La integración futura no debe conectar el driver DNS-aware directamente al adaptador actual: `residentSignedBootOriginalOps.RestoreOriginal` restaura EXE+tarea y solicita iniciar el motor original antes de que `RecoverPendingResidentAfterBootWithOriginalDNS` invoque `RestoreOriginalDNS`. El fence DNS necesita entonces distinguir candidato fallido de motor original; el observador genérico `auditResidentQuiescenceReadOnly` exige cero procesos VOLVÉ y cero listeners 53, por lo que no sirve sin adaptación para un motor original que ya está activo.
+
+**Pendiente de puerta 7:** diseñar y probar el fence candidato-específico, y fijar la secuencia de restauración de DNS versus inicio del motor original bajo la misma lease. No relajar quiescencia ni aceptar un éxito parcial; conservar journal pendiente hasta DNS/Internet verificados. Esta revisión fue estática; no hubo VM, workflow Windows ni escrituras de host. El scorecard global se mantiene en **50% (5/10 puertas)**.
