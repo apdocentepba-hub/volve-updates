@@ -200,3 +200,41 @@ func TestDurableDNSAwareBootDriverRechecksSystemAndRefusesMissingFence(t *testin
  if release,err:=d.AcquireExclusive(context.Background());err==nil||release!=nil{if release!=nil{release()};t.Fatal("lost SYSTEM token still acquired lease")}
  if f.writes!=0{t.Fatal("invalid token triggered DNS writes")}
 }
+
+
+// The DNS-aware production adapter must keep the original task stopped until
+// the signed DNS snapshot has been restored and independently read back.
+func TestDurableDNSAwareBootDriverSeparatesOriginalStartAfterDNSReadback(t *testing.T){
+ residentProtectedCITest(t)
+ f:=makeSignedDNSBootRecoveryFixture(t)
+ ctx:=context.Background()
+ if err:=PersistSignedOriginalDNSEvidenceNativeWindows(ctx,f.root,f.pub,f.binding,f.signature);err!=nil{t.Fatal(err)}
+ state,err:=InspectResidentRecoveryJournal(ctx,filepath.Join(f.parent,"motor-recovery-transaction"),func(p string)error{return nativeDNSOriginalBackupACL(ctx,p)})
+ if err!=nil{t.Fatal(err)}
+ ops:=&publisherBoundRecoveryOpsFixture{}
+ fenced:=false
+ fence:=func(context.Context,ResidentRecoveryIntent)error{
+  if !fenced{return errors.New("candidate must remain fenced until original DNS readback")}
+  return nil
+ }
+ driver,err:=newDurablePublisherDNSBootDriver(ops,f.root,f.pub,fence,func()error{return nil},f.host.inspect,f.invoke)
+ if err!=nil{t.Fatal(err)}
+ release,err:=driver.AcquireExclusive(ctx)
+ if err!=nil{t.Fatal(err)}
+ defer release()
+ if err:=driver.VerifySealedOriginal(ctx,state.Intent);err!=nil{t.Fatal(err)}
+ if err:=driver.RestoreOriginal(ctx,state.Intent);err!=nil{t.Fatal(err)}
+ if err:=driver.RestoreOriginalDNS(ctx,state.Intent);err==nil||f.writes!=0{
+  t.Fatal("DNS adapter write crossed the candidate fence")
+ }
+ fenced=true
+ if err:=driver.RestoreOriginalDNS(ctx,state.Intent);err!=nil{t.Fatal(err)}
+ if err:=driver.VerifyOriginalDNS(ctx,state.Intent);err!=nil{t.Fatal(err)}
+ if ops.started!=0{t.Fatal("original motor started before explicit final phase")}
+ if err:=driver.StartOriginal(ctx,state.Intent);err!=nil{t.Fatal(err)}
+ if ops.verified!=1||ops.restored!=1||ops.started!=1||f.writes!=3{
+  t.Fatalf("DNS-aware recovery phases not composed under one lease: ops=%+v writes=%d",ops,f.writes)
+ }
+ f.expectOriginal(t)
+ f.expectStillPending(t)
+}
