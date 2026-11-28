@@ -79,11 +79,16 @@ jobs:
           $oldPreference=$ErrorActionPreference
           try{
             $ErrorActionPreference='Continue'
-            $first | & $probe --verify-later 2>$null
+            $denial=@($first | & $probe --verify-later 2>&1)
             $rejected=$LASTEXITCODE
           }finally{$ErrorActionPreference=$oldPreference}
-          if($rejected -ne 1){throw 'Observer accepted same boot or failed unexpectedly'}
+          if($rejected -ne 1 -or (($denial | ForEach-Object {[string]$_}) -join "`n").Trim() -cne 'BOOT NOT VERIFIED: a later Windows boot is not independently proven'){
+            throw ('Observer did not explicitly reject the same boot: '+($denial -join ' '))
+          }
           Write-Host 'PASS VOLVE_VM_BOOT_OBSERVER_COMPILED_NATIVE_SAME_BOOT_REFUSED'
+          # The native exit 1 is the expected NEGATIVE test result. GitHub
+          # PowerShell's wrapper otherwise propagates this stale LASTEXITCODE.
+          exit 0
       - name: Syntax of integrated recovery and core motor scripts
         shell: powershell
         run: |
