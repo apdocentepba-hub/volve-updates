@@ -146,3 +146,23 @@ Directiva del responsable del producto: **no utilizar máquinas virtuales**. No 
 
 ### Criterio de veracidad
 El EXE NSIS/bundle/motor y las pruebas de integridad están aprobados en laboratorio CI; esto no equivale a un instalador productivo. Sin VM, no se intentará cerrar la puerta de reboot persistente mediante infraestructura virtual. Se puede continuar con ingeniería y pruebas no destructivas, pero el reinicio genuino y la restauración post-arranque quedan **NO DEMOSTRADOS**. No se eleva el scorecard global por tareas que no satisfacen su criterio de aceptación.
+
+
+## Directiva sin VM — workflows de laboratorio en modo manual — 2026-11-28
+
+A pedido del responsable del producto, se suspenden las ejecuciones automáticas de cualquier ensayo que dependa de VM/reinicio/laboratorio Windows descartable. Se modificaron ocho workflows de esta rama para eliminar sus disparadores `push` y `pull_request`, conservando únicamente `workflow_dispatch`:
+
+- `volve-0287-real-vm-dns-boot-contract.yml`
+- `volve-0287-vm-full-dns-preboot-e2e.yml`
+- `volve-0287-vm-integrated-full-dns-rollback.yml`
+- `volve-0287-vm-real-candidate-rollback.yml`
+- `volve-0287-vm-recovery-persistent-kit.yml`
+- `volve-0287-real-candidate-crash-system-ci.yml`
+- `volve-0287-pr-system-watchdog-e2e.yml`
+- `volve-0287-local-rollback-snapshot-pr.yml`
+
+**Verificación:** los ocho archivos fueron releídos; cada uno conserva `workflow_dispatch` y ninguno conserva eventos automáticos `push` o `pull_request`. La consulta de Actions posterior no registró nuevas ejecuciones disparadas por esos commits. No se lanzó ningún ensayo de VM en esta intervención.
+
+Los resultados históricos anteriores se mantienen como evidencia histórica, pero no se repiten ni se acreditan como pruebas nuevas. La restricción no convierte en demostrado el reinicio real: ese criterio sigue pendiente y no se sustituye por simulación.
+
+Commits de endurecimiento de triggers: `dab2961e`, `989c93de`, `0da9a636`, `2e929078`, `ab07606d`, `a04208b1`, `aa5ef937`, `f4ab4c35`.
