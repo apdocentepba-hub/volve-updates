@@ -78,10 +78,10 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference='Stop'
-          $result=@(go test ./motorupdate -run '^(TestFreshBootIdentityRejectsSameBootAndInconsistentEvidence|TestWindowsFreshNativeBootObservationReadOnly|TestWindowsFreshProvisionalNativeStorageAndPostBootGate|TestFreshPostBootActiveCensusRejectsPartialOrForeignFamilies|TestFreshResidentBlockedUDPBothFamilies|TestFreshMotorRuntimeRequiresFourExactSamePIDListeners|TestFreshStagingProofBindsCatalogAndMotorTask)$' -count=1 -v -timeout 4m)
+          $result=@(go test ./motorupdate -run '^(TestFreshBootIdentityRejectsSameBootAndInconsistentEvidence|TestWindowsFreshNativeBootObservationReadOnly|TestWindowsFreshProvisionalNativeStorageAndPostBootGate|TestFreshPostBootActiveCensusRejectsPartialOrForeignFamilies|TestFreshResidentBlockedUDPBothFamilies|TestFreshMotorRuntimeRequiresFourExactSamePIDListeners|TestFreshStagingProofBindsCatalogAndMotorTask)$' -count=1 -v -timeout 6m)
           $code=$LASTEXITCODE
           $result|Write-Host
           if($code -ne 0){throw 'Boot evidence validation failed'}
-          foreach($marker in @('PASS VOLVE_FRESH_BOOT_IDENTITY_REFUSES_SAME_BOOT_CLOCK_ONLY','PASS VOLVE_FRESH_NATIVE_BOOT_WMI_EVENT_KERNEL_UPTIME_READ_ONLY','PASS VOLVE_FRESH_PROVISIONAL_NATIVE_NTFS_CONSUMED_ADMISSION_SAME_BOOT_REFUSED_SIMULATED_LATER_BOOT','PASS VOLVE_FRESH_POSTBOOT_ALL_ACTIVE_DNS_FAMILIES_READ_ONLY','PASS VOLVE_FRESH_BLOCKED_UDP_DUAL_STACK_A_AAAA_REAL_SOCKETS_SYNTHETIC_REPLIES','PASS VOLVE_FRESH_RUNTIME_EXACT_FOUR_LISTENERS_SAME_SYSTEM_PID','PASS VOLVE_FRESH_STAGE_SIGNED_CATALOG_AND_MOTOR_TASK_BOUND')){
+          foreach($marker in @('PASS VOLVE_FRESH_BOOT_IDENTITY_REFUSES_SAME_BOOT_CLOCK_ONLY','PASS VOLVE_FRESH_NATIVE_BOOT_WMI_EVENT_KERNEL_UPTIME_READ_ONLY','PASS VOLVE_FRESH_PROVISIONAL_NATIVE_NTFS_CONSUMED_ADMISSION_SAME_BOOT_REFUSED_SIMULATED_LATER_BOOT','PASS VOLVE_FRESH_POSTBOOT_ALL_ACTIVE_DNS_FAMILIES_READ_ONLY','PASS VOLVE_FRESH_BLOCKED_UDP_DUAL_STACK_A_AAAA_REAL_SOCKETS_SYNTHETIC_REPLIES','PASS VOLVE_FRESH_RUNTIME_EXACT_FOUR_LISTENERS_SAME_SYSTEM_PID','PASS VOLVE_FRESH_STAGE_SIGNED_CATALOG_AND_MOTOR_TASK_BOUND','PASS VOLVE_FRESH_NATIVE_PROTECTED_CATALOG_BYTES_UNEXPECTED_OPTIONAL_AND_SAME_SIZE_TAMPER_REFUSED')){
             if(@($result|Where-Object {$_ -match ([regex]::Escape($marker)+'$')}).Count -ne 1){throw ('Missing boot proof: '+$marker)}
           }

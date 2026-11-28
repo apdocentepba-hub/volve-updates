@@ -194,6 +194,13 @@ func testFreshStagedCatalogNativeFiles(t *testing.T){
  if err:=os.WriteFile(optional,payload,0600);err!=nil{t.Fatal(err)}
  if err:=verifyFreshStagedCatalogNative(ctx,stage);err==nil||!strings.Contains(err.Error(),"unsigned optional catalog appeared"){t.Fatal("unexpected optional feed was not specifically refused",err)}
  if err:=os.Remove(optional);err!=nil{t.Fatal(err)}
+ // A signed optional slot is allowed only with its exact protected bytes.
+ stage.Feeds[1].Bytes=int64(len(payload))
+ stage.Feeds[1].SHA256=hex.EncodeToString(digest[:])
+ if err:=verifyFreshStagedCatalogNative(ctx,stage);err==nil{t.Fatal("missing signed optional feed accepted")}
+ if err:=os.WriteFile(optional,payload,0600);err!=nil{t.Fatal(err)}
+ if err:=nativeSealApprovedOriginalBackupNode(ctx,optional);err!=nil{t.Fatal(err)}
+ if err:=verifyFreshStagedCatalogNative(ctx,stage);err!=nil{t.Fatal("signed protected optional feed refused",err)}
  // Same byte length, different SHA-256: no size-only false PASS.
  altered:=append([]byte(nil),payload...);altered[0]='X'
  if err:=os.WriteFile(required,altered,0600);err!=nil{t.Fatal(err)}

@@ -424,7 +424,13 @@ func verifyFreshStagedCatalogNative(ctx context.Context,stage freshStagingProof)
  feeds:=filepath.Join(catalog,"feeds")
  check:=func(p string)error{return nativeDNSOriginalBackupACL(ctx,p)}
  directories:=[]string{stage.InstallRoot,catalog,feeds}
- for _,dir:=range directories{if err:=verifyOriginalHostsBackupNode(dir,true,check);err!=nil{return err}}
+ dirIdentity:=make(map[string]os.FileInfo,len(directories))
+ for _,dir:=range directories{
+  if err:=verifyOriginalHostsBackupNode(dir,true,check);err!=nil{return err}
+  info,err:=os.Lstat(dir);if err!=nil||!info.IsDir(){return errors.New("catalog directory identity unavailable")}
+  dirIdentity[dir]=info
+ }
+ fileIdentity:=make(map[string]os.FileInfo,len(stage.Feeds))
  for _,feed:=range stage.Feeds{
   if err:=ctx.Err();err!=nil{return err}
   path:=filepath.Join(feeds,feed.Name)
@@ -445,7 +451,22 @@ func verifyFreshStagedCatalogNative(ctx context.Context,stage freshStagingProof)
   if err:=verifyOriginalHostsBackupNode(path,false,check);err!=nil{return err}
   after,err:=os.Lstat(path)
   if err!=nil||!os.SameFile(before,after)||before.Size()!=after.Size()||!before.ModTime().Equal(after.ModTime()){return errors.New("catalog identity changed")}
+  fileIdentity[path]=after
  }
- for _,dir:=range directories{if err:=verifyOriginalHostsBackupNode(dir,true,check);err!=nil{return err}}
+ // Reobserve all slots, including absent optional files, after reading the
+ // entire set. Individual checks alone can miss a later replacement.
+ for _,feed:=range stage.Feeds{
+  path:=filepath.Join(feeds,feed.Name)
+  if old,ok:=fileIdentity[path];ok{
+   if err:=verifyOriginalHostsBackupNode(path,false,check);err!=nil{return err}
+   current,err:=os.Lstat(path)
+   if err!=nil||!os.SameFile(old,current)||old.Size()!=current.Size()||!old.ModTime().Equal(current.ModTime()){return errors.New("catalog identity changed across complete census")}
+  }else if _,err:=os.Lstat(path);!errors.Is(err,os.ErrNotExist){return errors.New("unsigned optional catalog appeared during complete census")}
+ }
+ for _,dir:=range directories{
+  if err:=verifyOriginalHostsBackupNode(dir,true,check);err!=nil{return err}
+  current,err:=os.Lstat(dir)
+  if err!=nil||!os.SameFile(dirIdentity[dir],current){return errors.New("catalog directory replaced during complete census")}
+ }
  return ctx.Err()
 }
