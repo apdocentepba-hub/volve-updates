@@ -1,17 +1,5 @@
 name: VOLVE 0.28.7 persistent VM full DNS boot contract (NO REBOOT)
 on:
-  push:
-    branches: [feature/motor-updater-0287-pilot]
-    paths:
-      - 'development/0.28.7/lab/vm_full_motor_reboot_dns.ps1'
-      - 'development/0.28.7/lab/live_dns_boot_event_chain.ps1'
-      - 'development/0.28.7/lab/test_live_dns_boot_event_chain.ps1'
-      - 'development/0.28.7/lab/vm_direct_internet_probe.ps1'
-      - 'development/0.28.7/lab/test_vm_direct_internet_probe.ps1'
-      - 'development/0.28.7/lab/vm_dns_reply_contract.ps1'
-      - 'development/0.28.7/lab/test_vm_dns_reply_contract.ps1'
-      - 'development/0.28.7/inapp/ci_fresh_dns53_windows.go'
-      - '.github/workflows/volve-0287-real-vm-dns-boot-contract.yml'
   workflow_dispatch:
 permissions:
   contents: read
