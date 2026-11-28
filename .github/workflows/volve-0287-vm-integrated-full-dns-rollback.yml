@@ -1,19 +1,5 @@
 name: VOLVE 0.28.7 integrated real Full DNS recovery VM kit (NO RELEASE)
 on:
-  push:
-    branches: [feature/motor-updater-0287-pilot, work/0287-postboot-proof-20261128]
-    paths:
-      - '.github/workflows/volve-0287-vm-integrated-full-dns-rollback.yml'
-      - 'development/0.28.7/lab/vm_integrated_real_dns_rollback.ps1'
-      - 'development/0.28.7/lab/VM_INTEGRATED_FULL_DNS_ROLLBACK.md'
-      - 'development/0.28.7/lab/vm_full_motor_reboot_dns.ps1'
-      - 'development/0.28.7/lab/reboot_event_chain.ps1'
-      - 'development/0.28.7/lab/vm_dns_reply_contract.ps1'
-      - 'development/0.28.7/lab/pack_vm_persistent_reboot_kit.ps1'
-      - 'development/0.28.7/inapp/ci_fresh_dns53_windows.go'
-      - 'development/0.28.7/inapp/apply_overlay.go'
-      - 'development/0.28.7/inapp/fresh_activation_postboot_windows.go'
-      - 'development/0.28.7/lab/boot_observer_main.go.txt'
   workflow_dispatch:
 permissions:
   contents: read
