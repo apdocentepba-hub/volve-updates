@@ -111,9 +111,23 @@ func expectedFreshActivationProvisional(pending freshRecoveryPending,admissionSH
  return freshActivationProvisional{1,"volve-fresh-activation-provisional-only-v1",hex.EncodeToString(digest[:]),admissionSHA,boot},nil
 }
 
+// Provisional and post-boot admission must reopen the actual consumed
+// reservation. The independent admission digest alone is not evidence
+// that a one-use authorization was ever durably reserved.
+func verifyFreshProvisionalConsumptionUnderLease(ctx context.Context,root string,pins freshActivationEvidence,admissionSHA string)error{
+ if _,err:=originalRecoveryEvidencePath(root,pins.TransactionID);err!=nil{return err}
+ data,err:=readFreshFixedRecordUnderLease(ctx,root,freshReservationName)
+ if err!=nil{return err}
+ var receipt freshActivationReservation
+ if err:=residentCanonical(data,&receipt);err!=nil{return err}
+ if receipt.Evidence!=pins||receipt.AdmissionSHA256!=admissionSHA{return errors.New("provisional admission differs from consumed authorization")}
+ return verifyFreshReservationNative(ctx,root,receipt)
+}
+
 func persistFreshActivationProvisionalUnderLease(ctx context.Context,root string,pending freshRecoveryPending,admissionSHA string,before freshBootIdentity,observe func(context.Context)(freshBootIdentity,error))error{
  if ctx==nil||observe==nil{return errors.New("missing independent boot observer")}
  if err:=verifyFreshRecoveryPendingUnderLease(ctx,root,pending);err!=nil{return err}
+ if err:=verifyFreshProvisionalConsumptionUnderLease(ctx,root,pending.Evidence,admissionSHA);err!=nil{return err}
  if err:=requireFreshDNSRestoredAbsent(ctx,root);err!=nil{return err}
  current,err:=observe(ctx)
  if err!=nil||current!=before{return errors.New("Windows boot identity changed during activation")}
@@ -122,7 +136,9 @@ func persistFreshActivationProvisionalUnderLease(ctx context.Context,root string
  check:=func(p string)error{return nativeDNSOriginalBackupACL(ctx,p)}
  if err:=ctx.Err();err!=nil{return err}
  if err:=residentCreate(filepath.Join(root,freshProvisionalName),encoded,func(p string)error{return nativeSealApprovedOriginalBackupNode(ctx,p)},check);err!=nil{return err}
- return verifyFreshFixedRecordUnderLease(ctx,root,freshProvisionalName,receipt)
+ if err:=verifyFreshFixedRecordUnderLease(ctx,root,freshProvisionalName,receipt);err!=nil{return err}
+ if err:=verifyFreshRecoveryPendingUnderLease(ctx,root,pending);err!=nil{return err}
+ return verifyFreshProvisionalConsumptionUnderLease(ctx,root,pending.Evidence,admissionSHA)
 }
 
 // Reopen the signed rescue permit and exact protected provisional record
@@ -135,6 +151,7 @@ func verifyFreshPostBootEvidenceUnderLease(ctx context.Context,root string,key e
  permit,err:=loadFreshRecoveryPermitUnderLease(ctx,root,key,pins);if err!=nil{return denied,err}
  pending,err:=expectedFreshRecoveryPending(pins,permit);if err!=nil{return denied,err}
  if err:=verifyFreshRecoveryPendingUnderLease(ctx,root,pending);err!=nil{return denied,err}
+ if err:=verifyFreshProvisionalConsumptionUnderLease(ctx,root,pins,admissionSHA);err!=nil{return denied,err}
  if err:=requireFreshDNSRestoredAbsent(ctx,root);err!=nil{return denied,err}
  data,err:=readFreshFixedRecordUnderLease(ctx,root,freshProvisionalName)
  if err!=nil{return denied,err}
@@ -146,6 +163,7 @@ func verifyFreshPostBootEvidenceUnderLease(ctx context.Context,root string,key e
  current,err:=observe(ctx);if err!=nil{return denied,err}
  if err:=verifyFreshLaterBoot(saved.Boot,current);err!=nil{return denied,err}
  if err:=verifyFreshRecoveryPendingUnderLease(ctx,root,pending);err!=nil{return denied,err}
+ if err:=verifyFreshProvisionalConsumptionUnderLease(ctx,root,pins,admissionSHA);err!=nil{return denied,err}
  if err:=requireFreshDNSRestoredAbsent(ctx,root);err!=nil{return denied,err}
  if err:=verifyFreshFixedRecordUnderLease(ctx,root,freshProvisionalName,expected);err!=nil{return denied,err}
  again,err:=observe(ctx)

@@ -78,10 +78,10 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference='Stop'
-          $result=@(go test ./motorupdate -run '^(TestFreshBootIdentityRejectsSameBootAndInconsistentEvidence|TestWindowsFreshNativeBootObservationReadOnly)$' -count=1 -v -timeout 2m)
+          $result=@(go test ./motorupdate -run '^(TestFreshBootIdentityRejectsSameBootAndInconsistentEvidence|TestWindowsFreshNativeBootObservationReadOnly|TestWindowsFreshProvisionalNativeStorageAndPostBootGate)$' -count=1 -v -timeout 4m)
           $code=$LASTEXITCODE
           $result|Write-Host
           if($code -ne 0){throw 'Boot evidence validation failed'}
-          foreach($marker in @('PASS VOLVE_FRESH_BOOT_IDENTITY_REFUSES_SAME_BOOT_CLOCK_ONLY','PASS VOLVE_FRESH_NATIVE_BOOT_WMI_EVENT_KERNEL_UPTIME_READ_ONLY')){
+          foreach($marker in @('PASS VOLVE_FRESH_BOOT_IDENTITY_REFUSES_SAME_BOOT_CLOCK_ONLY','PASS VOLVE_FRESH_NATIVE_BOOT_WMI_EVENT_KERNEL_UPTIME_READ_ONLY','PASS VOLVE_FRESH_PROVISIONAL_NATIVE_NTFS_CONSUMED_ADMISSION_SAME_BOOT_REFUSED_SIMULATED_LATER_BOOT')){
             if(@($result|Where-Object {$_ -match ([regex]::Escape($marker)+'$')}).Count -ne 1){throw ('Missing boot proof: '+$marker)}
           }

@@ -211,7 +211,7 @@ func verifyFreshFixedRecordUnderLease(ctx context.Context,root,name string,expec
 }
 func readFreshFixedRecordUnderLease(ctx context.Context,root,name string)([]byte,error){
  if ctx==nil{return nil,errors.New("fresh record context required")}
- if name!=freshRecoveryPendingName&&name!=freshDNSRestoredName&&name!=freshProvisionalName{return nil,errors.New("unsupported fresh recovery record")}
+ if name!=freshRecoveryPendingName&&name!=freshDNSRestoredName&&name!=freshProvisionalName&&name!=freshReservationName{return nil,errors.New("unsupported fresh recovery record")}
  path:=filepath.Join(root,name)
  check:=func(p string)error{return nativeDNSOriginalBackupACL(ctx,p)}
  verify:=func()error{
