@@ -49,7 +49,7 @@ func TestPinnedResidentBootDriverRejectsInteractiveWindowsToken(t *testing.T){
 
 
 type motorOnlyPinnedBootOpsFixture struct{
- verified,restored int
+ verified,restored,started int
  afterVerify,afterRestore func()error
 }
 func(f *motorOnlyPinnedBootOpsFixture)VerifySealedOriginal(context.Context,motorupdate.ResidentRecoveryIntent)error{
@@ -60,6 +60,10 @@ func(f *motorOnlyPinnedBootOpsFixture)VerifySealedOriginal(context.Context,motor
 func(f *motorOnlyPinnedBootOpsFixture)RestoreOriginal(context.Context,motorupdate.ResidentRecoveryIntent)error{
  f.restored++
  if f.afterRestore!=nil{return f.afterRestore()}
+ return nil
+}
+func(f *motorOnlyPinnedBootOpsFixture)StartOriginal(context.Context,motorupdate.ResidentRecoveryIntent)error{
+ f.started++
  return nil
 }
 
@@ -75,7 +79,7 @@ func TestMotorOnlyPinnedBootRefusesCompleteOrPartialDNSEvidence(t *testing.T){
    intent:=motorupdate.ResidentRecoveryIntent{}
    if err:=ops.VerifySealedOriginal(ctx,intent);err!=nil{t.Fatal(err)}
    if err:=ops.RestoreOriginal(ctx,intent);err!=nil{t.Fatal(err)}
-   if fake.verified!=1||fake.restored!=1{t.Fatal("clean motor-only operation not delegated")}
+   if fake.verified!=1||fake.restored!=1||fake.started!=1{t.Fatal("clean motor-only recovery did not restore and start original")}
    node:=filepath.Join(parent,name)
    if name==motorupdate.DNSOriginalBackupDirectoryName{
     if err:=os.Mkdir(node,0700);err!=nil{t.Fatal(err)}
@@ -86,7 +90,7 @@ func TestMotorOnlyPinnedBootRefusesCompleteOrPartialDNSEvidence(t *testing.T){
     err:=fn(ctx,intent)
     if err==nil||!strings.Contains(err.Error(),"DNS evidence present"){t.Fatalf("partial DNS staging admitted: %v",err)}
    }
-   if fake.verified!=1||fake.restored!=1{t.Fatal("DNS-changing transaction reached motor-only operations")}
+   if fake.verified!=1||fake.restored!=1||fake.started!=1{t.Fatal("DNS-changing transaction reached motor-only operations")}
   })
  }
 }
