@@ -54,8 +54,14 @@ func RecoverPendingResidentAfterBoot(
 // No production driver or installer is authorized by this interface.
 type ResidentDNSBootRecoveryDriver interface {
  ResidentBootRecoveryDriver
+ // RestoreOriginalDNS and VerifyOriginalDNS run while the failed candidate
+ // is fenced and before the original motor is started.
  RestoreOriginalDNS(context.Context,ResidentRecoveryIntent) error
  VerifyOriginalDNS(context.Context,ResidentRecoveryIntent) error
+ // StartOriginal is a distinct final activation step. It must run only after
+ // the signed original DNS snapshot has been restored and independently read
+ // back, under the SAME exclusive recovery lease.
+ StartOriginal(context.Context,ResidentRecoveryIntent) error
 }
 
 // RecoverPendingResidentAfterBootWithOriginalDNS is mandatory for future
@@ -125,13 +131,12 @@ func recoverPendingResidentAfterBoot(
    return "",fmt.Errorf("independent original motor restore failed: %w",err)
   }
  }
- // In DNS-changing transactions, a healthy original motor does NOT imply
- // the network adapter assignments are original. Revalidate motor identity
- // and pending journal before the separately authorized DNS-only operation.
+ // In DNS-changing transactions, restore the original DNS assignment
+ // BEFORE starting the original motor. The failed candidate must remain
+ // fenced and the port-53 ownership census must be unambiguous throughout
+ // both DNS operations. A healthy motor identity is checked only AFTER the
+ // explicit StartOriginal step below.
  if dns!=nil{
-  if err:=checks.VerifyRunningIdentity(ctx,state.Intent,"restored");err!=nil{
-   return "",fmt.Errorf("original motor identity unverified before DNS recovery: %w",err)
-  }
   current,err:=InspectResidentRecoveryJournal(ctx,journalDir,protect)
   if err!=nil||current!=state{return "",errors.New("recovery journal changed before original DNS restoration")}
   if err:=ctx.Err();err!=nil{return "",err}
@@ -140,6 +145,12 @@ func recoverPendingResidentAfterBoot(
   }
   if err:=dns.VerifyOriginalDNS(ctx,state.Intent);err!=nil{
    return "",fmt.Errorf("original DNS assignment not independently verified: %w",err)
+  }
+  current,err=InspectResidentRecoveryJournal(ctx,journalDir,protect)
+  if err!=nil||current!=state{return "",errors.New("recovery journal changed before starting original motor")}
+  if err:=ctx.Err();err!=nil{return "",err}
+  if err:=dns.StartOriginal(ctx,state.Intent);err!=nil{
+   return "",fmt.Errorf("original motor start after DNS restoration failed: %w",err)
   }
  }
  // Do NOT finalize on a successful Windows task registration. The
