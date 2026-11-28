@@ -98,9 +98,19 @@ func(o *residentSignedBootOriginalOps)RestoreOriginal(
  if err:=o.VerifySealedOriginal(ctx,intent);err!=nil{return err}
  if err:=recoverSignedLegacyOriginalAndSYSTEMTaskLockedWindows(
   ctx,o.root,o.publisher,o.deps);err!=nil{return err}
- // The exact original EXE and signed SYSTEM task are now restored, but DNS
- // is still stopped. Request one original-only start while the SAME
- // protected kernel lock remains held. Health and the durable receipt are
- // checked by RecoverPendingResidentAfterBoot AFTER this returns.
+ // Leave the restored original task READY but not started. The DNS-aware
+ // boot policy restores and verifies every original adapter/family first,
+ // then calls StartOriginal under the same protected lease.
+ return nil
+}
+
+// StartOriginal is separate from RestoreOriginal so a DNS-changing
+// transaction never launches the original listener before the signed
+// original DNS assignment has been restored and independently read back.
+func(o *residentSignedBootOriginalOps)StartOriginal(
+ ctx context.Context,intent motorupdate.ResidentRecoveryIntent,
+)error{
+ if o==nil{return errors.New("signed original starter unavailable")}
+ if err:=o.VerifySealedOriginal(ctx,intent);err!=nil{return err}
  return startSignedRestoredOriginalTaskLockedWindows(ctx,o.root,o.publisher,o.deps.Task)
 }
