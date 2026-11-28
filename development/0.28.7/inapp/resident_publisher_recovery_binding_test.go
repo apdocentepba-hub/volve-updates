@@ -24,7 +24,16 @@ type signedRecoveryFixture struct{
 }
 func makeSignedRecoveryFixture(t *testing.T,expired bool)signedRecoveryFixture{
  t.Helper()
- root:=t.TempDir()
+ return makeSignedRecoveryFixtureAt(t,expired,t.TempDir())
+}
+
+// Only test callers may supply a fresh fixture root. The nested reboot
+// lab needs durable disk state rather than a testing.T cleanup directory.
+func makeSignedRecoveryFixtureAt(t *testing.T,expired bool,root string)signedRecoveryFixture{
+ t.Helper()
+ if !filepath.IsAbs(root)||filepath.Clean(root)!=root{t.Fatal("noncanonical signed fixture root")}
+ entries,err:=os.ReadDir(root)
+ if err!=nil||len(entries)!=0{t.Fatalf("fixture root must be fresh and empty: %v",err)}
  parent:=filepath.Join(root,"legacy-engine-recovery")
  if err:=os.Mkdir(parent,0700);err!=nil{t.Fatal(err)}
  live:=filepath.Join(root,legacyServiceName)
@@ -144,5 +153,27 @@ func TestSignedPublisherBootRecoveryRequiresProtectedCallbacksAndCancellation(t 
  if _,err:=VerifyResidentPublisherRecoveryBinding(ctx,
  f.journal,f.backup,f.permit,f.sig,f.pub,allow,allow);err==nil{
   t.Fatal("cancelled recovery obtained approval")
+ }
+}
+
+
+func TestScopedResidentPublisherRecoveryBindsExactPendingJournal(t *testing.T){
+ for _,scope:=range []string{ResidentRecoveryScopeMotorOnly,ResidentRecoveryScopeMotorAndDNS}{
+  t.Run(scope,func(t *testing.T){
+   f:=makeSignedRecoveryFixture(t,false)
+   state,err:=InspectResidentRecoveryJournal(context.Background(),f.journal,func(string)error{return nil})
+   if err!=nil{t.Fatal(err)}
+   p:=f.pem
+   p.Schema=2
+   p.RecoveryScope=scope
+   p.RecoveryIntentNonce=state.Intent.Nonce
+   f=f.resign(t,p)
+   if err:=f.verify();err!=nil{t.Fatalf("valid scoped permit rejected: %v",err)}
+   // Sign again with the genuine test publisher but use the wrong
+   // transaction nonce. Identical original/target bytes are insufficient.
+   if p.RecoveryIntentNonce[0]=='a'{p.RecoveryIntentNonce="b"+p.RecoveryIntentNonce[1:]}else{p.RecoveryIntentNonce="a"+p.RecoveryIntentNonce[1:]}
+   f=f.resign(t,p)
+   if err:=f.verify();err==nil{t.Fatal("signed scoped permit for another transaction accepted")}
+  })
  }
 }

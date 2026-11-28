@@ -137,3 +137,80 @@ function Get-VolvRealBootChain {
     } | ForEach-Object {ConvertTo-VolvSchedulerEvent $_})
     return Assert-VolvBootEventChain -Events $normalized -TaskName $TaskName -BootUTC $BootUTC
 }
+
+
+# Indentation is ignorable only between XML child ELEMENTS. In particular,
+# an <Arguments> element containing whitespace is not the same as an empty
+# <Arguments> element: that leaf text must remain part of the comparison.
+function Remove-VolvTaskXMLIndentation {
+    param([Parameter(Mandatory=$true)][System.Xml.XmlNode]$Node)
+    foreach($child in @($Node.ChildNodes)){
+        if($child.NodeType -eq [System.Xml.XmlNodeType]::Element){
+            Remove-VolvTaskXMLIndentation -Node $child
+        }
+    }
+    $hasChildElements=$false
+    foreach($child in @($Node.ChildNodes)){
+        if($child.NodeType -eq [System.Xml.XmlNodeType]::Element){
+            $hasChildElements=$true
+            break
+        }
+    }
+    if($hasChildElements){
+        foreach($child in @($Node.ChildNodes)){
+            if($child.NodeType -eq [System.Xml.XmlNodeType]::Whitespace){
+                $null=$Node.RemoveChild($child)
+            }
+        }
+    }
+}
+
+# Strict read-only comparison of the entire restored Task Scheduler definition.
+# This is stronger than checking only the executable/arguments of the first
+# action. Whitespace-only formatting between XML elements is ignored, but
+# all element names, namespaces, attributes, text values and ordering remain
+# relevant. Any unsupported or malformed XML fails closed.
+function ConvertTo-VolvTaskXMLFingerprint {
+    param([Parameter(Mandatory=$true)][string]$XMLText)
+    if($XMLText.Length -gt 1048576){throw 'NOT VERIFIED: Task Scheduler XML exceeds the lab limit'}
+    $settings=[System.Xml.XmlReaderSettings]::new()
+    $settings.DtdProcessing=[System.Xml.DtdProcessing]::Prohibit
+    $settings.XmlResolver=$null
+    $settings.MaxCharactersInDocument=1048576
+    $readerText=[System.IO.StringReader]::new($XMLText)
+    $reader=$null
+    try {
+        $reader=[System.Xml.XmlReader]::Create($readerText,$settings)
+        $xml=[System.Xml.XmlDocument]::new()
+        $xml.XmlResolver=$null
+        $xml.PreserveWhitespace=$true
+        $xml.Load($reader)
+        # Preserve all leaf text, even whitespace-only command arguments;
+        # discard only harmless indentation between nested elements.
+        Remove-VolvTaskXMLIndentation -Node $xml.DocumentElement
+        if($null -eq $xml.DocumentElement -or
+           $xml.DocumentElement.LocalName -cne 'Task' -or
+           $xml.DocumentElement.NamespaceURI -cne 'http://schemas.microsoft.com/windows/2004/02/mit/task'){
+            throw 'NOT VERIFIED: unexpected Task Scheduler XML root or namespace'
+        }
+        return $xml.OuterXml
+    } catch {
+        if($_.Exception.Message -like 'NOT VERIFIED:*'){throw}
+        throw ('NOT VERIFIED: malformed or unsupported Task Scheduler XML: '+$_.Exception.Message)
+    } finally {
+        if($null -ne $reader){$reader.Dispose()}
+        $readerText.Dispose()
+    }
+}
+function Assert-VolvRestoredTaskXML {
+    param(
+        [Parameter(Mandatory=$true)][string]$SavedXML,
+        [Parameter(Mandatory=$true)][string]$RestoredXML
+    )
+    $original=ConvertTo-VolvTaskXMLFingerprint -XMLText $SavedXML
+    $restored=ConvertTo-VolvTaskXMLFingerprint -XMLText $RestoredXML
+    if($original -cne $restored){
+        throw 'NOT VERIFIED: restored Task Scheduler XML differs from original protected snapshot'
+    }
+    return $true
+}

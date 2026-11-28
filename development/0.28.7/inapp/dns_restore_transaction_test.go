@@ -120,3 +120,30 @@ func (c *concurrentChangeBackend)Read(ctx context.Context,id string,family DNSAd
  if c.reads==2 {c.current[family]=c.thirdParty}
  return c.fakeDNSRestoreBackend.Read(ctx,id,family)
 }
+
+ // Model a later family write unexpectedly disturbing the already verified
+ // first family. Never overwrite an unexplained third-party value to force
+ // a successful receipt.
+ type laterDNSDriftBackend struct {
+  *fakeDNSRestoreBackend
+ }
+ func (b *laterDNSDriftBackend) Apply(ctx context.Context,s DNSServerState)error{
+  if err:=b.fakeDNSRestoreBackend.Apply(ctx,s);err!=nil{return err}
+  if s.Family==DNSIPv6{
+   b.current[DNSIPv4]=DNSServerState{InterfaceGUID:testAdapterGUID,Family:DNSIPv4,Mode:DNSStatic,Servers:[]string{"192.0.2.99"}}
+  }
+  return nil
+ }
+ func TestVOLVEDNSRollbackRejectsLaterFamilyDrift(t *testing.T){
+  v4:=restoreFixture(DNSIPv4,DNSStatic,"192.0.2.53")
+  v6:=restoreFixture(DNSIPv6,DNSAutomatic)
+  b:=&laterDNSDriftBackend{newDNSFake(v4,v6)}
+  err:=RestoreVOLVEDNSAfterFailure(context.Background(),[]DNSRestoreRecord{v4,v6},b)
+  if err==nil||!strings.Contains(err.Error(),"final DNS recovery census"){t.Fatalf("later family drift not rejected: %v",err)}
+  if len(b.applied)!=2||b.current[DNSIPv4].Servers[0]!="192.0.2.99"{t.Fatal("unexpected corrective overwrite")}
+ }
+ func TestVOLVEDNSRollbackRejectsMissingContext(t *testing.T){
+  r:=restoreFixture(DNSIPv4,DNSAutomatic)
+  b:=newDNSFake(r)
+  if err:=RestoreVOLVEDNSAfterFailure(nil,[]DNSRestoreRecord{r},b);err==nil||len(b.applied)!=0{t.Fatal("missing context did not fail closed")}
+ }

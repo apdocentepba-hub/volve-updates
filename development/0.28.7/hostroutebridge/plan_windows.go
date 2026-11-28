@@ -41,6 +41,7 @@ type InstallerPlanReadOnly struct {
     CanUpgrade bool `json:"can_upgrade"`
     CanChangeDNS bool `json:"can_change_dns"`
     CanChangeTasks bool `json:"can_change_tasks"`
+    MigrationBlockers []string `json:"migration_blockers,omitempty"`
     Disposition string `json:"disposition"`
 }
 
@@ -50,7 +51,12 @@ var mandatoryBeforeAnyMutation = []string{
     "signed-original-and-recovery-snapshot",
     "durable-independent-boot-watchdog",
     "compatibility-and-live-state-recheck-under-lock",
+    "verify-configured-resolver-TCP-with-actual-motor-and-safe-original-DNS-recovery",
     "native-NTFS-ACL-and-rollback-restart-evidence",
+ "durable-hosts-browser-catalog-and-original-DNS-snapshot",
+ "persist-and-seal-original-DNS-source-and-exact-adapter-identity",
+ "inventory-and-preserve-DoH-NRPT-and-group-policy-DNS-overrides",
+ "restore-hosts-browser-catalog-and-DNS-after-crash-tested",
 }
 
 // PlanFromVerifiedReview only accepts a complete NON-AUTHORIZING review.
@@ -73,19 +79,32 @@ func PlanFromVerifiedReview(ctx context.Context, review Review) (InstallerPlanRe
     var mode PlanMode
     var steps []string
     var notes string
+    var migrationBlockers []string
     switch review.Route {
     case motorupdate.MotorRouteFreshCandidate:
         mode=PlanFresh
-        steps=[]string{"verify-full-browser-policy-inventory","validate-signed-fresh-install-permit","preserve-original-DNS-and-adapter-inventory"}
-        notes="A clean DNS census does not prove no browser policies exist; never replace existing protection silently."
+        steps=[]string{"verify-full-browser-policy-inventory","build-durable-original-hosts-browser-catalog-and-DNS-snapshot","validate-signed-fresh-install-permit"}
+        notes="A read-only census is not a backup: seal the exact original hosts, browser, catalog and DNS configuration before any write."
     case motorupdate.MotorRouteCatalogCandidate:
         mode=PlanCatalog
         steps=[]string{"verify-catalog-task-signer-and-exact-action","preserve-existing-catalog-and-browser-policies","validate-signed-fresh-install-permit"}
         notes="Catalog-only means preserve the independently verified scheduled catalog task."
     case motorupdate.MotorRouteLegacyReview:
         mode=PlanLegacy
-        steps=[]string{"attest-exact-legacy-exe-task-SYSTEM-and-port53","require-one-time-signed-legacy-to-0287-migration-permit-with-exact-origin-SHA256","prove-original-task-XML-and-motor-SHA256"}
-        notes="Existing legacy motor must remain running until a separate authorized protected transition is ready."
+        migrationBlockers=[]string{
+            "legacy_three_task_backup_unverified",
+            "legacy_transitive_dependencies_uncertified",
+            "legacy_reboot_recovery_unverified",
+        }
+        steps=[]string{
+            "attest-exact-legacy-exe-task-SYSTEM-and-port53",
+            "require-one-time-signed-legacy-to-0287-migration-permit-with-exact-origin-SHA256",
+            "prove-original-task-XML-and-motor-SHA256",
+            "verify-protected-backup-of-all-three-legacy-SYSTEM-task-actions",
+            "certify-transitive-dependencies-of-all-legacy-task-actions",
+            "verify-legacy-motor-and-three-task-restoration-after-real-VM-reboot",
+        }
+        notes="Direct action copies alone do not establish migration readiness. Preserve the legacy motor until dependency closure and post-reboot recovery are verified under a separately authorized protected transition."
     case motorupdate.MotorRouteManagedReview:
         mode=PlanManaged
         steps=[]string{"verify-installed-signed-motor-receipt","validate-version-compatibility-and-upgrade-lease","preserve-original-version-for-watchdog-rollback"}
@@ -115,6 +134,7 @@ func PlanFromVerifiedReview(ctx context.Context, review Review) (InstallerPlanRe
         Prerequisites:requirements,Notes:notes,
         CompleteHostInventories:6,SignedPackageVerified:true,
         CanInstall:false,CanUpgrade:false,CanChangeDNS:false,CanChangeTasks:false,
+        MigrationBlockers:migrationBlockers,
         Disposition:"READ_ONLY_PLAN_NOT_AN_INSTALLATION_PERMIT",
     },nil
 }

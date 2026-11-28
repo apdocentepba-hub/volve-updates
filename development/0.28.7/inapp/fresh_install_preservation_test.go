@@ -10,8 +10,31 @@ func partialProtectionFixture() ProtectionSnapshot {
   EdgePoliciesSHA256:strings.Repeat("c",64),
   FirefoxPoliciesSHA256:strings.Repeat("d",64),
   CatalogTaskDefinitionSHA256:strings.Repeat("e",64),
+  DNSAdaptersSHA256:strings.Repeat("f",64),
  }
 }
+func TestProtectionSnapshotCannotPassWhenAnySurfaceWasNotCaptured(t *testing.T){
+ cases:=[]struct{name string;clear func(*ProtectionSnapshot)}{
+  {"hosts",func(p *ProtectionSnapshot){p.HostsSHA256=""}},
+  {"chrome",func(p *ProtectionSnapshot){p.ChromePoliciesSHA256=""}},
+  {"edge",func(p *ProtectionSnapshot){p.EdgePoliciesSHA256=""}},
+  {"firefox",func(p *ProtectionSnapshot){p.FirefoxPoliciesSHA256=""}},
+  {"catalog-task",func(p *ProtectionSnapshot){p.CatalogTaskDefinitionSHA256=""}},
+  {"dns-adapters",func(p *ProtectionSnapshot){p.DNSAdaptersSHA256=""}},
+ }
+ for _,tc:=range cases{t.Run(tc.name,func(t *testing.T){
+  before:=partialProtectionFixture();after:=before
+  tc.clear(&before);tc.clear(&after)
+  if err:=VerifyPartialProtectionPreserved(before,after);err==nil{
+   t.Fatal("two incomplete snapshots compared equal and passed")
+  }
+ })}
+ before:=partialProtectionFixture();after:=before;after.HostsBlockedRuleCount=1_000_001
+ if err:=VerifyPartialProtectionPreserved(before,after);err==nil{
+  t.Fatal("implausible hosts rule count accepted")
+ }
+}
+
 func TestFreshMotorPreservesHostsBrowserPoliciesAndCatalog(t *testing.T){
  before:=partialProtectionFixture()
  if err:=VerifyPartialProtectionPreserved(before,before);err!=nil{t.Fatal(err)}
@@ -24,6 +47,8 @@ func TestFreshMotorDetectsPartialProtectionRegressions(t *testing.T){
   {"edge-altered",func(p *ProtectionSnapshot){p.EdgePoliciesSHA256=strings.Repeat("f",64)}},
   {"firefox-altered",func(p *ProtectionSnapshot){p.FirefoxPoliciesSHA256=strings.Repeat("f",64)}},
   {"catalog-task-removed",func(p *ProtectionSnapshot){p.CatalogTaskDefinitionSHA256=""}},
+  {"dns-adapters-altered",func(p *ProtectionSnapshot){p.DNSAdaptersSHA256=strings.Repeat("0",64)}},
+  {"dns-adapters-removed",func(p *ProtectionSnapshot){p.DNSAdaptersSHA256=""}},
   {"hosts-evidence-absent",func(p *ProtectionSnapshot){p.HostsSHA256=""}},
   {"invalid-policy-digest",func(p *ProtectionSnapshot){p.ChromePoliciesSHA256="invalid"}},
   {"unknown-rule-count",func(p *ProtectionSnapshot){p.HostsBlockedRuleCount=-1}},

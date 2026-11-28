@@ -37,7 +37,7 @@ func reject(t *testing.T,dir string,pub ed25519.PublicKey){
 func TestSignedCompleteBundle(t *testing.T){
  dir,pub,_,_:=setup(t)
  m,err:=Verify(dir,pub);if err!=nil{t.Fatal(err)}
- if len(m.Components)!=7{t.Fatal("eight parts required")}
+ if len(m.Components)!=7{t.Fatal("seven public components required")}
 }
 func TestMissingCriticalPartsFail(t *testing.T){
  for _,id:=range []string{"dns-motor","system-watchdog","browser-policies","full-catalog"}{
@@ -103,4 +103,31 @@ func TestOwnerOnlyUninstallerNeverIncludedInPublicBundle(t *testing.T){
  if _,exists:=RequiredFiles()["uninstaller"];exists{t.Fatal("owner-only removal tool entered public component allowlist")}
  if err:=os.WriteFile(filepath.Join(dir,"VOLVE_Uninstall.exe"),[]byte("owner-only forbidden"),0600);err!=nil{t.Fatal(err)}
  reject(t,dir,pub)
+}
+
+func TestStreamingComponentExactSizeAndDigest(t *testing.T){
+ dir,pub,priv,m:=setup(t)
+ path:=filepath.Join(dir,requiredComponents["full-catalog"])
+ data:=make([]byte,8*1024*1024+17)
+ for i:=range data{data[i]=byte(i%251)}
+ if err:=os.WriteFile(path,data,0600);err!=nil{t.Fatal(err)}
+ digest:=sha256.Sum256(data)
+ want:=hex.EncodeToString(digest[:])
+ for i:=range m.Components{
+  if m.Components[i].ID=="full-catalog"{m.Components[i].Size=int64(len(data));m.Components[i].SHA256=want}
+ }
+ sign(t,dir,priv,m)
+ if actual,err:=hashExactComponent(path,int64(len(data)));err!=nil||actual!=want{t.Fatalf("stream digest mismatch: %s %v",actual,err)}
+ if _,err:=Verify(dir,pub);err!=nil{t.Fatal(err)}
+ for _,size:=range []int64{0,-1,int64(len(data))-1,int64(len(data))+1,maxComponent+1}{
+  if _,err:=hashExactComponent(path,size);err==nil{t.Fatalf("invalid signed size accepted: %d",size)}
+ }
+ data[len(data)-1]^=1
+ if err:=os.WriteFile(path,data,0600);err!=nil{t.Fatal(err)}
+ reject(t,dir,pub)
+ if err:=os.WriteFile(path,data[:len(data)-1],0600);err!=nil{t.Fatal(err)}
+ reject(t,dir,pub)
+}
+func TestStreamingComponentRejectsDirectory(t *testing.T){
+ if _,err:=hashExactComponent(t.TempDir(),1);err==nil{t.Fatal("directory accepted as component")}
 }

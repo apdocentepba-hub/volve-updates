@@ -15,6 +15,8 @@ type ResidentActiveHealthChecks struct {
  IPv4DNS string
  IPv6DNS string
  TCPAddresses []string
+ // Candidate-only: old restored versions may close after one query.
+ RequirePersistentTCP bool
 }
 
 func (c ResidentActiveHealthChecks) VerifyRunningIdentity(ctx context.Context,
@@ -23,7 +25,9 @@ func (c ResidentActiveHealthChecks) VerifyRunningIdentity(ctx context.Context,
  return c.VerifyIdentity(ctx,intent,outcome)
 }
 func (c ResidentActiveHealthChecks) ProbeLocalDNS(ctx context.Context) error {
- return ProbeResidentDNSLoopbacks(ctx,c.IPv4DNS,c.IPv6DNS)
+ if err:=ProbeResidentDNSLoopbacks(ctx,c.IPv4DNS,c.IPv6DNS);err!=nil{return err}
+ if c.RequirePersistentTCP{return ProbeResidentPersistentTCPDNS(ctx,c.IPv4DNS,c.IPv6DNS)}
+ return nil
 }
 func (c ResidentActiveHealthChecks) ProbeConnectivity(ctx context.Context) error {
  return ProbeResidentInternetAt(ctx,c.TCPAddresses)

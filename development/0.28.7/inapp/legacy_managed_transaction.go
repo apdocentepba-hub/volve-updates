@@ -22,6 +22,9 @@ type SignedLegacySwitchDriver interface {
     // The interface is a requirement, not a production implementation.
     AcquireExclusiveMigration(context.Context) (release func(),err error)
     IndependentRecoveryReady(context.Context, VerifiedLegacyMigrationProof) error
+    // Must re-read all three original SYSTEM tasks, exact action/XML bytes,
+    // and their sealed recovery copies while the shared transaction mutex is held.
+    VerifyLegacyTaskRecoveryCoverage(context.Context, VerifiedLegacyMigrationProof) (LegacyTaskRecoverySnapshot, error)
     // Recheck the INSTALLED copy, not just the staged download. This call
     // must validate signed manifest, SHA-256 and size under the versioned
     // destination immediately before the last authorization/watchdog gate.
@@ -109,6 +112,9 @@ func ApplySignedLegacyWithRollback(
         permitJSON, permitSignature, publisherKey, protectBackup, livePreflight,
     )
     if err != nil { return fmt.Errorf("migración heredada no autorizada: %w",err) }
+    if err := requireLegacyTaskRecoveryCoverage(ctx, driver, proof); err != nil {
+        return fmt.Errorf("cobertura de las tres tareas legacy rechazada antes de preparar: %w", err)
+    }
     manifest, err := VerifyStaged(candidate,publisherKey)
     if err != nil { return fmt.Errorf("motor de destino no verificable: %w",err) }
     if manifest.Version != proof.CandidateVersion || manifest.SHA256 != proof.CandidateSHA256 {
@@ -123,6 +129,12 @@ func ApplySignedLegacyWithRollback(
     if err := ctx.Err(); err != nil { return err }
     if err := driver.Snapshot(ctx); err != nil {
         return fmt.Errorf("instantánea de reversión no durable; cambio no iniciado: %w",err)
+    }
+    // Re-read the combined three-task backup after Snapshot and before staging
+    // any candidate. Snapshot is backup-only; a coverage failure leaves the
+    // old task, motor and DNS untouched.
+    if err := requireLegacyTaskRecoveryCoverage(ctx, driver, proof); err != nil {
+        return fmt.Errorf("CRÍTICO: cobertura legacy cambió tras Snapshot; instalación detenida antes de alterar el motor: %w", err)
     }
     // The last preceding signed proof checked the old snapshot BEFORE
     // Snapshot(). Revalidate the exact protected bytes directly after the
@@ -155,6 +167,11 @@ func ApplySignedLegacyWithRollback(
     }
     if err := driver.IndependentRecoveryReady(ctx,rechecked); err != nil {
         return restoreSignedLegacyAndVerify(driver,fmt.Errorf("watchdog independiente dejó de estar listo: %w",err),backupDir,protectBackup,proof)
+    }
+    // Last task-set boundary: it is still too early to replace the SYSTEM
+    // DNS task, and the same cross-process mutex remains held.
+    if err := requireLegacyTaskRecoveryCoverage(ctx, driver, proof); err != nil {
+        return restoreSignedLegacyAndVerify(driver,fmt.Errorf("cobertura legacy inválida antes del cambio de tarea: %w",err),backupDir,protectBackup,proof)
     }
     if err := ctx.Err(); err != nil { return restoreSignedLegacyAndVerify(driver,err,backupDir,protectBackup,proof) }
     if err := driver.Switch(ctx); err != nil {

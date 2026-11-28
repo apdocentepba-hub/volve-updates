@@ -4,6 +4,7 @@ import (
  "context"
  "encoding/binary"
  "fmt"
+ "io"
  "net"
  "strings"
  "testing"
@@ -251,6 +252,52 @@ func TestResidentHealthValidCNAMEChainAndUnrelatedAnswer(t *testing.T) {
    msg,off:=makeDNS(tc.records...)
    got:=hasResidentDNSAddress(msg,off,1)
    if got!=tc.want{t.Fatalf("DNS alias verification got=%t want=%t",got,tc.want)}
+  })
+ }
+}
+
+func persistentHealthStub(t *testing.T,network,addr,mode string)string{
+ t.Helper()
+ l,err:=net.Listen(network,addr)
+ if err!=nil{t.Fatal(err)}
+ t.Cleanup(func(){l.Close()})
+ go func(){
+  c,e:=l.Accept();if e!=nil{return};defer c.Close()
+  c.SetDeadline(time.Now().Add(3*time.Second))
+  for i:=0;i<2;i++{
+   var length [2]byte
+   if _,e=io.ReadFull(c,length[:]);e!=nil{return}
+   n:=int(binary.BigEndian.Uint16(length[:]))
+   if n<17||n>512{return}
+   request:=make([]byte,n)
+   if _,e=io.ReadFull(c,request);e!=nil{return}
+   response:=append([]byte(nil),request...)
+   response[2]=0x81;response[3]=0x80
+   if i==0{
+    kind:=binary.BigEndian.Uint16(request[n-4:n-2])
+    answer:=[]byte{0xc0,0x0c,byte(kind>>8),byte(kind),0,1,0,0,0,30,0,4}
+    data:=[]byte{203,0,113,7}
+    if kind==28{answer[11]=16;data=make([]byte,16);data[0]=0x20;data[1]=1;data[15]=1}
+    response[7]=1
+    response=append(append(response,answer...),data...)
+   }else{
+    if mode!="wrong-block"{response[3]=0x83}
+    if mode=="wrong-id"{response[0]^=0xff}
+   }
+   frame:=make([]byte,2+len(response));binary.BigEndian.PutUint16(frame[:2],uint16(len(response)));copy(frame[2:],response)
+   if _,e=c.Write(frame);e!=nil{return}
+   if mode=="one-shot"{return}
+  }
+ }()
+ return l.Addr().String()
+}
+func TestResidentHealthPersistentTCPDNS(t *testing.T){
+ for _,mode:=range []string{"healthy","one-shot","wrong-id","wrong-block"}{
+  t.Run(mode,func(t *testing.T){
+   v4:=persistentHealthStub(t,"tcp4","127.0.0.1:0",mode)
+   v6:=persistentHealthStub(t,"tcp6","[::1]:0","healthy")
+   err:=ProbeResidentPersistentTCPDNS(context.Background(),v4,v6)
+   if (err==nil)!=(mode=="healthy"){t.Fatalf("mode %s returned %v",mode,err)}
   })
  }
 }

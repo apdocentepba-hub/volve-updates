@@ -188,3 +188,66 @@ func ProbeResidentInternetAt(ctx context.Context, endpoints []string) error {
 func ProbeResidentExternalInternet(ctx context.Context)error {
  return ProbeResidentInternetAt(ctx,[]string{"1.1.1.1:443","9.9.9.9:443"})
 }
+
+// ProbeResidentPersistentTCPDNS checks actual DNS framing on a single
+// connection per loopback address family. Each connection must carry an
+// allowed A/AAAA response and a separate blocked-domain NXDOMAIN response.
+// This is candidate health evidence, not proof of publisher or OS identity.
+func ProbeResidentPersistentTCPDNS(ctx context.Context,ipv4Addr,ipv6Addr string)error{
+ if ctx==nil{return errors.New("TCP DNS health requires context")}
+ for _,step:=range []struct{network,addr,host string;qtype uint16}{
+  {"tcp4",ipv4Addr,"127.0.0.1",1},{"tcp6",ipv6Addr,"::1",28},
+ }{
+  host,port,err:=net.SplitHostPort(step.addr)
+  if err!=nil||host!=step.host{return errors.New("TCP DNS health endpoint must be exact loopback")}
+  n,err:=strconv.Atoi(port)
+  if err!=nil||n<1||n>65535{return errors.New("invalid TCP DNS health port")}
+  if err:=probeResidentPersistentTCPFamily(ctx,step.network,step.addr,step.qtype);err!=nil{return fmt.Errorf("%s DNS persistent health: %w",step.network,err)}
+ }
+ return ctx.Err()
+}
+func probeResidentPersistentTCPFamily(ctx context.Context,network,addr string,qtype uint16)error{
+ ctx,cancel:=context.WithTimeout(ctx,2*residentProbeTimeout)
+ defer cancel()
+ conn,err:=(&net.Dialer{}).DialContext(ctx,network,addr)
+ if err!=nil{return err}
+ defer conn.Close()
+ stop:=context.AfterFunc(ctx,func(){_ = conn.Close()})
+ defer stop()
+ deadline,_:=ctx.Deadline()
+ if err:=conn.SetDeadline(deadline);err!=nil{return err}
+ for _,step:=range []struct{host string;kind uint16;blocked bool}{
+  {"example.com",qtype,false},{"stake.com",1,true},
+ }{
+  if err:=ctx.Err();err!=nil{return err}
+  request:=make([]byte,12,64)
+  if _,err:=io.ReadFull(rand.Reader,request[:2]);err!=nil{return err}
+  request[2]=1;request[5]=1
+  for _,label:=range strings.Split(step.host,"."){
+   request=append(request,byte(len(label)));request=append(request,label...)
+  }
+  request=append(request,0,byte(step.kind>>8),byte(step.kind),0,1)
+  frame:=make([]byte,2+len(request))
+  binary.BigEndian.PutUint16(frame[:2],uint16(len(request)))
+  copy(frame[2:],request)
+  for len(frame)>0{
+   n,e:=conn.Write(frame);if e!=nil{return e};if n<=0{return io.ErrShortWrite};frame=frame[n:]
+  }
+  var length [2]byte
+  if _,err:=io.ReadFull(conn,length[:]);err!=nil{return err}
+  size:=int(binary.BigEndian.Uint16(length[:]))
+  if size<len(request)||size>65535{return errors.New("invalid TCP DNS reply length")}
+  response:=make([]byte,size)
+  if _,err:=io.ReadFull(conn,response);err!=nil{return err}
+  if !bytes.Equal(response[:2],request[:2])||response[2]&0x80==0||response[2]&0x78!=0||response[2]&0x02!=0||
+   binary.BigEndian.Uint16(response[4:6])!=1||!bytes.Equal(response[12:len(request)],request[12:]){
+   return errors.New("TCP DNS response not correlated with question")
+  }
+  if step.blocked{
+   if response[3]&15!=3||binary.BigEndian.Uint16(response[6:8])!=0{return errors.New("blocked domain did not return NXDOMAIN")}
+  }else if response[3]&15!=0||!hasResidentDNSAddress(response,len(request),step.kind){
+   return errors.New("allowed TCP DNS response missing matching address")
+  }
+ }
+ return ctx.Err()
+}

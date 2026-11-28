@@ -53,6 +53,14 @@ func TestAllWindowsInstallRoutesHaveNonAuthorizingPlans(t *testing.T) {
                 if v==tc.mustInclude {found=true}
             }
             if !found{t.Fatalf("route-specific requirement %q absent in %v",tc.mustInclude,plan.Prerequisites)}
+            for _,required:=range mandatoryBeforeAnyMutation{
+                present:=false
+                for _,item:=range plan.Prerequisites{if item==required{present=true;break}}
+                if !present{t.Fatalf("route %s omitted mandatory safety gate %q",tc.route,required)}
+            }
+            count:=0
+            for _,item:=range plan.Prerequisites{if item=="verify-configured-resolver-TCP-with-actual-motor-and-safe-original-DNS-recovery"{count++}}
+            if count!=1{t.Fatalf("configured resolver TCP requirement absent or duplicated: %v",plan.Prerequisites)}
             if plan.Notes==""{t.Fatal("planning route must explain risk")}
         })
     }
@@ -111,7 +119,31 @@ func TestRoutePlanNeverConfusesLegacyWithFresh(t *testing.T) {
     if err!=nil{t.Fatal(err)}
     if plan.Mode==PlanFresh||plan.Mode==PlanCatalog||plan.CanInstall{t.Fatal("legacy route treated as clean")}
     requirements:=strings.Join(plan.Prerequisites," ")
-    if !strings.Contains(requirements,"exact-origin-SHA256")||!strings.Contains(requirements,"signed-original-and-recovery-snapshot"){
-        t.Fatal("legacy migration missing strong original identity and rollback requirements")
+    for _,required:=range []string{
+        "exact-origin-SHA256",
+        "signed-original-and-recovery-snapshot",
+        "verify-protected-backup-of-all-three-legacy-SYSTEM-task-actions",
+        "certify-transitive-dependencies-of-all-legacy-task-actions",
+        "verify-legacy-motor-and-three-task-restoration-after-real-VM-reboot",
+    } {
+        if !strings.Contains(requirements,required) {
+            t.Fatalf("legacy plan omitted required recovery blocker %q: %v",required,plan.Prerequisites)
+        }
+    }
+    wantBlockers:=[]string{
+        "legacy_three_task_backup_unverified",
+        "legacy_transitive_dependencies_uncertified",
+        "legacy_reboot_recovery_unverified",
+    }
+    if len(plan.MigrationBlockers)!=len(wantBlockers) {
+        t.Fatalf("legacy migration blockers missing or unexpected: %v",plan.MigrationBlockers)
+    }
+    for i,want:=range wantBlockers {
+        if plan.MigrationBlockers[i]!=want {
+            t.Fatalf("legacy blocker %d = %q, want %q",i,plan.MigrationBlockers[i],want)
+        }
+    }
+    if plan.CanInstall||plan.CanUpgrade||plan.CanChangeDNS||plan.CanChangeTasks {
+        t.Fatal("legacy recovery prerequisites authorized a mutation")
     }
 }

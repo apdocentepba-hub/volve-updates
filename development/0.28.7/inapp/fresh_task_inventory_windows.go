@@ -9,6 +9,9 @@ package motorupdate
 import (
  "bytes"
  "context"
+ "crypto/sha256"
+ "encoding/base64"
+ "encoding/hex"
  "encoding/json"
  "errors"
  "fmt"
@@ -129,4 +132,208 @@ func InspectWindowsVOLVETasksReadOnly(ctx context.Context,
   result.VerifiedCatalogTask=verified
  }
  return result,nil
+}
+
+// Read-only capture of the exact fixed catalog task definition. The original
+// trusted census must already have verified its action and identity. No task
+// is registered, executed, repaired or removed by this module.
+const catalogOriginalXMLLimit=1<<20
+const catalogOriginalCaptureQuery=`$ErrorActionPreference='Stop';$ProgressPreference='SilentlyContinue';
+$tasks=@(Get-ScheduledTask -ErrorAction Stop | Where-Object {$_.TaskName -ceq 'VOLVE-CATALOGO-0230' -and $_.TaskPath -ceq '\'});
+if($tasks.Count -gt 1){throw 'Ambiguous catalog task'};
+if($tasks.Count -eq 0){
+ [pscustomobject]@{Present=$false;PayloadBase64=''} | ConvertTo-Json -Compress
+}else{
+ $xml=Export-ScheduledTask -TaskName 'VOLVE-CATALOGO-0230' -TaskPath '\' -ErrorAction Stop;
+ $bytes=[Text.Encoding]::UTF8.GetBytes($xml);
+ if($bytes.Length -lt 1 -or $bytes.Length -gt 1048576){throw 'Catalog definition size invalid'};
+ [pscustomobject]@{Present=$true;PayloadBase64=[Convert]::ToBase64String($bytes)} | ConvertTo-Json -Compress
+}`
+
+type originalCatalogDefinition struct{
+ Present bool
+ // Private XML, never exported to diagnostic JSON.
+ XML []byte `json:"-"`
+}
+
+func readOriginalCatalogDefinitionLocal(ctx context.Context)([]byte,error){
+ if ctx==nil{return nil,errors.New("catalog capture context required")}
+ if err:=ctx.Err();err!=nil{return nil,err}
+ root:=os.Getenv("SystemRoot")
+ if !filepath.IsAbs(root)||strings.HasPrefix(root,`\\`){return nil,errors.New("local Windows SystemRoot unavailable")}
+ ps:=filepath.Join(root,"System32","WindowsPowerShell","v1.0","powershell.exe")
+ raw,err:=exec.CommandContext(ctx,ps,"-NoLogo","-NoProfile","-NonInteractive","-Command",catalogOriginalCaptureQuery).Output()
+ if err!=nil{return nil,errors.New("local catalog definition capture failed")}
+ return raw,nil
+}
+
+func captureOriginalCatalogDefinition(ctx context.Context,baseline ProtectionSnapshot,
+ taskInventory WindowsFreshVOLVETaskInventory,reader func(context.Context)([]byte,error))(originalCatalogDefinition,error){
+ var denied originalCatalogDefinition
+ if ctx==nil||reader==nil{return denied,errors.New("catalog backup requires context and local reader")}
+ if err:=ctx.Err();err!=nil{return denied,err}
+ if !validProtectionSnapshot(baseline)||len(taskInventory.UnknownTaskNames)!=0{return denied,errors.New("independent original task census required")}
+ absentHash:=sha256.Sum256([]byte(catalogTaskAbsentMarker))
+ absent:=hex.EncodeToString(absentHash[:])
+ expectedPresent:=false
+ switch{
+ case taskInventory.VOLVETaskCount==0&&taskInventory.VerifiedCatalogTask==nil:
+  if !strings.EqualFold(baseline.CatalogTaskDefinitionSHA256,absent){return denied,errors.New("catalog absence differs from original census")}
+ case taskInventory.VOLVETaskCount==1&&allowedFreshAuxiliaryTask(taskInventory.VerifiedCatalogTask):
+  expectedPresent=true
+  if strings.EqualFold(baseline.CatalogTaskDefinitionSHA256,absent)||!strings.EqualFold(baseline.CatalogTaskDefinitionSHA256,taskInventory.VerifiedCatalogTask.DefinitionSHA256){return denied,errors.New("catalog task differs from original census")}
+ default:return denied,errors.New("catalog task identity or action unverified")
+ }
+ raw,err:=reader(ctx)
+ if err!=nil||len(raw)<2||len(raw)>2*catalogOriginalXMLLimit{return denied,errors.New("local catalog capture unavailable")}
+ dec:=json.NewDecoder(bytes.NewReader(raw));dec.DisallowUnknownFields()
+ var row struct{Present *bool;PayloadBase64 *string}
+ if err:=dec.Decode(&row);err!=nil||row.Present==nil||row.PayloadBase64==nil{return denied,errors.New("catalog capture evidence incomplete")}
+ var trailing any
+ if err:=dec.Decode(&trailing);err!=io.EOF||*row.Present!=expectedPresent{return denied,errors.New("catalog presence changed after original census")}
+ if !expectedPresent{
+  if *row.PayloadBase64!=""{return denied,errors.New("absent catalog supplied unexpected bytes")}
+  if err:=ctx.Err();err!=nil{return denied,err}
+  return originalCatalogDefinition{Present:false},nil
+ }
+ payload,err:=base64.StdEncoding.Strict().DecodeString(*row.PayloadBase64)
+ if err!=nil||len(payload)==0||len(payload)>catalogOriginalXMLLimit{return denied,errors.New("invalid local catalog bytes")}
+ sum:=sha256.Sum256(payload)
+ if !strings.EqualFold(hex.EncodeToString(sum[:]),baseline.CatalogTaskDefinitionSHA256){return denied,errors.New("catalog definition changed since original census")}
+ if err:=ctx.Err();err!=nil{return denied,err}
+ return originalCatalogDefinition{Present:true,XML:payload},nil
+}
+
+// Local catalog definition archive. The bytes are solely for preserving the
+// pre-install state; this module cannot register or start a task. Existing
+// archives are never overwritten. Administrators retain repair access.
+const catalogOriginalArchiveDir="catalog-original-backup-v1"
+const catalogOriginalArchiveFile="original-catalog-definition.json"
+
+func catalogOriginalArchivePaths(parent string)(string,string,error){
+ if !filepath.IsAbs(parent)||filepath.Clean(parent)!=parent||
+  filepath.Base(parent)!="original-protection-recovery"||strings.HasPrefix(parent,`\\`){
+  return "","",errors.New("dedicated local recovery directory required")
+ }
+ dir:=filepath.Join(parent,catalogOriginalArchiveDir)
+ return dir,filepath.Join(dir,catalogOriginalArchiveFile),nil
+}
+
+func storeOriginalCatalogArchiveUnarmed(ctx context.Context,parent string,baseline ProtectionSnapshot,
+ inventory WindowsFreshVOLVETaskInventory,original originalCatalogDefinition,seal,check func(string)error)error{
+ if ctx==nil||seal==nil||check==nil{return errors.New("catalog archive requires context and ACL callbacks")}
+ if err:=ctx.Err();err!=nil{return err}
+ if len(original.XML)>catalogOriginalXMLLimit{return errors.New("catalog definition exceeds size bound")}
+ raw,err:=json.Marshal(struct{Present bool;PayloadBase64 string}{original.Present,base64.StdEncoding.EncodeToString(original.XML)})
+ if err!=nil{return errors.New("catalog archive encoding failed")}
+ if _,err:=captureOriginalCatalogDefinition(ctx,baseline,inventory,func(context.Context)([]byte,error){return raw,nil});err!=nil{return err}
+ dir,file,err:=catalogOriginalArchivePaths(parent);if err!=nil{return err}
+ if err:=verifyOriginalHostsBackupNode(parent,true,check);err!=nil{return err}
+ if err:=os.Mkdir(dir,0700);err!=nil{return errors.New("catalog archive stage must be new")}
+ if err:=seal(dir);err!=nil{return err}
+ if err:=verifyOriginalHostsBackupNode(dir,true,check);err!=nil{return err}
+ if err:=verifyOriginalHostsBackupNode(parent,true,check);err!=nil{return err}
+ if err:=ctx.Err();err!=nil{return err}
+ f,err:=os.OpenFile(file,os.O_CREATE|os.O_EXCL|os.O_WRONLY,0600)
+ if err!=nil{return err}
+ n,writeErr:=f.Write(raw)
+ if writeErr==nil&&n!=len(raw){writeErr=io.ErrShortWrite}
+ if writeErr==nil{writeErr=f.Sync()}
+ closeErr:=f.Close()
+ if writeErr!=nil{return writeErr}
+ if closeErr!=nil{return closeErr}
+ if err:=seal(file);err!=nil{return err}
+ _,err=readOriginalCatalogArchiveUnarmed(ctx,parent,baseline,inventory,check)
+ return err
+}
+
+func readOriginalCatalogArchiveUnarmed(ctx context.Context,parent string,baseline ProtectionSnapshot,
+ inventory WindowsFreshVOLVETaskInventory,check func(string)error)(originalCatalogDefinition,error){
+ var denied originalCatalogDefinition
+ if ctx==nil||check==nil{return denied,errors.New("catalog archive requires context and ACL verifier")}
+ if err:=ctx.Err();err!=nil{return denied,err}
+ dir,file,err:=catalogOriginalArchivePaths(parent);if err!=nil{return denied,err}
+ verify:=func()error{
+  if err:=verifyOriginalHostsBackupNode(parent,true,check);err!=nil{return err}
+  if err:=verifyOriginalHostsBackupNode(dir,true,check);err!=nil{return err}
+  if err:=verifyOriginalHostsBackupNode(file,false,check);err!=nil{return err}
+  nodes,err:=os.ReadDir(dir)
+  if err!=nil{return err}
+  if len(nodes)!=1||nodes[0].Name()!=catalogOriginalArchiveFile{return errors.New("unexpected catalog archive contents")}
+  return nil
+ }
+ if err:=verify();err!=nil{return denied,err}
+ before,err:=os.Lstat(file);if err!=nil{return denied,err}
+ if !before.Mode().IsRegular()||before.Size()<2||before.Size()>2*catalogOriginalXMLLimit{return denied,errors.New("catalog archive size or type invalid")}
+ f,err:=os.Open(file);if err!=nil{return denied,err}
+ opened,err:=f.Stat()
+ if err!=nil||!os.SameFile(before,opened){f.Close();return denied,errors.New("catalog archive replaced before read")}
+ raw,readErr:=io.ReadAll(io.LimitReader(f,2*catalogOriginalXMLLimit+1))
+ end,statErr:=f.Stat()
+ closeErr:=f.Close()
+ if readErr!=nil||statErr!=nil||closeErr!=nil{return denied,errors.New("catalog archive read failed")}
+ after,err:=os.Lstat(file);if err!=nil{return denied,err}
+ if !after.Mode().IsRegular()||!os.SameFile(before,after)||!os.SameFile(opened,end)||
+  before.Size()!=end.Size()||before.Size()!=after.Size()||before.Size()!=int64(len(raw))||
+  !before.ModTime().Equal(end.ModTime())||!before.ModTime().Equal(after.ModTime()){
+  return denied,errors.New("catalog archive changed during read")
+ }
+ if err:=verify();err!=nil{return denied,err}
+ return captureOriginalCatalogDefinition(ctx,baseline,inventory,func(context.Context)([]byte,error){return raw,nil})
+}
+
+// Verifies all four original backup components, within the scope of the
+// existing census. This is strictly a read-only review, NOT proof of full
+// browser coverage, atomicity, restoration, or installation authorization.
+// A separately authenticated transaction controller must establish those
+// prerequisites. No private payload is included in the receipt.
+func verifyOriginalProtectionArchivesUnarmed(ctx context.Context,protectionParent,dnsParent string,
+ baseline ProtectionSnapshot,browser WindowsBrowserPolicyEvidence,inventory WindowsFreshVOLVETaskInventory,
+ dnsJournalPin string,check func(string)error)(originalProtectionPairReceipt,error){
+ var denied originalProtectionPairReceipt
+ if ctx==nil||check==nil{return denied,errors.New("archive review requires context and ACL verifier")}
+ if err:=ctx.Err();err!=nil{return denied,err}
+ receipt,err:=verifyOriginalProtectionTripleUnarmed(ctx,protectionParent,dnsParent,baseline,browser,dnsJournalPin,check)
+ if err!=nil{return denied,err}
+ if _,err:=readOriginalCatalogArchiveUnarmed(ctx,protectionParent,baseline,inventory,check);err!=nil{
+  return denied,errors.New("original catalog archive not verified")
+ }
+ if err:=ctx.Err();err!=nil{return denied,err}
+ receipt.CatalogBackupVerified=true
+ return receipt,nil
+}
+
+// WindowsOriginalBackupReview is a display-only result. It contains no paths,
+// XML, DNS addresses, raw registry values or authorization. A zero-value
+// result is not proof of anything. Administrators retain legitimate access.
+type WindowsOriginalBackupReview struct {
+ Status string `json:"status"`
+ HostsVerified bool `json:"hosts_verified"`
+ BrowserKeysVerified int `json:"browser_keys_verified"`
+ DNSBackupVerified bool `json:"dns_backup_verified"`
+ CatalogBackupVerified bool `json:"catalog_backup_verified"`
+ CompleteRecoverySnapshot bool `json:"complete_recovery_snapshot"`
+ RestoreAuthorized bool `json:"restore_authorized"`
+ InstallAuthorized bool `json:"install_authorized"`
+}
+
+// InspectOriginalBackupArchivesNativeReadOnly reopens existing local archives
+// with native Windows ACL verification. The input pins must come from a
+// separate trusted census; this function does not authenticate that census,
+// assert transaction atomicity or modify any files, ACLs, tasks or DNS.
+func InspectOriginalBackupArchivesNativeReadOnly(ctx context.Context,protectionParent,dnsParent string,
+ baseline ProtectionSnapshot,browser WindowsBrowserPolicyEvidence,inventory WindowsFreshVOLVETaskInventory,
+ dnsJournalPin string)(WindowsOriginalBackupReview,error){
+ denied:=WindowsOriginalBackupReview{Status:"UNVERIFIED"}
+ if ctx==nil{return denied,errors.New("original archive review requires context")}
+ if err:=ctx.Err();err!=nil{return denied,err}
+ receipt,err:=verifyOriginalProtectionArchivesUnarmed(ctx,protectionParent,dnsParent,baseline,browser,inventory,dnsJournalPin,
+  func(path string)error{return nativeDNSOriginalBackupACL(ctx,path)})
+ if err!=nil{return denied,errors.New("local original archive verification failed")}
+ if !receipt.HostsVerified||receipt.BrowserKeysVerified!=3||!receipt.DNSBackupVerified||!receipt.CatalogBackupVerified||
+  receipt.CompleteRecoverySnapshot||receipt.InstallAuthorized||receipt.RestoreAuthorized{
+  return denied,errors.New("inconsistent original archive observation")
+ }
+ return WindowsOriginalBackupReview{Status:"FOUR_ARCHIVES_VERIFIED_READ_ONLY",HostsVerified:true,BrowserKeysVerified:3,
+  DNSBackupVerified:true,CatalogBackupVerified:true},nil
 }

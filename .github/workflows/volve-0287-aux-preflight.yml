@@ -1,0 +1,146 @@
+name: VOLVE 0.28.7 isolated preflight on auxiliary branch (NO VM)
+on:
+  push:
+    branches: [work/0287-quiescence-strict-census-20261124]
+    paths:
+      - '.github/workflows/volve-0287-aux-preflight.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  exact-source-regression:
+    runs-on: windows-2022
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.x'
+          cache: false
+      - name: Reconstruct hash-pinned VOLVE source; never publish a motor
+        shell: bash
+        run: |
+          python - <<'PY'
+          import hashlib, zipfile, shutil
+          from pathlib import Path
+          root=Path("development/0.28.7")
+          parts=sorted((root/"complete-source-parts").glob("part-*.bin"))
+          assert [p.name for p in parts]==[f"part-{i:02d}.bin" for i in range(10)]
+          data=b"".join(p.read_bytes() for p in parts)
+          assert hashlib.sha256(data).hexdigest()=="92b3536559151260375b17a64eedd009df8399e45460637208027b7ca0587ba5"
+          Path("source.zip").write_bytes(data)
+          Path("build").mkdir(exist_ok=True)
+          with zipfile.ZipFile("source.zip") as z:z.extractall("build")
+          for name,sha in [
+            ("VOLVE_0287_PRECHECK_RESCATE_OVERLAY_NO_INSTALAR.zip","fdfd31f21df81fe6da6075bfd442354297874576b6dc2c38f19bd35a681d95cd"),
+            ("VOLVE_0287_RECUPERACION_INTERRUPCION_FORZADA_NO_INSTALAR_v3.zip","773bd5eb5f1c4883021cc321856636354e964d3605dba9017e2fb5d1a7401b40"),
+          ]:
+            p=root/name
+            assert hashlib.sha256(p.read_bytes()).hexdigest()==sha
+            with zipfile.ZipFile(p) as z:z.extractall("build")
+          for p in (root/"journal").glob("*.go"):
+            shutil.copy2(p,Path("build/codigo/motorupdate")/p.name)
+          PY
+          go run development/0.28.7/inapp/apply_overlay.go build/codigo
+      - name: Verify exact activation transaction tests without native mutations
+        shell: powershell
+        working-directory: build/codigo
+        run: |
+          $ErrorActionPreference='Stop'
+          $env:VOLVE_CI_NESTED_GUEST_DNS=''
+          $env:VOLVE_CI_DNS_REBOOT_PHASE=''
+          $required=@('TestProtectedDNSActivationReattestsAfterHealthBeforeCommit','TestProtectedDNSActivationAllFamilyHealthyCommit','TestProtectedDNSActivationCancelledInstallerStillRequestsRescue','TestProtectedDNSActivationIndependentRecoveryMustProveOriginalReadback')
+          $pattern='^TestProtectedDNSActivation'
+          $listed=@(go test ./motorupdate -list $pattern)
+          if($LASTEXITCODE -ne 0){throw 'Activation test census failed'}
+          foreach($name in $required){if($listed -cnotcontains $name){throw ('Missing regression '+$name)}}
+          go test ./motorupdate -run $pattern -count=1 -v -timeout 2m
+          if($LASTEXITCODE -ne 0){throw 'Activation contract regression failed'}
+          go test ./motorupdate -run '^(TestExplicitResidentRecoveryScope|TestScopedResidentPublisherRecoveryBindsExactPendingJournal)$' -count=1 -timeout 2m -v
+          if($LASTEXITCODE -ne 0){throw 'Signed scope regression failed'}
+          go test ./cmd/volve-managed-watchdog -run '^TestMotorOnlyPinnedBoot' -count=1 -timeout 2m -v
+          if($LASTEXITCODE -ne 0){throw 'Motor-only scope regression failed'}
+          Write-Host 'PASS: exact candidate activation and scope transaction tests; NO REAL INSTALL'
+      - name: Compile exact CI-tagged motor for private guest integration
+        shell: powershell
+        working-directory: build/codigo
+        run: |
+          $ErrorActionPreference='Stop'
+          $out=Join-Path $env:RUNNER_TEMP 'VOLVE-CI-ActualMotor.exe'
+          go build -tags volveci -trimpath -o $out .
+          if($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $out -PathType Leaf)){throw 'Exact CI motor compilation failed'}
+          $wire=Join-Path $env:RUNNER_TEMP 'VOLVE-CI-ActualMotorProbe.test.exe'
+          go test -c -tags volveci -trimpath -o $wire .
+          if($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $wire -PathType Leaf)){throw 'Independent raw DNS observer compilation failed'}
+          Write-Host ('PASS: exact independent wire observer compiled SHA256='+((Get-FileHash -LiteralPath $wire -Algorithm SHA256).Hash))
+          $script=Join-Path $env:GITHUB_WORKSPACE 'development\0.28.7\lab\ci_private_motor_integration.ps1'
+          $tokens=$null;$errors=$null
+          $null=[System.Management.Automation.Language.Parser]::ParseFile($script,[ref]$tokens,[ref]$errors)
+          if(@($errors).Count -ne 0){throw ('Integrated motor script syntax failed: '+($errors|Out-String))}
+          Write-Host ('PASS: exact CI-tagged motor compiled SHA256='+((Get-FileHash -LiteralPath $out -Algorithm SHA256).Hash)+'; NO INSTALL')
+      - name: Build one exact private staging EXE with three embedded components
+        shell: powershell
+        working-directory: development/0.28.7/lab/private_installer_capsule
+        run: |
+          $ErrorActionPreference='Stop'
+          go test -count=1 -v stage.go stage_test.go
+          if($LASTEXITCODE -ne 0){throw 'Capsule staging regression failed'}
+          if(Test-Path -LiteralPath payload){throw 'Unexpected pre-existing capsule payload'}
+          New-Item -ItemType Directory -Path payload -ErrorAction Stop|Out-Null
+          Copy-Item -LiteralPath (Join-Path $env:RUNNER_TEMP 'VOLVE-CI-ActualMotor.exe') -Destination payload -ErrorAction Stop
+          Copy-Item -LiteralPath (Join-Path $env:RUNNER_TEMP 'VOLVE-CI-ActualMotorProbe.test.exe') -Destination payload -ErrorAction Stop
+          Copy-Item -LiteralPath (Join-Path $env:GITHUB_WORKSPACE 'development\0.28.7\lab\ci_private_motor_integration.ps1') -Destination payload -ErrorAction Stop
+          $out=Join-Path $env:RUNNER_TEMP 'VOLVE-CI-PrivateSetup-NO-RELEASE.exe'
+          go build -trimpath -o $out main_windows.go stage.go
+          if($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $out -PathType Leaf)){throw 'Single staging EXE compilation failed'}
+          $env:VOLVE_CI_NESTED_GUEST_DNS=''
+          & $out --stage-private-ci ('A'*64) ('B'*64) ('C'*64)
+          if($LASTEXITCODE -eq 0){throw 'Private capsule accepted execution outside private guest'}
+          Write-Host ('PASS: single exact private staging EXE compiled SHA256='+((Get-FileHash -LiteralPath $out -Algorithm SHA256).Hash)+'; NO INSTALL')
+          exit 0
+      - name: Compile and test private DNS peer and parse client probe
+        shell: powershell
+        working-directory: development/0.28.7/lab
+        run: |
+          $ErrorActionPreference='Stop'
+          go test -count=1 -v private_dns_peer/main.go private_dns_peer/main_test.go
+          if($LASTEXITCODE -ne 0){throw 'Private DNS peer regression failed'}
+          $out=Join-Path $env:RUNNER_TEMP 'VOLVE-CI-PrivateDNSPeer.exe'
+          go build -trimpath -o $out private_dns_peer/main.go
+          if($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $out)){throw 'Private DNS peer compile failed'}
+          $tokens=$null;$errors=$null
+          $null=[System.Management.Automation.Language.Parser]::ParseFile((Join-Path (Get-Location) 'private_dns_client_probe.ps1'),[ref]$tokens,[ref]$errors)
+          if(@($errors).Count -ne 0){throw ('Private DNS client probe parse failed: '+($errors|Out-String))}
+          $null=[System.Management.Automation.Language.Parser]::ParseFile((Join-Path (Get-Location) 'private_dns_peer_vm.ps1'),[ref]$tokens,[ref]$errors)
+          if(@($errors).Count -ne 0){throw ('Private DNS VM helper parse failed: '+($errors|Out-String))}
+          Write-Host ('PASS: private DNS peer compiled SHA256='+((Get-FileHash -LiteralPath $out -Algorithm SHA256).Hash)+'; CLIENT PARSED ONLY; NO NETWORK PROOF')
+      - name: Parse exact candidate guest orchestration without executing it
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $path=Join-Path $env:GITHUB_WORKSPACE '.github\workflows\volve-0287-pr-system-watchdog-e2e.yml'
+          $lines=[IO.File]::ReadAllLines($path)
+          $step=@(for($i=0;$i -lt $lines.Length;$i++){if($lines[$i] -ceq '      - name: Boot official evaluation guest and execute selected isolated trial'){$i}})
+          if($step.Count -ne 1){throw 'Expected one guest orchestration step'}
+          $start=-1
+          for($i=$step[0]+1;$i -lt $lines.Length;$i++){
+            if($lines[$i] -ceq '        run: |'){$start=$i+1;break}
+            if($lines[$i] -match '^      - '){break}
+          }
+          if($start -lt 0){throw 'Guest script block not found'}
+          $body=@(for($i=$start;$i -lt $lines.Length;$i++){
+            if($lines[$i] -match '^      - '){break}
+            if([string]::IsNullOrWhiteSpace($lines[$i])){'';continue}
+            if(-not $lines[$i].StartsWith('          ')){throw 'Unexpected guest script indentation'}
+            $lines[$i].Substring(10)
+          })
+          $source=$body -join [Environment]::NewLine
+          $tokens=$null
+          $errors=$null
+          $ast=[System.Management.Automation.Language.Parser]::ParseInput($source,[ref]$tokens,[ref]$errors)
+          if(@($errors).Count -ne 0){throw ('Guest PowerShell syntax rejected: '+(($errors|ForEach-Object Message)-join '; '))}
+          if($null -eq $ast -or $body.Count -lt 100){throw 'Guest script AST absent or unexpectedly short'}
+          Write-Host ('PASS VOLVE_GUEST_ORCHESTRATION_NATIVE_PARSE lines='+$body.Count+'; NO EXECUTION')

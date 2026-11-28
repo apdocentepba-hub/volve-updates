@@ -1,17 +1,25 @@
-name: VOLVE 0.28.7 PR signed migration + actual SYSTEM watchdog E2E (NO RELEASE)
+name: VOLVE 0.28.7 signed migration + isolated guest recovery labs (NO RELEASE)
 on:
   pull_request:
-    branches: [feature/motor-updater-0287-pilot]
+    branches: [feature/motor-updater-0287-pilot, work/0287-dns-cname-chain-guard-20261113]
     paths:
       - '.github/workflows/volve-0287-pr-system-watchdog-e2e.yml'
-      - 'development/0.28.7/inapp/signed_legacy_windows_task_lab_test.go'
+      - 'development/0.28.7/inapp/**'
+      - 'development/0.28.7/lab/**'
+      - 'development/0.28.7/journal/**'
+  push:
+    branches: [work/0287-installer-progress-20261124]
+    paths:
+      - 'development/0.28.7/lab/ci_private_motor_integration.ps1'
+      - 'development/0.28.7/inapp/ci_fresh_dns53_windows_test.go'
   workflow_dispatch:
 permissions:
   contents: read
 jobs:
   signed-legacy-and-system-watchdog:
+    if: github.event_name != 'push'
     runs-on: windows-latest
-    timeout-minutes: 20
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -27,6 +35,21 @@ jobs:
           foreach($task in @('VOLVE-DNS-SERVER-0270','VOLVE-DNS-RESCUE-0270')){
             if(Get-ScheduledTask -TaskName $task -ErrorAction SilentlyContinue){throw 'Production VOLVE task present; refuse test'}
           }
+      - name: Record nested Windows VM prerequisites without changing the runner
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $hyperV = Get-WindowsOptionalFeature -Online -FeatureName Microsoft-Hyper-V -ErrorAction SilentlyContinue
+          $processors = @(Get-CimInstance Win32_Processor)
+          $report = [ordered]@{
+            hyperv_enabled = ($hyperV.State -eq 'Enabled')
+            new_vm_available = [bool](Get-Command New-VM -ErrorAction SilentlyContinue)
+            firmware_virtualization_reported = ($processors.VirtualizationFirmwareEnabled -contains $true)
+            virtualization_extensions_reported = ($processors.VMMonitorModeExtensions -contains $true)
+          }
+          $json = ConvertTo-Json -InputObject $report -Compress
+          Write-Host "VOLVE_NESTED_VM_PREREQUISITES=$json"
+          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value $json
       - name: Reconstruct SHA-256 pinned VOLVE base and reviewed 0.28.7 source
         shell: bash
         run: |
@@ -53,7 +76,7 @@ jobs:
           print('Authenticated source assembled; no real installation touched.')
           PY
           go run development/0.28.7/inapp/apply_overlay.go build/codigo
-      - name: Execute signed Windows CI task switch with actual independent SYSTEM watchdog
+      - name: Execute signed CI task switch with independent SYSTEM watchdog (boot metadata only; NO REAL REBOOT)
         shell: pwsh
         working-directory: build/codigo
         run: |
@@ -66,7 +89,50 @@ jobs:
           if($LASTEXITCODE -ne 0){throw 'Durable grant failed persisted file/fresh process negative tests'}
           go test ./motorupdate -run '^(TestSignedPublisherBootRecovery|TestPublisherBoundProtectedBoot)' -count=1 -timeout 2m -v
           if($LASTEXITCODE -ne 0){throw 'Signed publisher grant and resident journal binding failed'}
-          go test ./motorupdate -run '^(TestProtectedSignedSwitchAndBootRecoveryShareProductionMutex|TestProtectedAdaptersFailClosedWithoutTrustedOperations|TestProtectedSignedRollbackHandsOffThenReacquiresBeforeHealth|TestProtectedSignedDriverRejectsHandoffMissing)$' -count=1 -timeout 3m -v
+          # Compile and explicitly execute the new policy and protected
+          # adapter tests. A broad go test filter that matches zero tests
+          # is not sufficient evidence.
+          $required=@(
+            'TestDNSAwareBootRecoveryChecksOriginalEvenWhenMotorAlreadyRunning',
+            'TestDNSAwareBootRecoveryNeverFinalizesOnWrongOriginalDNS',
+            'TestDNSAwareBootRecoveryRequiresExplicitDriverAndContext',
+            'TestDNSAwareBootRecoveryRejectsMotorOnlyDispatch',
+            'TestDurableDNSAwareBootDriverRejectsUnleasedAndUnfencedWrites',
+            'TestDurableDNSAwareBootDriverRejectsTamperedBindingBeforeMotorOperations',
+            'TestDurableDNSAwareBootDriverRechecksSystemAndRefusesMissingFence'
+          )
+          $regex='^('+($required -join '|')+')$'
+          $census=@(go test ./motorupdate -list $regex)
+          if($LASTEXITCODE -ne 0){throw 'DNS recovery adapter test census failed'}
+          foreach($testName in $required){
+            if($census -cnotcontains $testName){throw ('Required DNS recovery test missing: '+$testName)}
+          }
+          # Each case owns a separate bounded process. The real NTFS/SYSTEM
+          # evidence checks took 266s + 87s on a slow hosted runner; a single
+          # six-minute suite deadline interrupted the final case.
+          foreach($testName in $required){
+            $started=[datetime]::UtcNow
+            go test ./motorupdate -run ('^'+$testName+'$') -count=1 -timeout 8m -v
+            $elapsed=[math]::Round(([datetime]::UtcNow-$started).TotalSeconds,1)
+            Write-Host ('VOLVE_REQUIRED_TEST_DURATION_SECONDS='+$testName+':'+$elapsed)
+            if($LASTEXITCODE -ne 0){throw ('DNS-aware boot regression failed: '+$testName)}
+          }
+          Write-Host 'PASS: six named DNS-aware boot policy/NTFS/kernel lease tests; simulated DNS writer, no reboot proof.'
+          $fenceTests=@('TestResidentQuiescenceRequiresCompleteUnambiguousOSCensus','TestResidentQuiescenceCountsNamedMotorEvenWhenPathIsUnavailable','TestSignedOriginalSYSTEMStartRequiresSignedPendingTaskAndNeverCommits','TestPinnedBootHealthQueriesLiveTaskProcessAndBothDNS53Owners','TestMotorOnlyPinnedBootRefusesCompleteOrPartialDNSEvidence','TestMotorOnlyPinnedBootRechecksEvidenceAfterDelegation','TestMotorOnlyPinnedBootFailsClosedOnMissingAncestryOrContext')
+          $fenceRegex='^('+($fenceTests -join '|')+')$'
+          $fenceCensus=@(go test ./cmd/volve-managed-watchdog -list $fenceRegex)
+          if($LASTEXITCODE -ne 0){throw 'Watchdog fence test census failed'}
+          foreach($testName in $fenceTests){if($fenceCensus -cnotcontains $testName){throw ('Required fence regression missing: '+$testName)}}
+          foreach($testName in $fenceTests){
+            go test ./cmd/volve-managed-watchdog -run ('^'+$testName+'$') -count=1 -timeout 4m -v
+            if($LASTEXITCODE -ne 0){throw ('Strict process census/health regression failed: '+$testName)}
+          }
+          $cancelledUpdaterTest='TestProtectedSignedCancelledUpdaterStillReacquiresBeforeHealth'
+          $mutexCensus=@(go test ./motorupdate -list ('^'+$cancelledUpdaterTest+'$'))
+          if($LASTEXITCODE -ne 0 -or -not ($mutexCensus -ccontains $cancelledUpdaterTest)){
+            throw 'CRITICAL: cancelled updater mutex regression missing from reconstructed motorupdate'
+          }
+          go test ./motorupdate -run '^(TestProtectedSignedSwitchAndBootRecoveryShareProductionMutex|TestProtectedAdaptersFailClosedWithoutTrustedOperations|TestProtectedSignedRollbackHandsOffThenReacquiresBeforeHealth|TestProtectedSignedCancelledUpdaterStillReacquiresBeforeHealth|TestProtectedSignedDriverRejectsHandoffMissing)$' -count=1 -timeout 3m -v
           if($LASTEXITCODE -ne 0){throw 'Production switch and boot recovery did not share protected mutex'}
           go test ./cmd/volve-managed-watchdog -run '^(TestIndependentWatchdogUsesMigrationBootLockEvenForTerminalJournal|TestProtectedResidentBootPolicyUsesProductionMutexBeforeReadingJournal|TestProtectedBootPlanAuditWaitsForProductionUpdateMutex|TestIndependentBootAuditAcrossFreshProcesses|TestDurableWindowsGrant)' -count=1 -timeout 6m -v
           if($LASTEXITCODE -ne 0){throw 'Watchdog did not respect migration-held BootLock'}
@@ -77,3 +143,1557 @@ jobs:
           go test . -run '^TestWindowsSignedUnversionedMigrationWithActualSYSTEMRecovery$' -count=1 -timeout 9m -v
           if($LASTEXITCODE -ne 0){throw 'Signed disposable SYSTEM transaction and watchdog rollback failed'}
           Write-Host 'PASS: disposable signed migration and independent real SYSTEM watchdog rollback; no installed VOLVE motor touched.'
+
+  nested-hyperv-start-probe:
+    name: Nested Hyper-V Start-VM probe (empty disk, no network, NO GUEST OS)
+    runs-on: windows-latest
+    timeout-minutes: 6
+    steps:
+      - name: Attempt real Start-VM and record exact outcome
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if($env:GITHUB_ACTIONS -ne 'true' -or $env:RUNNER_ENVIRONMENT -ne 'github-hosted'){throw 'Hosted CI only'}
+          $hostVM = Get-CimInstance Win32_ComputerSystem
+          if(($hostVM.Manufacturer+' '+$hostVM.Model) -notmatch '(?i:virtual machine|vmware|hyper-v|kvm|qemu|virtualbox)'){throw 'Not a disposable VM'}
+          $name = 'VOLVE-CI-NESTED-'+[guid]::NewGuid().ToString('N')
+          $dir = Join-Path $env:RUNNER_TEMP $name
+          $disk = Join-Path $dir 'empty.vhdx'
+          $vm = $null
+          $report = [ordered]@{
+            runner_commit = $env:GITHUB_SHA
+            phase = 'prerequisites'
+            start_vm_attempted = $false
+            start_vm_returned = $false
+            state_after_start = $null
+            network_adapters = $null
+            guest_os_installed = $false
+            guest_boot_verified = $false
+            disk_persistence_verified = $false
+            error_message = $null
+            error_type = $null
+            error_id = $null
+            hresult = $null
+            cleanup_ok = $false
+          }
+          try {
+            Import-Module Hyper-V -ErrorAction Stop
+            $report.phase = 'create_empty_disk_and_vm'
+            New-Item -ItemType Directory -Path $dir -ErrorAction Stop | Out-Null
+            $vm = New-VM -Name $name -Generation 2 -MemoryStartupBytes 1GB -NewVHDPath $disk -NewVHDSizeBytes 2GB -Path $dir -ErrorAction Stop
+            $vm | Set-VMProcessor -Count 1 -ErrorAction Stop
+            $vm | Get-VMNetworkAdapter | Remove-VMNetworkAdapter -Confirm:$false -ErrorAction Stop
+            $report.network_adapters = @($vm | Get-VMNetworkAdapter).Count
+            if($report.network_adapters -ne 0){throw 'Network isolation failed'}
+            $report.phase = 'start_vm'
+            $report.start_vm_attempted = $true
+            Start-VM -VM $vm -ErrorAction Stop
+            $report.start_vm_returned = $true
+            Start-Sleep -Seconds 3
+            $report.state_after_start = (Get-VM -Id $vm.Id -ErrorAction Stop).State.ToString()
+            if($report.state_after_start -ne 'Running'){throw 'Start-VM returned but VM is not Running'}
+            $report.phase = 'hypervisor_start_confirmed_only'
+          } catch {
+            $report.error_message = $_.Exception.Message
+            $report.error_type = $_.Exception.GetType().FullName
+            $report.error_id = $_.FullyQualifiedErrorId
+            $report.hresult = ('0x{0:X8}' -f $_.Exception.HResult)
+          } finally {
+            try {
+              if($null -ne $vm){
+                $owned = Get-VM -Id $vm.Id -ErrorAction Stop
+                if($owned.Name -cne $name){throw 'Unexpected VM identity'}
+                if($owned.State -ne 'Off'){Stop-VM -VM $owned -TurnOff -Force -ErrorAction Stop}
+                Remove-VM -VM $owned -Force -ErrorAction Stop
+              }
+              if(Test-Path -LiteralPath $dir){Remove-Item -LiteralPath $dir -Recurse -Force -ErrorAction Stop}
+              $report.cleanup_ok = $true
+            } catch {
+              $report.cleanup_error = $_.Exception.Message
+            }
+            $json = ConvertTo-Json -InputObject $report -Compress -Depth 4
+            Write-Host "VOLVE_NESTED_VM_RESULT=$json"
+            Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value $json
+          }
+          if(-not $report.cleanup_ok){throw 'Nested VM cleanup failed; see recorded result'}
+          if($report.error_message){throw ('Nested VM probe failed in '+$report.phase+': '+$report.error_message)}
+          Write-Host 'PASS: Hyper-V started an empty isolated VM; NO guest OS boot or VOLVE installation proven.'
+
+  nested-windows-guest-reboot:
+    name: Windows guest ${{ matrix.trial }} (NO VOLVE INSTALL)
+    needs: nested-hyperv-start-probe
+    runs-on: windows-latest
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        trial: ${{ fromJSON(github.event_name == 'push' && '["native-dns"]' || '["strict-reboot","native-dns"]') }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.x'
+      - name: Reconstruct hash-pinned VOLVE source; never publish a motor
+        shell: bash
+        run: |
+          python - <<'PY'
+          import hashlib, zipfile, shutil
+          from pathlib import Path
+          root=Path("development/0.28.7")
+          parts=sorted((root/"complete-source-parts").glob("part-*.bin"))
+          assert [p.name for p in parts]==[f"part-{i:02d}.bin" for i in range(10)]
+          data=b"".join(p.read_bytes() for p in parts)
+          assert hashlib.sha256(data).hexdigest()=="92b3536559151260375b17a64eedd009df8399e45460637208027b7ca0587ba5"
+          Path("source.zip").write_bytes(data)
+          Path("build").mkdir(exist_ok=True)
+          with zipfile.ZipFile("source.zip") as z:z.extractall("build")
+          for name,sha in [
+            ("VOLVE_0287_PRECHECK_RESCATE_OVERLAY_NO_INSTALAR.zip","fdfd31f21df81fe6da6075bfd442354297874576b6dc2c38f19bd35a681d95cd"),
+            ("VOLVE_0287_RECUPERACION_INTERRUPCION_FORZADA_NO_INSTALAR_v3.zip","773bd5eb5f1c4883021cc321856636354e964d3605dba9017e2fb5d1a7401b40"),
+          ]:
+            p=root/name
+            assert hashlib.sha256(p.read_bytes()).hexdigest()==sha
+            with zipfile.ZipFile(p) as z:z.extractall("build")
+          for p in (root/"journal").glob("*.go"):
+            shutil.copy2(p,Path("build/codigo/motorupdate")/p.name)
+          PY
+          go run development/0.28.7/inapp/apply_overlay.go build/codigo
+      - name: Build standalone VM-only journal helper
+        if: matrix.trial == 'strict-reboot'
+        shell: powershell
+        working-directory: build/codigo
+        run: |
+          $ErrorActionPreference='Stop'
+          $out=Join-Path $env:RUNNER_TEMP 'volve-journal-lab.exe'
+          & go build -trimpath -o $out ./cmd/volve-journal-lab
+          if($LASTEXITCODE -ne 0){throw 'Could not compile the lab journal helper'}
+          if((Get-Item -LiteralPath $out).Length -lt 1048576){throw 'Unexpectedly short lab helper'}
+          Write-Host 'PASS: compiled lab journal helper; not a product executable'
+      - name: Compile exact candidate motorupdate test binary for private guest
+        if: matrix.trial == 'native-dns'
+        shell: powershell
+        working-directory: build/codigo
+        run: |
+          $ErrorActionPreference='Stop'
+          # Explicit census: the fast migration workflow does not run these
+          # Windows-only decoder tests. Do not credit a zero-match Go filter.
+          $dnsTests=@('TestWindowsDNSAssignmentProvenanceSeparatesStaticAndAutomatic','TestWindowsDNSAssignmentProvenanceRejectsUnknownOrConflictingSource','TestWindowsDNSAssignmentProvenanceRejectsDuplicateOrIncompleteFamilies','TestWindowsDNSAssignmentFingerprintIgnoresAutomaticLeaseAddressButPreservesStaticOrder','TestWindowsDNSAssignmentProvenanceRejectsCancellationAndMutableQueries','TestWindowsDNSAssignmentProvenanceRejectsMissingNullAndAliasedEvidence','TestWindowsDNSUnmappedLoopbackPlaceholderGuard','TestSignedWindowsDNSBootCensusConsolidatesWithoutLosingDriftChecks')
+          $dnsRegex='^('+($dnsTests -join '|')+')$'
+          $dnsListed=@(go test ./motorupdate -list $dnsRegex)
+          if($LASTEXITCODE -ne 0){throw 'DNS provenance test census failed'}
+          foreach($testName in $dnsTests){if($dnsListed -cnotcontains $testName){throw ('Required DNS provenance test missing: '+$testName)}}
+          go test ./motorupdate -run $dnsRegex -count=1 -timeout 2m -v
+          if($LASTEXITCODE -ne 0){throw 'DNS provenance regression failed; refuse guest trial'}
+          # Both restoration implementations must execute their in-memory
+          # regressions before the VM starts. A compiled or skipped test
+          # alone cannot count as evidence of restored DNS.
+          $restoreTests=@('TestVOLVEDNSRollbackRejectsLaterFamilyDrift','TestVOLVEDNSRollbackRejectsMissingContext','TestNativeDNSRecoveryRestoresStaticIPv4AndAutomaticIPv6ThroughPinnedWriter','TestNativeDNSRecoveryResumesAfterAutomaticDriverFailedPostMutation','TestNativeDNSRecoveryBatchRejectsDriftAfterLaterFamilyWrite')
+          $restoreRegex='^('+($restoreTests -join '|')+')$'
+          $restoreListed=@(go test ./motorupdate -list $restoreRegex)
+          if($LASTEXITCODE -ne 0){throw 'DNS restoration test census failed'}
+          foreach($required in $restoreTests){if($restoreListed -cnotcontains $required){throw ('Required DNS restoration test missing: '+$required)}}
+          $restoreEvents=@(go test ./motorupdate -run $restoreRegex -count=1 -timeout 2m -json)
+          if($LASTEXITCODE -ne 0){$restoreEvents | Write-Host;throw 'DNS restoration regression failed; refuse guest trial'}
+          $restorePassed=@(foreach($line in $restoreEvents){
+            $event=ConvertFrom-Json -InputObject $line
+            if($event.Action -ceq 'pass' -and $event.PSObject.Properties['Test']){[string]$event.Test}
+          })
+          foreach($required in $restoreTests){if(@($restorePassed | Where-Object {$_ -ceq $required}).Count -ne 1){throw ('DNS restoration test did not execute and pass exactly once: '+$required)}}
+          Write-Host ('PASS: '+$restoreTests.Count+' required in-memory DNS restoration regressions; NO NATIVE DNS WRITES')
+          $name='TestNestedGuestDNSIsolationScriptParsesWithoutExecution'
+          $listed=@(go test ./motorupdate -list ('^'+$name+'$'))
+          if($LASTEXITCODE -ne 0 -or $listed -cnotcontains $name){throw 'Mandatory guest PowerShell syntax test is missing'}
+          go test ./motorupdate -run ('^'+$name+'$') -count=1 -timeout 1m -v
+          if($LASTEXITCODE -ne 0){throw 'Guest isolation guard failed native PowerShell parse; refuse expensive VM trial'}
+          # Verify both reboot phases exist in the compiled source before a
+          # lengthy nested guest trial. They MUST remain inactive on the host.
+          foreach($phaseTest in @('TestNestedGuestDNSRebootArmSYSTEM','TestNestedGuestDNSRebootRecoverSYSTEM','TestNestedGuestDNSRebootVerifyReadOnly')){
+            $listed=@(go test ./motorupdate -list ('^'+$phaseTest+'$'))
+            if($LASTEXITCODE -ne 0 -or $listed -cnotcontains $phaseTest){throw ('Missing mandatory reboot phase: '+$phaseTest)}
+          }
+          # Require the new late-watchdog regression before the guest trial.
+          $activationRegex='^TestProtectedDNSActivation'
+          $listed=@(go test ./motorupdate -list $activationRegex)
+          if($LASTEXITCODE -ne 0 -or $listed -cnotcontains 'TestProtectedDNSActivationReattestsAfterHealthBeforeCommit'){throw 'Mandatory final activation regression missing'}
+          go test ./motorupdate -run $activationRegex -count=1 -timeout 2m -v
+          if($LASTEXITCODE -ne 0){throw 'Activation transaction regression failed'}
+          $scopeRegex='^(TestExplicitResidentRecoveryScope|TestScopedResidentPublisherRecoveryBindsExactPendingJournal|TestProtectedDNSActivationRescueBudgetSurvivesCancelledInstaller)$'
+          $listed=@(go test ./motorupdate -list $scopeRegex)
+          if($LASTEXITCODE -ne 0){throw 'Scoped recovery test census failed'}
+          foreach($required in @('TestExplicitResidentRecoveryScope','TestScopedResidentPublisherRecoveryBindsExactPendingJournal','TestProtectedDNSActivationRescueBudgetSurvivesCancelledInstaller')){
+            if($listed -cnotcontains $required){throw ('Missing mandatory scope test '+$required)}
+          }
+          go test ./motorupdate -run $scopeRegex -count=1 -timeout 2m -v
+          if($LASTEXITCODE -ne 0){throw 'Scoped recovery regression failed'}
+          $watchdogRegex='^TestMotorOnlyPinnedBoot'
+          $listed=@(go test ./cmd/volve-managed-watchdog -list $watchdogRegex)
+          if($LASTEXITCODE -ne 0 -or $listed -cnotcontains 'TestMotorOnlyPinnedBootRejectsUnprovenScopeEvenWithNoDNSArtifacts'){throw 'Missing watchdog scope negative test'}
+          go test ./cmd/volve-managed-watchdog -run $watchdogRegex -count=1 -timeout 2m -v
+          if($LASTEXITCODE -ne 0){throw 'Motor-only signed scope regression failed'}
+          $out=Join-Path $env:RUNNER_TEMP 'VOLVE-CI-GuestDNS.test.exe'
+          & go test -c -trimpath -o $out ./motorupdate
+          if($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $out)){throw 'Could not compile exact motorupdate tests'}
+          Write-Host 'PASS: candidate motorupdate test executable compiled; NO PRODUCT INSTALL'
+      - name: Compile exact CI-tagged motor for private guest integration
+        if: matrix.trial == 'native-dns'
+        shell: powershell
+        working-directory: build/codigo
+        run: |
+          $ErrorActionPreference='Stop'
+          $out=Join-Path $env:RUNNER_TEMP 'VOLVE-CI-ActualMotor.exe'
+          go build -tags volveci -trimpath -o $out .
+          if($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $out -PathType Leaf)){throw 'Exact CI motor compilation failed'}
+          $wire=Join-Path $env:RUNNER_TEMP 'VOLVE-CI-ActualMotorProbe.test.exe'
+          go test -c -tags volveci -trimpath -o $wire .
+          if($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $wire -PathType Leaf)){throw 'Independent raw DNS observer compilation failed'}
+          Write-Host ('PASS: exact independent wire observer compiled SHA256='+((Get-FileHash -LiteralPath $wire -Algorithm SHA256).Hash))
+          $script=Join-Path $env:GITHUB_WORKSPACE 'development\0.28.7\lab\ci_private_motor_integration.ps1'
+          $tokens=$null;$errors=$null
+          $null=[System.Management.Automation.Language.Parser]::ParseFile($script,[ref]$tokens,[ref]$errors)
+          if(@($errors).Count -ne 0){throw ('Integrated motor script syntax failed: '+($errors|Out-String))}
+          Write-Host ('PASS: exact CI-tagged motor compiled SHA256='+((Get-FileHash -LiteralPath $out -Algorithm SHA256).Hash)+'; NO INSTALL')
+      - name: Build one exact private staging EXE with three embedded components
+        if: matrix.trial == 'native-dns'
+        shell: powershell
+        working-directory: development/0.28.7/lab/private_installer_capsule
+        run: |
+          $ErrorActionPreference='Stop'
+          go test -count=1 -v stage.go stage_test.go
+          if($LASTEXITCODE -ne 0){throw 'Capsule staging regression failed'}
+          if(Test-Path -LiteralPath payload){throw 'Unexpected pre-existing capsule payload'}
+          New-Item -ItemType Directory -Path payload -ErrorAction Stop|Out-Null
+          Copy-Item -LiteralPath (Join-Path $env:RUNNER_TEMP 'VOLVE-CI-ActualMotor.exe') -Destination payload -ErrorAction Stop
+          Copy-Item -LiteralPath (Join-Path $env:RUNNER_TEMP 'VOLVE-CI-ActualMotorProbe.test.exe') -Destination payload -ErrorAction Stop
+          Copy-Item -LiteralPath (Join-Path $env:GITHUB_WORKSPACE 'development\0.28.7\lab\ci_private_motor_integration.ps1') -Destination payload -ErrorAction Stop
+          $out=Join-Path $env:RUNNER_TEMP 'VOLVE-CI-PrivateSetup-NO-RELEASE.exe'
+          go build -trimpath -o $out main_windows.go stage.go
+          if($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $out -PathType Leaf)){throw 'Single staging EXE compilation failed'}
+          $unexpected=Join-Path $env:RUNNER_TEMP 'VOLVE-CI-Capsule-Refusal'
+          $env:VOLVE_CI_NESTED_GUEST_DNS=''
+          & $out --stage-private-ci ('A'*64) ('B'*64) ('C'*64)
+          if($LASTEXITCODE -eq 0){throw 'Private capsule accepted execution outside private guest'}
+          Write-Host ('PASS: single exact private staging EXE compiled SHA256='+((Get-FileHash -LiteralPath $out -Algorithm SHA256).Hash)+'; NO INSTALL')
+          exit 0
+      - name: Compile and test private DNS peer and parse client probe
+        if: matrix.trial == 'native-dns'
+        shell: powershell
+        working-directory: development/0.28.7/lab
+        run: |
+          $ErrorActionPreference='Stop'
+          go test -count=1 -v private_dns_peer/main.go private_dns_peer/main_test.go
+          if($LASTEXITCODE -ne 0){throw 'Private DNS peer regression failed'}
+          $out=Join-Path $env:RUNNER_TEMP 'VOLVE-CI-PrivateDNSPeer.exe'
+          go build -trimpath -o $out private_dns_peer/main.go
+          if($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $out)){throw 'Private DNS peer compile failed'}
+          $tokens=$null;$errors=$null
+          $null=[System.Management.Automation.Language.Parser]::ParseFile((Join-Path (Get-Location) 'private_dns_client_probe.ps1'),[ref]$tokens,[ref]$errors)
+          if(@($errors).Count -ne 0){throw ('Private DNS client probe parse failed: '+($errors|Out-String))}
+          $null=[System.Management.Automation.Language.Parser]::ParseFile((Join-Path (Get-Location) 'private_dns_peer_vm.ps1'),[ref]$tokens,[ref]$errors)
+          if(@($errors).Count -ne 0){throw ('Private DNS VM helper parse failed: '+($errors|Out-String))}
+          Write-Host ('PASS: private DNS peer compiled SHA256='+((Get-FileHash -LiteralPath $out -Algorithm SHA256).Hash)+'; CLIENT PARSED ONLY; NO NETWORK PROOF')
+      - name: Parse exact candidate guest orchestration without executing it
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $path=Join-Path $env:GITHUB_WORKSPACE '.github\workflows\volve-0287-pr-system-watchdog-e2e.yml'
+          $lines=[IO.File]::ReadAllLines($path)
+          $step=@(for($i=0;$i -lt $lines.Length;$i++){if($lines[$i] -ceq '      - name: Boot official evaluation guest and execute selected isolated trial'){$i}})
+          if($step.Count -ne 1){throw 'Expected one guest orchestration step'}
+          $start=-1
+          for($i=$step[0]+1;$i -lt $lines.Length;$i++){
+            if($lines[$i] -ceq '        run: |'){$start=$i+1;break}
+            if($lines[$i] -match '^      - '){break}
+          }
+          if($start -lt 0){throw 'Guest script block not found'}
+          $body=@(for($i=$start;$i -lt $lines.Length;$i++){
+            if($lines[$i] -match '^      - '){break}
+            if([string]::IsNullOrWhiteSpace($lines[$i])){'';continue}
+            if(-not $lines[$i].StartsWith('          ')){throw 'Unexpected guest script indentation'}
+            $lines[$i].Substring(10)
+          })
+          $source=$body -join [Environment]::NewLine
+          $tokens=$null
+          $errors=$null
+          $ast=[System.Management.Automation.Language.Parser]::ParseInput($source,[ref]$tokens,[ref]$errors)
+          if(@($errors).Count -ne 0){throw ('Guest PowerShell syntax rejected: '+(($errors|ForEach-Object Message)-join '; '))}
+          if($null -eq $ast -or $body.Count -lt 100){throw 'Guest script AST absent or unexpectedly short'}
+          Write-Host ('PASS VOLVE_GUEST_ORCHESTRATION_NATIVE_PARSE lines='+$body.Count+'; NO EXECUTION')
+      - name: Boot official evaluation guest and execute selected isolated trial
+        shell: powershell
+        env:
+          CANDIDATE_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+          VOLVE_GUEST_TRIAL: ${{ matrix.trial }}
+        run: |
+          $ErrorActionPreference='Stop'
+          if($env:GITHUB_ACTIONS -ne 'true' -or $env:RUNNER_ENVIRONMENT -ne 'github-hosted'){throw 'Hosted CI only'}
+          $hostVM=Get-CimInstance Win32_ComputerSystem
+          if(($hostVM.Manufacturer+' '+$hostVM.Model) -notmatch '(?i:virtual machine|vmware|hyper-v|kvm|qemu|virtualbox)'){throw 'Not a disposable VM'}
+          if($env:VOLVE_GUEST_TRIAL -cnotin @('strict-reboot','native-dns')){throw 'Unknown lab trial'}
+          Import-Module Hyper-V -ErrorAction Stop
+          $name='VOLVE-CI-WINGUEST-'+[guid]::NewGuid().ToString('N')
+          $dir=Join-Path $env:RUNNER_TEMP $name
+          $vhd=Join-Path $dir 'evaluation.vhd'
+          $vm=$null
+          $privateSwitch=$null
+          $peerVM=$null
+          $peerSession=$null
+          $mounted=$false
+          $session=$null
+          $report=[ordered]@{
+            candidate_head=$env:CANDIDATE_HEAD
+            trial=$env:VOLVE_GUEST_TRIAL
+            environment_drift=$null
+            clean_boot_control=$null
+            clean_task_audit=@()
+            clean_audit_cursor=$null
+            recovery_audit_cursor=$null
+            recovery_task_audit=@()
+            task_audit_error=$null
+            runner_commit=$env:GITHUB_SHA
+            source='Microsoft Windows Server 2022 evaluation center VHD'
+            stage='download'
+            downloaded_sha256=$null
+            downloaded_bytes=$null
+            generation=$null
+            guest_boot_verified=$false
+            guest_os=$null
+            guest_boot_before=$null
+            guest_boot_after=$null
+            guest_poweroff_observed=$false
+            disk_persistence_verified=$false
+            recovery_kit_prepared=$false
+            recovery_kit_audit_passed=$false
+            recovery_kit_verified=$false
+            recovery_kit_cleanup_verified=$false
+            recovery_proof_sha256=$null
+            private_guest_dns_verified=$false
+            private_peer_topology_verified=$false
+            private_peer_identity=$null
+            private_actual_motor_integration=$null
+            private_setup_capsule=$null
+            private_peer_challenges=@()
+            private_network_connectivity_verified=$false
+            private_guest_dns_test_exit=$null
+            dns_test_exe_sha256=$null
+            dns_reboot_verified=$false
+            dns_reboot_arm_verified=$false
+            dns_reboot_independent_readback=$false
+            dns_reboot_original_sha256=$null
+            dns_reboot_event_chain=$null
+            network_connectivity_verified=$false
+            network_adapters=$null
+            scheduler_preflight=$null
+            guest_readiness=$null
+            guest_setup_ready=$false
+            guest_clock_skew_seconds=$null
+            guest_clock_stability=$null
+            scheduler_probe_attempts=@()
+            private_guest_dns_scheduler=$null
+            private_guest_dns_inventory=$null
+            cleanup_ok=$false
+            error_message=$null
+          }
+          function Connect-Guest([guid]$id,[pscredential]$credential,[int]$seconds){
+            $until=[datetime]::UtcNow.AddSeconds($seconds)
+            do {
+              try {return New-PSSession -VMId $id -Credential $credential -ErrorAction Stop}
+              catch {Start-Sleep -Seconds 10}
+            } while([datetime]::UtcNow -lt $until)
+            throw 'PowerShell Direct did not become available before deadline'
+          }
+          try{
+            New-Item -ItemType Directory -Path $dir -ErrorAction Stop | Out-Null
+            $drive=[IO.DriveInfo]::new([IO.Path]::GetPathRoot($dir))
+            $budget=[int64]($drive.AvailableFreeSpace-6GB)
+            $expectedImageBytes=[int64]10208214528
+            if($budget -lt $expectedImageBytes){throw 'Insufficient disk space for exact official VHD plus safety margin'}
+            # Official Microsoft Evaluation Center direct download; never uploaded or redistributed.
+            # At most two complete attempts for transient transport failures. A retry
+            # starts from byte zero; no partial image is mounted or trusted.
+            $downloadExit=-1
+            for($attempt=1;$attempt -le 2;$attempt++){
+              if(Test-Path -LiteralPath $vhd){throw 'Unexpected existing download destination'}
+              Write-Host ('Official VHD download attempt '+$attempt+' of 2')
+              & curl.exe --fail --location --proto '=https' --proto-redir '=https' --connect-timeout 30 --max-time 1200 --max-filesize $expectedImageBytes --silent --show-error --output $vhd 'https://go.microsoft.com/fwlink/p/?clcid=0x409&country=us&culture=en-us&linkid=2195166'
+              $downloadExit=$LASTEXITCODE
+              if(Test-Path -LiteralPath $vhd -PathType Leaf){$report.downloaded_bytes=(Get-Item -LiteralPath $vhd).Length}
+              if($downloadExit -eq 0){break}
+              if($attempt -eq 2 -or $downloadExit -notin @(6,7,18,28,52,55,56)){break}
+              if(Test-Path -LiteralPath $vhd -PathType Leaf){Remove-Item -LiteralPath $vhd -Force -ErrorAction Stop}
+              Start-Sleep -Seconds 5
+            }
+            if($downloadExit -ne 0){throw ('Microsoft VHD download failed with curl exit '+$downloadExit)}
+            $report.downloaded_bytes=(Get-Item -LiteralPath $vhd).Length
+            if($report.downloaded_bytes -ne $expectedImageBytes){throw 'Official VHD length differs from pinned lab image'}
+            $report.downloaded_sha256=(Get-FileHash -LiteralPath $vhd -Algorithm SHA256).Hash
+            if($report.downloaded_sha256 -cne '588355586A3B99F1D47CEE02F4861680A7E1BCB353582FBE7DA11E2988E7562F'){throw 'Official VHD bytes differ from the previously observed successful lab image; review before running'}
+            Get-VHD -Path $vhd -ErrorAction Stop | Out-Null
+            $report.stage='prepare_offline_guest_answer_file'
+            $password='V!a7'+[guid]::NewGuid().ToString('N')
+            Write-Host ('::add-mask::'+$password)
+            $credential=[pscredential]::new('Administrator',(ConvertTo-SecureString $password -AsPlainText -Force))
+            $mountedDisk=Mount-VHD -Path $vhd -NoDriveLetter -PassThru -ErrorAction Stop
+            $mounted=$true
+            $disk=$mountedDisk | Get-Disk -ErrorAction Stop
+            if(@($disk).Count -ne 1 -or $disk.IsBoot -or $disk.IsSystem){throw 'Refuse unexpected mounted disk identity'}
+            if($disk.IsOffline){Set-Disk -Number $disk.Number -IsOffline $false -ErrorAction Stop}
+            if($disk.IsReadOnly){throw 'Downloaded guest disk is read-only'}
+            if($disk.PartitionStyle -eq 'GPT'){$report.generation=2}
+            elseif($disk.PartitionStyle -eq 'MBR'){$report.generation=1}
+            else{throw 'Unexpected guest partition layout'}
+            $roots=@()
+            foreach($part in @(Get-Partition -DiskNumber $disk.Number | Where-Object {$_.Size -gt 2GB})){
+              if(-not $part.DriveLetter){
+                Add-PartitionAccessPath -DiskNumber $disk.Number -PartitionNumber $part.PartitionNumber -AssignDriveLetter -ErrorAction Stop
+                $part=Get-Partition -DiskNumber $disk.Number -PartitionNumber $part.PartitionNumber
+              }
+              if(-not $part.DriveLetter){continue}
+              $root=([string]$part.DriveLetter)+':\'
+              if(Test-Path -LiteralPath (Join-Path $root 'Windows\System32\ntoskrnl.exe')){$roots+=@($root)}
+            }
+            if($roots.Count -ne 1){throw 'Expected exactly one offline Windows installation'}
+            $panther=Join-Path $roots[0] 'Windows\Panther\Unattend'
+            $answer=Join-Path $panther 'Unattend.xml'
+            if(Test-Path -LiteralPath $answer){throw 'Existing vendor answer file requires review; refuse overwrite'}
+            New-Item -ItemType Directory -Path $panther -Force | Out-Null
+            $xml=@"
+          <?xml version="1.0" encoding="utf-8"?>
+          <unattend xmlns="urn:schemas-microsoft-com:unattend">
+            <settings pass="oobeSystem">
+              <component name="Microsoft-Windows-International-Core" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
+                <InputLocale>en-US</InputLocale><SystemLocale>en-US</SystemLocale><UILanguage>en-US</UILanguage><UserLocale>en-US</UserLocale>
+              </component>
+              <component name="Microsoft-Windows-Shell-Setup" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
+                <TimeZone>UTC</TimeZone>
+                <UserAccounts><AdministratorPassword><Value>$password</Value><PlainText>true</PlainText></AdministratorPassword></UserAccounts>
+                <AutoLogon><Password><Value>$password</Value><PlainText>true</PlainText></Password><Enabled>true</Enabled><LogonCount>1</LogonCount><Username>Administrator</Username></AutoLogon>
+                <!-- Microsoft documents unattended OOBE settings for
+                     pre-shipment system-builder testing. This image is a
+                     disposable evaluation lab only, never redistributed.
+                     No activation, licensing or setup registry overrides. -->
+                <OOBE>
+                  <HideEULAPage>true</HideEULAPage>
+                  <HideLocalAccountScreen>true</HideLocalAccountScreen>
+                  <HideOEMRegistrationScreen>true</HideOEMRegistrationScreen>
+                  <HideOnlineAccountScreens>true</HideOnlineAccountScreens>
+                  <HideWirelessSetupInOOBE>true</HideWirelessSetupInOOBE>
+                  <ProtectYourPC>3</ProtectYourPC>
+                </OOBE>
+              </component>
+            </settings>
+          </unattend>
+          "@
+            [xml]$parsed=$xml
+            Set-Content -LiteralPath $answer -Value $xml -Encoding UTF8 -ErrorAction Stop
+            Dismount-VHD -Path $vhd -ErrorAction Stop
+            $mounted=$false
+            $report.stage='start_windows_guest'
+            $clientDisk=$vhd
+            if($env:VOLVE_GUEST_TRIAL -ceq 'native-dns'){
+              . (Join-Path $env:GITHUB_WORKSPACE 'development\0.28.7\lab\private_dns_peer_vm.ps1')
+              $clientDisk=Join-Path $dir 'client-diff.vhd'
+              $peerDisk=Join-Path $dir 'peer-diff.vhd'
+              New-VHD -Path $clientDisk -ParentPath $vhd -Differencing -ErrorAction Stop|Out-Null
+              New-VHD -Path $peerDisk -ParentPath $vhd -Differencing -ErrorAction Stop|Out-Null
+              foreach($child in @($clientDisk,$peerDisk)){
+                $info=Get-VHD -Path $child -ErrorAction Stop
+                if([string]$info.VhdType -cne 'Differencing' -or [IO.Path]::GetFullPath($info.ParentPath) -cne [IO.Path]::GetFullPath($vhd)){throw 'Unexpected guest differencing disk ancestry'}
+              }
+            }
+            $vm=New-VM -Name $name -Generation $report.generation -MemoryStartupBytes 4GB -VHDPath $clientDisk -Path $dir -ErrorAction Stop
+            $vm | Set-VMProcessor -Count 2 -ErrorAction Stop
+            $vm | Set-VM -AutomaticCheckpointsEnabled $false -ErrorAction Stop
+            $vm | Get-VMNetworkAdapter | Remove-VMNetworkAdapter -Confirm:$false -ErrorAction Stop
+            $report.network_adapters=@($vm | Get-VMNetworkAdapter).Count
+            if($report.network_adapters -ne 0){throw 'Guest network isolation failed'}
+            Start-VM -VM $vm -ErrorAction Stop
+            $session=Connect-Guest $vm.Id $credential 600
+            $trial=$env:GITHUB_RUN_ID+'321'
+            if($trial -cnotmatch '^[0-9]{14,18}$'){throw 'Unexpected trial identifier'}
+            $checkedOut=(& git rev-parse HEAD).Trim()
+            if($LASTEXITCODE -ne 0 -or $checkedOut -cne $env:CANDIDATE_HEAD){throw 'Candidate source checkout mismatch'}
+            # Collect guest identity before scheduler preflight, so a queued
+            # task cannot obscure a proven Windows boot.
+            $guestIdentity=Invoke-Command -Session $session -ErrorAction Stop -ScriptBlock {
+              $os=Get-CimInstance Win32_OperatingSystem -ErrorAction Stop
+              [pscustomobject]@{caption=[string]$os.Caption;bootUtcTicks=$os.LastBootUpTime.ToUniversalTime().Ticks.ToString()}
+            }
+            $report.guest_os=$guestIdentity.caption
+            $report.guest_boot_before=$guestIdentity.bootUtcTicks
+            $report.guest_boot_verified=$true
+            # PowerShell Direct can authenticate before Windows setup has
+            # finished. Never falsify registry setup flags to unblock tasks.
+            # Wait for the actual supported image completion state.
+            $report.stage='wait_for_completed_guest_setup'
+            $report.guest_readiness=Invoke-Command -Session $session -ErrorAction Stop -ScriptBlock {
+              $ErrorActionPreference='Stop'
+              $deadline=[datetime]::UtcNow.AddMinutes(6)
+              do {
+                $setup=Get-ItemProperty -LiteralPath 'HKLM:\SYSTEM\Setup'
+                $image=Get-ItemProperty -LiteralPath 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Setup\State'
+                $flags=[ordered]@{}
+                foreach($key in @('SystemSetupInProgress','OOBEInProgress','SetupType')){
+                  $prop=$setup.PSObject.Properties[$key]
+                  $flags[$key]=if($null -ne $prop){[int]$prop.Value}else{$null}
+                }
+                $ready=$image.ImageState -ceq 'IMAGE_STATE_COMPLETE' -and $null -ne $flags.SystemSetupInProgress -and $flags.SystemSetupInProgress -eq 0 -and $null -ne $flags.OOBEInProgress -and $flags.OOBEInProgress -eq 0 -and $null -ne $flags.SetupType -and $flags.SetupType -eq 0
+                if($ready){break}
+                Start-Sleep -Seconds 10
+              }while([datetime]::UtcNow -lt $deadline)
+              [pscustomobject]@{ready=[bool]$ready;setup=$flags;image_state=[string]$image.ImageState}
+            }
+            $report.guest_setup_ready=[bool]$report.guest_readiness.ready
+            if(-not $report.guest_setup_ready){throw 'Guest setup did not reach IMAGE_STATE_COMPLETE; no scheduler or DNS verdict'}
+            # First boot of an evaluation image can register additional
+            # Windows tasks. Give setup an independent clean boot BEFORE
+            # taking the strict baseline; do not delete or exempt any task.
+            if($env:VOLVE_GUEST_TRIAL -ceq 'strict-reboot'){
+              $report.stage='warmup_clean_guest_boot'
+              Invoke-Command -Session $session -ErrorAction Stop -ScriptBlock {
+                $ErrorActionPreference='Stop'
+                & shutdown.exe /s /t 5 /f
+                if($LASTEXITCODE -ne 0){throw 'Guest warmup shutdown failed'}
+              }
+              Remove-PSSession $session
+              $session=$null
+              $limit=[datetime]::UtcNow.AddMinutes(4)
+              while((Get-VM -Id $vm.Id -ErrorAction Stop).State -ne 'Off' -and [datetime]::UtcNow -lt $limit){Start-Sleep -Seconds 3}
+              if((Get-VM -Id $vm.Id -ErrorAction Stop).State -ne 'Off'){throw 'Warmup shutdown not observed'}
+              Start-VM -VM $vm -ErrorAction Stop
+              $session=Connect-Guest $vm.Id $credential 360
+              Start-Sleep -Seconds 60
+            }
+            # Read-only diagnostics for a Scheduler instance stuck in Queued.
+            # No Setup/OOBE, licensing, service or time settings are changed.
+            $sent=[datetime]::UtcNow
+            $readiness=Invoke-Command -Session $session -ErrorAction Stop -ScriptBlock {
+              $setup=Get-ItemProperty -LiteralPath 'HKLM:\SYSTEM\Setup' -ErrorAction Stop
+              $image=Get-ItemProperty -LiteralPath 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Setup\State' -ErrorAction Stop
+              $flags=[ordered]@{}
+              foreach($key in @('SystemSetupInProgress','OOBEInProgress','SetupType','SetupPhase')){
+                $prop=$setup.PSObject.Properties[$key]
+                $flags[$key]=if($null -ne $prop){[int]$prop.Value}else{$null}
+              }
+              $services=@(Get-Service -Name Schedule,EventLog,RpcSs,ProfSvc,TimeBrokerSvc -ErrorAction SilentlyContinue|ForEach-Object {[pscustomobject]@{name=$_.Name;status=[string]$_.Status}})
+              $os=Get-CimInstance Win32_OperatingSystem -ErrorAction Stop
+              [pscustomobject]@{
+                setup=$flags;image_state=[string]$image.ImageState;services=$services;
+                guest_utc_ticks=[datetime]::UtcNow.Ticks.ToString();
+                boot_utc_ticks=$os.LastBootUpTime.ToUniversalTime().Ticks.ToString();
+                interactive_session_present=[bool](@(Get-CimInstance Win32_LogonSession -Filter 'LogonType=2' -ErrorAction Stop).Count -gt 0);
+              }
+            }
+            $received=[datetime]::UtcNow
+            $midpoint=$sent.AddTicks([long](($received.Ticks-$sent.Ticks)/2))
+            $report.guest_clock_skew_seconds=[math]::Round(([long]$readiness.guest_utc_ticks-$midpoint.Ticks)/10000000,1)
+            $report.guest_readiness=$readiness
+            # The evaluation VHD can step its UTC clock during startup.
+            # Require three successive bounded, synchronized observations
+            # before registering the owned task. No changes to host clock,
+            # time service, production machine or Scheduler security.
+            $report.stage='verify_guest_clock_stable'
+            $clockDeadline=[datetime]::UtcNow.AddMinutes(3)
+            $samples=@()
+            $previousGuest=[long]0
+            $previousHost=[long]0
+            do{
+              $sent=[datetime]::UtcNow
+              $sample=Invoke-Command -Session $session -ErrorAction Stop -ScriptBlock {
+                [pscustomobject]@{ticks=[datetime]::UtcNow.Ticks.ToString();zone=[TimeZoneInfo]::Local.Id}
+              }
+              $received=[datetime]::UtcNow
+              $hostTicks=$sent.AddTicks([long](($received.Ticks-$sent.Ticks)/2)).Ticks
+              $guestTicks=[long]$sample.ticks
+              $skew=($guestTicks-$hostTicks)/10000000.0
+              $deltaOK=($previousGuest -eq 0 -or ($guestTicks -gt $previousGuest -and [math]::Abs((($guestTicks-$previousGuest)-($hostTicks-$previousHost))/10000000.0) -le 3))
+              if($sample.zone -ceq 'UTC' -and [math]::Abs($skew) -le 5 -and $deltaOK -and ($received-$sent).TotalSeconds -le 5){
+                $samples+=@([math]::Round($skew,2))
+              }else{$samples=@()}
+              $previousGuest=$guestTicks
+              $previousHost=$hostTicks
+              if($samples.Count -ge 3){break}
+              Start-Sleep -Seconds 5
+            }while([datetime]::UtcNow -lt $clockDeadline)
+            $report.guest_clock_stability=[ordered]@{zone=$sample.zone;samples=$samples;verified=($samples.Count -ge 3)}
+            if(-not $report.guest_clock_stability.verified){throw 'Guest UTC clock not stable; refusing recovery and DNS mutation'}
+            # Prove Task Scheduler can execute an owned no-op as actual
+            # LocalSystem before arming any recovery or injecting DNS faults.
+            $report.stage='system_scheduler_preflight'
+            for($attempt=1;$attempt -le 3;$attempt++){
+            $probeId=$trial+'-'+[guid]::NewGuid().ToString('N')
+            $probe=Invoke-Command -Session $session -ArgumentList $probeId -ErrorAction Stop -ScriptBlock {
+              param($id)
+              $ErrorActionPreference='Stop'
+              $name='VOLVE-CI-SYSTEMProbe-'+$id
+              $root=Join-Path $env:ProgramData $name
+              if((Test-Path -LiteralPath $root) -or (Get-ScheduledTask -TaskName $name -ErrorAction SilentlyContinue)){throw 'Probe identity collision'}
+              New-Item -ItemType Directory -Path $root -ErrorAction Stop|Out-Null
+              & icacls.exe $root '/inheritance:r' '/grant:r' '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F'|Out-Null
+              if($LASTEXITCODE -ne 0){throw 'Probe ACL failed'}
+              & wevtutil.exe sl Microsoft-Windows-TaskScheduler/Operational /e:true
+              if($LASTEXITCODE -ne 0){throw 'Task history unavailable'}
+              $cmd=Join-Path $env:WINDIR 'System32\cmd.exe'
+              $who=Join-Path $env:WINDIR 'System32\whoami.exe'
+              $out=Join-Path $root 'sid.txt'
+              $action=New-ScheduledTaskAction -Execute $cmd -Argument ('/d /c ""'+$who+'" /user /fo csv /nh > "'+$out+'""') -WorkingDirectory $root
+              $principal=New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest
+              $settings=New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit (New-TimeSpan -Minutes 2)
+              Register-ScheduledTask -TaskName $name -TaskPath '\' -Action $action -Principal $principal -Settings $settings -ErrorAction Stop|Out-Null
+              try{
+                function Get-OwnedManualTaskProof([string]$ownedName,[long]$cursor){
+                  $all=@()
+                  try{$all=@(Get-WinEvent -LogName 'Microsoft-Windows-TaskScheduler/Operational' -MaxEvents 4096 -ErrorAction Stop)}
+                  catch{if($_.FullyQualifiedErrorId -notmatch '^NoMatchingEventsFound(?:,|$)'){throw}}
+                  $records=@(foreach($event in $all){
+                    if([long]$event.RecordId -le $cursor -or $event.Id -notin @(110,100,201,102)){continue}
+                    $xml=[xml]$event.ToXml()
+                    $fields=@{}
+                    foreach($node in $xml.SelectNodes("//*[local-name()='EventData']/*[local-name()='Data']")){
+                      $fields[[string]$node.GetAttribute('Name')]=[string]$node.InnerText
+                    }
+                    if($fields['TaskName'] -cne ('\'+$ownedName)){continue}
+                    $instance=[guid]::Empty
+                    $instanceText=[string]$fields['InstanceId']
+                    if(-not $instanceText){$instanceText=[string]$fields['TaskInstanceId']}
+                    if(-not [guid]::TryParse($instanceText,[ref]$instance) -or $instance -eq [guid]::Empty){continue}
+                    [pscustomobject]@{id=[int]$event.Id;record=[long]$event.RecordId;instance=$instance.ToString('D');result=[string]$fields['ResultCode']}
+                  })
+                  # Real guest evidence (ca1ef94): providers emitted 100
+                  # before 110 for the SAME GUID. Both must be fresh and
+                  # unique, both precede successful action completion (201),
+                  # which precedes task completion (102). Do not require
+                  # ordering between the two independent start notifications.
+                  $instances=@($records|Group-Object instance)
+                  if($instances.Count -eq 1){
+                    $owned=@($instances[0].Group)
+                    $trigger=@($owned|Where-Object id -eq 110)
+                    $started=@($owned|Where-Object id -eq 100)
+                    $action=@($owned|Where-Object id -eq 201)
+                    $completed=@($owned|Where-Object id -eq 102)
+                    if($owned.Count -eq 4 -and $trigger.Count -eq 1 -and $started.Count -eq 1 -and $action.Count -eq 1 -and $completed.Count -eq 1){
+                      $ids=@($owned|Sort-Object record|ForEach-Object {[long]$_.record})
+                      if(@($ids|Sort-Object -Unique).Count -eq 4 -and
+                        $action[0].record -gt $trigger[0].record -and $action[0].record -gt $started[0].record -and
+                        $completed[0].record -gt $action[0].record -and
+                        $action[0].result -in @('0','0x0','0x00000000') -and
+                        (-not $completed[0].result -or $completed[0].result -in @('0','0x0','0x00000000'))){
+                        return [pscustomobject]@{verified=$true;record_ids=$ids;instance=$trigger[0].instance}
+                      }
+                    }
+                  }
+                  # Keep the exact owned event metadata on rejection so
+                  # that provider ordering/schema differences are observable.
+                  # No unrelated task name, command, account or raw XML.
+                  return [pscustomobject]@{verified=$false;record_ids=@();instance=$null;cursor=$cursor;observed=@($records|Sort-Object record|Select-Object -Last 32)}
+                }
+                # A newly enabled Operational log may legitimately be empty.
+                # Empty is a valid zero cursor, NEVER a successful event chain.
+                $cursor=[long]0
+                $logInfo=Get-WinEvent -ListLog 'Microsoft-Windows-TaskScheduler/Operational' -ErrorAction Stop
+                if(-not $logInfo.IsEnabled){throw 'Scheduler event journal disabled'}
+                try{$cursor=[long](Get-WinEvent -LogName 'Microsoft-Windows-TaskScheduler/Operational' -MaxEvents 1 -ErrorAction Stop).RecordId}
+                catch{if($_.FullyQualifiedErrorId -notmatch '^NoMatchingEventsFound(?:,|$)'){throw}}
+                $start=Get-Date
+                Start-ScheduledTask -TaskName $name -TaskPath '\' -ErrorAction Stop
+                $limit=[datetime]::UtcNow.AddSeconds(90)
+                do{
+                  Start-Sleep -Seconds 2
+                  $t=Get-ScheduledTask -TaskName $name -TaskPath '\' -ErrorAction Stop
+                  $info=Get-ScheduledTaskInfo -TaskName $name -TaskPath '\' -ErrorAction Stop
+                  if((Test-Path -LiteralPath $out) -and $t.State -eq 'Ready'){
+                    $proof=Get-OwnedManualTaskProof $name $cursor
+                    if($proof.verified){break}
+                  }
+                }while([datetime]::UtcNow -lt $limit)
+                $proof=Get-OwnedManualTaskProof $name $cursor
+                $sidVerified=(Test-Path -LiteralPath $out) -and ((Get-Content -LiteralPath $out -Raw) -match '(?m),"S-1-5-18"\s*$')
+                $events=@(Get-WinEvent -FilterHashtable @{LogName='Microsoft-Windows-TaskScheduler/Operational';StartTime=$start.AddSeconds(-5)} -MaxEvents 1000 -ErrorAction SilentlyContinue|Where-Object {
+                  $xml=[xml]$_.ToXml()
+                  @($xml.SelectNodes("/*[local-name()='Event']/*[local-name()='EventData']/*[local-name()='Data'][@Name='TaskName']")|Where-Object {$_.InnerText -ceq ('\'+$name)}).Count -gt 0
+                }|ForEach-Object {[int]$_.Id})
+                # Observe global scheduler error IDs too: engine startup
+                # errors may not contain a TaskName field. No raw XML, task
+                # names or command lines are exported.
+                $taskCensus=@(Get-ScheduledTask -ErrorAction Stop)
+                $counts=[ordered]@{running=@($taskCensus|Where-Object State -eq 'Running').Count;queued=@($taskCensus|Where-Object State -eq 'Queued').Count;total=$taskCensus.Count}
+                $engineProcesses=@(Get-CimInstance Win32_Process -Filter "Name='taskeng.exe' OR Name='taskhostw.exe'" -ErrorAction Stop)
+                $engineErrors=@(Get-WinEvent -FilterHashtable @{LogName='Microsoft-Windows-TaskScheduler/Operational';StartTime=$start.AddSeconds(-5);Id=@(101,103,131,202,203,311,322,323,324)} -MaxEvents 100 -ErrorAction SilentlyContinue|ForEach-Object {[int]$_.Id})
+                [pscustomobject]@{
+                  sid_verified=$sidVerified;last_result=[int64]$info.LastTaskResult;
+                  state=[string]$t.State;event_ids=@($events|Sort-Object -Unique);
+                  engine_error_ids=@($engineErrors|Sort-Object -Unique);task_census=$counts;engine_process_count=$engineProcesses.Count;
+                  scheduler_service=[string](Get-Service Schedule).Status;
+                  last_run_after_request=($info.LastRunTime -ge $start.AddSeconds(-3));
+                  last_run_raw=$info.LastRunTime.ToString('o');
+                  request_raw=$start.ToString('o');
+                  correlated_event_chain=$proof;
+                  task_enabled=[bool]$t.Settings.Enabled;
+                  run_only_if_network=[bool]$t.Settings.RunOnlyIfNetworkAvailable;
+                  run_only_if_idle=[bool]$t.Settings.RunOnlyIfIdle;
+                  disallow_on_battery=[bool]$t.Settings.DisallowStartIfOnBatteries;
+                }
+              }finally{
+                $owned=Get-ScheduledTask -TaskName $name -TaskPath '\' -ErrorAction Stop
+                if($owned.Principal.UserId -notin @('SYSTEM','S-1-5-18')){throw 'Probe task identity changed'}
+                if($owned.State -eq 'Running'){Stop-ScheduledTask -TaskName $name -TaskPath '\' -ErrorAction Stop}
+                Unregister-ScheduledTask -TaskName $name -TaskPath '\' -Confirm:$false -ErrorAction Stop
+                Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction Stop
+              }
+            }
+            $report.scheduler_probe_attempts+=@([ordered]@{attempt=$attempt;sid_verified=$probe.sid_verified;result=$probe.last_result;state=$probe.state;correlated=$probe.correlated_event_chain.verified})
+            $report.scheduler_preflight=$probe
+            if($probe.sid_verified -and $probe.last_result -eq 0 -and $probe.correlated_event_chain.verified -and $probe.state -eq 'Ready'){break}
+            if($attempt -lt 3){Start-Sleep -Seconds 10}
+            }
+            if(-not $probe.sid_verified -or $probe.last_result -ne 0 -or -not $probe.correlated_event_chain.verified -or $probe.state -ne 'Ready'){throw 'Guest Scheduler did not demonstrate a completed LocalSystem no-op; inspect setup, clock and engine diagnostics'} 
+            $nonce=[guid]::NewGuid().ToString('N')
+            $before=Invoke-Command -Session $session -ArgumentList $nonce -ErrorAction Stop -ScriptBlock {
+              param($nonce)
+              $os=Get-CimInstance Win32_OperatingSystem
+              $path=Join-Path $env:ProgramData 'VOLVE-CI-reboot-marker.txt'
+              if(Test-Path -LiteralPath $path){throw 'Unexpected existing marker'}
+              [IO.File]::WriteAllText($path,$nonce)
+              [pscustomobject]@{os=$os.Caption;boot=$os.LastBootUpTime.ToUniversalTime().Ticks.ToString();marker=(Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash}
+            }
+            $report.guest_os=$before.os
+            $report.guest_boot_before=$before.boot
+            $report.guest_boot_verified=$true
+            if($env:VOLVE_GUEST_TRIAL -ceq 'strict-reboot'){
+            $report.stage='copy_hash_pinned_recovery_kit'
+            $guestKit='C:\VOLVE-CI-RebootKit'
+            Invoke-Command -Session $session -ArgumentList $guestKit -ErrorAction Stop -ScriptBlock {
+              param($root)
+              if(Test-Path -LiteralPath $root){throw 'Existing kit directory'}
+              New-Item -ItemType Directory -Path $root -ErrorAction Stop | Out-Null
+            }
+            $source=Join-Path $env:GITHUB_WORKSPACE 'development/0.28.7/lab'
+            $files=@('boot_recovery_lab.ps1','reboot_event_chain.ps1','vm_cleanup_state_contract.ps1','vm_environment_baseline.ps1','vm_reboot_proof.ps1','VM_ROLLBACK_BOOT_PACK_README.md','volve-journal-lab.exe','ci_task_scheduler_event_diagnostic.ps1')
+            foreach($file in $files){
+              if($file -ceq 'volve-journal-lab.exe'){$src=Join-Path $env:RUNNER_TEMP $file}else{$src=Join-Path $source $file}
+              $sha=(Get-FileHash -LiteralPath $src -Algorithm SHA256).Hash
+              $dst=Join-Path $guestKit $file
+              Copy-Item -LiteralPath $src -Destination $dst -ToSession $session -ErrorAction Stop
+              $observed=Invoke-Command -Session $session -ArgumentList $dst -ErrorAction Stop -ScriptBlock {param($path);(Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash}
+              if($observed -cne $sha){throw ('Guest kit copy hash mismatch: '+$file)}
+            }
+            # Negative control on the SAME isolated guest, before any
+            # VOLVE task, journal, or network mutation. Preserve the full
+            # comparison privately; export only counts and hash identifiers.
+            # Collect Security 4702 / 4688 evidence only in this disposable
+            # offline guest, before BOTH the clean and the recovery reboot.
+            # No exclusions, no modification of third-party tasks.
+            Invoke-Command -Session $session -ErrorAction Stop -ScriptBlock {
+              $ErrorActionPreference='Stop'
+              foreach($subcategory in @('{0CCE9227-69AE-11D9-BED3-505054503030}','{0CCE922B-69AE-11D9-BED3-505054503030}')){
+                & auditpol.exe /set "/subcategory:$subcategory" /success:enable|Out-Null
+                if($LASTEXITCODE -ne 0){throw 'Guest task/process audit enable failed'}
+              }
+            }
+            $report.stage='clean_reboot_without_volve_control'
+            $cleanAuditCursor=Invoke-Command -Session $session -ErrorAction Stop -ScriptBlock {
+              $security=Get-WinEvent -LogName Security -MaxEvents 1 -ErrorAction Stop
+              $scheduler=Get-WinEvent -LogName Microsoft-Windows-TaskScheduler/Operational -MaxEvents 1 -ErrorAction Stop
+              if($security.RecordId -le 0 -or $scheduler.RecordId -le 0){throw 'Audit cursors unavailable'}
+              [pscustomobject]@{security=[long]$security.RecordId;scheduler=[long]$scheduler.RecordId}
+            }
+            $report.clean_audit_cursor=$cleanAuditCursor
+            $controlBefore=Invoke-Command -Session $session -ArgumentList $guestKit,$trial -ErrorAction Stop -ScriptBlock {
+              param($root,$id)
+              $ErrorActionPreference='Stop'
+              . (Join-Path $root 'reboot_event_chain.ps1')
+              . (Join-Path $root 'vm_environment_baseline.ps1')
+              foreach($name in @(('VOLVE-CI-StartupMotor-'+$id),('VOLVE-CI-BootRecovery-'+$id))){
+                if(Get-ScheduledTask -TaskName $name -ErrorAction SilentlyContinue){throw 'Unexpected recovery task before control'}
+              }
+              $state=Get-VolvVMBaselineState -RunId $id
+              [pscustomobject]@{boot=(Get-CimInstance Win32_OperatingSystem -ErrorAction Stop).LastBootUpTime.ToUniversalTime().Ticks.ToString();state=$state}
+            }
+            Invoke-Command -Session $session -ErrorAction Stop -ScriptBlock {
+              & shutdown.exe /s /t 5 /f
+              if($LASTEXITCODE -ne 0){throw 'Control shutdown failed'}
+            }
+            Remove-PSSession $session
+            $session=$null
+            $limit=[datetime]::UtcNow.AddMinutes(4)
+            while((Get-VM -Id $vm.Id -ErrorAction Stop).State -ne 'Off' -and [datetime]::UtcNow -lt $limit){Start-Sleep -Seconds 3}
+            if((Get-VM -Id $vm.Id -ErrorAction Stop).State -ne 'Off'){throw 'Control guest graceful shutdown not observed'}
+            Start-VM -VM $vm -ErrorAction Stop
+            $session=Connect-Guest $vm.Id $credential 360
+            Start-Sleep -Seconds 60
+            $controlAfter=Invoke-Command -Session $session -ArgumentList $guestKit,$trial -ErrorAction Stop -ScriptBlock {
+              param($root,$id)
+              $ErrorActionPreference='Stop'
+              . (Join-Path $root 'reboot_event_chain.ps1')
+              . (Join-Path $root 'vm_environment_baseline.ps1')
+              foreach($name in @(('VOLVE-CI-StartupMotor-'+$id),('VOLVE-CI-BootRecovery-'+$id))){
+                if(Get-ScheduledTask -TaskName $name -ErrorAction SilentlyContinue){throw 'Unexpected recovery task after control'}
+              }
+              [pscustomobject]@{boot=(Get-CimInstance Win32_OperatingSystem -ErrorAction Stop).LastBootUpTime.ToUniversalTime().Ticks.ToString();state=(Get-VolvVMBaselineState -RunId $id)}
+            }
+            if([long]$controlAfter.boot -le [long]$controlBefore.boot){throw 'Clean control reboot not verified'}
+            # Compare complete records in host memory without emitting them.
+            $left=@{};$right=@{}
+            foreach($record in $controlBefore.state.taskRecords){$left[$record.Split('|')[0]]=$record}
+            foreach($record in $controlAfter.state.taskRecords){$right[$record.Split('|')[0]]=$record}
+            $added=@($right.Keys|Where-Object {-not $left.ContainsKey($_)})
+            $removed=@($left.Keys|Where-Object {-not $right.ContainsKey($_)})
+            $changed=@($left.Keys|Where-Object {$right.ContainsKey($_) -and $left[$_] -cne $right[$_]})
+            $hashName={param([string]$value) $h=[Security.Cryptography.SHA256]::Create();try{([BitConverter]::ToString($h.ComputeHash([Text.Encoding]::UTF8.GetBytes($value)))).Replace('-','').Substring(0,16)}finally{$h.Dispose()}}
+            $report.clean_boot_control=[ordered]@{
+              boot_before=$controlBefore.boot;boot_after=$controlAfter.boot;
+              before_count=$left.Count;after_count=$right.Count;
+              added_ids=@($added|ForEach-Object {& $hashName $_});
+              removed_ids=@($removed|ForEach-Object {& $hashName $_});
+              changed_ids=@($changed|ForEach-Object {& $hashName $_});
+              hosts_equal=($controlBefore.state.hostsSha256 -ceq $controlAfter.state.hostsSha256);
+              dns_equal=(($controlBefore.state.dnsRecords -join '|') -ceq ($controlAfter.state.dnsRecords -join '|'));
+              no_volve_recovery_tasks=$true;exemption_granted=$false
+            }
+            try{
+              $report.clean_task_audit=@(Invoke-Command -Session $session -ArgumentList $guestKit,(($report.clean_boot_control.changed_ids -join ',')),$cleanAuditCursor.security,$cleanAuditCursor.scheduler -ErrorAction Stop -ScriptBlock {
+                param($root,$ids,$securityCursor,$schedulerCursor)
+                $env:GITHUB_ACTIONS='true'
+                $env:RUNNER_ENVIRONMENT='github-hosted'
+                foreach($identity in @($ids.Split(',')|Where-Object {$_ -cmatch '^[A-F0-9]{16}$'})){
+                  $result=@(& (Join-Path $root 'ci_task_scheduler_event_diagnostic.ps1') -Mode Investigate -IdentityId $identity -Minutes 15 -AfterSecurityRecordId $securityCursor -AfterSchedulerRecordId $schedulerCursor 6>&1)
+                  foreach($line in $result){if(([string]$line).StartsWith('CI TASK EVENT POSTMORTEM:')){[string]$line}}
+                }
+              })
+            }catch{$report.task_audit_error='Clean task audit unavailable; no exemption'}
+            if(-not $report.clean_boot_control.hosts_equal -or -not $report.clean_boot_control.dns_equal){throw 'Clean reboot changed network baseline; refuse to arm recovery'}
+            # Controlled strict-reboot arm: preserve the uncontrolled negative
+            # control above. On this throwaway offline VHD only, hold the
+            # specifically observed, Microsoft-signed Edge Update actors BEFORE
+            # taking the full strict baseline. No XML differences are ignored.
+            # This is a fixture preparation step, NOT an install prerequisite,
+            # NOT a recommendation for a real PC, and NOT production evidence.
+            if(@(Get-VM -Id $vm.Id -ErrorAction Stop|Get-VMNetworkAdapter -ErrorAction Stop).Count -ne 0){throw 'Refuse controlled reboot on network-attached VM'}
+            $report['strict_reboot_scope']='CONTROLLED_OFFLINE_FIXTURE_NOT_PRODUCTION'
+            $report['edge_fixture_isolation']=Invoke-Command -Session $session -ArgumentList (($report.clean_boot_control.changed_ids)-join ',') -ErrorAction Stop -ScriptBlock {
+              param($changedCsv)
+              $ErrorActionPreference='Stop'
+              $cs=Get-CimInstance Win32_ComputerSystem -ErrorAction Stop
+              if(($cs.Manufacturer+' '+$cs.Model) -notmatch '(?i)virtual machine|hyper-v'){throw 'Controlled reboot requires positively identified Hyper-V guest'}
+              if(@(Get-NetRoute -ErrorAction Stop|Where-Object {$_.DestinationPrefix -in @('0.0.0.0/0','::/0')}).Count -ne 0){throw 'Controlled reboot requires no default route'}
+              if(@(Get-NetAdapter -ErrorAction SilentlyContinue|Where-Object {$_.Status -eq 'Up'}).Count -ne 0){throw 'Controlled reboot requires no active network adapter'}
+              if(@(Get-ScheduledTask -ErrorAction Stop|Where-Object {$_.TaskName -like 'VOLVE*'}).Count -ne 0){throw 'Controlled reboot requires clean guest with no VOLVE task'}
+              $known='C:\Program Files (x86)\Microsoft\EdgeUpdate\MicrosoftEdgeUpdate.exe'
+              $file=Get-Item -LiteralPath $known -ErrorAction Stop
+              if($file.PSIsContainer -or ($file.Attributes -band [IO.FileAttributes]::ReparsePoint)){throw 'Unexpected Edge fixture executable'}
+              $parent=$file.Directory
+              while($null -ne $parent){
+                if($parent.Attributes -band [IO.FileAttributes]::ReparsePoint){throw 'Unexpected redirected Edge fixture directory'}
+                $parent=$parent.Parent
+              }
+              $signature=Get-AuthenticodeSignature -LiteralPath $known -ErrorAction Stop
+              if($signature.Status -ne 'Valid' -or $null -eq $signature.SignerCertificate -or $signature.SignerCertificate.Subject -notmatch '(?:^|,\s*)O=Microsoft Corporation(?:,|$)'){throw 'Edge fixture signer not verified'}
+              $changed=@($changedCsv.Split(',')|Where-Object {$_ -cmatch '^[A-F0-9]{16}$'})
+              $tasks=@()
+              foreach($t in Get-ScheduledTask -ErrorAction Stop){
+                if($t.TaskPath -cne '\' -or $t.TaskName -cnotmatch '^MicrosoftEdgeUpdateTaskMachine(?:Core|UA)(?:[A-Za-z0-9{}._-]*)$'){continue}
+                if(@($t.Actions).Count -ne 1 -or [string]$t.Actions[0].Execute -ine $known){continue}
+                $hash=[Security.Cryptography.SHA256]::Create()
+                try{$id=[BitConverter]::ToString($hash.ComputeHash([Text.Encoding]::UTF8.GetBytes([string]$t.TaskPath+[string]$t.TaskName))).Replace('-','').Substring(0,16)}finally{$hash.Dispose()}
+                if($id -in $changed){$tasks+=@($t)}
+              }
+              if($tasks.Count -ne 2 -or @($tasks|Where-Object {$_.TaskName -cmatch '^MicrosoftEdgeUpdateTaskMachineCore'}).Count -ne 1 -or @($tasks|Where-Object {$_.TaskName -cmatch '^MicrosoftEdgeUpdateTaskMachineUA'}).Count -ne 1){throw 'Refuse fixture isolation without two exact observed Edge task actions'}
+              $services=@(Get-CimInstance Win32_Service -ErrorAction Stop|Where-Object {$_.Name -in @('edgeupdate','edgeupdatem')})
+              if($services.Count -lt 1 -or $services.Count -gt 2){throw 'Unexpected Edge service census'}
+              $servicePattern='^\s*"?' + [regex]::Escape($known) + '"?\s+/(?:svc|medsvc)\s*$'
+              foreach($svc in $services){
+                if([string]$svc.PathName -notmatch $servicePattern){throw 'Refuse unrelated Edge-named service'}
+              }
+              # All identities validated before making any fixture change.
+              foreach($t in $tasks){
+                Disable-ScheduledTask -TaskName $t.TaskName -TaskPath '\' -ErrorAction Stop|Out-Null
+                $current=Get-ScheduledTask -TaskName $t.TaskName -TaskPath '\' -ErrorAction Stop
+                if($current.State -eq 'Running'){Stop-ScheduledTask -TaskName $t.TaskName -TaskPath '\' -ErrorAction Stop}
+              }
+              foreach($svc in $services){Set-Service -Name $svc.Name -StartupType Disabled -ErrorAction Stop}
+              foreach($svc in $services){if((Get-Service -Name $svc.Name -ErrorAction Stop).Status -ne 'Stopped'){Stop-Service -Name $svc.Name -ErrorAction Stop}}
+              foreach($t in $tasks){
+                $current=Get-ScheduledTask -TaskName $t.TaskName -TaskPath '\' -ErrorAction Stop
+                if($current.State -ne 'Disabled' -or @($current.Actions).Count -ne 1 -or [string]$current.Actions[0].Execute -ine $known){throw 'Edge fixture task hold not verified'}
+              }
+              foreach($svc in $services){
+                $current=Get-CimInstance Win32_Service -Filter ("Name='"+$svc.Name+"'") -ErrorAction Stop
+                if($current.StartMode -ne 'Disabled' -or $current.State -ne 'Stopped' -or [string]$current.PathName -notmatch $servicePattern){throw 'Edge fixture service hold not verified'}
+              }
+              [pscustomobject]@{scope='DISPOSABLE_OFFLINE_VM_ONLY';signed_image_verified=$true;tasks_held=$tasks.Count;services_held=$services.Count;production_change=$false;strict_baseline_exemptions=0}
+            }
+            if($report.edge_fixture_isolation.tasks_held -ne 2 -or -not $report.edge_fixture_isolation.signed_image_verified -or $report.edge_fixture_isolation.strict_baseline_exemptions -ne 0){throw 'Controlled fixture isolation not verified'}
+            # The strict baseline is captured AFTER controlled fixture setup.
+            # Every subsequent task, HOSTS and DNS difference still fails.
+            # The isolated disk is destroyed by the existing VM cleanup;
+            # never perform these holds on a persistent/user Windows host.
+            $before.boot=$controlAfter.boot
+            $report.guest_boot_before=$controlAfter.boot
+            $report.stage='prepare_strict_system_recovery_kit'
+            Invoke-Command -Session $session -ArgumentList $guestKit,$trial -ErrorAction Stop -ScriptBlock {
+              param($root,$id)
+              $ErrorActionPreference='Stop'
+              & wevtutil.exe sl Microsoft-Windows-TaskScheduler/Operational /e:true
+              if($LASTEXITCODE -ne 0){throw 'Cannot enable task history'}
+              $script=Join-Path $root 'vm_reboot_proof.ps1'
+              & $script -Mode Probe
+              & $script -Mode Prepare -RunId $id -LabScript (Join-Path $root 'boot_recovery_lab.ps1') -JournalExe (Join-Path $root 'volve-journal-lab.exe')
+            }
+            $report.recovery_kit_prepared=$true
+            Invoke-Command -Session $session -ArgumentList $guestKit,$trial -ErrorAction Stop -ScriptBlock {
+              param($root,$id)
+              $ErrorActionPreference='Stop'
+              & (Join-Path $root 'vm_reboot_proof.ps1') -Mode AuditPrepared -RunId $id
+            }
+            $report.recovery_kit_audit_passed=$true
+            $report.stage='restart_and_verify_guest_disk'
+            $recoveryAuditCursor=Invoke-Command -Session $session -ErrorAction Stop -ScriptBlock {
+              $security=Get-WinEvent -LogName Security -MaxEvents 1 -ErrorAction Stop
+              $scheduler=Get-WinEvent -LogName Microsoft-Windows-TaskScheduler/Operational -MaxEvents 1 -ErrorAction Stop
+              if($security.RecordId -le 0 -or $scheduler.RecordId -le 0){throw 'Audit cursors unavailable'}
+              [pscustomobject]@{security=[long]$security.RecordId;scheduler=[long]$scheduler.RecordId}
+            }
+            $report.recovery_audit_cursor=$recoveryAuditCursor
+            # The previous guest-initiated /r returned success twice without
+            # a new observable boot. Require a clean shutdown, independently
+            # observe the VM Off state, then start exactly the owned VM.
+            Invoke-Command -Session $session -ErrorAction Stop -ScriptBlock {
+              & shutdown.exe /s /t 5 /f
+              if($LASTEXITCODE -ne 0){throw 'Guest shutdown request failed'}
+            }
+            Remove-PSSession $session
+            $session=$null
+            $offDeadline=[datetime]::UtcNow.AddMinutes(4)
+            while((Get-VM -Id $vm.Id -ErrorAction Stop).State -ne 'Off' -and [datetime]::UtcNow -lt $offDeadline){Start-Sleep -Seconds 3}
+            if((Get-VM -Id $vm.Id -ErrorAction Stop).State -ne 'Off'){throw 'Guest graceful shutdown not observed; no forced restart credited'}
+            $report.guest_poweroff_observed=$true
+            Start-VM -VM $vm -ErrorAction Stop
+            Start-Sleep -Seconds 20
+            $until=[datetime]::UtcNow.AddMinutes(8)
+            do{
+              $session=Connect-Guest $vm.Id $credential 90
+              $after=Invoke-Command -Session $session -ErrorAction Stop -ScriptBlock {
+                $os=Get-CimInstance Win32_OperatingSystem
+                $path=Join-Path $env:ProgramData 'VOLVE-CI-reboot-marker.txt'
+                [pscustomobject]@{boot=$os.LastBootUpTime.ToUniversalTime().Ticks.ToString();marker=(Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash}
+              }
+              Remove-PSSession $session
+              $session=$null
+              if([long]$after.boot -gt [long]$before.boot){break}
+              Start-Sleep -Seconds 10
+            }while([datetime]::UtcNow -lt $until)
+            if([long]$after.boot -le [long]$before.boot){throw 'No real guest reboot demonstrated'}
+            if($after.marker -cne $before.marker){throw 'Guest disk marker did not persist'}
+            $report.guest_boot_after=$after.boot
+            $report.disk_persistence_verified=$true
+            $report.stage='verify_system_watchdog_recovery_after_real_reboot'
+            $session=Connect-Guest $vm.Id $credential 120
+            Invoke-Command -Session $session -ArgumentList $guestKit,$trial -ErrorAction Stop -ScriptBlock {
+              param($root,$id)
+              $ErrorActionPreference='Stop'
+              $dir=Join-Path $env:ProgramData ('VOLVE-VM-RebootLab-'+$id)
+              $marker=Join-Path $dir ('VOLVE-CI-BOOT-'+$id+'\boot-recovery-success.marker')
+              $until=[datetime]::UtcNow.AddMinutes(3)
+              while(-not (Test-Path -LiteralPath $marker) -and [datetime]::UtcNow -lt $until){Start-Sleep -Seconds 5}
+              & (Join-Path $root 'vm_reboot_proof.ps1') -Mode Verify -RunId $id
+            }
+            $proof=Invoke-Command -Session $session -ArgumentList $trial -ErrorAction Stop -ScriptBlock {
+              param($id)
+              $path=Join-Path $env:ProgramData ('VOLVE-VM-RebootLab-'+$id+'\vm-proof-evidence.json')
+              $p=Get-Content -LiteralPath $path -Raw -ErrorAction Stop|ConvertFrom-Json
+              if($p.test -cne 'VOLVE-VM-REAL-REBOOT' -or $p.runId -cne $id -or $p.recoveryJournalState -cne 'NO_ROLLBACK:restored'){throw 'Unexpected recovery proof'}
+              [pscustomobject]@{sha=(Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash;events=($p.schedulerEventIds -join ',');journal=$p.recoveryJournalState}
+            }
+            $report.recovery_proof_sha256=$proof.sha
+            $report.recovery_event_ids=$proof.events
+            $report.recovery_journal_state=$proof.journal
+            $report.recovery_kit_verified=$true
+            $report.stage='cleanup_verified_recovery_kit'
+            Invoke-Command -Session $session -ArgumentList $guestKit,$trial -ErrorAction Stop -ScriptBlock {
+              param($root,$id)
+              $ErrorActionPreference='Stop'
+              & (Join-Path $root 'vm_reboot_proof.ps1') -Mode Cleanup -RunId $id
+            }
+            $report.recovery_kit_cleanup_verified=$true
+            $report.stage='guest_reboot_and_fixture_recovery_verified'
+            }else{
+            # Different disposable VM: no strict kit is run or credited here.
+            # Failure in one matrix leg cannot conceal the other result.
+            $report.stage='prepare_private_guest_dns_network'
+            Invoke-Command -Session $session -ErrorAction Stop -ScriptBlock {
+              & shutdown.exe /s /t 5 /f
+              if($LASTEXITCODE -ne 0){throw 'Guest shutdown request failed'}
+            }
+            Remove-PSSession $session
+            $session=$null
+            $until=[datetime]::UtcNow.AddMinutes(3)
+            while((Get-VM -Id $vm.Id -ErrorAction Stop).State -ne 'Off' -and [datetime]::UtcNow -lt $until){Start-Sleep -Seconds 3}
+            if((Get-VM -Id $vm.Id -ErrorAction Stop).State -ne 'Off'){throw 'Guest failed to shut down'}
+            $switchName=$name+'-PRIVATE'
+            if(Get-VMSwitch -Name $switchName -ErrorAction SilentlyContinue){throw 'Private switch collision'}
+            $privateSwitch=New-VMSwitch -Name $switchName -SwitchType Private -ErrorAction Stop
+            if([string]$privateSwitch.SwitchType -cne 'Private'){throw 'Private switch isolation failed'}
+            Add-VMNetworkAdapter -VM $vm -Name 'VOLVE-CI-PRIVATE-DNS' -SwitchName $switchName -ErrorAction Stop
+            $nic=@($vm|Get-VMNetworkAdapter)
+            if($nic.Count -ne 1 -or $nic[0].SwitchName -cne $switchName){throw 'Unexpected guest network attachment'}
+            $report.network_adapters=$nic.Count
+            $hostNic=@(Get-VMNetworkAdapter -ManagementOS|Where-Object {$_.SwitchName -ceq $switchName})
+            if($hostNic.Count -ne 0){throw 'Host network interface is attached to private guest switch'}
+            Start-VM -VM $vm -ErrorAction Stop
+            $session=Connect-Guest $vm.Id $credential 240
+            $guestDNS='C:\VOLVE-CI-PrivateDNS'
+            Invoke-Command -Session $session -ArgumentList $guestDNS -ErrorAction Stop -ScriptBlock {
+              param($root)
+              $ErrorActionPreference='Stop'
+              if(Test-Path -LiteralPath $root){throw 'Unexpected DNS fixture directory'}
+              $until=[datetime]::UtcNow.AddMinutes(2)
+              do{
+                $a=@(Get-NetAdapter -ErrorAction Stop)
+                if($a.Count -eq 1 -and $a[0].Status -eq 'Up'){break}
+                Start-Sleep -Seconds 3
+              }while([datetime]::UtcNow -lt $until)
+              if($a.Count -ne 1 -or $a[0].Status -ne 'Up' -or $a[0].InterfaceDescription -notmatch '^Microsoft Hyper-V Network Adapter( #[0-9]+)?$'){throw 'Unexpected guest network adapter'}
+              if(@(Get-NetRoute -ErrorAction Stop|Where-Object {$_.DestinationPrefix -in @('0.0.0.0/0','::/0')}).Count -ne 0){throw 'Unexpected default route'}
+              $idx=$a[0].InterfaceIndex
+              Rename-NetAdapter -Name $a[0].Name -NewName 'VOLVE-CI-PRIVATE-DNS' -ErrorAction Stop
+              Set-NetIPInterface -InterfaceIndex $idx -AddressFamily IPv4 -Dhcp Disabled -ErrorAction Stop
+              New-NetIPAddress -InterfaceIndex $idx -IPAddress '192.0.2.10' -PrefixLength 24 -ErrorAction Stop|Out-Null
+              & netsh.exe interface ipv4 set dnsservers "name=$idx" source=static address=192.0.2.53 validate=no
+              if($LASTEXITCODE -ne 0){throw 'Initial lab IPv4 DNS configuration failed'}
+              & netsh.exe interface ipv4 add dnsservers "name=$idx" address=192.0.2.54 index=2 validate=no
+              if($LASTEXITCODE -ne 0){throw 'Initial lab secondary IPv4 DNS configuration failed'}
+              & netsh.exe interface ipv6 set dnsservers "name=$idx" source=dhcp
+              if($LASTEXITCODE -ne 0){throw 'Initial automatic IPv6 DNS configuration failed'}
+              if(@(Get-NetRoute -ErrorAction Stop|Where-Object {$_.DestinationPrefix -in @('0.0.0.0/0','::/0')}).Count -ne 0){throw 'Unexpected default route after fixture setup'}
+              New-Item -ItemType Directory -Path $root -ErrorAction Stop|Out-Null
+              & icacls.exe $root '/inheritance:r' '/grant:r' '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F'|Out-Null
+              if($LASTEXITCODE -ne 0){throw 'Could not protect DNS test folder'}
+            }
+            $report.stage='prepare_isolated_dns_peer'
+            $free=[long](Get-CimInstance Win32_OperatingSystem -ErrorAction Stop).FreePhysicalMemory*1KB
+            if($free -lt 3GB){throw 'Insufficient host memory for second isolated Windows guest; no connectivity verdict'}
+            $peerVM=New-VM -Name ($name+'-PEER') -Generation $report.generation -MemoryStartupBytes 2GB -VHDPath $peerDisk -Path $dir -ErrorAction Stop
+            $peerVM|Set-VMProcessor -Count 1 -ErrorAction Stop
+            $peerVM|Set-VM -AutomaticCheckpointsEnabled $false -ErrorAction Stop
+            $peerVM|Get-VMNetworkAdapter|Remove-VMNetworkAdapter -Confirm:$false -ErrorAction Stop
+            Add-VMNetworkAdapter -VM $peerVM -Name 'VOLVE-CI-PRIVATE-DNS-PEER' -SwitchName $switchName -ErrorAction Stop
+            $peerExe=Join-Path $env:RUNNER_TEMP 'VOLVE-CI-PrivateDNSPeer.exe'
+            $peerSHA=(Get-FileHash -LiteralPath $peerExe -Algorithm SHA256).Hash
+            $peerSession=Start-VolvPrivateDNSPeer -Peer $peerVM -Client $vm -Switch $privateSwitch -Credential $credential -PeerExe $peerExe -ExpectedSHA $peerSHA
+            $pinnedPeerIdentity=Get-VolvPrivatePeerLiveIdentity -Session $peerSession -ExpectedSHA $peerSHA
+            $report.private_peer_identity=$pinnedPeerIdentity
+            $report.private_peer_topology_verified=Assert-VolvPrivatePeerTopology -ClientId $vm.Id -PeerId $peerVM.Id -SwitchId $privateSwitch.Id
+            $probeSource=Join-Path $env:GITHUB_WORKSPACE 'development\0.28.7\lab\private_dns_client_probe.ps1'
+            $probeSHA=(Get-FileHash -LiteralPath $probeSource -Algorithm SHA256).Hash
+            $probeGuest=Join-Path $guestDNS 'private_dns_client_probe.ps1'
+            Copy-Item -LiteralPath $probeSource -Destination $probeGuest -ToSession $session -ErrorAction Stop
+            foreach($transport in @('Default','TCP')){
+              $report.private_peer_challenges+=Assert-VolvPrivateDNSPeerChallenge -ClientSession $session -PeerSession $peerSession -ClientId $vm.Id -PeerId $peerVM.Id -SwitchId $privateSwitch.Id -ProbePath $probeGuest -ProbeSHA $probeSHA -PeerSHA $peerSHA -PinnedPeerIdentity $pinnedPeerIdentity -Phase Original -Transport $transport
+            }
+            # Read-only forensic census: do not exclude unknown adapters.
+            # Establish whether the unpaired DNS rows belong to an actual
+            # .NET loopback interface or an unexpected virtual adapter.
+            # No GUID, DNS address, interface name or route is exported.
+            $report.private_guest_dns_inventory=Invoke-Command -Session $session -ErrorAction Stop -ScriptBlock {
+              $ErrorActionPreference='Stop'
+              $adapters=@(Get-NetAdapter -IncludeHidden -ErrorAction Stop|Where-Object {$_.InterfaceGuid -and $_.InterfaceIndex -gt 0})
+              $loopIndexes=@(foreach($n in [Net.NetworkInformation.NetworkInterface]::GetAllNetworkInterfaces()){
+                if($n.NetworkInterfaceType -ne [Net.NetworkInformation.NetworkInterfaceType]::Loopback){continue}
+                $p=$n.GetIPProperties()
+                if($n.Supports([Net.NetworkInformation.NetworkInterfaceComponent]::IPv4)){$p.GetIPv4Properties().Index}
+                if($n.Supports([Net.NetworkInformation.NetworkInterfaceComponent]::IPv6)){$p.GetIPv6Properties().Index}
+              })
+              $loopIndexes=@($loopIndexes|Sort-Object -Unique)
+              $rows=@(foreach($d in Get-DnsClientServerAddress -ErrorAction Stop){
+                $idx=[uint32]$d.InterfaceIndex
+                $mapped=@($adapters|Where-Object {[uint32]$_.InterfaceIndex -eq $idx}|ForEach-Object InterfaceGuid|Sort-Object -Unique)
+                $servers=@($d.ServerAddresses|Where-Object {$_})
+                [pscustomobject]@{
+                  index=$idx;family=[string]$d.AddressFamily;guid_count=$mapped.Count;
+                  server_count=$servers.Count;dotnet_loopback=($idx -in $loopIndexes);
+                  only_legacy_ipv6_placeholders=($servers.Count -gt 0 -and @($servers|Where-Object {$_ -notin @('fec0:0:0:ffff::1','fec0:0:0:ffff::2','fec0:0:0:ffff::3')}).Count -eq 0)
+                }
+              })
+              [pscustomobject]@{mapped_adapter_count=$adapters.Count;rows=$rows}
+            }
+            $exe=Join-Path $env:RUNNER_TEMP 'VOLVE-CI-GuestDNS.test.exe'
+            $report.dns_test_exe_sha256=(Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash
+            $guestExe=Join-Path $guestDNS 'VOLVE-CI-GuestDNS.test.exe'
+            Copy-Item -LiteralPath $exe -Destination $guestExe -ToSession $session -ErrorAction Stop
+            $copied=Invoke-Command -Session $session -ArgumentList $guestExe -ErrorAction Stop -ScriptBlock {param($path);(Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash}
+            if($copied -cne $report.dns_test_exe_sha256){throw 'Guest test binary hash mismatch'}
+            $report.stage='native_signed_dns_recovery_under_real_system'
+            $armDir=Join-Path $guestDNS 'arm'
+            $recoverDir=Join-Path $guestDNS 'recover'
+            Invoke-Command -Session $session -ArgumentList $guestDNS,$armDir,$recoverDir,$report.dns_test_exe_sha256 -ErrorAction Stop -ScriptBlock {
+              param($root,$arm,$recover,$sha)
+              foreach($p in @($arm,$recover)){
+                New-Item -ItemType Directory -Path $p -ErrorAction Stop|Out-Null
+                $dest=Join-Path $p 'VOLVE-CI-GuestDNS.test.exe'
+                Copy-Item -LiteralPath (Join-Path $root 'VOLVE-CI-GuestDNS.test.exe') -Destination $dest -ErrorAction Stop
+                if((Get-FileHash -LiteralPath $dest -Algorithm SHA256).Hash -cne $sha){throw 'Durable phase executable mismatch'}
+              }
+            }
+            foreach($phase in @('SINGLE','ARM')){
+            if($phase -ceq 'ARM'){$report.stage='arm_persisted_dns_fault_before_reboot'}
+            $phaseDir=if($phase -ceq 'ARM'){$armDir}else{$guestDNS}
+            $test=Invoke-Command -Session $session -ArgumentList $phaseDir,$trial,$phase -ErrorAction Stop -ScriptBlock {
+              param($root,$id,$phase)
+              $ErrorActionPreference='Stop'
+              $task='VOLVE-CI-GuestDNS-'+$phase+'-'+$id
+              if(Get-ScheduledTask -TaskName $task -ErrorAction SilentlyContinue){throw 'Task collision'}
+              $runner=Join-Path $root 'run-test.cmd'
+              $script=@'
+          @echo off
+          setlocal
+          "%SystemRoot%\System32\whoami.exe" /user /fo csv /nh > "%~dp0started.txt" 2>&1
+          if errorlevel 1 exit /b 91
+          set "GITHUB_ACTIONS=true"
+          set "RUNNER_ENVIRONMENT=github-hosted"
+          set "VOLVE_CI_NESTED_GUEST_DNS=PRIVATE_GUEST_ONLY"
+          set "VOLVE_CI_DNS_REBOOT_PHASE=__PHASE__"
+          "%~dp0VOLVE-CI-GuestDNS.test.exe" "-test.run=^__TEST__$" -test.v -test.timeout=32m > "%~dp0test.log" 2>&1
+          set "RESULT=%ERRORLEVEL%"
+          > "%~dp0exit.tmp" echo %RESULT%
+          move /y "%~dp0exit.tmp" "%~dp0exit.txt" >nul
+          exit /b %RESULT%
+          '@
+              $testName=if($phase -ceq 'ARM'){'TestNestedGuestDNSRebootArmSYSTEM'}elseif($phase -ceq 'SINGLE'){'TestNestedGuestSignedOriginalDNSNativeSYSTEM'}else{throw 'Unknown DNS lab phase'}
+              $script=$script.Replace('__PHASE__',$phase).Replace('__TEST__',$testName)
+              Set-Content -LiteralPath $runner -Value $script -Encoding ASCII -ErrorAction Stop
+              $action=New-ScheduledTaskAction -Execute (Join-Path $env:WINDIR 'System32\cmd.exe') -Argument ('/d /c ""'+$runner+'""') -WorkingDirectory $root
+              $principal=New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest
+              $settings=New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit (New-TimeSpan -Minutes 34)
+              & wevtutil.exe sl Microsoft-Windows-TaskScheduler/Operational /e:true
+              if($LASTEXITCODE -ne 0){throw 'Task history unavailable'}
+              Register-ScheduledTask -TaskName $task -TaskPath '\' -Principal $principal -Action $action -Settings $settings -ErrorAction Stop|Out-Null
+              try{
+                function Get-OwnedManualTaskProof([string]$ownedName,[long]$cursor){
+                  $all=@()
+                  try{$all=@(Get-WinEvent -LogName 'Microsoft-Windows-TaskScheduler/Operational' -MaxEvents 4096 -ErrorAction Stop)}
+                  catch{if($_.FullyQualifiedErrorId -notmatch '^NoMatchingEventsFound(?:,|$)'){throw}}
+                  $records=@(foreach($event in $all){
+                    if([long]$event.RecordId -le $cursor -or $event.Id -notin @(110,100,201,102)){continue}
+                    $xml=[xml]$event.ToXml()
+                    $fields=@{}
+                    foreach($node in $xml.SelectNodes("//*[local-name()='EventData']/*[local-name()='Data']")){
+                      $fields[[string]$node.GetAttribute('Name')]=[string]$node.InnerText
+                    }
+                    if($fields['TaskName'] -cne ('\'+$ownedName)){continue}
+                    $instance=[guid]::Empty
+                    $instanceText=[string]$fields['InstanceId']
+                    if(-not $instanceText){$instanceText=[string]$fields['TaskInstanceId']}
+                    if(-not [guid]::TryParse($instanceText,[ref]$instance) -or $instance -eq [guid]::Empty){continue}
+                    [pscustomobject]@{id=[int]$event.Id;record=[long]$event.RecordId;instance=$instance.ToString('D');result=[string]$fields['ResultCode']}
+                  })
+                  # Real guest evidence (ca1ef94): providers emitted 100
+                  # before 110 for the SAME GUID. Both must be fresh and
+                  # unique, both precede successful action completion (201),
+                  # which precedes task completion (102). Do not require
+                  # ordering between the two independent start notifications.
+                  $instances=@($records|Group-Object instance)
+                  if($instances.Count -eq 1){
+                    $owned=@($instances[0].Group)
+                    $trigger=@($owned|Where-Object id -eq 110)
+                    $started=@($owned|Where-Object id -eq 100)
+                    $action=@($owned|Where-Object id -eq 201)
+                    $completed=@($owned|Where-Object id -eq 102)
+                    if($owned.Count -eq 4 -and $trigger.Count -eq 1 -and $started.Count -eq 1 -and $action.Count -eq 1 -and $completed.Count -eq 1){
+                      $ids=@($owned|Sort-Object record|ForEach-Object {[long]$_.record})
+                      if(@($ids|Sort-Object -Unique).Count -eq 4 -and
+                        $action[0].record -gt $trigger[0].record -and $action[0].record -gt $started[0].record -and
+                        $completed[0].record -gt $action[0].record -and
+                        $action[0].result -in @('0','0x0','0x00000000') -and
+                        (-not $completed[0].result -or $completed[0].result -in @('0','0x0','0x00000000'))){
+                        return [pscustomobject]@{verified=$true;record_ids=$ids;instance=$trigger[0].instance}
+                      }
+                    }
+                  }
+                  # Keep the exact owned event metadata on rejection so
+                  # that provider ordering/schema differences are observable.
+                  # No unrelated task name, command, account or raw XML.
+                  return [pscustomobject]@{verified=$false;record_ids=@();instance=$null;cursor=$cursor;observed=@($records|Sort-Object record|Select-Object -Last 32)}
+                }
+                # A newly enabled Operational log may legitimately be empty.
+                # Empty is a valid zero cursor, NEVER a successful event chain.
+                $cursor=[long]0
+                $logInfo=Get-WinEvent -ListLog 'Microsoft-Windows-TaskScheduler/Operational' -ErrorAction Stop
+                if(-not $logInfo.IsEnabled){throw 'Scheduler event journal disabled'}
+                try{$cursor=[long](Get-WinEvent -LogName 'Microsoft-Windows-TaskScheduler/Operational' -MaxEvents 1 -ErrorAction Stop).RecordId}
+                catch{if($_.FullyQualifiedErrorId -notmatch '^NoMatchingEventsFound(?:,|$)'){throw}}
+                $startedAt=Get-Date
+                Start-ScheduledTask -TaskName $task -TaskPath '\' -ErrorAction Stop
+                $exitFile=Join-Path $root 'exit.txt'
+                $until=[datetime]::UtcNow.AddMinutes(33)
+                do{
+                  Start-Sleep -Seconds 3
+                  $current=Get-ScheduledTask -TaskName $task -TaskPath '\' -ErrorAction Stop
+                  if((Test-Path -LiteralPath $exitFile) -and $current.State -eq 'Ready'){
+                    # Nonzero exit is already a failure. Preserve its log
+                    # without burning the entire success-event deadline.
+                    if([IO.File]::ReadAllText($exitFile).Trim() -ne '0'){break}
+                    $proof=Get-OwnedManualTaskProof $task $cursor
+                    if($proof.verified){break}
+                  }
+                }while([datetime]::UtcNow -lt $until)
+                $proof=Get-OwnedManualTaskProof $task $cursor
+                $log=Join-Path $root 'test.log'
+                $output=if(Test-Path -LiteralPath $log){Get-Content -LiteralPath $log -Raw}else{''}
+                $code=if(Test-Path -LiteralPath $exitFile){[int]([IO.File]::ReadAllText($exitFile))}else{-999}
+                $started=Join-Path $root 'started.txt'
+                $sidVerified=(Test-Path -LiteralPath $started) -and ((Get-Content -LiteralPath $started -Raw) -match '(?m),"S-1-5-18"\s*$')
+                $info=Get-ScheduledTaskInfo -TaskName $task -TaskPath '\' -ErrorAction Stop
+                $current=Get-ScheduledTask -TaskName $task -TaskPath '\' -ErrorAction Stop
+                $events=@(Get-WinEvent -FilterHashtable @{LogName='Microsoft-Windows-TaskScheduler/Operational';StartTime=$startedAt.AddSeconds(-5)} -MaxEvents 1000 -ErrorAction SilentlyContinue|Where-Object {
+                  $xml=[xml]$_.ToXml()
+                  @($xml.SelectNodes("/*[local-name()='Event']/*[local-name()='EventData']/*[local-name()='Data'][@Name='TaskName']")|Where-Object {$_.InnerText -ceq ('\'+$task)}).Count -gt 0
+                }|ForEach-Object {[int]$_.Id})
+                [pscustomobject]@{exit=$code;log=$output;system_sid_verified=$sidVerified;last_result=[int64]$info.LastTaskResult;state=[string]$current.State;event_ids=@($events|Sort-Object -Unique);correlated_event_chain=$proof}
+              }finally{
+                $owned=Get-ScheduledTask -TaskName $task -TaskPath '\' -ErrorAction Stop
+                if($owned.Principal.UserId -notin @('SYSTEM','S-1-5-18')){throw 'Unexpected task identity'}
+                if($owned.State -eq 'Running'){Stop-ScheduledTask -TaskName $task -TaskPath '\' -ErrorAction Stop}
+                Unregister-ScheduledTask -TaskName $task -TaskPath '\' -Confirm:$false -ErrorAction Stop
+              }
+            }
+            if($phase -ceq 'ARM'){
+              $arm=$test
+              Write-Host $arm.log
+              if(-not $arm.system_sid_verified -or $arm.exit -ne 0 -or $arm.last_result -ne 0 -or $arm.state -ne 'Ready' -or -not $arm.correlated_event_chain.verified -or $arm.log -notmatch 'PASS VOLVE_DNS_REBOOT_ARMED_DUAL_STACK_FAULT_NO_RESTORE_YET' -or $arm.log -notmatch '--- PASS: TestNestedGuestDNSRebootArmSYSTEM'){throw 'Durable DNS fault not proven'}
+              break
+            }
+            $report.private_guest_dns_test_exit=$test.exit
+            $report.private_guest_dns_scheduler=[ordered]@{system_sid_verified=$test.system_sid_verified;last_result=$test.last_result;state=$test.state;event_ids=$test.event_ids;correlated_event_chain=$test.correlated_event_chain}
+            Write-Host $test.log
+            if(-not $test.system_sid_verified -or $test.exit -ne 0 -or $test.last_result -ne 0 -or $test.state -ne 'Ready' -or -not $test.correlated_event_chain.verified -or $test.log -notmatch 'PASS VOLVE_NESTED_GUEST_REAL_SIGNED_SYSTEM_DNS_STATIC_IPV4_AUTOMATIC_IPV6' -or $test.log -notmatch '--- PASS: TestNestedGuestSignedOriginalDNSNativeSYSTEM'){throw 'Real native SYSTEM DNS recovery test did not pass'}
+            $report.private_guest_dns_verified=$true
+            $report.stage='native_dns_slice_verified_only'
+            }
+            $keyMatches=[regex]::Matches($arm.log,'VOLVE_DNS_REBOOT_PUBLIC_KEY_SHA256=([a-f0-9]{64})')
+            $originalMatches=[regex]::Matches($arm.log,'VOLVE_DNS_REBOOT_ORIGINAL_SHA256=([a-f0-9]{64})')
+            if($keyMatches.Count -ne 1 -or $originalMatches.Count -ne 1){throw 'Unique preboot DNS pins not proven'}
+            $keyPin=$keyMatches[0].Groups[1].Value
+            $originalPin=$originalMatches[0].Groups[1].Value
+            $report.dns_reboot_arm_verified=$true
+            $report.dns_reboot_original_sha256=$originalPin
+            $chainSource=Join-Path $env:GITHUB_WORKSPACE 'development\0.28.7\lab\reboot_event_chain.ps1'
+            $chainHash=(Get-FileHash -LiteralPath $chainSource -Algorithm SHA256).Hash
+            Copy-Item -LiteralPath $chainSource -Destination (Join-Path $recoverDir 'reboot_event_chain.ps1') -ToSession $session -ErrorAction Stop
+            $report.stage='actual_system_motor_on_armed_dns_then_stop'
+            $motorSource=Join-Path $env:RUNNER_TEMP 'VOLVE-CI-ActualMotor.exe'
+            $motorSHA=(Get-FileHash -LiteralPath $motorSource -Algorithm SHA256).Hash
+            $motorGuest=Join-Path $guestDNS 'VOLVE-CI-ActualMotor.exe'
+            $integrationSource=Join-Path $env:GITHUB_WORKSPACE 'development\0.28.7\lab\ci_private_motor_integration.ps1'
+            $integrationSHA=(Get-FileHash -LiteralPath $integrationSource -Algorithm SHA256).Hash
+            $integrationGuest=Join-Path $guestDNS 'ci_private_motor_integration.ps1'
+            $wireSource=Join-Path $env:RUNNER_TEMP 'VOLVE-CI-ActualMotorProbe.test.exe'
+            $wireSHA=(Get-FileHash -LiteralPath $wireSource -Algorithm SHA256).Hash
+            $wireGuest=Join-Path $guestDNS 'VOLVE-CI-ActualMotorProbe.test.exe'
+            $capsuleSource=Join-Path $env:RUNNER_TEMP 'VOLVE-CI-PrivateSetup-NO-RELEASE.exe'
+            $capsuleSHA=(Get-FileHash -LiteralPath $capsuleSource -Algorithm SHA256).Hash
+            $capsuleGuest=Join-Path $guestDNS 'VOLVE-CI-PrivateSetup-NO-RELEASE.exe'
+            Copy-Item -LiteralPath $capsuleSource -Destination $capsuleGuest -ToSession $session -ErrorAction Stop
+            $report.private_setup_capsule=Invoke-Command -Session $session -ArgumentList $capsuleGuest,$capsuleSHA,$motorGuest,$motorSHA,$wireGuest,$wireSHA,$integrationGuest,$integrationSHA -ErrorAction Stop -ScriptBlock {
+              param($exe,$pin,$motor,$motorPin,$wire,$wirePin,$script,$scriptPin)
+              if((Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash -cne $pin){throw 'Private setup EXE hash mismatch'}
+              $env:GITHUB_ACTIONS='true'
+              $env:RUNNER_ENVIRONMENT='github-hosted'
+              $env:VOLVE_CI_NESTED_GUEST_DNS='PRIVATE_GUEST_ONLY'
+              $output=@(& $exe --stage-private-ci $motorPin $wirePin $scriptPin)
+              if($LASTEXITCODE -ne 0 -or @($output|Where-Object {$_ -ceq 'PASS VOLVE_PRIVATE_CAPSULE_STAGED_THREE_EXACT_COMPONENTS NO_INSTALL'}).Count -ne 1){throw 'Private single EXE staging failed'}
+              foreach($item in @(@($motor,$motorPin),@($wire,$wirePin),@($script,$scriptPin))){
+                if((Get-FileHash -LiteralPath $item[0] -Algorithm SHA256).Hash -cne $item[1]){throw 'Independent staged component verification failed'}
+              }
+              [pscustomobject]@{capsule_sha256=$pin;exact_components=3;independent_readback_verified=$true;production_install=$false}
+            }
+            if($report.private_setup_capsule.capsule_sha256 -cne $capsuleSHA -or -not $report.private_setup_capsule.independent_readback_verified -or $report.private_setup_capsule.exact_components -ne 3){throw 'Single EXE staging proof absent'}
+            # The reversible gateway experiment already failed to alter TCP 10057.
+            # Do not repeat it during ordinary regression runs; retain its separate evidence.
+            $null=Assert-VolvPrivatePeerTopology -ClientId $vm.Id -PeerId $peerVM.Id -SwitchId $privateSwitch.Id
+            $report.private_actual_motor_integration=Invoke-Command -Session $session -ArgumentList $integrationGuest,$integrationSHA,$motorGuest,$motorSHA,$wireGuest,$wireSHA,$trial -ErrorAction Stop -ScriptBlock {
+              param($path,$sha,$motor,$motorPin,$wire,$wirePin,$id)
+              if((Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash -cne $sha){throw 'Integration script hash mismatch'}
+              $env:GITHUB_ACTIONS='true'
+              $env:RUNNER_ENVIRONMENT='github-hosted'
+              $env:VOLVE_CI_NESTED_GUEST_DNS='PRIVATE_GUEST_ONLY'
+              & $path -MotorExe $motor -MotorSHA $motorPin -WireProbeExe $wire -WireProbeSHA $wirePin -Trial $id -PrivateGatewayControl
+            }
+            if(-not $report.private_actual_motor_integration.actual_system_motor -or -not $report.private_actual_motor_integration.motor_stopped -or -not $report.private_actual_motor_integration.independent_wire_probe_verified -or $report.private_actual_motor_integration.independent_wire_probe_sha256 -cne $wireSHA -or $report.private_actual_motor_integration.dual_stack_transport_checks -ne 4 -or -not $report.private_actual_motor_integration.configured_resolver_default -or -not $report.private_actual_motor_integration.blocked_domains_verified){throw 'Actual motor activation/failure integration not proven'}
+            if(-not $report.private_actual_motor_integration.configured_resolver_tcp){
+              if(-not $report.private_actual_motor_integration.configured_tcp_known_failure){throw 'Unexpected configured TCP failure'}
+              Write-Host 'KNOWN CONFIGURED TCP FAILURE 10057; continue independent recovery trial; overall result MUST FAIL'
+            }
+            $null=Assert-VolvPrivatePeerTopology -ClientId $vm.Id -PeerId $peerVM.Id -SwitchId $privateSwitch.Id
+            $report.stage='verify_dns_fault_after_actual_motor_stop'
+            foreach($transport in @('Default','TCP')){
+              $report.private_peer_challenges+=Assert-VolvPrivateDNSPeerChallenge -ClientSession $session -PeerSession $peerSession -ClientId $vm.Id -PeerId $peerVM.Id -SwitchId $privateSwitch.Id -ProbePath $probeGuest -ProbeSHA $probeSHA -PeerSHA $peerSHA -PinnedPeerIdentity $pinnedPeerIdentity -Phase Fault -Transport $transport
+            }
+            $report.stage='register_dedicated_system_dns_startup_recovery'
+            $bootTask=Invoke-Command -Session $session -ArgumentList $recoverDir,$trial,$keyPin,$originalPin,$chainHash -ErrorAction Stop -ScriptBlock {
+              param($root,$id,$key,$original,$chainSHA)
+              $ErrorActionPreference='Stop'
+              if($key -cnotmatch '^[a-f0-9]{64}$' -or $original -cnotmatch '^[a-f0-9]{64}$'){throw 'Invalid host-pinned recovery evidence'}
+              if((Get-FileHash -LiteralPath (Join-Path $root 'reboot_event_chain.ps1') -Algorithm SHA256).Hash -cne $chainSHA){throw 'Boot verifier bytes changed'}
+              $task='VOLVE-CI-BootRecovery-'+$id
+              if(Get-ScheduledTask -TaskName $task -TaskPath '\' -ErrorAction SilentlyContinue){throw 'Startup task collision'}
+              $runner=Join-Path $root 'recover.cmd'
+              $script=@'
+          @echo off
+          setlocal
+          "%SystemRoot%\System32\whoami.exe" /user /fo csv /nh > "%~dp0started.txt" 2>&1
+          if errorlevel 1 exit /b 91
+          set "GITHUB_ACTIONS=true"
+          set "RUNNER_ENVIRONMENT=github-hosted"
+          set "VOLVE_CI_NESTED_GUEST_DNS=PRIVATE_GUEST_ONLY"
+          set "VOLVE_CI_DNS_REBOOT_PHASE=RECOVER"
+          set "VOLVE_CI_DNS_REBOOT_PUBLIC_KEY_SHA256=__KEY__"
+          set "VOLVE_CI_DNS_REBOOT_ORIGINAL_SHA256=__ORIGINAL__"
+          "%~dp0VOLVE-CI-GuestDNS.test.exe" "-test.run=^TestNestedGuestDNSRebootRecoverSYSTEM$" -test.v -test.timeout=32m > "%~dp0test.log" 2>&1
+          set "RESULT=%ERRORLEVEL%"
+          > "%~dp0exit.tmp" echo %RESULT%
+          move /y "%~dp0exit.tmp" "%~dp0exit.txt" >nul
+          exit /b %RESULT%
+          '@
+              $script=$script.Replace('__KEY__',$key).Replace('__ORIGINAL__',$original)
+              Set-Content -LiteralPath $runner -Value $script -Encoding ASCII -ErrorAction Stop
+              $action=New-ScheduledTaskAction -Execute (Join-Path $env:WINDIR 'System32\cmd.exe') -Argument ('/d /c ""'+$runner+'""') -WorkingDirectory $root
+              $principal=New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest
+              $settings=New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Minutes 34)
+              Register-ScheduledTask -TaskName $task -TaskPath '\' -Principal $principal -Action $action -Settings $settings -Trigger (New-ScheduledTaskTrigger -AtStartup) -ErrorAction Stop|Out-Null
+              $owned=Get-ScheduledTask -TaskName $task -TaskPath '\' -ErrorAction Stop
+              if($owned.Principal.UserId -notin @('SYSTEM','S-1-5-18') -or $owned.State -ne 'Ready' -or @($owned.Triggers).Count -ne 1 -or $owned.Triggers[0].CimClass.CimClassName -cne 'MSFT_TaskBootTrigger'){throw 'Startup task not armed as SYSTEM'}
+              if(Test-Path -LiteralPath (Join-Path $root 'started.txt')){throw 'Recovery started before boot'}
+              [pscustomobject]@{name=$task;boot=(Get-CimInstance Win32_OperatingSystem).LastBootUpTime.ToUniversalTime().Ticks.ToString();xml=(Export-ScheduledTask -TaskName $task -TaskPath '\' -ErrorAction Stop);runner_sha=(Get-FileHash -LiteralPath $runner -Algorithm SHA256).Hash;cursor=[long](Get-WinEvent -LogName 'Microsoft-Windows-TaskScheduler/Operational' -MaxEvents 1 -ErrorAction Stop).RecordId}
+            }
+            $report.guest_boot_before=$bootTask.boot
+            $report.stage='reboot_with_persisted_dns_fault'
+            Invoke-Command -Session $session -ErrorAction Stop -ScriptBlock {
+              & shutdown.exe /s /t 5 /f
+              if($LASTEXITCODE -ne 0){throw 'DNS guest graceful shutdown failed'}
+            }
+            Remove-PSSession $session
+            $session=$null
+            $until=[datetime]::UtcNow.AddMinutes(4)
+            while((Get-VM -Id $vm.Id -ErrorAction Stop).State -ne 'Off' -and [datetime]::UtcNow -lt $until){Start-Sleep -Seconds 3}
+            if((Get-VM -Id $vm.Id -ErrorAction Stop).State -ne 'Off'){throw 'DNS guest poweroff not observed'}
+            $report.guest_poweroff_observed=$true
+            Start-VM -VM $vm -ErrorAction Stop
+            $session=Connect-Guest $vm.Id $credential 360
+            $report.stage='verify_boot_triggered_signed_dns_restoration'
+            $recovery=Invoke-Command -Session $session -ArgumentList $recoverDir,$bootTask.name,$bootTask.boot,$bootTask.xml,$bootTask.runner_sha,$bootTask.cursor,$chainHash,$report.dns_test_exe_sha256 -ErrorAction Stop -ScriptBlock {
+              param($root,$task,$before,$xml,$runnerSHA,$cursor,$chainSHA,$exeSHA)
+              $ErrorActionPreference='Stop'
+              $boot=(Get-CimInstance Win32_OperatingSystem).LastBootUpTime.ToUniversalTime()
+              if($boot.Ticks -le [long]$before){throw 'DNS guest boot did not advance'}
+              $chain=Join-Path $root 'reboot_event_chain.ps1'
+              if((Get-FileHash -LiteralPath $chain -Algorithm SHA256).Hash -cne $chainSHA){throw 'Boot chain verifier changed'}
+              . $chain
+              $exit=Join-Path $root 'exit.txt'
+              $proof=$null
+              $until=[datetime]::UtcNow.AddMinutes(35)
+              do{
+                Start-Sleep -Seconds 3
+                $owned=Get-ScheduledTask -TaskName $task -TaskPath '\' -ErrorAction Stop
+                if((Test-Path -LiteralPath $exit) -and $owned.State -eq 'Ready'){
+                  if([IO.File]::ReadAllText($exit).Trim() -ne '0'){break}
+                  try{$proof=Get-VolvRealBootChain -TaskName ('\'+$task) -BootUTC $boot}catch{}
+                  if($null -ne $proof){break}
+                }
+              }while([datetime]::UtcNow -lt $until)
+              $log=Join-Path $root 'test.log'
+              $output=if(Test-Path -LiteralPath $log){[IO.File]::ReadAllText($log)}else{''}
+              $code=if(Test-Path -LiteralPath $exit){[int]([IO.File]::ReadAllText($exit))}else{-999}
+              $started=Join-Path $root 'started.txt'
+              $sid=(Test-Path -LiteralPath $started) -and ([IO.File]::ReadAllText($started) -match '(?m),"S-1-5-18"\s*$')
+              $owned=Get-ScheduledTask -TaskName $task -TaskPath '\' -ErrorAction Stop
+              $info=Get-ScheduledTaskInfo -TaskName $task -TaskPath '\' -ErrorAction Stop
+              $unchanged=Assert-VolvRestoredTaskXML -SavedXML $xml -RestoredXML (Export-ScheduledTask -TaskName $task -TaskPath '\' -ErrorAction Stop)
+              if((Get-FileHash -LiteralPath (Join-Path $root 'recover.cmd') -Algorithm SHA256).Hash -cne $runnerSHA -or (Get-FileHash -LiteralPath (Join-Path $root 'VOLVE-CI-GuestDNS.test.exe') -Algorithm SHA256).Hash -cne $exeSHA){throw 'Recovery executable or runner changed'}
+              $fresh=($null -ne $proof -and $proof.TriggerRecordId -gt [long]$cursor)
+              [pscustomobject]@{boot=$boot.Ticks.ToString();exit=$code;log=$output;sid=$sid;result=[int64]$info.LastTaskResult;state=[string]$owned.State;xml_unchanged=$unchanged;fresh=$fresh;chain=$proof}
+            }
+            Write-Host $recovery.log
+            if($recovery.exit -ne 0 -or -not $recovery.sid -or $recovery.result -ne 0 -or $recovery.state -ne 'Ready' -or -not $recovery.xml_unchanged -or -not $recovery.fresh -or $recovery.log -notmatch 'PASS VOLVE_DNS_REBOOT_PERSISTED_SIGNED_DNS_RESTORED_NO_REAL_MOTOR_NO_CONNECTIVITY_PROOF' -or $recovery.log -notmatch '--- PASS: TestNestedGuestDNSRebootRecoverSYSTEM'){throw 'Boot-triggered DNS recovery not proven'}
+            $report.stage='independent_postboot_dns_readback'
+            $observation=Invoke-Command -Session $session -ArgumentList $recoverDir,$originalPin,$report.dns_test_exe_sha256 -ErrorAction Stop -ScriptBlock {
+              param($root,$pin,$sha)
+              $ErrorActionPreference='Stop'
+              $exe=Join-Path $root 'VOLVE-CI-GuestDNS.test.exe'
+              if((Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash -cne $sha){throw 'Observer executable mismatch'}
+              $env:GITHUB_ACTIONS='true'
+              $env:RUNNER_ENVIRONMENT='github-hosted'
+              $env:VOLVE_CI_NESTED_GUEST_DNS='PRIVATE_GUEST_ONLY'
+              $env:VOLVE_CI_DNS_REBOOT_PHASE='VERIFY'
+              $env:VOLVE_CI_DNS_REBOOT_ORIGINAL_SHA256=$pin
+              $output=@(& $exe '-test.run=^TestNestedGuestDNSRebootVerifyReadOnly$' '-test.v' '-test.timeout=3m' 2>&1)
+              $code=$LASTEXITCODE
+              [pscustomobject]@{exit=$code;log=($output -join [Environment]::NewLine)}
+            }
+            Write-Host $observation.log
+            if($observation.exit -ne 0 -or $observation.log -notmatch 'PASS VOLVE_DNS_REBOOT_INDEPENDENT_READBACK_NO_WRITES' -or $observation.log -notmatch '--- PASS: TestNestedGuestDNSRebootVerifyReadOnly'){throw 'Independent postboot DNS readback failed'}
+            $report.dns_reboot_independent_readback=$true
+            $report.stage='verify_private_network_after_dns_reboot'
+            foreach($transport in @('Default','TCP')){
+              $report.private_peer_challenges+=Assert-VolvPrivateDNSPeerChallenge -ClientSession $session -PeerSession $peerSession -ClientId $vm.Id -PeerId $peerVM.Id -SwitchId $privateSwitch.Id -ProbePath $probeGuest -ProbeSHA $probeSHA -PeerSHA $peerSHA -PinnedPeerIdentity $pinnedPeerIdentity -Phase Restored -Transport $transport
+            }
+            if($report.private_peer_challenges.Count -ne 6 -or @($report.private_peer_challenges|ForEach-Object nonce|Sort-Object -Unique).Count -ne 6){throw 'Incomplete private connectivity challenge census'}
+            $report.private_network_connectivity_verified=$true
+            $report.guest_boot_after=$recovery.boot
+            $report.dns_reboot_event_chain=$recovery.chain
+            $report.disk_persistence_verified=$true
+            $report.dns_reboot_verified=$true
+            $report.stage='native_signed_dns_reboot_and_private_connectivity_after_real_motor_stop_no_internet'
+            }
+          }catch{
+            $report.error_message=$_.Exception.Message
+            # Preserve a REDACTED, read-only census diff before destruction.
+            # This is forensic evidence only, never approval or exemption.
+            if($env:VOLVE_GUEST_TRIAL -ceq 'strict-reboot' -and $report.recovery_kit_prepared -and $session){
+              try{
+                $report.environment_drift=Invoke-Command -Session $session -ArgumentList $trial -ErrorAction Stop -ScriptBlock {
+                  param($id)
+                  $ErrorActionPreference='Stop'
+                  $dir=Join-Path $env:ProgramData ('VOLVE-VM-RebootLab-'+$id)
+                  . (Join-Path $dir 'reboot_event_chain.ps1')
+                  . (Join-Path $dir 'vm_environment_baseline.ps1')
+                  $old=Get-Content -LiteralPath (Join-Path $dir 'vm-environment-baseline.json') -Raw|ConvertFrom-Json
+                  $new=Get-VolvVMBaselineState -RunId $id
+                  $left=@{};$right=@{}
+                  foreach($r in $old.taskRecords){$left[$r.Split('|')[0]]=$r}
+                  foreach($r in $new.taskRecords){$right[$r.Split('|')[0]]=$r}
+                  $added=@($right.Keys|Where-Object {-not $left.ContainsKey($_)}|Sort-Object)
+                  $removed=@($left.Keys|Where-Object {-not $right.ContainsKey($_)}|Sort-Object)
+                  $changed=@($left.Keys|Where-Object {$right.ContainsKey($_) -and $left[$_] -cne $right[$_]}|Sort-Object)
+                  $classify={param($name) [pscustomobject]@{id=(Get-VolvVMBaselineSha -Value $name).Substring(0,16);scope=$(if($name.StartsWith('\Microsoft\Windows\',[StringComparison]::OrdinalIgnoreCase)){'microsoft-windows'}else{'other'})}}
+                  $marker=Join-Path $dir ('VOLVE-CI-BOOT-'+$id+'\boot-recovery-success.marker')
+                  $failed=Join-Path $dir ('VOLVE-CI-BOOT-'+$id+'\boot-recovery-failed.marker')
+                  # Capture only the owned watchdog's startup events and
+                  # result, never raw event messages, XML or foreign task names.
+                  $taskName='VOLVE-CI-BootRecovery-'+$id
+                  $task=Get-ScheduledTask -TaskName $taskName -TaskPath '\' -ErrorAction Stop
+                  $info=Get-ScheduledTaskInfo -TaskName $taskName -TaskPath '\' -ErrorAction Stop
+                  $boot=(Get-CimInstance Win32_OperatingSystem).LastBootUpTime
+                  $events=@(Get-WinEvent -FilterHashtable @{LogName='Microsoft-Windows-TaskScheduler/Operational';StartTime=$boot.AddSeconds(-5)} -MaxEvents 2000 -ErrorAction SilentlyContinue|Where-Object {
+                    $xml=[xml]$_.ToXml()
+                    @($xml.SelectNodes("/*[local-name()='Event']/*[local-name()='EventData']/*[local-name()='Data'][@Name='TaskName']")|Where-Object {$_.InnerText -ceq ('\'+$taskName)}).Count -gt 0
+                  }|ForEach-Object {[int]$_.Id})
+                  # Strict environmental failure remains a failure. Record a
+                  # separately correlated, read-only fixture result to isolate
+                  # the watchdog mechanism from unrelated OS task drift.
+                  $chain=$null
+                  $chainError=$null
+                  try{$chain=Get-VolvRealBootChain -TaskName ('\'+$taskName) -BootUTC $boot.ToUniversalTime()}
+                  catch{$chainError=$_.Exception.Message}
+                  $xmlMatches=$false
+                  $xmlError=$null
+                  try{
+                    $saved=[IO.File]::ReadAllText((Join-Path $dir ('VOLVE-CI-BOOT-'+$id+'\old-task.xml')))
+                    $live=Export-ScheduledTask -TaskName ('VOLVE-CI-StartupMotor-'+$id) -TaskPath '\' -ErrorAction Stop
+                    $xmlMatches=Assert-VolvRestoredTaskXML -SavedXML $saved -RestoredXML $live
+                  }catch{$xmlError=$_.Exception.Message}
+                  $journalStatus='unavailable'
+                  $journal=Join-Path $dir ('VOLVE-CI-BOOT-'+$id+'\recovery.json')
+                  $helper=Join-Path $dir 'volve-journal-lab.exe'
+                  if((Test-Path -LiteralPath $journal) -and (Test-Path -LiteralPath $helper)){
+                    $value=& $helper status $journal
+                    if($LASTEXITCODE -eq 0 -and $value -match '^(ROLLBACK_REQUIRED|NO_ROLLBACK:restored)$'){$journalStatus=$value}
+                  }
+                  [pscustomobject]@{
+                    watchdog_state=[string]$task.State
+                    watchdog_last_result=[int64]$info.LastTaskResult
+                    watchdog_last_run_after_boot=($info.LastRunTime -ge $boot.AddSeconds(-5))
+                    watchdog_event_ids=@($events|Sort-Object -Unique)
+                    watchdog_correlated_boot_chain=$chain
+                    watchdog_chain_error=$chainError
+                    fixture_original_xml_matches=$xmlMatches
+                    fixture_xml_error=$xmlError
+                    recovery_journal_status=$journalStatus
+                    before=@($old.taskRecords).Count;after=@($new.taskRecords).Count
+                    added=@($added|ForEach-Object {& $classify $_})
+                    removed=@($removed|ForEach-Object {& $classify $_})
+                    changed=@($changed|ForEach-Object {Get-VolvVMBaselineTaskDriftHint -ExpectedRecord $left[$_] -ActualRecord $right[$_]})
+                    changed_ids=@($changed|ForEach-Object {(Get-VolvVMBaselineSha -Value $_).Substring(0,16)})
+                    hosts_equal=($old.hostsSha256 -ceq $new.hostsSha256)
+                    dns_equal=(($old.dnsRecords -join '|') -ceq ($new.dnsRecords -join '|'))
+                    recovery_marker_present=(Test-Path -LiteralPath $marker)
+                    failure_marker_present=(Test-Path -LiteralPath $failed)
+                  }
+                }
+              }catch{$report.environment_diagnostic_error=$_.Exception.Message}
+              try{
+                if($report.environment_drift){
+                  $report.recovery_task_audit=@(Invoke-Command -Session $session -ArgumentList $guestKit,($report.environment_drift.changed_ids -join ','),$recoveryAuditCursor.security,$recoveryAuditCursor.scheduler -ErrorAction Stop -ScriptBlock {
+                    param($root,$ids,$securityCursor,$schedulerCursor)
+                    $env:GITHUB_ACTIONS='true'
+                    $env:RUNNER_ENVIRONMENT='github-hosted'
+                    foreach($identity in @($ids.Split(',')|Where-Object {$_ -cmatch '^[A-F0-9]{16}$'})){
+                      $result=@(& (Join-Path $root 'ci_task_scheduler_event_diagnostic.ps1') -Mode Investigate -IdentityId $identity -Minutes 15 -AfterSecurityRecordId $securityCursor -AfterSchedulerRecordId $schedulerCursor 6>&1)
+                      foreach($line in $result){if(([string]$line).StartsWith('CI TASK EVENT POSTMORTEM:')){[string]$line}}
+                    }
+                  })
+                }
+              }catch{$report.task_audit_error='Recovery task audit unavailable; no exemption'}
+            }
+          }finally{
+            # Attempt each owned resource independently, even after another
+            # cleanup fails. Never remove an unexpected VM/switch or a disk
+            # directory while an owned VM or mounted VHD may still exist.
+            $cleanupErrors=@()
+            try{if($session){Remove-PSSession $session -ErrorAction Stop}}catch{$cleanupErrors+=('client session: '+$_.Exception.Message)}
+            try{if($peerSession){Remove-PSSession $peerSession -ErrorAction Stop}}catch{$cleanupErrors+=('peer session: '+$_.Exception.Message)}
+            $diskSafe=$true
+            try{if($mounted){Dismount-VHD -Path $vhd -ErrorAction Stop}}catch{$diskSafe=$false;$cleanupErrors+=('mounted VHD: '+$_.Exception.Message)}
+            try{
+              if($vm){
+                $owned=Get-VM -Id $vm.Id -ErrorAction Stop
+                if($owned.Name -cne $name){throw 'Unexpected VM identity'}
+                if($owned.State -ne 'Off'){Stop-VM -VM $owned -TurnOff -Force -ErrorAction Stop}
+                Remove-VM -VM $owned -Force -ErrorAction Stop
+              }
+            }catch{$diskSafe=$false;$cleanupErrors+=('client VM: '+$_.Exception.Message)}
+            try{
+              if($peerVM){
+                $ownedPeer=Get-VM -Id $peerVM.Id -ErrorAction Stop
+                if($ownedPeer.Name -cne ($name+'-PEER')){throw 'Unexpected peer VM identity'}
+                if($ownedPeer.State -ne 'Off'){Stop-VM -VM $ownedPeer -TurnOff -Force -ErrorAction Stop}
+                Remove-VM -VM $ownedPeer -Force -ErrorAction Stop
+              }
+            }catch{$diskSafe=$false;$cleanupErrors+=('peer VM: '+$_.Exception.Message)}
+            try{
+              if($privateSwitch){
+                $ownedSwitch=Get-VMSwitch -Id $privateSwitch.Id -ErrorAction Stop
+                if($ownedSwitch.Name -cne ($name+'-PRIVATE') -or [string]$ownedSwitch.SwitchType -cne 'Private'){throw 'Unexpected private switch identity'}
+                $attached=@(Get-VM -ErrorAction Stop|Get-VMNetworkAdapter -ErrorAction Stop|Where-Object {$_.SwitchName -ceq $ownedSwitch.Name})
+                if($attached.Count -ne 0){throw 'Private switch still has VM attachments'}
+                Remove-VMSwitch -VMSwitch $ownedSwitch -Force -ErrorAction Stop
+              }
+            }catch{$cleanupErrors+=('private switch: '+$_.Exception.Message)}
+            try{
+              if($diskSafe -and (Test-Path -LiteralPath $dir)){Remove-Item -LiteralPath $dir -Recurse -Force -ErrorAction Stop}
+              if(-not $diskSafe){throw 'Disk directory preserved because detach/removal is not proven'}
+            }catch{$cleanupErrors+=('guest disk: '+$_.Exception.Message)}
+            $report.cleanup_ok=($cleanupErrors.Count -eq 0)
+            if(-not $report.cleanup_ok){$report.cleanup_error=($cleanupErrors -join '; ')}
+            $json=ConvertTo-Json -InputObject $report -Depth 8 -Compress
+            Write-Host "VOLVE_WINDOWS_GUEST_REBOOT_RESULT=$json"
+            Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value $json
+          }
+          if(-not $report.cleanup_ok){throw 'Guest cleanup failed'}
+          if($report.error_message){throw ('Guest test failed in '+$report.stage+': '+$report.error_message)}
+          if($env:VOLVE_GUEST_TRIAL -ceq 'strict-reboot'){
+            if(-not $report.disk_persistence_verified){throw 'Guest persistence not demonstrated'}
+            if(-not $report.recovery_kit_verified -or -not $report.recovery_kit_cleanup_verified){throw 'Strict SYSTEM recovery kit not fully verified'}
+            Write-Host 'PASS: real guest reboot + strict SYSTEM task fixture recovery; NO DNS TEST NO INSTALL.'
+          }else{
+            if(-not $report.private_guest_dns_verified){throw 'Private guest signed native DNS test not proven'}
+            if(-not $report.dns_reboot_verified -or -not $report.dns_reboot_independent_readback -or -not $report.dns_reboot_arm_verified -or -not $report.guest_poweroff_observed -or -not $report.disk_persistence_verified){throw 'Signed DNS startup recovery not proven'}
+            if(-not $report.private_network_connectivity_verified -or -not $report.private_peer_topology_verified){throw 'Private connectivity not proven'}
+            if(-not $report.private_actual_motor_integration.motor_stopped){throw 'Integrated motor failure missing'}
+            # Native configured-client fallback must also work; direct TCP and
+            # upstream-only probes cannot replace this end-to-end assertion.
+            if(-not $report.private_actual_motor_integration.native_upstream_truncation_verified -or $report.private_actual_motor_integration.native_upstream_truncation_exit -ne 0){throw 'Configured Windows resolver automatic TCP completion unverified; NO RELEASE'}
+            if(-not $report.private_actual_motor_integration.configured_resolver_tcp){throw 'Configured Windows TCP DNS remains unverified (10057); independent recovery evidence retained; NO RELEASE'}
+            Write-Host 'PASS: actual CI-tagged SYSTEM motor stopped, signed DNS restored after reboot, isolated UDP/TCP connectivity; NO INTERNET PROOF, NO PRODUCT INSTALL.'
+          }

@@ -39,6 +39,26 @@ func AuditResidentRecoveryOutcome(
  ctx context.Context, dir, outcome string,
  protect func(string)error, checks ResidentCompletionChecks,
 ) (ResidentRecoveryIntent,error) {
+ return auditResidentOutcome(ctx,dir,outcome,"recovery-required",nil,protect,checks)
+}
+
+// RecheckResidentTerminalOutcome is read-only: the UI/controller must supply
+// the exact previously authenticated transaction identity, not a user-selected
+// outcome or a stored progress number. Terminal receipts alone cannot establish
+// current health. This does not authorize writes or prove full host restoration;
+// the privileged caller must also verify its full original snapshot and lease.
+func RecheckResidentTerminalOutcome(
+ ctx context.Context, dir, outcome string, expected ResidentRecoveryIntent,
+ protect func(string)error, checks ResidentCompletionChecks,
+) (ResidentRecoveryIntent,error) {
+ if err:=validResidentIntent(expected);err!=nil{return ResidentRecoveryIntent{},err}
+ return auditResidentOutcome(ctx,dir,outcome,outcome,&expected,protect,checks)
+}
+
+func auditResidentOutcome(
+ ctx context.Context, dir, outcome, requiredStatus string, expected *ResidentRecoveryIntent,
+ protect func(string)error, checks ResidentCompletionChecks,
+) (ResidentRecoveryIntent,error) {
  var empty ResidentRecoveryIntent
  if outcome!="committed" && outcome!="restored" {
   return empty,errors.New("unknown resident transaction outcome")
@@ -46,11 +66,15 @@ func AuditResidentRecoveryOutcome(
  if checks==nil || protect==nil {
   return empty,errors.New("resident outcome has no trusted health checks or ACL services")
  }
+ if ctx==nil{return empty,errors.New("missing resident health context")}
  if err:=ctx.Err();err!=nil{return empty,err}
  current,err:=InspectResidentRecoveryJournal(ctx,dir,protect)
  if err!=nil{return empty,fmt.Errorf("unverifiable resident transaction: %w",err)}
- if current.Status!="recovery-required" {
-  return empty,fmt.Errorf("resident transaction not pending: %s",current.Status)
+ if current.Status!=requiredStatus {
+  return empty,fmt.Errorf("unexpected resident transaction status: %s",current.Status)
+ }
+ if expected!=nil && current.Intent!=*expected {
+  return empty,errors.New("resident receipt differs from expected transaction")
  }
  if err:=checks.VerifyRunningIdentity(ctx,current.Intent,outcome);err!=nil {
   return empty,fmt.Errorf("running SYSTEM motor identity unverified: %w",err)
@@ -69,9 +93,10 @@ func AuditResidentRecoveryOutcome(
  }
  latest,err:=InspectResidentRecoveryJournal(ctx,dir,protect)
  if err!=nil{return empty,fmt.Errorf("transaction changed during health probes: %w",err)}
- if latest.Status!="recovery-required" || latest.Intent!=current.Intent {
+ if latest.Status!=requiredStatus || latest.Intent!=current.Intent {
   return empty,errors.New("recovery journal changed during health verification")
  }
+ if err:=ctx.Err();err!=nil{return empty,err}
  return current.Intent,nil
 }
 
@@ -86,8 +111,7 @@ func ConfirmResidentRecoveryOutcome(
  if seal==nil {
   return errors.New("resident outcome has no trusted health checks or ACL services")
  }
- if _,err:=AuditResidentRecoveryOutcome(ctx,dir,outcome,protect,checks);err!=nil {
-  return err
- }
- return FinishResidentRecoveryIntent(ctx,dir,outcome,seal,protect)
+ verified,err:=AuditResidentRecoveryOutcome(ctx,dir,outcome,protect,checks)
+ if err!=nil{return err}
+ return finishResidentRecoveryIntentBound(ctx,dir,outcome,&verified,seal,protect)
 }

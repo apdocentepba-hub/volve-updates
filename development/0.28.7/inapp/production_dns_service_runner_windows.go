@@ -10,6 +10,7 @@ import (
     "os"
     "path/filepath"
     "strings"
+    "sync"
     "time"
 
     "volve-browser-protection/dnsproxy"
@@ -28,19 +29,27 @@ func runDNSServiceAt(ctx context.Context, root string, port int, upstreams []str
     engine,err:=fullEngineAt(root)
     if err!=nil{return fmt.Errorf("DNS Full catalog unavailable: %w",err)}
     running,cancel:=context.WithCancel(ctx)
-    defer cancel()
+    // Never report that a stopped/failed service has returned while
+    // either of its owned listeners or client handlers is still draining.
+    var servers sync.WaitGroup
+    defer func(){
+        cancel()
+        servers.Wait()
+    }()
 
     sv4:=dnsproxy.New(engine,upstreams)
     sv6:=dnsproxy.New(engine,upstreams)
     failures:=make(chan error,2)
-    go func(){failures<-sv4.Run(running,"127.0.0.1",port)}()
+    servers.Add(1)
+    go func(){defer servers.Done();failures<-sv4.Run(running,"127.0.0.1",port)}()
     select{
     case <-sv4.Ready():
     case err:=<-failures:return fmt.Errorf("IPv4 DNS server did not start: %w",err)
     case <-ctx.Done():return ctx.Err()
     case <-time.After(10*time.Second):return errors.New("UDP IPv4 no inició")
     }
-    go func(){failures<-sv6.Run(running,"::1",port)}()
+    servers.Add(1)
+    go func(){defer servers.Done();failures<-sv6.Run(running,"::1",port)}()
     select{
     case <-sv6.Ready():
     case err:=<-failures:return fmt.Errorf("IPv6 DNS server did not start: %w",err)

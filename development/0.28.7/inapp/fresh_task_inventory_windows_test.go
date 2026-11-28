@@ -4,8 +4,13 @@ package motorupdate
 
 import (
  "context"
+ "crypto/sha256"
+ "encoding/base64"
+ "encoding/hex"
  "encoding/json"
  "errors"
+ "os"
+ "time"
  "path/filepath"
  "strings"
  "testing"
@@ -95,4 +100,153 @@ func TestWindowsFreshTaskInventoryRealTaskSchedulerReadOnly(t *testing.T){
  }
  t.Logf("READ ONLY: enumerated %d VOLVE tasks, catalog verified=%t, unknown task count=%d (NO task/DNS writes)",
   result.VOLVETaskCount,result.VerifiedCatalogTask!=nil&&result.VerifiedCatalogTask.ActionVerified,len(result.UnknownTaskNames))
+}
+
+func TestWindowsOriginalCatalogCaptureExactXMLAndDrift(t *testing.T){
+ ctx:=context.Background()
+ original:=[]byte("<Task><RegistrationInfo><Description>fixture</Description></RegistrationInfo></Task>")
+ sum:=sha256.Sum256(original)
+ task:=freshTaskFixture();task.DefinitionSHA256=hex.EncodeToString(sum[:])
+ inventory,err:=InspectWindowsVOLVETasksReadOnly(ctx,task.Actions[0].Execute,task.Actions[0].Arguments,func(context.Context,string)([]byte,error){return freshWindowsTaskJSON(t,[]windowsVOLVETaskRecord{task}),nil})
+ if err!=nil{t.Fatal(err)}
+ snap:=ProtectionSnapshot{HostsSHA256:strings.Repeat("a",64),ChromePoliciesSHA256:strings.Repeat("b",64),EdgePoliciesSHA256:strings.Repeat("c",64),FirefoxPoliciesSHA256:strings.Repeat("d",64),CatalogTaskDefinitionSHA256:task.DefinitionSHA256,DNSAdaptersSHA256:strings.Repeat("e",64)}
+ reader:=func(payload []byte)func(context.Context)([]byte,error){return func(context.Context)([]byte,error){
+  return json.Marshal(map[string]any{"Present":true,"PayloadBase64":base64.StdEncoding.EncodeToString(payload)})
+ }}
+ got,err:=captureOriginalCatalogDefinition(ctx,snap,inventory,reader(original))
+ if err!=nil||!got.Present||string(got.XML)!=string(original){t.Fatal("original catalog capture failed",err)}
+ public,err:=json.Marshal(got);if err!=nil||strings.Contains(string(public),"fixture"){t.Fatal("private XML exported")}
+ if _,err:=captureOriginalCatalogDefinition(ctx,snap,inventory,reader([]byte("changed")));err==nil{t.Fatal("changed definition accepted")}
+ bad:=inventory;bad.UnknownTaskNames=[]string{"unknown"}
+ if _,err:=captureOriginalCatalogDefinition(ctx,snap,bad,reader(original));err==nil{t.Fatal("unknown task accepted")}
+}
+func TestWindowsOriginalCatalogCaptureAbsenceAndMissingEvidence(t *testing.T){
+ ctx:=context.Background()
+ sum:=sha256.Sum256([]byte(catalogTaskAbsentMarker))
+ snap:=ProtectionSnapshot{HostsSHA256:strings.Repeat("a",64),ChromePoliciesSHA256:strings.Repeat("b",64),EdgePoliciesSHA256:strings.Repeat("c",64),FirefoxPoliciesSHA256:strings.Repeat("d",64),CatalogTaskDefinitionSHA256:hex.EncodeToString(sum[:]),DNSAdaptersSHA256:strings.Repeat("e",64)}
+ inventory:=WindowsFreshVOLVETaskInventory{}
+ for _,v:=range []string{`{}`,`{"Present":null,"PayloadBase64":""}`,`{"Present":false}`,`{"Present":true,"PayloadBase64":""}`,`{"Present":false,"PayloadBase64":"YWJj"}`}{
+  if _,err:=captureOriginalCatalogDefinition(ctx,snap,inventory,func(context.Context)([]byte,error){return []byte(v),nil});err==nil{t.Fatal("ambiguous absence accepted")}
+ }
+ got,err:=captureOriginalCatalogDefinition(ctx,snap,inventory,func(context.Context)([]byte,error){return []byte(`{"Present":false,"PayloadBase64":""}`),nil})
+ if err!=nil||got.Present||got.XML!=nil{t.Fatal("explicit absent task rejected",err)}
+}
+
+func TestWindowsOriginalCatalogArchivePresentAndAbsent(t *testing.T){
+ for _,present:=range []bool{true,false}{
+  name:="absent";if present{name="present"}
+  t.Run(name,func(t *testing.T){
+   ctx:=context.Background()
+   parent,snap,_,_,_:=makeOriginalProtectionPairFixture(t)
+   definition:=originalCatalogDefinition{}
+   inv:=WindowsFreshVOLVETaskInventory{}
+   sum:=sha256.Sum256([]byte(catalogTaskAbsentMarker))
+   if present{
+    definition=originalCatalogDefinition{Present:true,XML:[]byte("<Task>synthetic</Task>")}
+    sum=sha256.Sum256(definition.XML)
+    task:=freshTaskFixture();task.DefinitionSHA256=hex.EncodeToString(sum[:])
+    var err error
+    inv,err=InspectWindowsVOLVETasksReadOnly(ctx,task.Actions[0].Execute,task.Actions[0].Arguments,func(context.Context,string)([]byte,error){return freshWindowsTaskJSON(t,[]windowsVOLVETaskRecord{task}),nil})
+    if err!=nil{t.Fatal(err)}
+   }
+   snap.CatalogTaskDefinitionSHA256=hex.EncodeToString(sum[:])
+   allow:=func(string)error{return nil}
+   if err:=storeOriginalCatalogArchiveUnarmed(ctx,parent,snap,inv,definition,allow,allow);err!=nil{t.Fatal(err)}
+   got,err:=readOriginalCatalogArchiveUnarmed(ctx,parent,snap,inv,allow)
+   if err!=nil||got.Present!=present||string(got.XML)!=string(definition.XML){t.Fatal("catalog archive readback mismatch",err)}
+   if err:=storeOriginalCatalogArchiveUnarmed(ctx,parent,snap,inv,definition,allow,allow);err==nil{t.Fatal("archive overwrite accepted")}
+   _,file,err:=catalogOriginalArchivePaths(parent);if err!=nil{t.Fatal(err)}
+   if err:=os.WriteFile(file,[]byte("{}"),0600);err!=nil{t.Fatal(err)}
+   if _,err:=readOriginalCatalogArchiveUnarmed(ctx,parent,snap,inv,allow);err==nil{t.Fatal("corrupted archive accepted")}
+  })
+ }
+}
+
+func TestWindowsOriginalCatalogArchiveRealNTFS(t *testing.T){
+ if os.Getenv("GITHUB_ACTIONS")!="true"||os.Getenv("RUNNER_ENVIRONMENT")!="github-hosted"{t.Skip("disposable runner only")}
+ ctx,cancel:=context.WithTimeout(context.Background(),90*time.Second);defer cancel()
+ parent,snap,_,_,_:=makeOriginalProtectionPairFixture(t)
+ definition:=originalCatalogDefinition{Present:true,XML:[]byte("<Task>synthetic native fixture</Task>")}
+ sum:=sha256.Sum256(definition.XML)
+ snap.CatalogTaskDefinitionSHA256=hex.EncodeToString(sum[:])
+ task:=freshTaskFixture();task.DefinitionSHA256=snap.CatalogTaskDefinitionSHA256
+ inv,err:=InspectWindowsVOLVETasksReadOnly(ctx,task.Actions[0].Execute,task.Actions[0].Arguments,func(context.Context,string)([]byte,error){return freshWindowsTaskJSON(t,[]windowsVOLVETaskRecord{task}),nil})
+ if err!=nil{t.Fatal(err)}
+ seal:=func(path string)error{return sealDNSBackupLabNode(ctx,path)}
+ check:=func(path string)error{return nativeDNSOriginalBackupACL(ctx,path)}
+ if err:=seal(parent);err!=nil{t.Fatal(err)}
+ if err:=storeOriginalCatalogArchiveUnarmed(ctx,parent,snap,inv,definition,seal,check);err!=nil{t.Fatal(err)}
+ got,err:=readOriginalCatalogArchiveUnarmed(ctx,parent,snap,inv,check)
+ if err!=nil||!got.Present||string(got.XML)!=string(definition.XML){t.Fatal("native catalog archive readback mismatch",err)}
+ t.Log("PASS VOLVE_CATALOG_ARCHIVE_REAL_NTFS_FIXTURE_NO_TASK_WRITES")
+}
+
+func TestWindowsOriginalCatalogArchiveFourComponentReview(t *testing.T){
+ ctx:=context.Background()
+ parent,snap,browser,hosts,policies:=makeOriginalProtectionPairFixture(t)
+ allow:=func(string)error{return nil}
+ observed,err:=InspectWindowsDNSAssignmentProvenanceReadOnly(ctx,protectionSnapshotDNSInspect)
+ if err!=nil{t.Fatal(err)}
+ journal,pin,err:=BuildDNSOriginalJournal(ctx,observed.States)
+ if err!=nil{t.Fatal(err)}
+ snap.DNSAdaptersSHA256=observed.SHA256
+ dnsParent:=filepath.Join(filepath.Dir(parent),"legacy-engine-recovery")
+ if err:=os.Mkdir(dnsParent,0700);err!=nil{t.Fatal(err)}
+ sum:=sha256.Sum256([]byte(catalogTaskAbsentMarker))
+ snap.CatalogTaskDefinitionSHA256=hex.EncodeToString(sum[:])
+ inv:=WindowsFreshVOLVETaskInventory{}
+ hostsPin:=WindowsHostsFileEvidence{SHA256:snap.HostsSHA256,BlockedRuleCount:snap.HostsBlockedRuleCount}
+ if err:=storeOriginalWindowsHostsBackupUnarmed(ctx,parent,hosts,hostsPin,allow,allow);err!=nil{t.Fatal(err)}
+ if err:=storeBrowserOriginalArchiveUnarmed(ctx,parent,browser,policies,allow,allow);err!=nil{t.Fatal(err)}
+ if _,err:=StoreDNSOriginalBackupUnarmed(ctx,dnsParent,journal,pin,allow,allow);err!=nil{t.Fatal(err)}
+ review:=func()(originalProtectionPairReceipt,error){
+  return verifyOriginalProtectionArchivesUnarmed(ctx,parent,dnsParent,snap,browser,inv,pin,allow)
+ }
+ if got,err:=review();err==nil||got!=(originalProtectionPairReceipt{}){t.Fatal("missing catalog archive accepted")}
+ if err:=storeOriginalCatalogArchiveUnarmed(ctx,parent,snap,inv,originalCatalogDefinition{},allow,allow);err!=nil{t.Fatal(err)}
+ got,err:=review()
+ if err!=nil||!got.HostsVerified||got.BrowserKeysVerified!=3||!got.DNSBackupVerified||!got.CatalogBackupVerified||
+  got.CompleteRecoverySnapshot||got.InstallAuthorized||got.RestoreAuthorized{t.Fatal("four-component review incorrectly reported",err)}
+ _,file,err:=catalogOriginalArchivePaths(parent);if err!=nil{t.Fatal(err)}
+ if err:=os.WriteFile(file,[]byte("{}"),0600);err!=nil{t.Fatal(err)}
+ if got,err:=review();err==nil||got!=(originalProtectionPairReceipt{}){t.Fatal("invalid catalog archive accepted")}
+ t.Log("PASS VOLVE_FOUR_ORIGINAL_ARCHIVES_FIXTURE_REVIEW_NO_AUTHORIZATION")
+}
+
+func TestWindowsOriginalCatalogArchiveNativeDisplayReview(t *testing.T){
+ if os.Getenv("GITHUB_ACTIONS")!="true"||os.Getenv("RUNNER_ENVIRONMENT")!="github-hosted"{t.Skip("disposable runner only")}
+ ctx,cancel:=context.WithTimeout(context.Background(),150*time.Second);defer cancel()
+ parent,snap,browser,hosts,policies:=makeOriginalProtectionPairFixture(t)
+ observed,err:=InspectWindowsDNSAssignmentProvenanceReadOnly(ctx,protectionSnapshotDNSInspect)
+ if err!=nil{t.Fatal(err)}
+ journal,pin,err:=BuildDNSOriginalJournal(ctx,observed.States)
+ if err!=nil{t.Fatal(err)}
+ snap.DNSAdaptersSHA256=observed.SHA256
+ dnsParent:=filepath.Join(filepath.Dir(parent),"legacy-engine-recovery")
+ if err:=os.Mkdir(dnsParent,0700);err!=nil{t.Fatal(err)}
+ seal:=func(path string)error{return sealDNSBackupLabNode(ctx,path)}
+ check:=func(path string)error{return nativeDNSOriginalBackupACL(ctx,path)}
+ if err:=seal(parent);err!=nil{t.Fatal(err)}
+ if err:=seal(dnsParent);err!=nil{t.Fatal(err)}
+ sum:=sha256.Sum256([]byte(catalogTaskAbsentMarker))
+ snap.CatalogTaskDefinitionSHA256=hex.EncodeToString(sum[:])
+ inv:=WindowsFreshVOLVETaskInventory{}
+ hostsPin:=WindowsHostsFileEvidence{SHA256:snap.HostsSHA256,BlockedRuleCount:snap.HostsBlockedRuleCount}
+ if err:=storeOriginalWindowsHostsBackupUnarmed(ctx,parent,hosts,hostsPin,seal,check);err!=nil{t.Fatal(err)}
+ if err:=storeBrowserOriginalArchiveUnarmed(ctx,parent,browser,policies,seal,check);err!=nil{t.Fatal(err)}
+ if _,err:=StoreDNSOriginalBackupUnarmed(ctx,dnsParent,journal,pin,seal,check);err!=nil{t.Fatal(err)}
+ if err:=storeOriginalCatalogArchiveUnarmed(ctx,parent,snap,inv,originalCatalogDefinition{},seal,check);err!=nil{t.Fatal(err)}
+ report,err:=InspectOriginalBackupArchivesNativeReadOnly(ctx,parent,dnsParent,snap,browser,inv,pin)
+ if err!=nil||report.Status!="FOUR_ARCHIVES_VERIFIED_READ_ONLY"||!report.HostsVerified||report.BrowserKeysVerified!=3||
+  !report.CatalogBackupVerified||!report.DNSBackupVerified||report.CompleteRecoverySnapshot||report.InstallAuthorized||report.RestoreAuthorized{
+  t.Fatal("native display review failed",err)
+ }
+ serialized,err:=json.Marshal(report);if err!=nil{t.Fatal(err)}
+ if strings.Contains(string(serialized),parent)||strings.Contains(string(serialized),snap.HostsSHA256)||strings.Contains(string(serialized),pin){
+  t.Fatal("private recovery data leaked to display")
+ }
+ wrong:=snap;wrong.DNSAdaptersSHA256=strings.Repeat("f",64)
+ refused,err:=InspectOriginalBackupArchivesNativeReadOnly(ctx,parent,dnsParent,wrong,browser,inv,pin)
+ if err==nil||refused!=(WindowsOriginalBackupReview{Status:"UNVERIFIED"}){t.Fatal("wrong original baseline received display credit")}
+ t.Log("PASS VOLVE_FOUR_ARCHIVES_REAL_NTFS_DISPLAY_ONLY")
 }

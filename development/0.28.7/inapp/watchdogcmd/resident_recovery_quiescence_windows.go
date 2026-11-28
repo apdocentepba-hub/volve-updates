@@ -73,6 +73,7 @@ func residentQuiescenceWithQuery(ctx context.Context,root,version string,
  query func(context.Context,string)(string,error),
 )(residentQuiescenceDecision,error){
  var no residentQuiescenceDecision
+ if ctx==nil{return no,errors.New("quiescence context missing")}
  if err:=ctx.Err();err!=nil{return no,err}
  if query==nil||!filepath.IsAbs(root)||filepath.Clean(root)!=root{
   return no,errors.New("missing trusted Windows read-only query")
@@ -86,9 +87,11 @@ func residentQuiescenceWithQuery(ctx context.Context,root,version string,
   "$r="+q(root)+";"+
   "$t=Get-ScheduledTask -TaskName 'VOLVE-DNS-SERVER-0270' -TaskPath '\\' -ErrorAction Stop;"+
   "if(@($t).Count -ne 1){throw 'Ambiguous DNS task'};"+
-  "$prefix=$r.TrimEnd('\\')+'\\';"+
+  "$known=@((Join-Path $r '"+residentLegacyExe+"'),(Join-Path $r 'VOLVE_DNS_Motor_0_28_7.exe'),(Join-Path $r 'installed-engines\\VOLVE_DNS_Motor_0_28_7.exe'));"+
   "$all=@(Get-CimInstance Win32_Process -ErrorAction Stop);"+
-  "$motor=@($all|Where-Object{([string]$_.ExecutablePath).StartsWith($prefix,[StringComparison]::OrdinalIgnoreCase) -and ([string]$_.Name -like 'VOLVE_DNS_*')});"+
+  // Name-only matches are conservatively counted even when Windows hides
+  // ExecutablePath. Never interpret an inaccessible process as stopped.
+  "$motor=@($all|Where-Object{([string]$_.Name -like 'VOLVE_DNS_*') -or ($known -icontains ([string]$_.ExecutablePath))});"+
   "$udp=@(Get-NetUDPEndpoint -ErrorAction Stop|Where-Object{[int]$_.LocalPort -eq 53});"+
   "$tcp=@(Get-NetTCPConnection -State Listen -ErrorAction Stop|Where-Object{[int]$_.LocalPort -eq 53});"+
   "$report=[ordered]@{TaskName=[string]$t.TaskName;TaskPath=[string]$t.TaskPath;"+
@@ -98,13 +101,8 @@ func residentQuiescenceWithQuery(ctx context.Context,root,version string,
   "$report|ConvertTo-Json -Compress -Depth 3"
  raw,err:=query(ctx,script)
  if err!=nil{return no,fmt.Errorf("Windows task/process/DNS evidence unavailable: %w",err)}
- if len(raw)<30||len(raw)>4096{return no,errors.New("quiescence report size invalid")}
- decoder:=json.NewDecoder(bytes.NewReader([]byte(raw)))
- decoder.DisallowUnknownFields()
- var data residentQuiescenceObservation
- if err:=decoder.Decode(&data);err!=nil{return no,fmt.Errorf("quiescence report invalid: %w",err)}
- var rest any
- if err:=decoder.Decode(&rest);err!=io.EOF{return no,errors.New("trailing data in quiescence report")}
+ data,err:=decodeResidentQuiescenceObservation(raw)
+ if err!=nil{return no,err}
  if err:=ctx.Err();err!=nil{return no,err}
  return validateResidentQuiescence(root,version,data)
 }
@@ -114,4 +112,43 @@ func auditResidentQuiescenceReadOnly(ctx context.Context,root string)(residentQu
  // restorer must repeat this check inside the existing protected OS mutex.
  return residentQuiescenceWithQuery(ctx,root,"0.28.7",
   func(ctx context.Context,script string)(string,error){return ps(ctx,script)})
+}
+
+// A zero-valued count is evidence ONLY when the OS explicitly supplied it.
+// Reject missing, null, duplicate, unknown and case-aliased fields instead of
+// allowing encoding/json's default zero/last-wins struct semantics.
+func decodeResidentQuiescenceObservation(raw string)(residentQuiescenceObservation,error){
+ var no residentQuiescenceObservation
+ if len(raw)<30||len(raw)>4096{return no,errors.New("quiescence report size invalid")}
+ required:=map[string]bool{
+  "TaskName":false,"TaskPath":false,"Principal":false,"ActionCount":false,
+  "ActionExecute":false,"ActionArguments":false,"MotorProcessCount":false,
+  "UDP53Count":false,"TCP53Count":false,
+ }
+ decoder:=json.NewDecoder(bytes.NewReader([]byte(raw)))
+ tok,err:=decoder.Token()
+ if err!=nil||tok!=json.Delim('{'){return no,errors.New("quiescence report must be one object")}
+ for decoder.More(){
+  token,err:=decoder.Token()
+  if err!=nil{return no,err}
+  name,ok:=token.(string)
+  seen,known:=required[name]
+  if !ok||!known||seen{return no,errors.New("quiescence report has unknown or duplicate field")}
+  var value json.RawMessage
+  if err:=decoder.Decode(&value);err!=nil{return no,err}
+  if bytes.Equal(bytes.TrimSpace(value),[]byte("null")){return no,errors.New("quiescence report has null field")}
+  required[name]=true
+ }
+ tok,err=decoder.Token()
+ if err!=nil||tok!=json.Delim('}'){return no,errors.New("quiescence report object not closed")}
+ for name,seen:=range required{
+  if !seen{return no,fmt.Errorf("quiescence report missing mandatory field %s",name)}
+ }
+ var rest any
+ if err:=decoder.Decode(&rest);err!=io.EOF{return no,errors.New("trailing data in quiescence report")}
+ strict:=json.NewDecoder(bytes.NewReader([]byte(raw)))
+ strict.DisallowUnknownFields()
+ var data residentQuiescenceObservation
+ if err:=strict.Decode(&data);err!=nil{return no,fmt.Errorf("quiescence report invalid: %w",err)}
+ return data,nil
 }

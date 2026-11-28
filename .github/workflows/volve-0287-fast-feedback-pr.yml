@@ -1,0 +1,321 @@
+name: VOLVE 0.28.7 fast independent contract feedback (NO INSTALL)
+on:
+  pull_request:
+    branches: [work/0287-dns-cname-chain-guard-20261113]
+    paths:
+      - '.github/workflows/volve-0287-fast-feedback-pr.yml'
+      - '.github/workflows/volve-0287-vm-recovery-persistent-kit.yml'
+      - '.github/workflows/volve-0287-one-exe-pr.yml'
+      - 'development/0.28.7/taskrecoverygate/**'
+      - 'development/0.28.7/lab/**'
+      - 'development/0.28.7/installer-wizard/**'
+  push:
+    branches: [work/0287-installer-progress-20261124]
+    paths:
+      - '.github/workflows/volve-0287-fast-feedback-pr.yml'
+      - 'development/0.28.7/installer-wizard/installerprogress/**'
+      - 'development/0.28.7/lab/ci_private_motor_integration.ps1'
+      - 'development/0.28.7/lab/ci_task_scheduler_event_diagnostic.ps1'
+      - 'development/0.28.7/lab/private_dns_peer_vm.ps1'
+      - 'development/0.28.7/lab/private_dns_peer/**'
+      - 'development/0.28.7/lab/test_private_dns_peer_identity.ps1'
+      - 'development/0.28.7/unifiedbundle/**'
+      - 'development/0.28.7/inapp/ci_fresh_dns53_windows_test.go'
+      - 'development/0.28.7/inapp/production_dns_service_runner_windows_test.go'
+      - 'development/0.28.7/inapp/production_dns_service_runner_windows.go'
+      - 'development/0.28.7/inapp/dns_activation_exclusive_lease.go'
+      - 'development/0.28.7/inapp/dns_activation_exclusive_lease_test.go'
+      - 'development/0.28.7/inapp/dns_activation_nonce_native_windows.go'
+      - 'development/0.28.7/inapp/dns_activation_nonce_native_windows_test.go'
+      - 'development/0.28.7/inapp/dns_activation_publisher_guard.go'
+      - 'development/0.28.7/inapp/dns_activation_publisher_guard_test.go'
+      - 'development/0.28.7/inapp/dns_activation_system_windows.go'
+      - 'development/0.28.7/inapp/resident_journal.go'
+      - 'development/0.28.7/inapp/resident_journal_test.go'
+      - 'development/0.28.7/inapp/resident_completion.go'
+      - 'development/0.28.7/inapp/resident_completion_test.go'
+      - 'development/0.28.7/inapp/resident_boot_recovery.go'
+      - 'development/0.28.7/inapp/resident_boot_recovery_test.go'
+      - 'development/0.28.7/inapp/watchdogcmd/main_windows.go'
+      - 'development/0.28.7/inapp/watchdogcmd/resident_pinned_boot_cli_windows.go'
+      - 'development/0.28.7/inapp/watchdogcmd/resident_pinned_boot_cli_windows_test.go'
+      - 'development/0.28.7/inapp/watchdogcmd/resident_pinned_boot_health_windows.go'
+      - 'development/0.28.7/inapp/watchdogcmd/resident_pinned_boot_health_windows_test.go'
+      - 'development/0.28.7/inapp/resident_health_probe.go'
+      - 'development/0.28.7/inapp/resident_health_probe_test.go'
+      - 'development/0.28.7/inapp/resident_active_health.go'
+      - 'development/0.28.7/inapp/resident_health_audit_windows.go'
+      - 'development/0.28.7/inapp/apply_overlay.go'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+jobs:
+  go-migration-contract:
+    name: Fast Go migration contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 7
+    defaults:
+      run:
+        working-directory: development/0.28.7/taskrecoverygate
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.x'
+          cache: false
+      - name: Run isolated migration tests and vet (NO INSTALL)
+        shell: bash
+        run: |
+          set -euo pipefail
+          go test -count=1 ./...
+          go vet ./...
+          echo 'PASS: fast Go migration contract; NOT a production installer validation'
+      - name: Test isolated DNS peer wire contract without opening sockets
+        working-directory: development/0.28.7/lab/private_dns_peer
+        shell: bash
+        run: |
+          set -euo pipefail
+          go test -count=1 -v main.go main_test.go
+          go vet main.go main_test.go
+      - name: Verify signed public package with bounded component hashing
+        working-directory: development/0.28.7/unifiedbundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          go test -count=1 -race -v ./...
+          go vet ./...
+      - name: Verify installer progress and fail-closed recovery states
+        working-directory: development/0.28.7/installer-wizard/installerprogress
+        shell: bash
+        run: |
+          set -euo pipefail
+          go test -count=1 -race -cover -v progress.go progress_test.go
+          go vet progress.go progress_test.go
+          echo 'PASS: installer UI state contract; NO installation or connectivity proof'
+  exact-native-diagnostic-build:
+    name: Compile exact Windows native DNS diagnostic (NO INSTALL)
+    runs-on: windows-2022
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.x'
+          cache: false
+      - name: Reconstruct hash-pinned VOLVE source; never publish a motor
+        shell: bash
+        run: |
+          python - <<'PY'
+          import hashlib, zipfile, shutil
+          from pathlib import Path
+          root=Path("development/0.28.7")
+          parts=sorted((root/"complete-source-parts").glob("part-*.bin"))
+          assert [p.name for p in parts]==[f"part-{i:02d}.bin" for i in range(10)]
+          data=b"".join(p.read_bytes() for p in parts)
+          assert hashlib.sha256(data).hexdigest()=="92b3536559151260375b17a64eedd009df8399e45460637208027b7ca0587ba5"
+          Path("source.zip").write_bytes(data)
+          Path("build").mkdir(exist_ok=True)
+          with zipfile.ZipFile("source.zip") as z:z.extractall("build")
+          for name,sha in [
+            ("VOLVE_0287_PRECHECK_RESCATE_OVERLAY_NO_INSTALAR.zip","fdfd31f21df81fe6da6075bfd442354297874576b6dc2c38f19bd35a681d95cd"),
+            ("VOLVE_0287_RECUPERACION_INTERRUPCION_FORZADA_NO_INSTALAR_v3.zip","773bd5eb5f1c4883021cc321856636354e964d3605dba9017e2fb5d1a7401b40"),
+          ]:
+            p=root/name
+            assert hashlib.sha256(p.read_bytes()).hexdigest()==sha
+            with zipfile.ZipFile(p) as z:z.extractall("build")
+          for p in (root/"journal").glob("*.go"):
+            shutil.copy2(p,Path("build/codigo/motorupdate")/p.name)
+          PY
+          go run development/0.28.7/inapp/apply_overlay.go build/codigo
+      - name: Exercise protected DNS activation panic and recovery regressions (NO NATIVE WRITES)
+        shell: powershell
+        working-directory: build/codigo
+        run: |
+          $ErrorActionPreference='Stop'
+          $listed=@(go test ./motorupdate -list '^TestProtectedDNSActivationPanicRequestsIndependentRecovery$')
+          if($LASTEXITCODE -ne 0 -or $listed -cnotcontains 'TestProtectedDNSActivationPanicRequestsIndependentRecovery'){throw 'New panic regression missing'}
+          go test ./motorupdate -run '^TestProtectedDNSActivation' -count=1 -v -timeout 2m
+          if($LASTEXITCODE -ne 0){throw 'Protected activation regression failed'}
+          $pattern='^TestWindowsProtectedDNSActivationLeaseCanceled(AcquisitionDoesNotReachFactory|ReacquisitionRefusesReadback)$'
+          $listed=@(go test ./motorupdate -list $pattern)
+          if($LASTEXITCODE -ne 0 -or $listed -cnotcontains 'TestWindowsProtectedDNSActivationLeaseCanceledAcquisitionDoesNotReachFactory' -or $listed -cnotcontains 'TestWindowsProtectedDNSActivationLeaseCanceledReacquisitionRefusesReadback'){throw 'Cancellation regression census incomplete'}
+          go test ./motorupdate -run $pattern -count=1 -v -timeout 2m
+          if($LASTEXITCODE -ne 0){throw 'Protected activation acquisition/reacquisition cancellation regression failed'}
+          $listed=@(go test ./motorupdate -list '^TestResidentHealthPersistentTCPDNS$')
+          if($LASTEXITCODE -ne 0 -or $listed -cnotcontains 'TestResidentHealthPersistentTCPDNS'){throw 'Candidate TCP health tests missing'}
+          go test ./motorupdate -run '^TestResidentHealthPersistentTCPDNS$' -count=1 -v -timeout 30s
+          if($LASTEXITCODE -ne 0){throw 'Candidate persistent TCP health regression failed'}
+          $pattern='^TestPublisherScopedDNSActivation'
+          $listed=@(go test ./motorupdate -list $pattern)
+          if($LASTEXITCODE -ne 0 -or $listed -cnotcontains 'TestPublisherScopedDNSActivationExpiryDuringAttestation' -or $listed -cnotcontains 'TestPublisherScopedDNSActivationSnapshotIsIndependent'){throw 'Publisher attestation regression census incomplete'}
+          go test ./motorupdate -run $pattern -count=1 -v -timeout 2m
+          if($LASTEXITCODE -ne 0){throw 'Publisher attestation regression failed'}
+          $pattern='^TestResident(Journal|Completion|HealthAudit)'
+          $listed=@(go test ./motorupdate -list $pattern)
+          if($LASTEXITCODE -ne 0 -or $listed -cnotcontains 'TestResidentCompletionRejectsReplacementAfterSuccessfulHealthAudit' -or $listed -cnotcontains 'TestResidentJournalRejectsIntentReplacementBeforeTerminalWrite'){throw 'Terminal intent binding regression census incomplete'}
+          go test ./motorupdate -run $pattern -count=1 -v -timeout 2m
+          if($LASTEXITCODE -ne 0){throw 'Terminal intent binding regression failed'}
+          $pattern='^Test(BootRecovery|DNSAwareBootRecovery)'
+          $listed=@(go test ./motorupdate -list $pattern)
+          if($LASTEXITCODE -ne 0 -or $listed -cnotcontains 'TestBootRecoveryRejectsReplacementAtTerminalBoundary'){throw 'Boot recovery boundary regression missing'}
+          go test ./motorupdate -run $pattern -count=1 -v -timeout 2m
+          if($LASTEXITCODE -ne 0){throw 'Boot recovery boundary regression failed'}
+          $pattern='^TestPinnedRecoveryContextCoversObservedRealRestoration$'
+          $listed=@(go test ./cmd/volve-managed-watchdog -list $pattern)
+          if($LASTEXITCODE -ne 0 -or $listed -cnotcontains 'TestPinnedRecoveryContextCoversObservedRealRestoration'){throw 'Recovery timeout regression missing'}
+          go test ./cmd/volve-managed-watchdog -run $pattern -count=1 -v -timeout 30s
+          if($LASTEXITCODE -ne 0){throw 'Recovery timeout regression failed'}
+          $pattern='^TestPinnedBootHealth'
+          $listed=@(go test ./cmd/volve-managed-watchdog -list $pattern)
+          if($LASTEXITCODE -ne 0 -or $listed -cnotcontains 'TestPinnedBootHealthQueriesLiveTaskProcessAndBothDNS53Owners'){throw 'Complete original task health regression missing'}
+          go test ./cmd/volve-managed-watchdog -run $pattern -count=1 -v -timeout 2m
+          if($LASTEXITCODE -ne 0){throw 'Complete original task health regression failed'}
+          $listed=@(go test ./motorupdate -list '^TestWindowsNativeSignedDNSActivationNonceRejectsStaleClock$')
+          if($LASTEXITCODE -ne 0 -or $listed -cnotcontains 'TestWindowsNativeSignedDNSActivationNonceRejectsStaleClock'){throw 'Native nonce stale-clock regression missing'}
+          go test ./motorupdate -run '^TestWindowsNativeSignedDNSActivationNonceRejectsStaleClock$' -count=1 -v -timeout 3m
+          if($LASTEXITCODE -ne 0){throw 'Native nonce stale-clock regression failed'}
+      - name: Test boot recovery lock and cancellation boundaries (NO NATIVE WRITES)
+        shell: powershell
+        working-directory: build/codigo
+        run: |
+          $ErrorActionPreference='Stop'
+          $pattern='^Test(BootRecovery|DNSAwareBootRecovery)'
+          $listed=@(go test ./motorupdate -list $pattern)
+          if($LASTEXITCODE -ne 0 -or $listed -cnotcontains 'TestBootRecoveryReleasesPartialFailedLease' -or $listed -cnotcontains 'TestBootRecoveryDoesNotRestoreAfterCanceledIdentityProbe'){throw 'Expected boot recovery tests missing'}
+          go test ./motorupdate -run $pattern -count=1 -v -timeout 2m
+          if($LASTEXITCODE -ne 0){throw 'Boot recovery regression failed'}
+      - name: Compile and enumerate exact candidate DNS diagnostic
+        shell: powershell
+        working-directory: build/codigo
+        run: |
+          $ErrorActionPreference='Stop'
+          $out=Join-Path $env:RUNNER_TEMP 'VOLVE-CI-NativeDiagnostic.test.exe'
+          go test -c -tags volveci -trimpath -o $out .
+          if($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $out -PathType Leaf)){throw 'Exact candidate test compilation failed'}
+          $env:VOLVE_CI_FRESH_DNS53_PROBE=''
+          $env:VOLVE_CI_NESTED_GUEST_DNS=''
+          $listed=@(& $out '-test.list=^TestCI(ConfiguredNativeTCPDNS|FreshResidentSYSTEMPort53|ResidentTCPConnectionReuse)$')
+          if($LASTEXITCODE -ne 0 -or $listed -cnotcontains 'TestCIConfiguredNativeTCPDNS' -or $listed -cnotcontains 'TestCIFreshResidentSYSTEMPort53' -or $listed -cnotcontains 'TestCIResidentTCPConnectionReuse'){throw 'Expected diagnostic tests missing from binary'}
+          Write-Host ('PASS: exact Windows diagnostic compiled and test census verified; SHA256='+((Get-FileHash -LiteralPath $out -Algorithm SHA256).Hash)+'; NO DNS EXECUTION')
+      - name: Test real DNS runner TCP reuse on ephemeral loopback only (NO INSTALL)
+        shell: powershell
+        working-directory: build/codigo
+        run: |
+          $ErrorActionPreference='Stop'
+          $out=Join-Path $env:RUNNER_TEMP 'VOLVE-CI-NativeDiagnostic.test.exe'
+          $proof=@(& $out '-test.run=^TestResident(DualStackDNSFullCatalogFromRealRunner|DNSRunnerDrainsPartialIPv6Start)$' '-test.v' '-test.timeout=45s')
+          $exitCode=$LASTEXITCODE
+          $proof|Write-Host
+          if($exitCode -ne 0){throw 'Real runner ephemeral TCP regression failed'}
+          $markers=@($proof|Where-Object {$_ -match 'PASS VOLVE_EPHEMERAL_TCP_REUSE address=(127\.0\.0\.1|::1) sequence=[123] rcode=[03]$'})
+          if($markers.Count -ne 6){throw 'Six actual loopback TCP responses not verified'}
+          if(@($proof|Where-Object {$_ -match 'PASS VOLVE_TCP_IDLE_SHUTDOWN$'}).Count -ne 1){throw 'Idle TCP shutdown not verified'}
+          if(@($proof|Where-Object {$_ -match 'PASS VOLVE_PARTIAL_START_DRAIN$'}).Count -ne 1){throw 'Partial IPv6 startup cleanup not verified'}
+          $listed=@(go test . -list '^TestResidentDNSRunnerCompletesTruncatedUpstreamTCP$')
+          if($LASTEXITCODE -ne 0 -or $listed -cnotcontains 'TestResidentDNSRunnerCompletesTruncatedUpstreamTCP'){throw 'Upstream TCP completion regression missing'}
+          $complete=@(go test . -run '^TestResidentDNSRunnerCompletesTruncatedUpstreamTCP$' -count=1 -v -timeout 45s 2>&1)
+          $completeExit=$LASTEXITCODE
+          $complete|ForEach-Object {Write-Host $_}
+          if($completeExit -ne 0 -or @($complete|Where-Object {$_ -match 'PASS VOLVE_UPSTREAM_TCP_COMPLETES_TRUNCATION_DUAL_STACK$'}).Count -ne 1){throw 'Upstream TCP completion failed'}
+          Write-Host 'PASS: actual production DNS runner accepted three sequential queries per address family; no adapter changes'
+  windows-synthetic-contract:
+    name: Fast Windows syntax and security contracts
+    runs-on: windows-2022
+    timeout-minutes: 9
+    steps:
+      - uses: actions/checkout@v4
+      - name: Parse entire recovery lab PowerShell source without running privileged commands
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $root='development/0.28.7/lab'
+          $names=@(
+            'vm_reboot_proof.ps1',
+            'boot_recovery_lab.ps1',
+            'reboot_event_chain.ps1',
+            'test_reboot_event_chain.ps1',
+            'vm_cleanup_state_contract.ps1',
+            'test_vm_cleanup_state_contract.ps1',
+            'test_vm_cleanup_receipt_contract.ps1',
+            'test_vm_cleanup_scheduler_roundtrip.ps1',
+            'vm_environment_baseline.ps1',
+            'test_vm_environment_baseline.ps1',
+            'ci_task_scheduler_event_diagnostic.ps1',
+            'ci_private_motor_integration.ps1',
+            'private_dns_client_probe.ps1',
+            'private_dns_peer_vm.ps1',
+            'test_private_dns_peer_identity.ps1'
+          )
+          foreach($name in $names){
+            $file=Join-Path $root $name
+            if(-not (Test-Path -LiteralPath $file -PathType Leaf)){
+              throw ('Missing recovery contract source: '+$name)
+            }
+            $tokens=$null; $errors=$null
+            [Management.Automation.Language.Parser]::ParseFile((Resolve-Path $file).Path,
+              [ref]$tokens,[ref]$errors) | Out-Null
+            if(@($errors).Count -ne 0){
+              throw ('PowerShell syntax validation failed for '+$name)
+            }
+          }
+          Write-Host 'PASS: parsed 15 recovery laboratory scripts'
+      - name: Verify retained native process handle on actual Windows (NO NETWORK NO INSTALL)
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          if($env:GITHUB_ACTIONS -cne 'true' -or $env:RUNNER_ENVIRONMENT -cne 'github-hosted'){throw 'Hosted CI only'}
+          $p=$null
+          $handle=$null
+          # Anonymous-to-other-trials child: a bounded wait on an owned event.
+          # Explicitly retain the original Process/SafeHandle, never open by PID.
+          $eventName='Local\VOLVE-CI-Handle-'+[guid]::NewGuid().ToString('N')
+          $signal=[Threading.EventWaitHandle]::new($false,[Threading.EventResetMode]::ManualReset,$eventName)
+          try{
+            $child='$e=[Threading.EventWaitHandle]::OpenExisting('+"'"+$eventName+"'"+');try{if(-not $e.WaitOne(15000)){exit 3}}finally{$e.Dispose()}'
+            $encoded=[Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($child))
+            $powershell=Join-Path $PSHOME 'powershell.exe'
+            $p=Start-Process -FilePath $powershell -ArgumentList @('-NoProfile','-NonInteractive','-EncodedCommand',$encoded) -PassThru -ErrorAction Stop
+            $handle=$p.SafeHandle
+            if($null -eq $handle -or $handle.IsClosed -or $handle.IsInvalid -or $p.HasExited){throw 'Cannot retain real child handle'}
+            $pin=$handle.DangerousGetHandle()
+            if($pin -eq [IntPtr]::Zero -or -not [object]::ReferenceEquals($p.SafeHandle,$handle)){throw 'Original native handle not retained'}
+            $null=$signal.Set()
+            if(-not $p.WaitForExit(20000)){throw 'Owned bounded child did not exit'}
+            if($p.ExitCode -ne 0 -or -not $p.HasExited){throw 'Original process termination not observed'}
+            if($handle.IsClosed -or $handle.IsInvalid -or $handle.DangerousGetHandle() -ne $pin -or -not [object]::ReferenceEquals($p.SafeHandle,$handle)){throw 'Original process handle changed before disposal'}
+            Write-Host 'PASS: actual Windows retained SafeHandle survives child exit and HasExited detects original termination; NO NETWORK NO DNS NO INSTALL'
+          }finally{
+            $null=$signal.Set()
+            if($null -ne $p){
+              if(-not $p.WaitForExit(20000)){throw 'Owned bounded child did not finish during cleanup'}
+              $p.Dispose()
+            }
+            $signal.Dispose()
+          }
+      - name: Execute synthetic-only recovery and security tests (NO REBOOT NO DNS)
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $root='development/0.28.7/lab'
+          foreach($name in @(
+            'test_reboot_event_chain.ps1',
+            'test_vm_cleanup_state_contract.ps1',
+            'test_vm_cleanup_receipt_contract.ps1',
+            'ci_task_scheduler_event_diagnostic.ps1',
+            'test_vm_environment_baseline.ps1',
+            'test_private_dns_peer_identity.ps1'
+          )){
+            $script=Join-Path $root $name
+            if($name -ceq 'ci_task_scheduler_event_diagnostic.ps1'){
+              & $script -Mode Test
+            }else{
+              & $script
+            }
+            if(-not $? -or ($LASTEXITCODE -and $LASTEXITCODE -ne 0)){
+              throw ('Synthetic contract failed: '+$name)
+            }
+          }
+          Write-Host 'PASS: fast independent Windows security/recovery contracts; no real reboot or installation proved'

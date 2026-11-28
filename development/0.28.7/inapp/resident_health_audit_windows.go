@@ -38,6 +38,9 @@ func auditWindowsResidentRecoveryHealthReadOnly(
   return empty,fmt.Errorf("protected recovery journal rejected: %w",err)
  }
  checks:=newResidentWindowsHealthChecks(root,key)
+ // New candidate must prove reusable TCP DNS. Never prevent recovery of
+ // a previously installed legacy motor solely for its old TCP behavior.
+ checks.RequirePersistentTCP=outcome=="committed"
  return motorupdate.AuditResidentRecoveryOutcome(ctx,dir,outcome,
   checkSealedResidentJournalACL,checks)
 }

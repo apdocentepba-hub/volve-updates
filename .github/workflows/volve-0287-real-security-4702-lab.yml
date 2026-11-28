@@ -1,0 +1,99 @@
+name: "VOLVE 0.28.7 - real Security 4702 on disposable Windows CI"
+on:
+  pull_request:
+    branches: [work/0287-dns-cname-chain-guard-20261113]
+    paths:
+      - 'development/0.28.7/lab/ci_task_scheduler_event_diagnostic.ps1'
+      - '.github/workflows/volve-0287-real-security-4702-lab.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  security-4702-disposable:
+    runs-on: windows-2022
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test audited update to a disposable SYSTEM task without touching VOLVE or user PC
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          if($env:GITHUB_ACTIONS -cne 'true' -or $env:RUNNER_ENVIRONMENT -cne 'github-hosted'){
+            throw 'REFUSED: only on disposable hosted Windows CI'
+          }
+          $cs=Get-CimInstance Win32_ComputerSystem -ErrorAction Stop
+          if(($cs.Manufacturer+' '+$cs.Model) -notmatch '(?i:virtual machine|hyper-v|vmware|kvm|qemu)'){
+            throw 'REFUSED: host is not a verified virtual machine'
+          }
+          $id=[Security.Principal.WindowsIdentity]::GetCurrent()
+          if(-not ([Security.Principal.WindowsPrincipal]::new($id)).IsInRole(
+             [Security.Principal.WindowsBuiltInRole]::Administrator)){
+            throw 'REFUSED: lab requires elevated permissions'
+          }
+          $script='development/0.28.7/lab/ci_task_scheduler_event_diagnostic.ps1'
+          $tokens=$null;$errors=$null
+          [Management.Automation.Language.Parser]::ParseFile((Resolve-Path $script).Path,
+            [ref]$tokens,[ref]$errors)|Out-Null
+          if($errors.Count -ne 0){throw 'Security 4702 parser has invalid PowerShell syntax'}
+          . $script -Mode Test
+          # Audit success is enabled only in this ephemeral CI VM, not a real PC.
+          & auditpol.exe /set '/subcategory:Other Object Access Events' '/success:enable' | Out-Null
+          if($LASTEXITCODE -ne 0){throw 'Cannot enable disposable CI task-update audit'}
+          $name='VOLVE-CI-4702-'+$env:GITHUB_RUN_ID
+          if($name -cnotmatch '^VOLVE-CI-4702-[0-9]{9,15}$'){
+            throw 'Invalid disposable CI task identity'
+          }
+          if(Get-ScheduledTask -TaskName $name -TaskPath '\' -ErrorAction SilentlyContinue){
+            throw 'CI-only task already exists'
+          }
+          $exe=Join-Path $env:WINDIR 'System32\cmd.exe'
+          $action=New-ScheduledTaskAction -Execute $exe -Argument '/C exit 0'
+          $before=Get-Date
+          $created=$false
+          try {
+            $trigger=New-ScheduledTaskTrigger -Once -At (Get-Date).AddDays(3)
+            Register-ScheduledTask -TaskName $name -TaskPath '\' -Action $action -Trigger $trigger -User SYSTEM -RunLevel Highest -ErrorAction Stop | Out-Null
+            $created=$true
+            $next=New-ScheduledTaskTrigger -Once -At (Get-Date).AddDays(4)
+            Set-ScheduledTask -TaskName $name -TaskPath '\' -Trigger $next -ErrorAction Stop | Out-Null
+            $found=$false
+            $pidEvidence=$false
+            for($retry=0;$retry -lt 12;$retry++){
+              Start-Sleep -Seconds 1
+              $events=@()
+              try{
+                $events=@(Get-WinEvent -FilterHashtable @{
+                  LogName='Security';Id=4702;StartTime=$before.AddSeconds(-2)
+                } -MaxEvents 400 -ErrorAction Stop)
+              } catch {continue}
+              $summary=Get-VolvCISecurity4702Summary -TaskIdentity ('\'+$name) -EventXML @(
+                $events | ForEach-Object {$_.ToXml()}
+              )
+              if($summary.matched4702 -gt 0){
+                $found=$true
+                $pidEvidence=$summary.clientPidFieldPresent -gt 0
+                break
+              }
+            }
+            if(-not $found){
+              throw 'FAIL: no real Security 4702 matched the disposable scheduled task'
+            }
+            Write-Host 'PASS: REAL_WINDOWS_4702_TASK_UPDATE_MATCHED; no identifiers, XML or PIDs exported'
+            if($pidEvidence){
+              Write-Host 'PASS: REAL_WINDOWS_4702_CLIENT_PID_PRESENT; EXECUTABLE_IDENTITY_UNPROVEN'
+            } else {
+              Write-Host 'NOTICE: ClientProcessId unavailable; process identity still unknown'
+            }
+          } finally {
+            if($created){
+              $owned=Get-ScheduledTask -TaskName $name -TaskPath '\' -ErrorAction SilentlyContinue
+              if($null -ne $owned){
+                if($owned.TaskPath -cne '\' -or $owned.Principal.UserId -notin @('SYSTEM','S-1-5-18') -or
+                  @($owned.Actions).Count -ne 1 -or $owned.Actions[0].Execute -cne $exe -or
+                  $owned.Actions[0].Arguments -cne '/C exit 0'){
+                  throw 'REFUSED: disposable CI task changed identity or action; no unsafe cleanup'
+                }
+                Unregister-ScheduledTask -TaskName $name -TaskPath '\' -Confirm:$false -ErrorAction Stop
+              }
+            }
+          }

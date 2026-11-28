@@ -177,12 +177,27 @@ func InspectResidentRecoveryJournal(ctx context.Context,dir string,
 // (restored). It cannot prove that health by itself; no production caller yet.
 func FinishResidentRecoveryIntent(ctx context.Context,dir,outcome string,
  seal,protect func(string)error)error{
+ return finishResidentRecoveryIntentBound(ctx,dir,outcome,nil,seal,protect)
+}
+
+// The health audit supplies the independently observed exact intent.
+// The caller still must hold the protected cross-process transition lease;
+// comparison alone is not an OS-level exclusion mechanism.
+func finishResidentRecoveryIntentBound(ctx context.Context,dir,outcome string,
+ expected *ResidentRecoveryIntent,seal,protect func(string)error)error{
+ if ctx==nil{return errors.New("missing terminal recovery context")}
  if outcome!="committed"&&outcome!="restored"{return errors.New("invalid terminal outcome")}
  if e:=ctx.Err();e!=nil{return e}
  if seal==nil||protect==nil{return errors.New("missing ACL services")}
  state,e:=InspectResidentRecoveryJournal(ctx,dir,protect);if e!=nil{return e}
  if state.Status!="recovery-required"{return errors.New("journal not armed or already finalized")}
- raw,e:=residentFile(filepath.Join(dir,ResidentIntentFile));if e!=nil{return e}
+ if expected!=nil&&state.Intent!=*expected{return errors.New("pending recovery intent differs from audited health evidence")}
+ intentPath:=filepath.Join(dir,ResidentIntentFile)
+ if e=protect(intentPath);e!=nil{return e}
+ raw,e:=residentFile(intentPath);if e!=nil{return e}
+ var observed ResidentRecoveryIntent
+ if e=residentCanonical(raw,&observed);e!=nil{return e}
+ if observed!=state.Intent{return errors.New("recovery intent changed before terminal receipt")}
  digest:=sha256.Sum256(bytes.TrimSpace(raw))
  result:=ResidentRecoveryResult{Schema:1,Component:"dns-engine-recovery-result",
   IntentSHA256:hex.EncodeToString(digest[:]),IntentNonce:state.Intent.Nonce,Outcome:outcome}
@@ -190,6 +205,6 @@ func FinishResidentRecoveryIntent(ctx context.Context,dir,outcome string,
  if e=ctx.Err();e!=nil{return e}
  if e=residentCreate(filepath.Join(dir,ResidentResultFile),output,seal,protect);e!=nil{return e}
  after,e:=InspectResidentRecoveryJournal(ctx,dir,protect)
- if e!=nil||after.Status!=outcome{return fmt.Errorf("terminal result not verifiable: %v",e)}
+ if e!=nil||after.Status!=outcome||after.Intent!=state.Intent{return fmt.Errorf("terminal result not verifiable for exact intent: %v",e)}
  return nil
 }

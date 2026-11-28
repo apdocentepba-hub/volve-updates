@@ -1,12 +1,22 @@
 name: VOLVE 0.28.7 legacy protected rollback boundary tests (NO RELEASE)
 on:
   push:
-    branches: [feature/motor-updater-0287-pilot]
+    branches: [feature/motor-updater-0287-pilot, work/0287-native-setup-preview-20261113]
     paths:
       - 'development/0.28.7/inapp/legacy_managed_transaction.go'
       - 'development/0.28.7/inapp/legacy_managed_transaction_test.go'
+      - 'development/0.28.7/inapp/legacy_task_recovery_coverage.go'
+      - 'development/0.28.7/inapp/legacy_task_recovery_coverage_test.go'
+      - 'development/0.28.7/inapp/legacy_task_recovery_reader.go'
+      - 'development/0.28.7/inapp/legacy_task_recovery_reader_windows.go'
+      - 'development/0.28.7/inapp/legacy_task_recovery_reader_test.go'
+      - 'development/0.28.7/inapp/resident_protected_signed_switch_windows.go'
+      - 'development/0.28.7/inapp/resident_protected_signed_transaction_windows_test.go'
       - 'development/0.28.7/inapp/apply_overlay.go'
+      - 'development/0.28.7/inapp/legacy_pe_imports.go'
+      - 'development/0.28.7/inapp/legacy_pe_imports_test.go'
       - '.github/workflows/volve-0287-legacy-backup-boundary.yml'
+  pull_request:
   workflow_dispatch:
 permissions:
   contents: read
@@ -56,5 +66,5 @@ jobs:
         run: |
           test -f motorupdate/legacy_managed_transaction.go
           test -f motorupdate/legacy_managed_transaction_test.go
-          go test ./motorupdate -run '^TestSignedLegacyTransaction' -count=1 -timeout 4m -v
-          echo "PASS: protected original reverified after Snapshot; corrupt or revoked recovery cannot be used or switched."
+          go test ./motorupdate -run '^(TestReadLegacyPEStaticImports|TestReadLegacyPEDelayImports|TestAuditLegacyPEStaticImportClosure|TestNewLegacyPEAllowlistedResolver|TestSignedLegacyTransaction|TestReadLegacyTaskRecoverySnapshot|TestProtectedSignedDriverUsesRecoveryReaderOnlyUnderNativeMutex|TestProtectedSignedTransactionBlocksWhenDedicatedReaderLacksDependencyOrRebootEvidence)' -count=1 -timeout 4m -v
+          echo "PASS: protected legacy transaction, fail-closed dependency/reboot evidence, and read-only recovery reader verified; no install, DNS or task writes."

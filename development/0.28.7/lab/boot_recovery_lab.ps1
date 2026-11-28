@@ -51,35 +51,128 @@ if($Mode -eq 'stage'){
  [IO.File]::WriteAllText($xmlPath,(Export-ScheduledTask -TaskName $TaskName),[Text.UTF8Encoding]::new($false))
  Journal -Arguments @('prepare',$journal,$old,$new,$xmlPath,'0.29.0') | Out-Null
  Journal -Arguments @('advance',$journal,'switching') | Out-Null
- Set-ScheduledTask -TaskName $TaskName -Action (New-ScheduledTaskAction -Execute $notepad) | Out-Null
- TaskAction $TaskName $notepad ''
- Journal -Arguments @('advance',$journal,'proving') | Out-Null
- # This recovery task *would* run on a boot; for CI it is manually started.
- # It cannot be published/installed; only exact CI disposable task names accepted.
+ # Seal the recovery code and original fixture BEFORE registering the boot
+ # trigger or changing the disposable task. Both the seal and its inputs
+ # reside under the ACL-protected VM kit for a persistent-VM trial.
+ $verificationLib=Join-Path $PSScriptRoot 'reboot_event_chain.ps1'
+ if(-not (Test-Path -LiteralPath $verificationLib -PathType Leaf)){throw 'Recovery verification library missing before arming watchdog'}
+ $seal=[ordered]@{
+  schema=1
+  taskName=$TaskName
+  watchdogName=$WatchdogName
+  workspace=$Workspace
+  labScriptSha256=(Get-FileHash -Algorithm SHA256 -LiteralPath $PSCommandPath).Hash
+  verificationLibSha256=(Get-FileHash -Algorithm SHA256 -LiteralPath $verificationLib).Hash
+  journalHelperSha256=(Get-FileHash -Algorithm SHA256 -LiteralPath $JournalExe).Hash
+  originalTaskXMLSha256=(Get-FileHash -Algorithm SHA256 -LiteralPath $xmlPath).Hash
+  previousFixtureSha256=(Get-FileHash -Algorithm SHA256 -LiteralPath $old).Hash
+ }
+ $seal | ConvertTo-Json -Depth 3 | Set-Content -LiteralPath (Join-Path $Workspace 'recovery-code-seal.json') -Encoding UTF8 -ErrorAction Stop
+ # CRITICAL ORDER: arm and positively verify the independent SYSTEM watchdog
+ # BEFORE changing even the disposable candidate task. A crash after arming,
+ # but before switching, must be recoverable as "original already intact".
+ # Neither the fixture nor its successor is a production installer.
  $script=$PSCommandPath
  $pwsh=Join-Path $env:WINDIR 'System32\WindowsPowerShell\v1.0\powershell.exe'
  $args='-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "'+$script+'" -Mode recover -TaskName "'+$TaskName+'" -WatchdogName "'+$WatchdogName+'" -Workspace "'+$Workspace+'" -JournalExe "'+$JournalExe+'"'
  $wdTrigger=New-ScheduledTaskTrigger -AtStartup
- Register-ScheduledTask -TaskName $WatchdogName -Action (New-ScheduledTaskAction -Execute $pwsh -Argument $args) -Trigger $wdTrigger -User SYSTEM -RunLevel Highest | Out-Null
- $wd=Get-ScheduledTask -TaskName $WatchdogName
+ # Recovery must not depend on AC power, an idle session or Internet.
+ # Keep one bounded instance; never relax the signed snapshot or boot proof.
+ $wdSettings=New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Minutes 5)
+ Register-ScheduledTask -TaskName $WatchdogName -TaskPath '\' -Action (New-ScheduledTaskAction -Execute $pwsh -Argument $args -WorkingDirectory $PSScriptRoot) -Trigger $wdTrigger -Settings $wdSettings -User SYSTEM -RunLevel Highest -ErrorAction Stop | Out-Null
+ $wd=Get-ScheduledTask -TaskName $WatchdogName -TaskPath '\' -ErrorAction Stop
  if($wd.Principal.UserId -notin @('SYSTEM','S-1-5-18') -or @($wd.Triggers).Count -ne 1 -or $wd.Triggers[0].CimClass.CimClassName -ne 'MSFT_TaskBootTrigger'){throw 'Boot watchdog not configured to run as SYSTEM on boot'}
- Write-Host 'STAGED: disposable motor task switched; SYSTEM startup watchdog installed (not triggered yet).'
+ if(-not $wd.Settings.Enabled -or -not $wd.Triggers[0].Enabled -or
+    $wd.Settings.DisallowStartIfOnBatteries -or $wd.Settings.StopIfGoingOnBatteries -or
+    $wd.Settings.RunOnlyIfIdle -or $wd.Settings.RunOnlyIfNetworkAvailable -or
+    -not $wd.Settings.StartWhenAvailable -or
+    [string]$wd.Settings.MultipleInstances -ne 'IgnoreNew' -or
+    [string]$wd.Settings.ExecutionTimeLimit -ne 'PT5M' -or
+    [string]$wd.Actions[0].WorkingDirectory -cne $PSScriptRoot){
+  throw 'Boot watchdog persisted settings do not allow bounded offline recovery'
+ }
+ Write-Host 'PASS: persisted startup task permits bounded SYSTEM recovery without AC, network or idle prerequisites.'
+ if($env:VOLVE_CI_ABORT_BEFORE_CANDIDATE -eq '1'){
+  # Disposable CI-only fault injection. Do not touch the candidate; leave the
+  # pending journal and boot-triggered watchdog to exercise pre-switch rescue.
+  if($env:GITHUB_ACTIONS -ne 'true' -or $env:RUNNER_ENVIRONMENT -ne 'github-hosted'){
+   throw 'Pre-switch fault injection only allowed on GitHub-hosted isolated CI VM'
+  }
+  Write-Host 'FAULT INJECTION: watchdog armed before candidate switch; original task intact.'
+  exit 0
+ }
+ Set-ScheduledTask -TaskName $TaskName -Action (New-ScheduledTaskAction -Execute $notepad) | Out-Null
+ TaskAction $TaskName $notepad ''
+ Journal -Arguments @('advance',$journal,'proving') | Out-Null
+ Write-Host 'STAGED: independent SYSTEM watchdog verified BEFORE disposable candidate switch (not boot-triggered yet).'
  exit 0
 }
 if($Mode -eq 'recover'){
  try{
   $who=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value
   if($who -ne 'S-1-5-18'){throw ('Boot recovery not running as SYSTEM: '+$who)}
+  # Validate independently staged code identity BEFORE reading the journal,
+  # importing XML, or altering the temporary task. A missing/mutated
+  # verifier must never convert a pending rollback into a false success.
+  $sealPath=Join-Path $Workspace 'recovery-code-seal.json'
+  if(-not (Test-Path -LiteralPath $sealPath -PathType Leaf)){
+   throw 'Recovery code seal missing; journal remains pending'
+  }
+  $seal=Get-Content -LiteralPath $sealPath -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+  if($seal.schema -ne 1 -or $seal.taskName -cne $TaskName -or
+     $seal.watchdogName -cne $WatchdogName -or $seal.workspace -cne $Workspace){
+   throw 'Recovery code seal identity mismatch; journal remains pending'
+  }
+  foreach($check in @(
+   @{label='lab script';path=$PSCommandPath;digest=$seal.labScriptSha256},
+   @{label='verification library';path=(Join-Path $PSScriptRoot 'reboot_event_chain.ps1');digest=$seal.verificationLibSha256},
+   @{label='journal helper';path=$JournalExe;digest=$seal.journalHelperSha256},
+   @{label='original task XML';path=$xmlPath;digest=$seal.originalTaskXMLSha256},
+   @{label='previous fixture';path=$old;digest=$seal.previousFixtureSha256}
+  )){
+   if([string]::IsNullOrWhiteSpace([string]$check.digest) -or
+      ([string]$check.digest).Length -ne 64 -or
+      -not (Test-Path -LiteralPath $check.path -PathType Leaf)){
+    throw ('Recovery seal missing or malformed: '+$check.label)
+   }
+   if((Get-FileHash -Algorithm SHA256 -LiteralPath $check.path).Hash -cne [string]$check.digest){
+    throw ('Recovery seal hash mismatch: '+$check.label+'; journal remains pending')
+   }
+  }
   $state=Journal -Arguments @('status',$journal)
   if($state -ne 'ROLLBACK_REQUIRED'){throw 'Recovery is not required'}
   Journal -Arguments @('verify-snapshot',$journal,$xmlPath) | Out-Null
   Journal -Arguments @('verify-previous',$journal,$old) | Out-Null
-  TaskAction $TaskName $notepad ''
+  # Fail closed on all unexpected actions, including an unrelated task that
+  # took over our disposable name. Pre-switch crash: leave original untouched.
+  $current=Get-ScheduledTask -TaskName $TaskName -ErrorAction Stop
+  if($current.TaskPath -ne '\' -or $current.Principal.UserId -notin @('SYSTEM','S-1-5-18') -or @($current.Actions).Count -ne 1){
+   throw 'Unexpected disposable motor identity during recovery'
+  }
+  $action=@($current.Actions)[0]
+  $alreadyOriginal=($action.Execute -eq $cmd -and [string]$action.Arguments -eq '/C exit 0')
+  $switched=($action.Execute -eq $notepad -and [string]::IsNullOrWhiteSpace([string]$action.Arguments))
+  if(-not $alreadyOriginal -and -not $switched){throw 'Unrecognized disposable motor action; refusing restore'}
   Journal -Arguments @('advance',$journal,'restoring') | Out-Null
   $saved=[IO.File]::ReadAllText($xmlPath)
   if($saved -notmatch 'cmd\.exe'){throw 'Unexpected original task executable'}
-  Register-ScheduledTask -TaskName $TaskName -Xml $saved -Force | Out-Null
+  if($switched) {
+   Register-ScheduledTask -TaskName $TaskName -Xml $saved -Force | Out-Null
+  }
   TaskAction $TaskName $cmd '/C exit 0'
+  # A correct-looking action is not sufficient. The SYSTEM watchdog itself
+  # must verify the whole task definition BEFORE marking the journal restored.
+  # This exact helper is shipped alongside this fixture in the protected VM
+  # kit; if missing or unparseable, fail closed and retain recovery evidence.
+  $xmlVerifier=Join-Path $PSScriptRoot 'reboot_event_chain.ps1'
+  if(-not (Test-Path -LiteralPath $xmlVerifier -PathType Leaf)){
+   throw 'Full XML recovery verifier is missing; journal remains pending'
+  }
+  . $xmlVerifier
+  $actualXML=Export-ScheduledTask -TaskName $TaskName -TaskPath '\' -ErrorAction Stop
+  if(-not (Assert-VolvRestoredTaskXML -SavedXML $saved -RestoredXML $actualXML)){
+   throw 'Full original Task Scheduler XML was not recovered'
+  }
   Journal -Arguments @('advance',$journal,'restored') | Out-Null
   [IO.File]::WriteAllText($success,'RESTORED_BY_SYSTEM_STARTUP_TASK',[Text.Encoding]::ASCII)
   Write-Host 'PASS: SYSTEM startup recovery restored original test task.'

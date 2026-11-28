@@ -30,6 +30,11 @@ type signedLegacyDriverLab struct {
     replaceOldMotor string
     afterSnapshot func()error
     afterInstall func()error
+    coverageCount int
+    failCoverageAt int
+    coverageSnapshot *LegacyTaskRecoverySnapshot
+    coverageSnapshots []LegacyTaskRecoverySnapshot
+    coverageAlterServerAction bool
 }
 func newSignedLegacyDriverLab()*signedLegacyDriverLab {
     return &signedLegacyDriverLab{managedDriverTest:&managedDriverTest{}}
@@ -84,6 +89,27 @@ func (d *signedLegacyDriverLab) IndependentRecoveryReady(_ context.Context, _ Ve
     if d.failWatchdogAt==d.watchdogCount{return errors.New("independent recovery agent unavailable")}
     return nil
 }
+func (d *signedLegacyDriverLab) VerifyLegacyTaskRecoveryCoverage(_ context.Context, proof VerifiedLegacyMigrationProof)(LegacyTaskRecoverySnapshot,error){
+    if err:=d.requireLock();err!=nil{return LegacyTaskRecoverySnapshot{},err}
+    d.coverageCount++
+    if err:=d.tick("task-coverage");err!=nil{return LegacyTaskRecoverySnapshot{},err}
+    if d.failCoverageAt==d.coverageCount{return LegacyTaskRecoverySnapshot{},errors.New("legacy task backup changed at locked boundary")}
+    var snapshot LegacyTaskRecoverySnapshot
+    if d.coverageCount<=len(d.coverageSnapshots){snapshot=d.coverageSnapshots[d.coverageCount-1]
+    } else if d.coverageSnapshot!=nil {snapshot=*d.coverageSnapshot
+    } else {snapshot=completeLegacyTaskRecoverySnapshot()}
+    snapshot = testLegacyTaskRecoverySnapshotForProof(snapshot,proof)
+    if d.coverageAlterServerAction {
+        for i := range snapshot.Tasks {
+            if snapshot.Tasks[i].Name == "VOLVE-DNS-SERVER-0270" {
+                snapshot.Tasks[i].SourceActionSHA256 = testLegacyManifestSHA256
+                snapshot.Tasks[i].BackupActionSHA256 = testLegacyManifestSHA256
+            }
+        }
+    }
+    return snapshot,nil
+}
+
 func (d *signedLegacyDriverLab) VerifyPreparedTarget(_ context.Context, m Manifest) error {
     if err:=d.requireLock();err!=nil{return err}
     d.preparedCount++
@@ -122,16 +148,34 @@ func TestSignedLegacyTransactionRequiresRevalidationAndIndependentWatchdog(t *te
     err:=runSignedLegacyLab(context.Background(),f,d,testSecureLabFolderBridge,
         func()error{checks++;return nil})
     if err!=nil {t.Fatal(err)}
-    want:=[]string{"preflight","watchdog","snapshot","install","prepared","watchdog","switch","probe","connectivity","prepared","watchdog","commit"}
+    want:=[]string{"task-coverage","preflight","watchdog","snapshot","task-coverage","install","prepared","watchdog","task-coverage","switch","probe","connectivity","prepared","watchdog","commit"}
     if !reflect.DeepEqual(d.calls,want){t.Fatalf("unexpected signed migration order: %v",d.calls)}
     // Each of the TWO signed-proof boundaries now verifies SYSTEM/DNS twice:
     // initial and final immutable-host checks (4 total). The external
     // watchdog itself is independently checked before and after Snapshot.
-    if checks!=4 || d.watchdogCount!=3||d.preparedCount!=2||
+    if checks!=4 || d.watchdogCount!=3||d.preparedCount!=2||d.coverageCount!=3||
         d.lockHeld||d.lockAcquires!=1||d.lockReleases!=1 {
         t.Fatalf("expected 4 OS probes, 3 watchdogs, 2 target checks and ONE released exclusive lease; got %d/%d/%d locks=%d/%d active=%t",checks,d.watchdogCount,d.preparedCount,d.lockAcquires,d.lockReleases,d.lockHeld)
     }
 }
+func TestSignedLegacyTransactionRejectsThreeTaskBackupForDifferentSignedMotor(t *testing.T) {
+    f := newSignedBridge(t)
+    d := newSignedLegacyDriverLab()
+    d.coverageAlterServerAction = true
+    err := runSignedLegacyLab(context.Background(), f, d, testSecureLabFolderBridge, func() error { return nil })
+    if err == nil || !strings.Contains(err.Error(), "not bound to the signed migration proof") {
+        t.Fatalf("recovery for a different DNS server motor accepted: %v", err)
+    }
+    for _, call := range d.calls {
+        if call == "snapshot" || call == "install" || call == "switch" || call == "commit" {
+            t.Fatalf("transaction advanced with unrelated recovery bytes: %v", d.calls)
+        }
+    }
+    if d.coverageCount != 1 || d.lockHeld || d.lockAcquires != 1 || d.lockReleases != 1 {
+        t.Fatalf("mismatched proof should fail at first locked coverage check: %+v", d)
+    }
+}
+
 func TestSignedLegacyTransactionBlocksBeforeSnapshotWithoutPermissionOrWatchdog(t *testing.T){
     for _,kind:=range []string{"wrong-publisher","unsafe-parent","no-live-dns","missing-watchdog","no-driver"}{
         t.Run(kind,func(t *testing.T){
@@ -251,7 +295,7 @@ func TestSignedLegacyTransactionRejectsBackupModifiedImmediatelyAfterSnapshot(t 
     !strings.Contains(err.Error(),"respaldo alterado tras Snapshot"){
     t.Fatalf("corrupted backup after snapshot was not marked critical: %v",err)
    }
-   want:=[]string{"preflight","watchdog","snapshot"}
+   want:=[]string{"task-coverage","preflight","watchdog","snapshot","task-coverage"}
    if !reflect.DeepEqual(d.calls,want){
     t.Fatalf("modified fallback allowed installation or attempted unsafe restore: %v",d.calls)
    }
@@ -270,7 +314,7 @@ func TestSignedLegacyTransactionRejectsSealedBackupTamperedAfterTargetPreparatio
   !strings.Contains(err.Error(),"autorización cambió"){
   t.Fatalf("corrupted rollback after installing target not critical: %v",err)
  }
- want:=[]string{"preflight","watchdog","snapshot","install","prepared"}
+ want:=[]string{"task-coverage","preflight","watchdog","snapshot","task-coverage","install","prepared"}
  if !reflect.DeepEqual(d.calls,want){
   t.Fatalf("corrupted backup allowed unsafe restore, switch or commit: %v",d.calls)
  }
@@ -420,4 +464,148 @@ func TestSignedLegacyTransactionCancellationBeforeLeaseChangesNothing(t *testing
  if !errors.Is(err,context.Canceled)||d.lockAcquires!=0{
   t.Fatalf("cancelled transaction unexpectedly acquired exclusive lock: %v",err)
  }
+}
+
+
+func TestSignedLegacyTransactionStopsAtEachTaskCoverageBoundary(t *testing.T) {
+    for _, tc := range []struct {
+        name             string
+        failAt           int
+        wantSnapshot     bool
+        wantInstall      bool
+        wantRestore      bool
+    }{
+        {name: "before-snapshot", failAt: 1},
+        {name: "after-snapshot-before-install", failAt: 2, wantSnapshot: true},
+        {name: "immediately-before-switch", failAt: 3, wantSnapshot: true, wantInstall: true, wantRestore: true},
+    } {
+        t.Run(tc.name, func(t *testing.T) {
+            f := newSignedBridge(t)
+            d := newSignedLegacyDriverLab()
+            d.failCoverageAt = tc.failAt
+
+            err := runSignedLegacyLab(context.Background(), f, d, testSecureLabFolderBridge, func() error { return nil })
+            if err == nil {
+                t.Fatal("transaction accepted a failed three-task recovery coverage check")
+            }
+            if d.coverageCount != tc.failAt {
+                t.Fatalf("coverage checks=%d, want failure at check %d; calls=%v", d.coverageCount, tc.failAt, d.calls)
+            }
+
+            seen := func(call string) bool {
+                for _, item := range d.calls {
+                    if item == call {
+                        return true
+                    }
+                }
+                return false
+            }
+            if seen("snapshot") != tc.wantSnapshot || seen("install") != tc.wantInstall {
+                t.Fatalf("transaction crossed the wrong pre-switch boundary: %v", d.calls)
+            }
+            if seen("switch") || seen("commit") {
+                t.Fatalf("invalid task recovery evidence allowed switch or commit: %v", d.calls)
+            }
+            if seen("restore") != tc.wantRestore {
+                t.Fatalf("rollback behavior does not match whether the engine candidate was touched: %v", d.calls)
+            }
+            if tc.wantRestore {
+                if !strings.Contains(err.Error(), "revertida") {
+                    t.Fatalf("failure after candidate preparation was not reported as reverted: %v", err)
+                }
+                if len(d.calls) < 3 || !reflect.DeepEqual(d.calls[len(d.calls)-3:], []string{"restore", "probe", "connectivity"}) {
+                    t.Fatalf("candidate failure lacked independent recovery health checks: %v", d.calls)
+                }
+            } else if seen("restore") {
+                t.Fatalf("backup-only stage attempted unnecessary engine rollback: %v", d.calls)
+            }
+            if d.lockHeld || d.lockAcquires != 1 || d.lockReleases != 1 {
+                t.Fatalf("transaction lease leaked after coverage failure: acquires=%d releases=%d active=%t", d.lockAcquires, d.lockReleases, d.lockHeld)
+            }
+        })
+    }
+}
+
+
+func TestSignedLegacyTransactionRequiresDependencyAndRebootEvidenceAtEveryBoundary(t *testing.T) {
+	for _, evidence := range []struct {
+		name string
+		clear func(*LegacyTaskRecoverySnapshot)
+		want string
+	}{
+		{"transitive dependencies", func(s *LegacyTaskRecoverySnapshot) { s.TransitiveDependenciesCertified = false }, "transitive_dependencies_uncertified"},
+		{"recovery after reboot", func(s *LegacyTaskRecoverySnapshot) { s.RecoveryAfterRebootVerified = false }, "recovery_after_reboot_unverified"},
+	} {
+		for _, failAt := range []int{1, 2} {
+			t.Run(fmt.Sprintf("%s/check-%d", evidence.name, failAt), func(t *testing.T) {
+				f := newSignedBridge(t)
+				d := newSignedLegacyDriverLab()
+				for i := 1; i < failAt; i++ {
+					d.coverageSnapshots = append(d.coverageSnapshots, completeLegacyTaskRecoverySnapshot())
+				}
+				incomplete := completeLegacyTaskRecoverySnapshot()
+				evidence.clear(&incomplete)
+				d.coverageSnapshots = append(d.coverageSnapshots, incomplete)
+
+				err := runSignedLegacyLab(context.Background(), f, d, testSecureLabFolderBridge, func() error { return nil })
+				if err == nil || !strings.Contains(err.Error(), evidence.want) || d.coverageCount != failAt {
+					t.Fatalf("missing %s evidence passed transaction boundary %d: count=%d err=%v", evidence.name, failAt, d.coverageCount, err)
+				}
+				has := func(name string) bool {
+					for _, call := range d.calls { if call == name { return true } }
+					return false
+				}
+				if has("install") || has("switch") || has("commit") || has("restore") || has("snapshot") != (failAt == 2) {
+					t.Fatalf("transaction crossed boundary with missing %s evidence: %v", evidence.name, d.calls)
+				}
+				if d.lockHeld || d.lockAcquires != 1 || d.lockReleases != 1 {
+					t.Fatalf("transaction lease leaked after missing %s evidence: acquires=%d releases=%d active=%t", evidence.name, d.lockAcquires, d.lockReleases, d.lockHeld)
+				}
+			})
+		}
+	}
+}
+
+func TestSignedLegacyTransactionRejectsIncompleteTaskEvidenceAtLaterBoundaries(t *testing.T) {
+    for _, failAt := range []int{2, 3} {
+        t.Run(fmt.Sprintf("coverage-check-%d", failAt), func(t *testing.T) {
+            f := newSignedBridge(t)
+            d := newSignedLegacyDriverLab()
+            incomplete := completeLegacyTaskRecoverySnapshot()
+            incomplete.Tasks[1].BackupReadbackVerified = false
+            for i := 1; i < failAt; i++ {
+                d.coverageSnapshots = append(d.coverageSnapshots, completeLegacyTaskRecoverySnapshot())
+            }
+            d.coverageSnapshots = append(d.coverageSnapshots, incomplete)
+
+            err := runSignedLegacyLab(context.Background(), f, d, testSecureLabFolderBridge, func() error { return nil })
+            if err == nil || d.coverageCount != failAt {
+                t.Fatalf("incomplete task evidence was accepted at check %d: count=%d err=%v", failAt, d.coverageCount, err)
+            }
+            has := func(name string) bool {
+                for _, call := range d.calls {
+                    if call == name { return true }
+                }
+                return false
+            }
+            if has("switch") || has("commit") || has("restore") != (failAt == 3) {
+                t.Fatalf("task evidence crossed an unsafe transaction boundary: %v", d.calls)
+            }
+            if failAt == 2 {
+                if has("install") {
+                    t.Fatalf("incomplete post-snapshot evidence allowed candidate preparation: %v", d.calls)
+                }
+            } else {
+                if !has("install") || !strings.Contains(err.Error(), "revertida") {
+                    t.Fatalf("prepared candidate was not independently restored: %v; %v", err, d.calls)
+                }
+                if len(d.calls) < 3 || !reflect.DeepEqual(d.calls[len(d.calls)-3:], []string{"restore", "probe", "connectivity"}) {
+                    t.Fatalf("rollback health checks missing: %v", d.calls)
+                }
+            }
+            if d.lockHeld || d.lockAcquires != 1 || d.lockReleases != 1 {
+                t.Fatalf("exclusive transaction lease not released: acquires=%d releases=%d active=%t", d.lockAcquires, d.lockReleases, d.lockHeld)
+            }
+        })
+    }
 }

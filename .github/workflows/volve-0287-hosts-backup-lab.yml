@@ -1,0 +1,62 @@
+name: VOLVE original hosts backup capture (FIXTURES ONLY NO INSTALL)
+on:
+  push:
+    branches: [work/0287-original-hosts-backup-20261126]
+    paths:
+      - '.github/workflows/volve-0287-hosts-backup-lab.yml'
+      - 'development/0.28.7/inapp/protection_snapshot_windows.go'
+      - 'development/0.28.7/inapp/protection_snapshot_windows_test.go'
+permissions:
+  contents: read
+jobs:
+  hosts-backup:
+    runs-on: windows-2025
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.x'
+          cache: false
+      - name: Reconstruct and verify full VOLVE Go source
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $parts=@(Get-ChildItem 'development/0.28.7/complete-source-parts' -Filter 'part-*.bin' | Sort-Object Name)
+          if($parts.Count -ne 10){throw 'Source archive part count'}
+          $dest=[IO.File]::Create((Join-Path (Get-Location) 'source.zip'))
+          try {
+            for($i=0;$i -lt 10;$i++){
+              if($parts[$i].Name -ne ('part-{0:D2}.bin' -f $i)){throw 'Source archive order'}
+              $src=[IO.File]::OpenRead($parts[$i].FullName)
+              try{$src.CopyTo($dest)}finally{$src.Dispose()}
+            }
+          }finally{$dest.Dispose()}
+          if((Get-FileHash source.zip -Algorithm SHA256).Hash.ToLowerInvariant() -ne '92b3536559151260375b17a64eedd009df8399e45460637208027b7ca0587ba5'){throw 'Source SHA256 mismatch'}
+          Expand-Archive source.zip -DestinationPath build -Force
+          $old='development/0.28.7/VOLVE_0287_PRECHECK_RESCATE_OVERLAY_NO_INSTALAR.zip'
+          if((Get-FileHash $old -Algorithm SHA256).Hash.ToLowerInvariant() -ne 'fdfd31f21df81fe6da6075bfd442354297874576b6dc2c38f19bd35a681d95cd'){throw 'Preflight ZIP SHA256 mismatch'}
+          Expand-Archive $old -DestinationPath build -Force
+          Copy-Item development/0.28.7/journal/*.go build/codigo/motorupdate/ -Force
+          $recovery='development/0.28.7/VOLVE_0287_RECUPERACION_INTERRUPCION_FORZADA_NO_INSTALAR_v3.zip'
+          if((Get-FileHash $recovery -Algorithm SHA256).Hash.ToLowerInvariant() -ne '773bd5eb5f1c4883021cc321856636354e964d3605dba9017e2fb5d1a7401b40'){throw 'Recovery ZIP SHA256 mismatch'}
+          Expand-Archive $recovery -DestinationPath build -Force
+          go run development/0.28.7/inapp/apply_overlay.go build/codigo
+          if($LASTEXITCODE -ne 0){throw 'Source overlay failed'}
+      - name: Verify original bytes and integrity using disposable synthetic files
+        working-directory: build/codigo
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $pattern='^TestWindowsHosts(OriginalBackup|FileReadOnly)'
+          $result=@(go test ./motorupdate -run $pattern -count=1 -v -timeout 4m)
+          $exit=$LASTEXITCODE
+          $result|Write-Host
+          if($exit -ne 0){throw 'Hosts capture regression failed'}
+          if(@($result|Where-Object {$_ -match '^--- PASS: TestWindowsHostsOriginalBackup'}).Count -ne 8){throw 'Expected exactly eight original hosts backup tests'}
+          foreach($marker in @('PASS VOLVE_HOSTS_NTFS_REAL_ACL_AND_FIXTURE_RECOVERY','PASS VOLVE_HOSTS_NTFS_REAL_ACL_DRIFT_REJECTED','PASS VOLVE_HOSTS_NTFS_REAL_UNPROTECTED_PARENT_REFUSED')){
+            if(@($result|Where-Object {$_ -match [regex]::Escape($marker)}).Count -ne 1){throw ('Missing real NTFS evidence: '+$marker)}
+          }
+          Write-Host 'PASS: exact original bytes, independent hash, drift rejection and local readback; synthetic fixtures only; NO INSTALL'

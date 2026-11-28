@@ -64,6 +64,138 @@ func patchResidentDNSEntry(path string) error {
     return os.WriteFile(path,updated,0600)
 }
 
+// The pinned base DNS proxy previously closed its TCP connection after
+// exactly one query. Reuse must preserve all existing filtering and failure
+// behavior. Reject any drift in the original handler before modifying it.
+func patchDNSPersistentTCP(path string) error {
+    const original = `				defer c.Close()
+				_ = c.SetDeadline(time.Now().Add(12 * time.Second))
+				var length [2]byte
+				if _, e := io.ReadFull(c, length[:]); e != nil {
+					return
+				}
+				n := int(binary.BigEndian.Uint16(length[:]))
+				if n < 12 || n > 65500 {
+					return
+				}
+				q := make([]byte, n)
+				if _, e := io.ReadFull(c, q); e != nil {
+					return
+				}
+				ans, e := s.handle(q)
+				if e != nil {
+					ans = SERVFAIL(q)
+				}
+				if len(ans) < 12 {
+					return
+				}
+				binary.BigEndian.PutUint16(length[:], uint16(len(ans)))
+				_, _ = c.Write(length[:])
+				_, _ = c.Write(ans)`
+    const replacement = `				defer c.Close()
+				// A TCP DNS connection can carry multiple framed queries.
+				// Keep the original per-frame timeout and bound total lifetime
+				// and query count. Closing on cancellation unblocks idle reads.
+				stopClose := context.AfterFunc(ctx, func() { _ = c.Close() })
+				defer stopClose()
+				expires := time.Now().Add(2 * time.Minute)
+				for served := 0; served < 128; served++ {
+					if ctx.Err() != nil || !time.Now().Before(expires) {
+						return
+					}
+					deadline := time.Now().Add(12 * time.Second)
+					if expires.Before(deadline) {
+						deadline = expires
+					}
+					if err := c.SetDeadline(deadline); err != nil {
+						return
+					}
+					var length [2]byte
+					if _, e := io.ReadFull(c, length[:]); e != nil {
+						return
+					}
+					n := int(binary.BigEndian.Uint16(length[:]))
+					if n < 12 || n > 65500 {
+						return
+					}
+					q := make([]byte, n)
+					if _, e := io.ReadFull(c, q); e != nil {
+						return
+					}
+					// Every query, including a reused connection, traverses
+					// the same rule engine and upstream/failed-response path.
+					ans, e := s.handleTransport(q, true)
+					if e != nil {
+						ans = SERVFAIL(q)
+					}
+					if len(ans) < 12 || len(ans) > 65535 {
+						return
+					}
+					frame := make([]byte, 2+len(ans))
+					binary.BigEndian.PutUint16(frame[:2], uint16(len(ans)))
+					copy(frame[2:], ans)
+					for len(frame) > 0 {
+						written, err := c.Write(frame)
+						if err != nil || written <= 0 {
+							return
+						}
+						frame = frame[written:]
+					}
+				}`
+    return patch(path, original, replacement)
+}
+
+// A TCP client retry must not receive the same truncated UDP answer.
+// Keep ordinary UDP behavior and the existing block rule path; only a
+// truncated response to a TCP client requires an upstream TCP retry.
+func patchDNSUpstreamTruncation(path string) error {
+    const oldHandle = `func (s *Server) handle(query []byte) ([]byte, error) {`
+    const newHandle = `func (s *Server) handle(query []byte) ([]byte, error) {
+        return s.handleTransport(query, false)
+    }
+    func (s *Server) handleTransport(query []byte, tcpClient bool) ([]byte, error) {`
+    if err:=patch(path,oldHandle,newHandle);err!=nil{return err}
+    const oldReturn = `		return response[:n], nil
+	}
+	return nil, fmt.Errorf("upstreams failed: %w", last)
+}`
+    const newReturn = `		if tcpClient && response[2]&0x02 != 0 {
+            full,err:=s.completeTruncatedDNSOverTCP(target,query,end)
+            if err!=nil {last=err;continue}
+            return full,nil
+        }
+        return response[:n], nil
+	}
+	return nil, fmt.Errorf("upstreams failed: %w", last)
+}
+func (s *Server) completeTruncatedDNSOverTCP(target string,query []byte,questionEnd int)([]byte,error){
+    if len(query)<12||len(query)>65535||questionEnd<17||questionEnd>len(query){return nil,errors.New("invalid TCP upstream request")}
+    conn,err:=net.DialTimeout("tcp",target,s.timeout)
+    if err!=nil{return nil,err}
+    defer conn.Close()
+    if err=conn.SetDeadline(time.Now().Add(s.timeout));err!=nil{return nil,err}
+    packet:=make([]byte,2+len(query))
+    binary.BigEndian.PutUint16(packet[:2],uint16(len(query)));copy(packet[2:],query)
+    for len(packet)>0 {
+        n,e:=conn.Write(packet);if e!=nil{return nil,e};if n<=0{return nil,io.ErrShortWrite};packet=packet[n:]
+    }
+    var length [2]byte
+    if _,err=io.ReadFull(conn,length[:]);err!=nil{return nil,err}
+    n:=int(binary.BigEndian.Uint16(length[:]))
+    if n<questionEnd{return nil,errors.New("short upstream TCP DNS frame")}
+    reply:=make([]byte,n)
+    if _,err=io.ReadFull(conn,reply);err!=nil{return nil,err}
+    if reply[0]!=query[0]||reply[1]!=query[1]||reply[2]&0x80==0||
+        reply[2]&0x78!=query[2]&0x78||reply[2]&0x02!=0||
+        binary.BigEndian.Uint16(reply[4:6])!=1||
+        string(reply[12:questionEnd])!=string(query[12:questionEnd]){
+        return nil,errors.New("uncorrelated or truncated upstream TCP DNS response")
+    }
+    return reply,nil
+}`
+    return patch(path,oldReturn,newReturn)
+}
+
 func main() {
     if len(os.Args) != 2 { panic("usage: go run apply_overlay.go <source-code-dir>") }
     target := os.Args[1]
@@ -79,7 +211,7 @@ func main() {
         formatted, err := format.Source(data); if err != nil { panic(err) }
         if err := os.WriteFile(filepath.Join(target, name), formatted, 0600); err != nil { panic(err) }
     }
-    for _, name := range []string{"managed_transaction.go", "managed_transaction_test.go", "legacy_managed_transaction.go", "legacy_managed_transaction_test.go", "verified_inventory.go", "verified_inventory_test.go", "internet_proof.go", "internet_proof_test.go", "legacy_motor_attestation.go", "legacy_motor_attestation_test.go", "legacy_recovery_snapshot.go", "legacy_recovery_snapshot_test.go", "legacy_migration_permit.go", "legacy_migration_permit_test.go", "resident_publisher_recovery_binding.go", "resident_publisher_recovery_binding_test.go", "resident_publisher_durable_grant.go", "resident_publisher_durable_grant_test.go", "legacy_migration_draft.go", "legacy_migration_draft_test.go", "versioned_motor_protected_prepare.go", "versioned_motor_protected_prepare_test.go", "legacy_publisher_review_packet.go", "legacy_publisher_review_packet_test.go", "legacy_observed_candidate_review.go", "legacy_observed_candidate_review_test.go", "resident_journal.go", "resident_journal_test.go", "resident_completion.go", "resident_completion_test.go", "resident_health_probe.go", "resident_health_probe_test.go", "resident_active_health.go", "resident_running_identity.go", "resident_running_identity_test.go", "resident_boot_recovery.go", "resident_boot_recovery_test.go", "fresh_install_policy.go", "fresh_install_policy_test.go", "fresh_task_inventory_windows.go", "fresh_task_inventory_windows_test.go", "fresh_service_inventory_windows.go", "fresh_service_inventory_windows_test.go", "fresh_dns_adapter_inventory_windows.go", "fresh_dns_adapter_inventory_windows_test.go", "fresh_partial_host_probe_windows.go", "fresh_partial_host_probe_windows_test.go", "fresh_motor_file_inventory_windows.go", "fresh_motor_file_inventory_windows_test.go", "fresh_host_files_integration_windows.go", "fresh_host_files_integration_windows_test.go", "fresh_port53_inventory_windows.go", "fresh_port53_inventory_windows_test.go", "fresh_host_port53_integration_windows.go", "fresh_host_port53_integration_windows_test.go", "fresh_recovery_inventory_windows.go", "fresh_recovery_inventory_windows_test.go", "fresh_complete_host_probe_windows.go", "fresh_complete_host_probe_windows_test.go", "motor_install_route.go", "motor_install_route_test.go", "motor_install_route_windows.go", "motor_install_route_windows_test.go", "motor_install_evidence_summary_windows.go", "motor_install_evidence_summary_windows_test.go", "browser_policy_inventory_windows.go", "browser_policy_inventory_windows_test.go", "fresh_install_preservation.go", "fresh_install_preservation_test.go", "dns_restore_transaction.go", "dns_restore_transaction_test.go", "dns_restore_netsh_plan.go", "dns_restore_netsh_plan_test.go", "dns_restore_adapter_inventory_windows.go", "dns_restore_adapter_inventory_windows_test.go", "dns_restore_static_executor_windows.go", "dns_restore_static_executor_windows_test.go", "dns_restore_static_batch_windows_test.go", "dns_restore_native_runner_windows.go", "dns_restore_native_runner_windows_test.go", "dns_restore_authorized_windows.go", "dns_restore_authorized_windows_test.go", "dns_restore_lab_mutex_windows.go", "dns_restore_lab_mutex_windows_test.go", "dns_restore_signed_migration_mutex_windows_test.go", "resident_transition_lock_windows.go", "resident_transition_lock_windows_test.go", "resident_protected_boot_driver_windows.go", "resident_protected_boot_driver_windows_test.go", "resident_publisher_protected_boot_windows.go", "resident_publisher_protected_boot_windows_test.go", "resident_durable_publisher_boot_windows.go", "resident_durable_publisher_boot_windows_test.go", "resident_protected_signed_switch_windows.go", "resident_protected_signed_switch_windows_test.go", "resident_protected_signed_transaction_windows_test.go", "dns_restore_sealed_attestor_windows.go", "dns_restore_sealed_attestor_windows_test.go", "dns_restore_ntfs_acl_windows.go", "dns_restore_ntfs_acl_windows_test.go", "dns_restore_disposable_adapter_windows.go", "dns_restore_disposable_adapter_windows_test.go", "dns_restore_disposable_real_windows_test.go", "dns_restore_watchdog_crash_windows_test.go", "dns_restore_crash_lab_attestation_windows_test.go", "dns_restore_system_real_windows_test.go"} {
+    for _, name := range []string{"managed_transaction.go", "managed_transaction_test.go", "legacy_managed_transaction.go", "legacy_managed_transaction_test.go", "legacy_task_recovery_coverage.go", "legacy_task_recovery_coverage_test.go", "verified_inventory.go", "verified_inventory_test.go", "internet_proof.go", "internet_proof_test.go", "legacy_motor_attestation.go", "legacy_motor_attestation_test.go", "legacy_recovery_snapshot.go", "legacy_recovery_snapshot_test.go", "legacy_migration_permit.go", "legacy_migration_permit_test.go", "resident_publisher_recovery_binding.go", "resident_publisher_recovery_binding_test.go", "resident_publisher_durable_grant.go", "resident_publisher_durable_grant_test.go", "legacy_migration_draft.go", "legacy_migration_draft_test.go", "versioned_motor_protected_prepare.go", "versioned_motor_protected_prepare_test.go", "legacy_publisher_review_packet.go", "legacy_publisher_review_packet_test.go", "legacy_observed_candidate_review.go", "legacy_observed_candidate_review_test.go", "resident_journal.go", "resident_journal_test.go", "resident_completion.go", "resident_completion_test.go", "resident_health_probe.go", "resident_health_probe_test.go", "resident_active_health.go", "resident_running_identity.go", "resident_running_identity_test.go", "resident_boot_recovery.go", "resident_boot_recovery_test.go", "fresh_install_policy.go", "fresh_install_policy_test.go", "fresh_task_inventory_windows.go", "fresh_task_inventory_windows_test.go", "fresh_service_inventory_windows.go", "fresh_service_inventory_windows_test.go", "fresh_dns_adapter_inventory_windows.go", "fresh_dns_adapter_inventory_windows_test.go", "fresh_partial_host_probe_windows.go", "fresh_partial_host_probe_windows_test.go", "fresh_motor_file_inventory_windows.go", "fresh_motor_file_inventory_windows_test.go", "fresh_host_files_integration_windows.go", "fresh_host_files_integration_windows_test.go", "fresh_port53_inventory_windows.go", "fresh_port53_inventory_windows_test.go", "fresh_host_port53_integration_windows.go", "fresh_host_port53_integration_windows_test.go", "fresh_recovery_inventory_windows.go", "fresh_recovery_inventory_windows_test.go", "fresh_complete_host_probe_windows.go", "fresh_complete_host_probe_windows_test.go", "motor_install_route.go", "motor_install_route_test.go", "motor_install_route_windows.go", "motor_install_route_windows_test.go", "motor_install_evidence_summary_windows.go", "motor_install_evidence_summary_windows_test.go", "browser_policy_inventory_windows.go", "browser_policy_inventory_windows_test.go", "fresh_install_preservation.go", "fresh_install_preservation_test.go", "protection_snapshot_windows.go", "protection_snapshot_windows_test.go", "dns_restore_transaction.go", "dns_restore_transaction_test.go", "dns_activation_transaction.go", "dns_activation_transaction_test.go", "dns_activation_signed_grant.go", "dns_activation_signed_grant_test.go", "dns_activation_publisher_guard.go", "dns_activation_publisher_guard_test.go", "dns_activation_nonce_native_windows.go", "dns_activation_nonce_native_windows_test.go", "dns_activation_native_windows.go", "dns_activation_native_windows_test.go", "dns_activation_exclusive_lease.go", "dns_activation_exclusive_lease_test.go", "dns_activation_system_windows.go", "dns_activation_system_windows_test.go", "dns_boot_original_recovery_windows.go", "dns_boot_original_recovery_windows_test.go", "dns_boot_original_binding_store_windows.go", "dns_recovery_journal.go", "dns_recovery_journal_test.go", "dns_recovery_store_windows.go", "dns_recovery_store_windows_test.go", "dns_recovery_store_native_windows.go", "dns_recovery_store_native_windows_test.go", "dns_original_publisher_binding_windows.go", "dns_original_publisher_binding_windows_test.go", "dns_restore_netsh_plan.go", "dns_restore_netsh_plan_test.go", "dns_restore_adapter_inventory_windows.go", "dns_restore_adapter_inventory_windows_test.go", "dns_assignment_provenance_windows.go", "dns_assignment_provenance_windows_test.go", "dns_restore_static_executor_windows.go", "dns_restore_static_executor_windows_test.go", "dns_restore_static_batch_windows_test.go", "dns_restore_native_runner_windows.go", "dns_restore_native_runner_windows_test.go", "dns_restore_native_runner_automatic_windows_test.go", "dns_restore_authorized_windows.go", "dns_restore_authorized_windows_test.go", "dns_restore_lab_mutex_windows.go", "dns_restore_lab_mutex_windows_test.go", "dns_restore_signed_migration_mutex_windows_test.go", "resident_transition_lock_windows.go", "resident_transition_lock_windows_test.go", "resident_protected_boot_driver_windows.go", "resident_protected_boot_driver_windows_test.go", "resident_publisher_protected_boot_windows.go", "resident_publisher_protected_boot_windows_test.go", "resident_durable_publisher_boot_windows.go", "resident_durable_publisher_boot_windows_test.go", "resident_protected_signed_switch_windows.go", "resident_protected_signed_switch_windows_test.go", "resident_protected_signed_transaction_windows_test.go", "dns_restore_sealed_attestor_windows.go", "dns_restore_sealed_attestor_windows_test.go", "dns_restore_ntfs_acl_windows.go", "dns_restore_ntfs_acl_windows_test.go", "dns_restore_disposable_adapter_windows.go", "dns_restore_disposable_adapter_windows_test.go", "dns_restore_disposable_real_windows_test.go", "dns_restore_watchdog_crash_windows_test.go", "dns_restore_crash_lab_attestation_windows_test.go", "dns_restore_system_real_windows_test.go", "legacy_pe_imports.go", "legacy_pe_imports_test.go", "legacy_task_recovery_reader.go", "legacy_task_recovery_reader_windows.go", "legacy_task_recovery_reader_test.go"} {
         data, err := os.ReadFile(filepath.Join(srcDir, name)); if err != nil { panic(err) }
         formatted, err := format.Source(data); if err != nil { panic(err) }
         if err := os.WriteFile(filepath.Join(target, "motorupdate", name), formatted, 0600); err != nil { panic(err) }
@@ -115,6 +247,8 @@ func fullEngineAt(root string) (*blocker.Engine, error) {
     // Use the downloaded Full list, not a status counter.`
     if err := patch(filepath.Join(target, "dnsprod_windows.go"), fullCatalogMarker, fullCatalogReplacement); err != nil { panic(err) }
     if err := patchResidentDNSEntry(filepath.Join(target,"dnsprod_windows.go")); err != nil { panic(err) }
+    if err := patchDNSPersistentTCP(filepath.Join(target,"dnsproxy","dns.go")); err != nil { panic(err) }
+    if err := patchDNSUpstreamTruncation(filepath.Join(target,"dnsproxy","dns.go")); err != nil { panic(err) }
     const oldMain = "if len(os.Args) == 2 && os.Args[1] == \"--check-app-updates\" {"
     const newMain = `if len(os.Args) == 2 && os.Args[1] == "--prepare-legacy-rollback" {
         if err := printLegacyRecoveryPreparation(); err != nil {

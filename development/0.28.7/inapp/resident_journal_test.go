@@ -146,3 +146,24 @@ func TestResidentJournalDisallowsModifiedOrExtraFiles(t *testing.T){
  if e:=os.WriteFile(filepath.Join(dir,"unexpected"),[]byte("x"),0600);e!=nil{t.Fatal(e)}
  if _,e:=InspectResidentRecoveryJournal(context.Background(),dir,residentLabACL);e==nil{t.Fatal("unknown journal file accepted")}
 }
+
+func TestResidentJournalRejectsIntentReplacementBeforeTerminalWrite(t *testing.T){
+ ctx:=context.Background()
+ dir:=t.TempDir()
+ original,err:=ArmResidentRecoveryIntent(ctx,dir,residentFixture(),residentLabACL,residentLabACL)
+ if err!=nil{t.Fatal(err)}
+ path:=filepath.Join(dir,ResidentIntentFile)
+ reads:=0
+ protect:=func(p string)error{
+  if p!=path{return nil}
+  reads++
+  if reads==2{
+   replacement:=original;replacement.TargetVersion="0.28.8"
+   raw,e:=json.Marshal(replacement);if e!=nil{return e}
+   return os.WriteFile(path,raw,0600)
+  }
+  return nil
+ }
+ if err:=FinishResidentRecoveryIntent(ctx,dir,"committed",residentLabACL,protect);err==nil{t.Fatal("terminal accepted a replaced intent")}
+ if _,err:=os.Stat(filepath.Join(dir,ResidentResultFile));!os.IsNotExist(err){t.Fatal("terminal receipt created for changed intent")}
+}
