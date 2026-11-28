@@ -1418,7 +1418,7 @@ jobs:
               $env:GITHUB_ACTIONS='true'
               $env:RUNNER_ENVIRONMENT='github-hosted'
               $env:VOLVE_CI_NESTED_GUEST_DNS='PRIVATE_GUEST_ONLY'
-              & $path -MotorExe $motor -MotorSHA $motorPin -WireProbeExe $wire -WireProbeSHA $wirePin -Trial $id
+              & $path -MotorExe $motor -MotorSHA $motorPin -WireProbeExe $wire -WireProbeSHA $wirePin -Trial $id -PrivateGatewayControl
             }
             if(-not $report.private_actual_motor_integration.actual_system_motor -or -not $report.private_actual_motor_integration.motor_stopped -or -not $report.private_actual_motor_integration.independent_wire_probe_verified -or $report.private_actual_motor_integration.independent_wire_probe_sha256 -cne $wireSHA -or $report.private_actual_motor_integration.dual_stack_transport_checks -ne 4 -or -not $report.private_actual_motor_integration.configured_resolver_default -or -not $report.private_actual_motor_integration.blocked_domains_verified){throw 'Actual motor activation/failure integration not proven'}
             if(-not $report.private_actual_motor_integration.configured_resolver_tcp){
