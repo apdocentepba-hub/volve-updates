@@ -362,3 +362,23 @@ Esta precisión no modifica el crédito de aceptación: **50% (5/10 puertas)**. 
 La integración futura no debe conectar el driver DNS-aware directamente al adaptador actual: `residentSignedBootOriginalOps.RestoreOriginal` restaura EXE+tarea y solicita iniciar el motor original antes de que `RecoverPendingResidentAfterBootWithOriginalDNS` invoque `RestoreOriginalDNS`. El fence DNS necesita entonces distinguir candidato fallido de motor original; el observador genérico `auditResidentQuiescenceReadOnly` exige cero procesos VOLVÉ y cero listeners 53, por lo que no sirve sin adaptación para un motor original que ya está activo.
 
 **Pendiente de puerta 7:** diseñar y probar el fence candidato-específico, y fijar la secuencia de restauración de DNS versus inicio del motor original bajo la misma lease. No relajar quiescencia ni aceptar un éxito parcial; conservar journal pendiente hasta DNS/Internet verificados. Esta revisión fue estática; no hubo VM, workflow Windows ni escrituras de host. El scorecard global se mantiene en **50% (5/10 puertas)**.
+
+
+## Integración de orden DNS-aware implementada; validación post-corrección pendiente — 28/11/2026
+
+**Código implementado, sin crédito adicional de aceptación:**
+- La política DNS-aware separa restauración del EXE/tarea, restauración y readback DNS, y arranque del original mediante `StartOriginal`, todo bajo una lease global.
+- El arranque del original es posterior a la verificación independiente del DNS original. Si el motor ya está activo, sólo se acepta tras validar hash del EXE, XML completo de la tarea SYSTEM, SID del proceso y propiedad única de UDP/TCP 53 en loopback.
+- El driver DNS-aware reabre el permiso editorial firmado y exige alcance `MotorAndDNS` ligado al nonce del intent antes de cualquier operación DNS; el fence rechaza candidatos, procesos extra o puertos con dueño no probado.
+- El camino `MotorOnly` mantiene una secuencia aparte restore+start y no se usa como fallback DNS-aware.
+
+**Tests escritos, no ejecutados después de la última corrección:**
+- Secuencia de cuatro eventos restore/verify/start/final-verify.
+- Fallo de start deja el journal pendiente y sin recibo terminal.
+- Driver Windows integra DNS restore/readback y StartOriginal bajo el mismo mutex.
+
+**Incidente de validación:** el workflow Windows #46155953540 terminó FAIL en el commit anterior `f217918`: Go reportó dos definiciones de `durablePublisherDNSBootDriver.StartOriginal`. Se eliminó la declaración redundante en commit `c0976276`. No se ha ejecutado un build posterior; no se declara compilación ni tests PASS. La ejecución heredada no se reintentó.
+
+**Directiva sin VM:** los workflows `volve-0287-one-exe-pr.yml` y `volve-0287-activation-order-regression.yml` se cambiaron a `workflow_dispatch` únicamente, conservando su contenido. Los ocho workflows de VM/watchdog ya estaban en modo manual. Verificación actual: los diez workflows de laboratorio o runner Windows identificados conservan sólo activación manual; push/pull_request no disparan esas pruebas. Ningún workflow fue invocado manualmente en esta intervención.
+
+**Aceptación global permanece 50% (5/10 puertas).** El desarrollo se considera implementado en código, pero el driver DNS-aware y la secuencia no están validados en ejecución; faltan además el arranque/reinicio auténtico, registro productivo del watchdog, firma editorial y aceptación de instalación.
