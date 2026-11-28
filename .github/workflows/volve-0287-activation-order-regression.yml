@@ -10,7 +10,7 @@ permissions:
 jobs:
   order-regression:
     runs-on: windows-2025
-    timeout-minutes: 10
+    timeout-minutes: 12
     steps:
       - uses: actions/checkout@v4
         with:
@@ -52,7 +52,7 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference='Stop'
-          $result=@(go test ./motorupdate -run '^(TestFreshActivationAdmissionSeparatesFreshFromMigration|TestWindowsFreshReservationNativeCreateOnly|TestWindowsFreshControllerSignedArchivesAndRecovery|TestWindows(ActivationPolicyDriftInsideAttestationPreventsCommit|DNSActivationOverrideGuardRejectsDriftWithoutSuppressingRecovery|PinnedDNSActivation.*))$' -count=1 -v -timeout 5m)
+          $result=@(go test ./motorupdate -run '^(TestFreshActivationAdmissionSeparatesFreshFromMigration|TestWindowsFreshReservationNativeCreateOnly|TestWindowsFreshControllerSignedArchivesAndRecovery|TestWindows(ActivationPolicyDriftInsideAttestationPreventsCommit|DNSActivationOverrideGuardRejectsDriftWithoutSuppressingRecovery|PinnedDNSActivation.*))$' -count=1 -v -timeout 7m)
           $code=$LASTEXITCODE
           $result|Write-Host
           if($code -ne 0){throw 'Activation order regression failed'}
@@ -61,4 +61,5 @@ jobs:
           if(@($result|Where-Object {$_ -match 'PASS VOLVE_FRESH_ADMISSION_BINDS_SEVEN_PINS_REJECTS_MIGRATION_AND_CATALOG$'}).Count -ne 1){throw 'Missing fresh admission scope proof'}
           if(@($result|Where-Object {$_ -match 'PASS VOLVE_FRESH_NATIVE_RESERVATION_CREATE_ONLY_ACL_REPLAY_REFUSED_NO_DNS$'}).Count -ne 1){throw 'Missing native fresh reservation proof'}
           if(@($result|Where-Object {$_ -match 'PASS VOLVE_FRESH_SIGNED_ARCHIVES_RESERVATION_RECOVERY_CHAIN_MEMORY_DNS_ONLY$'}).Count -ne 1){throw 'Missing integrated fresh archive and recovery proof'}
+          if(@($result|Where-Object {$_ -match 'PASS VOLVE_FRESH_RESERVATION_REOPEN_REFUSES_FOREIGN_PARTIAL$'}).Count -ne 1 -or @($result|Where-Object {$_ -match 'PASS VOLVE_FRESH_RESERVATION_DRIFT_STOPS_NEXT_WRITE_AND_RECOVERS$'}).Count -ne 1){throw 'Missing fresh consumed receipt drift proof'}
           Write-Host 'PASS VOLVE_ACTIVATION_ORDER_MEMORY_ONLY_NO_INSTALL_NO_RELEASE'

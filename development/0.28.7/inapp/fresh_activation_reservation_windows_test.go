@@ -49,7 +49,14 @@ func TestWindowsFreshReservationNativeCreateOnly(t *testing.T){
  if _,err:=reserveFreshActivationUnderHeldLease(ctx,root,raw,sig,pub,pins,host,held);!errors.Is(err,os.ErrExist){t.Fatal("fresh admission replay accepted or unexpected refusal",err)}
  after,err:=os.ReadFile(marker);if err!=nil||!bytes.Equal(initial,after){t.Fatal("replay modified reservation")}
  if err:=nativeDNSOriginalBackupACL(ctx,marker);err!=nil{t.Fatal(err)}
+ if err:=verifyFreshReservationNative(ctx,root,first);err!=nil{t.Fatal("intact receipt refused",err)}
+ wrong:=first;wrong.AdmissionSHA256=strings.Repeat("9",64)
+ if err:=verifyFreshReservationNative(ctx,root,wrong);err==nil{t.Fatal("foreign reservation accepted")}
+ if err:=os.WriteFile(marker,[]byte("{"),0600);err!=nil{t.Fatal(err)}
+ if err:=verifyFreshReservationNative(ctx,root,first);err==nil{t.Fatal("partial reservation accepted")}
+ if _,err:=reserveFreshActivationUnderHeldLease(ctx,root,raw,sig,pub,pins,host,held);!errors.Is(err,os.ErrExist){t.Fatal("partial reservation reused",err)}
  t.Log("PASS VOLVE_FRESH_NATIVE_RESERVATION_CREATE_ONLY_ACL_REPLAY_REFUSED_NO_DNS")
+ t.Log("PASS VOLVE_FRESH_RESERVATION_REOPEN_REFUSES_FOREIGN_PARTIAL")
 }
 
 type freshReservationFixtureGuard struct{}
@@ -61,7 +68,7 @@ func(*freshReservationFixtureGuard)CommitActive(context.Context,string)error{ret
 
 func TestWindowsFreshControllerSignedArchivesAndRecovery(t *testing.T){
  if os.Getenv("GITHUB_ACTIONS")!="true"||os.Getenv("RUNNER_ENVIRONMENT")!="github-hosted"{t.Skip("hosted NTFS only")}
- ctx,cancel:=context.WithTimeout(context.Background(),150*time.Second);defer cancel()
+ ctx,cancel:=context.WithTimeout(context.Background(),240*time.Second);defer cancel()
  _,snap,browser,hosts,policies:=makeOriginalProtectionPairFixture(t)
  id:=strings.Repeat("b",32)
  root:=filepath.Join(t.TempDir(),id)
@@ -91,21 +98,39 @@ func TestWindowsFreshControllerSignedArchivesAndRecovery(t *testing.T){
  raw,err:=json.Marshal(freshActivationAdmission{1,freshActivationComponent,freshActivationOperation,pins,now.Add(-time.Minute).Unix(),now.Add(5*time.Minute).Unix()});if err!=nil{t.Fatal(err)}
  sig:=[]byte(base64.StdEncoding.EncodeToString(ed25519.Sign(priv,raw)))
  host:=FreshMotorInstallEvidence{InspectedAsAdministrator:true,InspectedMotorFiles:true,InspectedTaskScheduler:true,InspectedServices:true,InspectedDNSAdapters:true,InspectedPort53Listeners:true,InspectedRecoveryState:true}
- backend:=&activationTestBackend{current:map[string]DNSServerState{},failOn:1}
+ backend:=&activationTestBackend{current:map[string]DNSServerState{}}
  for _,state:=range observed.States{backend.current[activationKey(state.InterfaceGUID,state.Family)]=copyActivationState(state)}
  guard:=&activationTestGuard{backend:backend,originals:observed.States}
  calls:=0
- run:=func()error{return activateFreshDNSUnderProtectedLease(ctx,root,raw,sig,pub,pins,host,snap,browser,inv,journal,guard,func(context.Context,DNSActivationSafetyGuard)(DNSAdapterBackend,error){calls++;return backend,nil})}
  marker:=filepath.Join(root,freshReservationName)
+ corrupted:=&freshReservationCorruptingBackend{activationTestBackend:backend,marker:marker}
+ run:=func()error{return activateFreshDNSUnderProtectedLease(ctx,root,raw,sig,pub,pins,host,snap,browser,inv,journal,guard,func(context.Context,DNSActivationSafetyGuard)(DNSAdapterBackend,error){calls++;return corrupted,nil})}
  if err:=run();err==nil||calls!=0||backend.writes!=0{t.Fatal("unsigned historical review reached backend")}
  if _,err:=os.Lstat(marker);!os.IsNotExist(err){t.Fatal("unsigned review consumed reservation")}
  if err:=PersistSignedOriginalRecoveryNativeUnarmed(ctx,root,id,reviewRaw,ed25519.Sign(priv,reviewRaw),pub,snap,browser,inv,dnsPin);err!=nil{t.Fatal(err)}
- // Real protected files + lease, simulated DNS write failure and rescue.
- if err:=run();err==nil||!strings.Contains(err.Error(),"DNS activation write")||calls!=1||backend.writes!=1||guard.recoverCalls!=1||guard.commitCalls!=0{t.Fatal("failed activation did not request independent recovery",err)}
+ // Real protected files + lease, simulated successful first DNS write
+ // followed by deliberate damage to the consumed receipt.
+ if err:=run();err==nil||!strings.Contains(err.Error(),"recovery attestation lost")||calls!=1||backend.writes!=1||guard.recoverCalls!=1||guard.commitCalls!=0||!corrupted.corrupted{t.Fatal("damaged reservation did not prevent next write and request rescue",err)}
  records,err:=VerifyDNSOriginalJournal(ctx,journal,dnsPin);if err!=nil{t.Fatal(err)}
  if err:=verifyDNSActivationTransition(ctx,records,backend,0);err!=nil{t.Fatal("original readback differs",err)}
  before,err:=os.ReadFile(marker);if err!=nil{t.Fatal(err)}
  if err:=run();err==nil||calls!=1||backend.writes!=1||guard.commitCalls!=0{t.Fatal("replay reached backend",err)}
  after,err:=os.ReadFile(marker);if err!=nil||!bytes.Equal(before,after){t.Fatal("replay modified durable marker")}
+ if string(before)!="{"{t.Fatal("partial consumed receipt not preserved")}
  t.Log("PASS VOLVE_FRESH_SIGNED_ARCHIVES_RESERVATION_RECOVERY_CHAIN_MEMORY_DNS_ONLY")
+ t.Log("PASS VOLVE_FRESH_RESERVATION_DRIFT_STOPS_NEXT_WRITE_AND_RECOVERS")
+}
+
+type freshReservationCorruptingBackend struct{
+ *activationTestBackend
+ marker string
+ corrupted bool
+}
+func(b *freshReservationCorruptingBackend)Apply(ctx context.Context,next DNSServerState)error{
+ if err:=b.activationTestBackend.Apply(ctx,next);err!=nil{return err}
+ if b.writes==1{
+  if err:=os.WriteFile(b.marker,[]byte("{"),0600);err!=nil{return err}
+  b.corrupted=true
+ }
+ return nil
 }

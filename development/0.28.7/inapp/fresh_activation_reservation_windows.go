@@ -82,6 +82,38 @@ func reserveFreshActivationUnderHeldLease(ctx context.Context,root string,raw,si
 }
 
 
+// Reopen the exact consumed marker, not a newly supplied or reconstructed
+// authorization. Native ACL and identity checks surround bounded readback.
+// A missing, partial or altered reservation is never treated as fresh.
+func verifyFreshReservationNative(ctx context.Context,root string,expected freshActivationReservation)error{
+ if ctx==nil{return errors.New("fresh reservation verification requires context")}
+ if err:=ctx.Err();err!=nil{return err}
+ if expected.Schema!=1||expected.Component!="volve-fresh-activation-once-v1"||expected.ReservedAtUnix<=0||verifyCanonicalLowerSHA256(expected.AdmissionSHA256)!=nil{return errors.New("missing independent fresh reservation receipt")}
+ if err:=validateFreshActivationEvidence(expected.Evidence);err!=nil{return err}
+ if _,err:=originalRecoveryEvidencePath(root,expected.Evidence.TransactionID);err!=nil{return err}
+ check:=func(p string)error{return nativeDNSOriginalBackupACL(ctx,p)}
+ path:=filepath.Join(root,freshReservationName)
+ verify:=func()error{
+  if err:=verifyOriginalHostsBackupNode(root,true,check);err!=nil{return err}
+  return verifyOriginalHostsBackupNode(path,false,check)
+ }
+ if err:=verify();err!=nil{return err}
+ before,err:=os.Lstat(path)
+ if err!=nil||!before.Mode().IsRegular()||before.Size()<2||before.Size()>4096{return errors.New("fresh reservation invalid type or length")}
+ file,err:=os.Open(path);if err!=nil{return err}
+ opened,err:=file.Stat()
+ if err!=nil||!os.SameFile(before,opened){file.Close();return errors.New("fresh reservation replaced before read")}
+ data,readErr:=io.ReadAll(io.LimitReader(file,4097))
+ closeErr:=file.Close()
+ if readErr!=nil||closeErr!=nil{return errors.Join(readErr,closeErr)}
+ canonical,err:=json.Marshal(expected)
+ if err!=nil||int64(len(data))!=before.Size()||!bytes.Equal(data,canonical){return errors.New("fresh reservation differs from independent consumed receipt")}
+ if err:=verify();err!=nil{return err}
+ after,err:=os.Lstat(path)
+ if err!=nil||!os.SameFile(before,after)||before.Size()!=after.Size()||!before.ModTime().Equal(after.ModTime()){return errors.New("fresh reservation changed during verification")}
+ return ctx.Err()
+}
+
 // This private controller joins the previously isolated fresh admission,
 // signed original archives and durable reservation to the existing DNS
 // transaction coordinator. No product entrypoint calls it yet. The caller
@@ -129,10 +161,12 @@ func activateFreshDNSUnderProtectedLease(ctx context.Context,root string,raw,sig
   if err!=nil||r.Status!="SIGNED_BOUND_FOUR_ARCHIVES_VERIFIED_READ_ONLY"||!r.HostsVerified||r.BrowserKeysVerified!=3||!r.DNSBackupVerified||!r.CatalogBackupVerified||r.CompleteRecoverySnapshot||r.InstallAuthorized||r.RestoreAuthorized{return errors.New("fresh controller requires intact signed four-archive review")}
   return c.Err()
  }
+ var consumed *freshActivationReservation
  guard:=&freshAdmissionGuard{inner:inner,review:review,verify:func(c context.Context,pin string)error{
   if pin!=pins.OriginalDNSJournalSHA256{return errors.New("fresh activation journal changed")}
-  _,err:=verifyFreshActivationAdmission(c,raw,sig,key,pins,host,time.Now())
-  return err
+  if _,err:=verifyFreshActivationAdmission(c,raw,sig,key,pins,host,time.Now());err!=nil{return err}
+  if consumed!=nil{return verifyFreshReservationNative(c,root,*consumed)}
+  return c.Err()
  }}
  return activateVOLVEDNSUnderProtectedLease(ctx,originalJournal,pins.OriginalDNSJournalSHA256,guard,AcquireProtectedResidentTransitionLease,func(c context.Context,held DNSActivationSafetyGuard)(DNSAdapterBackend,error){
   exclusive,ok:=held.(*exclusiveDNSActivationGuard)
@@ -144,7 +178,10 @@ func activateFreshDNSUnderProtectedLease(ctx context.Context,root string,raw,sig
   backend,err:=factory(c,held)
   if err!=nil||backend==nil{return nil,errors.New("fresh controller backend unavailable")}
   if err:=verifyDNSActivationTransition(c,records,backend,0);err!=nil{return nil,err}
-  if _,err:=reserveFreshActivationUnderHeldLease(c,root,raw,sig,key,pins,host,exclusive);err!=nil{return nil,err}
+  receipt,err:=reserveFreshActivationUnderHeldLease(c,root,raw,sig,key,pins,host,exclusive)
+  if err!=nil{return nil,err}
+  consumed=&receipt
+  if err:=verifyFreshReservationNative(c,root,receipt);err!=nil{return nil,err}
   return backend,nil
  })
 }
