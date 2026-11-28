@@ -160,5 +160,45 @@ func TestFreshStagingProofBindsCatalogAndMotorTask(t *testing.T){
   s:=ed25519.Sign(priv,b);if mode=="tamper"{s=sig}
   if _,e:=verifyFreshStagingProof(pub,b,s,pins,admission,motor);e==nil{t.Fatal("unsafe staging proof accepted",mode)}
  }
+
+ // The signed metadata alone cannot establish actual feed contents.
+ // Use only disposable files on the hosted Windows runner; no motor or
+ // task is started and no DNS, installed catalog, or network is changed.
+ if os.Getenv("GITHUB_ACTIONS")=="true"&&os.Getenv("RUNNER_ENVIRONMENT")=="github-hosted"{
+  t.Run("native_protected_feed_bytes",testFreshStagedCatalogNativeFiles)
+ }
  t.Log("PASS VOLVE_FRESH_STAGE_SIGNED_CATALOG_AND_MOTOR_TASK_BOUND")
+}
+
+func testFreshStagedCatalogNativeFiles(t *testing.T){
+ ctx,cancel:=context.WithTimeout(context.Background(),110*time.Second);defer cancel()
+ root:=filepath.Join(t.TempDir(),"catalog-fixture")
+ catalog:=filepath.Join(root,"catalog")
+ feeds:=filepath.Join(catalog,"feeds")
+ for _,dir:=range []string{root,catalog,feeds}{
+  if err:=os.Mkdir(dir,0700);err!=nil{t.Fatal(err)}
+  if err:=nativeSealApprovedOriginalBackupNode(ctx,dir);err!=nil{t.Fatal(err)}
+ }
+ stage:=freshStagingProof{InstallRoot:root}
+ for i,name:=range freshStageFeedNames{stage.Feeds[i].Name=name}
+ payload:=[]byte("example.invalid\n")
+ digest:=sha256.Sum256(payload)
+ stage.Feeds[0].Bytes=int64(len(payload))
+ stage.Feeds[0].SHA256=hex.EncodeToString(digest[:])
+ required:=filepath.Join(feeds,stage.Feeds[0].Name)
+ if err:=os.WriteFile(required,payload,0600);err!=nil{t.Fatal(err)}
+ if err:=nativeSealApprovedOriginalBackupNode(ctx,required);err!=nil{t.Fatal(err)}
+ if err:=verifyFreshStagedCatalogNative(ctx,stage);err!=nil{t.Fatal("exact protected feed refused",err)}
+ // Unexpected optional data must not be silently accepted.
+ optional:=filepath.Join(feeds,stage.Feeds[1].Name)
+ if err:=os.WriteFile(optional,payload,0600);err!=nil{t.Fatal(err)}
+ if err:=verifyFreshStagedCatalogNative(ctx,stage);err==nil||!strings.Contains(err.Error(),"unsigned optional catalog appeared"){t.Fatal("unexpected optional feed was not specifically refused",err)}
+ if err:=os.Remove(optional);err!=nil{t.Fatal(err)}
+ // Same byte length, different SHA-256: no size-only false PASS.
+ altered:=append([]byte(nil),payload...);altered[0]='X'
+ if err:=os.WriteFile(required,altered,0600);err!=nil{t.Fatal(err)}
+ if err:=verifyFreshStagedCatalogNative(ctx,stage);err==nil||!strings.Contains(err.Error(),"catalog differs from signed staged content"){t.Fatal("same-size altered catalog was not specifically refused",err)}
+ observed,err:=os.ReadFile(required)
+ if err!=nil||!bytes.Equal(observed,altered){t.Fatal("read-only audit modified fixture",err)}
+ t.Log("PASS VOLVE_FRESH_NATIVE_PROTECTED_CATALOG_BYTES_UNEXPECTED_OPTIONAL_AND_SAME_SIZE_TAMPER_REFUSED")
 }
