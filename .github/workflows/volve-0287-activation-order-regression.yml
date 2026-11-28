@@ -67,4 +67,5 @@ jobs:
           if(@($result|Where-Object {$_ -match 'PASS VOLVE_FRESH_RECOVERY_PERMIT_DISTINCT_SCOPE_NO_ACTIVATION_EXPIRY$'}).Count -ne 1){throw 'Missing fresh recovery-only scope proof'}
           if(@($result|Where-Object {$_ -match 'PASS VOLVE_FRESH_PERSISTED_RESCUE_RESUME_IDEMPOTENT_WITHOUT_ACTIVATION_MEMORY_DNS_ONLY$'}).Count -ne 1){throw 'Missing durable fresh rescue resume proof'}
           if(@($result|Where-Object {$_ -match 'PASS VOLVE_FRESH_RECOVERY_PENDING_CREATE_ONLY_REQUIRED_BEFORE_RESCUE$'}).Count -ne 1){throw 'Missing durable pending-state gate proof'}
+          if(@($result|Where-Object {$_ -match 'PASS VOLVE_FRESH_DNS_ONLY_TERMINAL_READBACK_REPLAY_AND_DRIFT_NO_WRITES$'}).Count -ne 1){throw 'Missing DNS-only completion lifecycle proof'}
           Write-Host 'PASS VOLVE_ACTIVATION_ORDER_MEMORY_ONLY_NO_INSTALL_NO_RELEASE'

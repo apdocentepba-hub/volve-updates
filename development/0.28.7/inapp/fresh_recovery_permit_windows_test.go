@@ -116,12 +116,29 @@ func TestWindowsFreshPersistedRecoveryResumesWithoutActivationGrant(t *testing.T
  allow=true
  extra:=true
  if err:=run(windowsActivationInspectorWithExtraAdapter(h,&extra));err==nil||simulated.writes!=0{t.Fatal("foreign adapter reached DNS writer",err)}
+ resultPath:=filepath.Join(root,freshDNSRestoredName)
  simulated.failAt=2
  if err:=run(h.inspect);err==nil||simulated.writes!=2{t.Fatal("mid-recovery failure not preserved",err)}
+ if _,err:=os.Lstat(resultPath);!os.IsNotExist(err){t.Fatal("partial recovery produced a DNS completion receipt")}
  simulated.failAt=0
  if err:=run(h.inspect);err!=nil||simulated.writes!=3{t.Fatal("durable recovery could not resume",err)}
  simulated.expectOriginal(t)
+ resultBytes,err:=os.ReadFile(resultPath);if err!=nil{t.Fatal("verified DNS result not persisted",err)}
+ result,err:=expectedFreshDNSRestored(pending);if err!=nil{t.Fatal(err)}
+ release,err=AcquireProtectedResidentTransitionLease(ctx);if err!=nil{t.Fatal(err)}
+ verifyErr:=verifyFreshDNSRestoredUnderLease(ctx,root,pending,result)
+ release()
+ if verifyErr!=nil{t.Fatal("sealed DNS result rejected",verifyErr)}
  if err:=run(h.inspect);err!=nil||simulated.writes!=3{t.Fatal("restoration not idempotent",err)}
+ // A completed DNS-only record is not a new authorization to mutate
+ // a later changed system. On boot only reverify the original assignment.
+ h.states[records[0].Original.Family]=copyWindowsActivationDNSState(records[0].Expected)
+ if err:=run(h.inspect);err==nil||simulated.writes!=3{t.Fatal("completed rescue rewrote later DNS state",err)}
+ h.states[records[0].Original.Family]=copyWindowsActivationDNSState(records[0].Original)
+ again,err:=os.ReadFile(resultPath);if err!=nil||!bytes.Equal(resultBytes,again){t.Fatal("DNS completion receipt changed")}
+ if err:=os.WriteFile(resultPath,[]byte("{"),0600);err!=nil{t.Fatal(err)}
+ if err:=run(h.inspect);err==nil||simulated.writes!=3{t.Fatal("damaged DNS completion result accepted",err)}
+ t.Log("PASS VOLVE_FRESH_DNS_ONLY_TERMINAL_READBACK_REPLAY_AND_DRIFT_NO_WRITES")
  after,err:=os.ReadFile(path);if err!=nil||!bytes.Equal(saved,after){t.Fatal("rescue permit modified")}
  broken,err:=os.ReadFile(consumed);if err!=nil||string(broken)!="{"{t.Fatal("consumed activation marker was rewritten")}
  if err:=os.WriteFile(path,[]byte("{"),0600);err!=nil{t.Fatal(err)}

@@ -138,6 +138,16 @@ func restoreFreshOriginalDNSUnderLease(ctx context.Context,root string,key ed255
   return c.Err()
  }
  if err:=reattest(ctx);err!=nil{return err}
+ result,err:=expectedFreshDNSRestored(pending)
+ if err!=nil{return err}
+ resultPath:=filepath.Join(root,freshDNSRestoredName)
+ if _,err:=os.Lstat(resultPath);err==nil{
+  // A completed DNS-only rescue is read-only on subsequent boots. Never
+  // overwrite its record or interpret it as full machine recovery.
+  if err:=verifyFreshDNSRestoredUnderLease(ctx,root,pending,result);err!=nil{return err}
+  if err:=verifySignedDNSBootRestoreCensus(ctx,records,inspect,true);err!=nil{return fmt.Errorf("DNS drift after completed fresh rescue requires separate diagnosis: %w",err)}
+  return reattest(ctx)
+ }else if !errors.Is(err,os.ErrNotExist){return err}
  if err:=verifySignedDNSBootRestoreCensus(ctx,records,inspect,false);err!=nil{return err}
  writer,err:=NewWindowsPinnedDNSRecoveryWriter(ctx,records,inspect,invoke)
  if err!=nil{return err}
@@ -147,7 +157,13 @@ func restoreFreshOriginalDNSUnderLease(ctx context.Context,root string,key ed255
   return writer(c,cmd)
  });err!=nil{return fmt.Errorf("fresh DNS rescue incomplete: %w",err)}
  if err:=reattest(ctx);err!=nil{return err}
- // This is only DNS readback; caller must not mark full recovery here.
+ if err:=verifySignedDNSBootRestoreCensus(ctx,records,inspect,true);err!=nil{return err}
+ // Record ONLY the verified original DNS result. This does not authorize
+ // removing the watchdog, committing installation or claiming full rescue.
+ if err:=reattest(ctx);err!=nil{return err}
+ if err:=verifySignedDNSBootRestoreCensus(ctx,records,inspect,true);err!=nil{return err}
+ if err:=persistFreshDNSRestoredUnderLease(ctx,root,pending,result);err!=nil{return err}
+ if err:=reattest(ctx);err!=nil{return err}
  return verifySignedDNSBootRestoreCensus(ctx,records,inspect,true)
 }
 
@@ -181,7 +197,15 @@ func verifyFreshRecoveryPendingUnderLease(ctx context.Context,root string,expect
  if expected.Schema!=1||expected.Component!="volve-fresh-dns-recovery-pending-v1"||verifyCanonicalLowerSHA256(expected.PermitEnvelopeSHA256)!=nil{return errors.New("fresh recovery pending evidence invalid")}
  if err:=validateFreshActivationEvidence(expected.Evidence);err!=nil{return err}
  if _,err:=originalRecoveryEvidencePath(root,expected.Evidence.TransactionID);err!=nil{return err}
- path:=filepath.Join(root,freshRecoveryPendingName)
+ return verifyFreshFixedRecordUnderLease(ctx,root,freshRecoveryPendingName,expected)
+}
+
+// Shared bounded native reader for these two fixed protected records.
+// Never allow a caller to nominate an arbitrary file.
+func verifyFreshFixedRecordUnderLease(ctx context.Context,root,name string,expected any)error{
+ if ctx==nil{return errors.New("fresh record context required")}
+ if name!=freshRecoveryPendingName&&name!=freshDNSRestoredName{return errors.New("unsupported fresh recovery record")}
+ path:=filepath.Join(root,name)
  check:=func(p string)error{return nativeDNSOriginalBackupACL(ctx,p)}
  verify:=func()error{
   if err:=verifyOriginalHostsBackupNode(root,true,check);err!=nil{return err}
@@ -215,9 +239,55 @@ func armFreshRecoveryPendingUnderLease(ctx context.Context,root string,key ed255
  if _,err:=ReadDNSOriginalBackupNativeWindows(ctx,filepath.Join(root,"legacy-engine-recovery"),pins.OriginalDNSJournalSHA256);err!=nil{return denied,err}
  check:=func(p string)error{return nativeDNSOriginalBackupACL(ctx,p)}
  if err:=verifyOriginalHostsBackupNode(root,true,check);err!=nil{return denied,err}
+ if err:=requireFreshDNSRestoredAbsent(ctx,root);err!=nil{return denied,err}
  raw,err:=json.Marshal(expected);if err!=nil{return denied,err}
  if err:=ctx.Err();err!=nil{return denied,err}
  if err:=residentCreate(filepath.Join(root,freshRecoveryPendingName),raw,func(p string)error{return nativeSealApprovedOriginalBackupNode(ctx,p)},check);err!=nil{return denied,err}
  if err:=verifyFreshRecoveryPendingUnderLease(ctx,root,expected);err!=nil{return denied,err}
  return expected,nil
+}
+
+
+// A DNS-only completion record is distinct from a successful installation
+// or full rollback. No timestamp or mutable flags are used as authority.
+// It binds the exact independently verified pending record. Full recovery
+// and an active post-boot installation need different lifecycle evidence.
+const freshDNSRestoredName="fresh-dns-original-restored.json"
+type freshDNSRestored struct{
+ Schema int `json:"schema"`
+ Component string `json:"component"`
+ PendingSHA256 string `json:"pending_sha256"`
+ OriginalDNSJournalSHA256 string `json:"original_dns_journal_sha256"`
+}
+func expectedFreshDNSRestored(pending freshRecoveryPending)(freshDNSRestored,error){
+ var denied freshDNSRestored
+ if pending.Schema!=1||pending.Component!="volve-fresh-dns-recovery-pending-v1"||verifyCanonicalLowerSHA256(pending.PermitEnvelopeSHA256)!=nil{return denied,errors.New("fresh DNS restored result requires verified pending record")}
+ if err:=validateFreshActivationEvidence(pending.Evidence);err!=nil{return denied,err}
+ raw,err:=json.Marshal(pending);if err!=nil{return denied,err}
+ digest:=sha256.Sum256(raw)
+ return freshDNSRestored{1,"volve-fresh-dns-original-restored-only-v1",hex.EncodeToString(digest[:]),pending.Evidence.OriginalDNSJournalSHA256},nil
+}
+func requireFreshDNSRestoredAbsent(ctx context.Context,root string)error{
+ if err:=ctx.Err();err!=nil{return err}
+ if _,err:=os.Lstat(filepath.Join(root,freshDNSRestoredName));!errors.Is(err,os.ErrNotExist){return errors.New("fresh DNS completion slot already exists or cannot be observed")}
+ return nil
+}
+func verifyFreshDNSRestoredUnderLease(ctx context.Context,root string,pending freshRecoveryPending,result freshDNSRestored)error{
+ expected,err:=expectedFreshDNSRestored(pending)
+ if err!=nil||expected!=result{return errors.New("foreign fresh DNS completion result")}
+ if err:=verifyFreshRecoveryPendingUnderLease(ctx,root,pending);err!=nil{return err}
+ return verifyFreshFixedRecordUnderLease(ctx,root,freshDNSRestoredName,result)
+}
+// Internal caller must have proved exact live original DNS and retained the
+// same independent recovery lease; this helper alone proves no OS outcome.
+func persistFreshDNSRestoredUnderLease(ctx context.Context,root string,pending freshRecoveryPending,result freshDNSRestored)error{
+ expected,err:=expectedFreshDNSRestored(pending)
+ if err!=nil||expected!=result{return errors.New("invalid fresh DNS completion result")}
+ if err:=verifyFreshRecoveryPendingUnderLease(ctx,root,pending);err!=nil{return err}
+ if err:=requireFreshDNSRestoredAbsent(ctx,root);err!=nil{return err}
+ raw,err:=json.Marshal(result);if err!=nil{return err}
+ check:=func(p string)error{return nativeDNSOriginalBackupACL(ctx,p)}
+ if err:=ctx.Err();err!=nil{return err}
+ if err:=residentCreate(filepath.Join(root,freshDNSRestoredName),raw,func(p string)error{return nativeSealApprovedOriginalBackupNode(ctx,p)},check);err!=nil{return err}
+ return verifyFreshDNSRestoredUnderLease(ctx,root,pending,result)
 }

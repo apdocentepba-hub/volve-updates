@@ -353,6 +353,7 @@ func activateFreshDNSAsSYSTEM(ctx context.Context,root string,raw,sig []byte,key
   rescue,err:=loadFreshRecoveryPermitUnderLease(c,root,key,pins)
   if err!=nil{return fmt.Errorf("fresh native activation lacks protected recovery permit: %w",err)}
   if firstRescue==nil{firstRescue=&rescue}else if !bytes.Equal(firstRescue.Payload,rescue.Payload)||!bytes.Equal(firstRescue.Signature,rescue.Signature){return errors.New("fresh recovery permit changed during activation")}
+  if err:=requireFreshDNSRestoredAbsent(c,root);err!=nil{return err}
   if pending!=nil{if err:=verifyFreshRecoveryPendingUnderLease(c,root,*pending);err!=nil{return err}}
   if !policy.captured{
    if err:=policy.capture(c);err!=nil{return err}
