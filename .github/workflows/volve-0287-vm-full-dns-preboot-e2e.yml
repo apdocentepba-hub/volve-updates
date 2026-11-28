@@ -1,15 +1,5 @@
 name: VOLVE 0.28.7 REAL motor VM preboot test (NO REBOOT / NO RELEASE)
 on:
-  push:
-    branches: [feature/motor-updater-0287-pilot]
-    paths:
-      - 'development/0.28.7/lab/vm_full_motor_reboot_dns.ps1'
-      - 'development/0.28.7/lab/live_dns_boot_event_chain.ps1'
-      - 'development/0.28.7/lab/vm_dns_reply_contract.ps1'
-      - 'development/0.28.7/lab/pack_vm_persistent_reboot_kit.ps1'
-      - 'development/0.28.7/inapp/ci_fresh_dns53_windows.go'
-      - 'development/0.28.7/inapp/apply_overlay.go'
-      - '.github/workflows/volve-0287-vm-full-dns-preboot-e2e.yml'
   workflow_dispatch:
 permissions:
   contents: read
