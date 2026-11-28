@@ -6,13 +6,21 @@ on:
       - 'development/0.28.7/singlefile-*'
       - 'development/0.28.7/singlefile-overlay/**'
       - 'development/0.28.7/hostroutebridge/**'
+      - 'development/0.28.7/installer-wizard/**'
+      - 'development/0.28.7/unifiedbundle/**'
+      - 'development/0.28.7/singlefile-overlay/**'
+      - 'development/0.28.7/authenticode-source/**'
+      - 'development/0.28.7/complete-source-parts/**'
+      - 'development/0.28.7/journal/**'
+      - 'development/0.28.7/taskrecoverygate/**'
+      - 'development/0.28.7/lab/**'
       - 'development/0.28.7/authenticode-source/**'
       - 'development/0.28.7/unifiedbundle/**'
       - 'development/0.28.7/installer-wizard/**'
       - 'development/0.28.7/taskrecoverygate/**'
       - '.github/workflows/volve-0287-one-exe-pr.yml'
   push:
-    branches: [work/0287-installer-progress-20261124, work/0287-preview-dns-compatibility-20261126, work/0287-browser-backup-capture-20261126, work/0287-dns-overrides-preflight-20261127, work/0287-activation-order-regression-20261127]
+    branches: [work/0287-installer-progress-20261124, work/0287-preview-dns-compatibility-20261126, work/0287-browser-backup-capture-20261126, work/0287-dns-overrides-preflight-20261127, work/0287-activation-order-regression-20261127, work/0287-postboot-proof-20261128]
     paths:
       - 'development/0.28.7/hostroutebridge/**'
       - '.github/workflows/volve-0287-one-exe-pr.yml'
