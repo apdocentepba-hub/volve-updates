@@ -1,17 +1,5 @@
 name: VOLVE 0.28.7 signed migration + isolated guest recovery labs (NO RELEASE)
 on:
-  pull_request:
-    branches: [feature/motor-updater-0287-pilot, work/0287-dns-cname-chain-guard-20261113]
-    paths:
-      - '.github/workflows/volve-0287-pr-system-watchdog-e2e.yml'
-      - 'development/0.28.7/inapp/**'
-      - 'development/0.28.7/lab/**'
-      - 'development/0.28.7/journal/**'
-  push:
-    branches: [work/0287-installer-progress-20261124]
-    paths:
-      - 'development/0.28.7/lab/ci_private_motor_integration.ps1'
-      - 'development/0.28.7/inapp/ci_fresh_dns53_windows_test.go'
   workflow_dispatch:
 permissions:
   contents: read
