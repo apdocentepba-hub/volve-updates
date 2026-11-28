@@ -232,13 +232,14 @@ func verifyFreshActiveDNSCensus(records []DNSRestoreRecord,states []DNSServerSta
 
 // Production-oriented read-only audit, not a product installation outcome.
 // The privileged controller must independently pin the admission digest,
-// policy baseline and actual signed motor identity. The health dependency
-// MUST check real running SYSTEM identity, permitted and blocked queries
-// via both address families and direct upstream connectivity. A successful
+// policy baseline and actual signed motor identity. The identity dependency
+// MUST independently check real running SYSTEM identity and trusted catalog.
+// Actual permitted/blocked UDP and persistent TCP DNS and external TCP
+// probes are mandatory here, not supplied by that dependency. A successful
 // audit does not disable rescue or grant authority to write terminal state.
-func auditFreshPostBootHealthAsSYSTEM(ctx context.Context,root string,key ed25519.PublicKey,pins freshActivationEvidence,admissionSHA string,watchdog freshWatchdogTaskPin,policy WindowsDNSOverrideCensus,health func(context.Context,freshActivationEvidence)error)(freshBootIdentity,error){
+func auditFreshPostBootHealthAsSYSTEM(ctx context.Context,root string,key ed25519.PublicKey,pins freshActivationEvidence,admissionSHA string,watchdog freshWatchdogTaskPin,policy WindowsDNSOverrideCensus,identity func(context.Context,freshActivationEvidence)error)(freshBootIdentity,error){
  var denied freshBootIdentity
- if ctx==nil||health==nil{return denied,errors.New("trusted postboot health checks required")}
+ if ctx==nil||identity==nil{return denied,errors.New("trusted postboot identity checks required")}
  if err:=ctx.Err();err!=nil{return denied,err}
  if err:=VerifyWindowsCurrentSystemSIDReadOnly();err!=nil{return denied,err}
  if watchdog.Name!="VOLVE-FRESH-WATCHDOG"{return denied,errors.New("postboot audit requires exact production watchdog identity")}
@@ -262,7 +263,9 @@ func auditFreshPostBootHealthAsSYSTEM(ctx context.Context,root string,key ed2551
   return verifyFreshActiveDNSCensus(records,census.States)
  }
  if err:=attest();err!=nil{return denied,err}
- if err:=health(ctx,pins);err!=nil{return denied,err}
+ if err:=identity(ctx,pins);err!=nil{return denied,err}
+ if err:=probeFreshResidentNetworkHealth(ctx);err!=nil{return denied,err}
+ if err:=identity(ctx,pins);err!=nil{return denied,err}
  if err:=attest();err!=nil{return denied,err}
  final,err:=verifyFreshPostBootEvidenceUnderLease(ctx,root,key,pins,admissionSHA,observeFreshBootNative)
  if err!=nil||final!=first{return denied,errors.New("postboot protected transaction changed during health audit")}

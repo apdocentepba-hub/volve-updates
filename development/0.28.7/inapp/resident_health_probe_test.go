@@ -301,3 +301,47 @@ func TestResidentHealthPersistentTCPDNS(t *testing.T){
   })
  }
 }
+
+
+func blockedUDPHealthStub(t *testing.T,network,address,mode string)string{
+ t.Helper()
+ sock,err:=net.ListenPacket(network,address)
+ if err!=nil{t.Fatal(err)}
+ t.Cleanup(func(){_ = sock.Close()})
+ go func(){
+  _ = sock.SetReadDeadline(time.Now().Add(6*time.Second))
+  request:=make([]byte,512)
+  for i:=0;i<4;i++{
+   n,peer,err:=sock.ReadFrom(request);if err!=nil||n<17{return}
+   response:=append([]byte(nil),request[:n]...)
+   response[2]=0x81;response[3]=0x83
+   switch mode{
+   case "wrong-id":response[0]^=1
+   case "not-blocked":response[3]=0x80
+   case "servfail":response[3]=0x82
+   case "truncated":response[2]|=2
+   case "answer":response[7]=1
+   case "foreign-question":response[13]^=1
+   case "trailing":response=append(response,0)
+   }
+   if _,err:=sock.WriteTo(response,peer);err!=nil{return}
+  }
+ }()
+ return sock.LocalAddr().String()
+}
+func TestFreshResidentBlockedUDPBothFamilies(t *testing.T){
+ for _,mode:=range []string{"healthy","wrong-id","not-blocked","servfail","truncated","answer","foreign-question","trailing"}{
+  t.Run(mode,func(t *testing.T){
+   // Test both denial paths independently, including successful IPv4
+   // followed by faulty IPv6. Real loopback sockets; synthetic DNS replies.
+   v4:=blockedUDPHealthStub(t,"udp4","127.0.0.1:0","healthy")
+   v6:=blockedUDPHealthStub(t,"udp6","[::1]:0",mode)
+   err:=ProbeResidentBlockedUDP(context.Background(),v4,v6)
+   if (err==nil)!=(mode=="healthy"){t.Fatalf("mode %s: %v",mode,err)}
+  })
+ }
+ ctx,cancel:=context.WithCancel(context.Background());cancel()
+ if err:=ProbeResidentBlockedUDP(ctx,"127.0.0.1:53","[::1]:53");err==nil{t.Fatal("canceled probe accepted")}
+ if err:=ProbeResidentBlockedUDP(context.Background(),"1.1.1.1:53","[::1]:53");err==nil{t.Fatal("non-loopback accepted")}
+ t.Log("PASS VOLVE_FRESH_BLOCKED_UDP_DUAL_STACK_A_AAAA_REAL_SOCKETS_SYNTHETIC_REPLIES")
+}

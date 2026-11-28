@@ -251,3 +251,72 @@ func probeResidentPersistentTCPFamily(ctx context.Context,network,addr string,qt
  }
  return ctx.Err()
 }
+
+
+// ProbeResidentBlockedUDP requires a correlated, empty NXDOMAIN response
+// from both local address families for two fixed policy canaries. A timeout,
+// SERVFAIL, unrelated packet or allowed answer is not evidence of blocking.
+// These canaries must remain present in the signed production catalog.
+func ProbeResidentBlockedUDP(ctx context.Context,ipv4Addr,ipv6Addr string)error{
+ if ctx==nil{return errors.New("blocked UDP DNS requires context")}
+ for _,step:=range []struct{network,addr,host string}{
+  {"udp4",ipv4Addr,"127.0.0.1"},{"udp6",ipv6Addr,"::1"},
+ }{
+  host,port,err:=net.SplitHostPort(step.addr)
+  if err!=nil||host!=step.host{return errors.New("blocked UDP DNS endpoint must be exact loopback")}
+  n,err:=strconv.Atoi(port)
+  if err!=nil||n<1||n>65535{return errors.New("invalid blocked UDP DNS port")}
+  for _,domain:=range []string{"stake.com","betwarrior.bet.ar"}{
+   for _,kind:=range []uint16{1,28}{
+    if err:=probeResidentBlockedUDPQuery(ctx,step.network,step.addr,domain,kind);err!=nil{return fmt.Errorf("%s blocked UDP canary: %w",step.network,err)}
+   }
+  }
+ }
+ return ctx.Err()
+}
+
+func probeResidentBlockedUDPQuery(ctx context.Context,network,addr,domain string,kind uint16)error{
+ if err:=ctx.Err();err!=nil{return err}
+ ctx,cancel:=context.WithTimeout(ctx,residentProbeTimeout)
+ defer cancel()
+ request:=make([]byte,12,64)
+ if _,err:=io.ReadFull(rand.Reader,request[:2]);err!=nil{return err}
+ request[2]=1;request[5]=1
+ for _,label:=range strings.Split(domain,"."){request=append(request,byte(len(label)));request=append(request,label...)}
+ request=append(request,0,byte(kind>>8),byte(kind),0,1)
+ conn,err:=(&net.Dialer{}).DialContext(ctx,network,addr)
+ if err!=nil{return err}
+ defer conn.Close()
+ stop:=context.AfterFunc(ctx,func(){_ = conn.Close()});defer stop()
+ deadline,_:=ctx.Deadline()
+ if err:=conn.SetDeadline(deadline);err!=nil{return err}
+ n,err:=conn.Write(request)
+ if err!=nil{return err}
+ if n!=len(request){return io.ErrShortWrite}
+ response:=make([]byte,65535)
+ n,err=conn.Read(response)
+ if err!=nil{return err}
+ response=response[:n]
+ // VOLVE's blocked reply has only the original question. Do not accept
+ // a fabricated negative header attached to address or unrelated records.
+ if n!=len(request)||!bytes.Equal(response[:2],request[:2])||
+  response[2]&0x80==0||response[2]&0x78!=0||response[2]&0x02!=0||
+  response[3]&0x0f!=3||binary.BigEndian.Uint16(response[4:6])!=1||
+  !bytes.Equal(response[6:12],make([]byte,6))||!bytes.Equal(response[12:],request[12:]){
+  return errors.New("blocked domain did not return exact correlated empty NXDOMAIN")
+ }
+ return ctx.Err()
+}
+
+// Fixed real network checks for the fresh installer. No caller-provided
+// endpoints, simulated success callback, or mutation. Identity, durable
+// recovery and trusted catalog verification are separate prerequisites.
+func probeFreshResidentNetworkHealth(ctx context.Context)error{
+ if ctx==nil{return errors.New("fresh motor network health requires context")}
+ const v4="127.0.0.1:53"
+ const v6="[::1]:53"
+ if err:=ProbeResidentDNSLoopbacks(ctx,v4,v6);err!=nil{return err}
+ if err:=ProbeResidentBlockedUDP(ctx,v4,v6);err!=nil{return err}
+ if err:=ProbeResidentPersistentTCPDNS(ctx,v4,v6);err!=nil{return err}
+ return ProbeResidentExternalInternet(ctx)
+}
