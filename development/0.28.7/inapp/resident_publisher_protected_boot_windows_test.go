@@ -11,13 +11,17 @@ import (
  "time"
 )
 
-type publisherBoundRecoveryOpsFixture struct{ verified,restored int }
+type publisherBoundRecoveryOpsFixture struct{ verified,restored,started int }
 func(f *publisherBoundRecoveryOpsFixture)VerifySealedOriginal(context.Context,ResidentRecoveryIntent)error{
  f.verified++
  return nil
 }
 func(f *publisherBoundRecoveryOpsFixture)RestoreOriginal(context.Context,ResidentRecoveryIntent)error{
  f.restored++
+ return nil
+}
+func(f *publisherBoundRecoveryOpsFixture)StartOriginal(context.Context,ResidentRecoveryIntent)error{
+ f.started++
  return nil
 }
 func makePublisherEvidence(f signedRecoveryFixture)PublisherBoundResidentRecoveryEvidence{
