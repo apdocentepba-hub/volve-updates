@@ -342,6 +342,7 @@ func activateFreshDNSAsSYSTEM(ctx context.Context,root string,raw,sig []byte,key
   return InspectWindowsDNSOverrideCensusReadOnly(c,DefaultWindowsReadOnlyPowerShell)
  }}
  var firstRescue *freshRecoveryEnvelope
+ var pending *freshRecoveryPending
  native:=&freshAdmissionGuard{inner:independent,review:func(c context.Context)error{return c.Err()},verify:func(c context.Context,pin string)error{
   if pin!=pins.OriginalDNSJournalSHA256{return errors.New("fresh native original DNS pin mismatch")}
   if err:=VerifyWindowsCurrentSystemSIDReadOnly();err!=nil{return err}
@@ -352,6 +353,7 @@ func activateFreshDNSAsSYSTEM(ctx context.Context,root string,raw,sig []byte,key
   rescue,err:=loadFreshRecoveryPermitUnderLease(c,root,key,pins)
   if err!=nil{return fmt.Errorf("fresh native activation lacks protected recovery permit: %w",err)}
   if firstRescue==nil{firstRescue=&rescue}else if !bytes.Equal(firstRescue.Payload,rescue.Payload)||!bytes.Equal(firstRescue.Signature,rescue.Signature){return errors.New("fresh recovery permit changed during activation")}
+  if pending!=nil{if err:=verifyFreshRecoveryPendingUnderLease(c,root,*pending);err!=nil{return err}}
   if !policy.captured{
    if err:=policy.capture(c);err!=nil{return err}
    if policy.baseline!=expectedPolicy{return errors.New("fresh native DNS policy changed since original census")}
@@ -361,7 +363,16 @@ func activateFreshDNSAsSYSTEM(ctx context.Context,root string,raw,sig []byte,key
  }}
  return activateFreshDNSUnderProtectedLease(ctx,root,raw,sig,key,pins,host,baseline,browser,inventory,originalJournal,native,
   func(c context.Context,held DNSActivationSafetyGuard)(DNSAdapterBackend,error){
-   return newWindowsPinnedDNSActivationBackend(c,originalJournal,pins.OriginalDNSJournalSHA256,
+   backend,err:=newWindowsPinnedDNSActivationBackend(c,originalJournal,pins.OriginalDNSJournalSHA256,
     DefaultWindowsReadOnlyPowerShell,runPinnedWindowsNativeDNS,held)
+   if err!=nil{return nil,err}
+   exclusive,ok:=held.(*exclusiveDNSActivationGuard)
+   if !ok{return nil,errors.New("fresh native pending arming lost shared lease")}
+   // The coordinator has already reopened the signed four archives. Arm
+   // rescue before spending the admission and before any actual DNS write.
+   record,err:=armFreshRecoveryPendingUnderLease(c,root,key,pins,exclusive)
+   if err!=nil{return nil,err}
+   pending=&record
+   return backend,nil
   })
 }

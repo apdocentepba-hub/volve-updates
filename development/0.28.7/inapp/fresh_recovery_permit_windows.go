@@ -12,6 +12,8 @@ import(
  "bytes"
  "context"
  "crypto/ed25519"
+ "crypto/sha256"
+ "encoding/hex"
  "encoding/json"
  "errors"
  "fmt"
@@ -121,10 +123,14 @@ func restoreFreshOriginalDNSUnderLease(ctx context.Context,root string,key ed255
  if ctx==nil||fence==nil||inspect==nil||invoke==nil{return errors.New("fresh original DNS rescue dependencies missing")}
  first,err:=loadFreshRecoveryPermitUnderLease(ctx,root,key,pins)
  if err!=nil{return err}
+ pending,err:=expectedFreshRecoveryPending(pins,first)
+ if err!=nil{return err}
+ if err:=verifyFreshRecoveryPendingUnderLease(ctx,root,pending);err!=nil{return fmt.Errorf("fresh DNS rescue has no verified pending state: %w",err)}
  records,err:=ReadDNSOriginalBackupNativeWindows(ctx,filepath.Join(root,"legacy-engine-recovery"),pins.OriginalDNSJournalSHA256)
  if err!=nil{return err}
  reattest:=func(c context.Context)error{
   if err:=fence(c,pins);err!=nil{return err}
+  if err:=verifyFreshRecoveryPendingUnderLease(c,root,pending);err!=nil{return err}
   again,err:=loadFreshRecoveryPermitUnderLease(c,root,key,pins)
   if err!=nil||!bytes.Equal(first.Payload,again.Payload)||!bytes.Equal(first.Signature,again.Signature){return errors.New("fresh rescue permit changed")}
   current,err:=ReadDNSOriginalBackupNativeWindows(c,filepath.Join(root,"legacy-engine-recovery"),pins.OriginalDNSJournalSHA256)
@@ -143,4 +149,75 @@ func restoreFreshOriginalDNSUnderLease(ctx context.Context,root string,key ed255
  if err:=reattest(ctx);err!=nil{return err}
  // This is only DNS readback; caller must not mark full recovery here.
  return verifySignedDNSBootRestoreCensus(ctx,records,inspect,true)
+}
+
+
+// Pending DNS recovery is separate from both admission consumption and the
+// recovery-only permit. Only the trusted controller, after validating all
+// signed original archives and the independent watchdog, may arm it under
+// the shared native lease. A partial marker is never accepted or overwritten.
+// This record is NOT a terminal receipt or permission to remove a watchdog.
+const freshRecoveryPendingName="fresh-dns-recovery-pending.json"
+type freshRecoveryPending struct{
+ Schema int `json:"schema"`
+ Component string `json:"component"`
+ Evidence freshActivationEvidence `json:"evidence"`
+ PermitEnvelopeSHA256 string `json:"permit_envelope_sha256"`
+}
+func expectedFreshRecoveryPending(pins freshActivationEvidence,envelope freshRecoveryEnvelope)(freshRecoveryPending,error){
+ var denied freshRecoveryPending
+ if err:=validateFreshActivationEvidence(pins);err!=nil{return denied,err}
+ encoded,err:=json.Marshal(envelope);if err!=nil{return denied,err}
+ digest:=sha256.Sum256(encoded)
+ return freshRecoveryPending{1,"volve-fresh-dns-recovery-pending-v1",pins,hex.EncodeToString(digest[:])},nil
+}
+
+// Caller owns native lease; only fixed exact transaction child is read.
+// The trusted permit is reopened by the caller, never inferred from this
+// unsigned NTFS-protected pending record.
+func verifyFreshRecoveryPendingUnderLease(ctx context.Context,root string,expected freshRecoveryPending)error{
+ if ctx==nil{return errors.New("fresh recovery pending context required")}
+ if err:=ctx.Err();err!=nil{return err}
+ if expected.Schema!=1||expected.Component!="volve-fresh-dns-recovery-pending-v1"||verifyCanonicalLowerSHA256(expected.PermitEnvelopeSHA256)!=nil{return errors.New("fresh recovery pending evidence invalid")}
+ if err:=validateFreshActivationEvidence(expected.Evidence);err!=nil{return err}
+ if _,err:=originalRecoveryEvidencePath(root,expected.Evidence.TransactionID);err!=nil{return err}
+ path:=filepath.Join(root,freshRecoveryPendingName)
+ check:=func(p string)error{return nativeDNSOriginalBackupACL(ctx,p)}
+ verify:=func()error{
+  if err:=verifyOriginalHostsBackupNode(root,true,check);err!=nil{return err}
+  return verifyOriginalHostsBackupNode(path,false,check)
+ }
+ if err:=verify();err!=nil{return err}
+ before,err:=os.Lstat(path)
+ if err!=nil||before.Size()<2||before.Size()>4096{return errors.New("fresh recovery pending record missing or malformed")}
+ file,err:=os.Open(path);if err!=nil{return err}
+ opened,err:=file.Stat()
+ if err!=nil||!os.SameFile(before,opened){file.Close();return errors.New("fresh pending recovery record replaced")}
+ data,readErr:=io.ReadAll(io.LimitReader(file,4097))
+ closeErr:=file.Close()
+ if readErr!=nil||closeErr!=nil{return errors.Join(readErr,closeErr)}
+ canonical,err:=json.Marshal(expected)
+ if err!=nil||int64(len(data))!=before.Size()||!bytes.Equal(data,append(canonical,'\n')){return errors.New("fresh pending recovery record differs from authenticated permit")}
+ if err:=verify();err!=nil{return err}
+ after,err:=os.Lstat(path)
+ if err!=nil||!os.SameFile(before,after)||before.Size()!=after.Size()||!before.ModTime().Equal(after.ModTime()){return errors.New("fresh pending recovery record changed during readback")}
+ return ctx.Err()
+}
+
+func armFreshRecoveryPendingUnderLease(ctx context.Context,root string,key ed25519.PublicKey,pins freshActivationEvidence,held *exclusiveDNSActivationGuard)(freshRecoveryPending,error){
+ var denied freshRecoveryPending
+ if ctx==nil||held==nil{return denied,errors.New("fresh pending arming requires protected lease and independent watchdog")}
+ if err:=held.VerifyArmed(ctx,pins.OriginalDNSJournalSHA256);err!=nil{return denied,err}
+ envelope,err:=loadFreshRecoveryPermitUnderLease(ctx,root,key,pins)
+ if err!=nil{return denied,err}
+ expected,err:=expectedFreshRecoveryPending(pins,envelope)
+ if err!=nil{return denied,err}
+ if _,err:=ReadDNSOriginalBackupNativeWindows(ctx,filepath.Join(root,"legacy-engine-recovery"),pins.OriginalDNSJournalSHA256);err!=nil{return denied,err}
+ check:=func(p string)error{return nativeDNSOriginalBackupACL(ctx,p)}
+ if err:=verifyOriginalHostsBackupNode(root,true,check);err!=nil{return denied,err}
+ raw,err:=json.Marshal(expected);if err!=nil{return denied,err}
+ if err:=ctx.Err();err!=nil{return denied,err}
+ if err:=residentCreate(filepath.Join(root,freshRecoveryPendingName),raw,func(p string)error{return nativeSealApprovedOriginalBackupNode(ctx,p)},check);err!=nil{return denied,err}
+ if err:=verifyFreshRecoveryPendingUnderLease(ctx,root,expected);err!=nil{return denied,err}
+ return expected,nil
 }

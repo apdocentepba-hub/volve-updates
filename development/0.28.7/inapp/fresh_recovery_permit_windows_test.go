@@ -51,7 +51,7 @@ func TestWindowsFreshRecoveryPermitDistinctScope(t *testing.T){
 // independent fence. No legacy motor or migration journal is created.
 func TestWindowsFreshPersistedRecoveryResumesWithoutActivationGrant(t *testing.T){
  if os.Getenv("GITHUB_ACTIONS")!="true"||os.Getenv("RUNNER_ENVIRONMENT")!="github-hosted"{t.Skip("hosted NTFS only")}
- ctx,cancel:=context.WithTimeout(context.Background(),240*time.Second);defer cancel()
+ ctx,cancel:=context.WithTimeout(context.Background(),360*time.Second);defer cancel()
  id:=strings.Repeat("c",32)
  root:=filepath.Join(t.TempDir(),id)
  parent:=filepath.Join(root,"legacy-engine-recovery")
@@ -102,6 +102,16 @@ func TestWindowsFreshPersistedRecoveryResumesWithoutActivationGrant(t *testing.T
   // Reopen the disk envelope on EVERY invocation, including retry.
   return restoreFreshOriginalDNSUnderLease(ctx,root,pub,pins,fence,inspect,simulated.invoke)
  }
+ if err:=run(h.inspect);err==nil||simulated.writes!=0||fenceCalls!=0{t.Fatal("unarmed recovery reached fence or DNS writer",err)}
+ // Real create-only pending marker under native mutex. The readiness
+ // guard remains synthetic and cannot authorize any real DNS writes.
+ release,err:=AcquireProtectedResidentTransitionLease(ctx);if err!=nil{t.Fatal(err)}
+ held:=&exclusiveDNSActivationGuard{inner:&freshReservationFixtureGuard{},acquire:AcquireProtectedResidentTransitionLease,release:release}
+ pending,err:=armFreshRecoveryPendingUnderLease(ctx,root,pub,pins,held)
+ if err!=nil{held.close();t.Fatal("pending marker arming failed",err)}
+ if err:=verifyFreshRecoveryPendingUnderLease(ctx,root,pending);err!=nil{held.close();t.Fatal(err)}
+ if _,err:=armFreshRecoveryPendingUnderLease(ctx,root,pub,pins,held);!errors.Is(err,os.ErrExist){held.close();t.Fatal("pending transaction rearmed",err)}
+ held.close()
  if err:=run(h.inspect);err==nil||simulated.writes!=0||fenceCalls==0{t.Fatal("unfenced recovery reached DNS writer",err)}
  allow=true
  extra:=true
@@ -117,5 +127,12 @@ func TestWindowsFreshPersistedRecoveryResumesWithoutActivationGrant(t *testing.T
  if err:=os.WriteFile(path,[]byte("{"),0600);err!=nil{t.Fatal(err)}
  if err:=run(h.inspect);err==nil||simulated.writes!=3{t.Fatal("tampered rescue permit accepted",err)}
  if err:=persistFreshRecoveryPermitNative(ctx,root,raw,sig,pub,pins);!errors.Is(err,os.ErrExist){t.Fatal("damaged rescue permit reused",err)}
+ pendingPath:=filepath.Join(root,freshRecoveryPendingName)
+ if err:=os.WriteFile(pendingPath,[]byte("{"),0600);err!=nil{t.Fatal(err)}
+ release,err=AcquireProtectedResidentTransitionLease(ctx);if err!=nil{t.Fatal(err)}
+ invalid:=verifyFreshRecoveryPendingUnderLease(ctx,root,pending)
+ release()
+ if invalid==nil{t.Fatal("partial pending marker accepted")}
+ t.Log("PASS VOLVE_FRESH_RECOVERY_PENDING_CREATE_ONLY_REQUIRED_BEFORE_RESCUE")
  t.Log("PASS VOLVE_FRESH_PERSISTED_RESCUE_RESUME_IDEMPOTENT_WITHOUT_ACTIVATION_MEMORY_DNS_ONLY")
 }
