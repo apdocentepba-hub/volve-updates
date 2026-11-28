@@ -84,10 +84,22 @@ func newPinnedResidentBootRecoveryDriverWindows(
    evidence.IntentNonce!=intent.Nonce{
    return errors.New("candidate fence does not match exact signed recovery intent")
   }
+  // A previously healthy original motor may already own loopback DNS53.
+  // Admit that state ONLY when the independent health adapter proves the
+  // exact original EXE hash, complete SYSTEM task XML, SYSTEM process owner,
+  // one process, and exclusive UDP/TCP socket ownership on 127.0.0.1 + ::1.
+  // Any candidate, second process, foreign socket owner or ambiguous census
+  // fails this branch and is then rejected by the strict empty-port fallback.
+  health,healthErr:=newPinnedResidentBootHealthWindows(checkCtx,root)
+  if healthErr==nil {
+   if err:=health.VerifyRunningIdentity(checkCtx,intent,"restored");err==nil{
+    return checkCtx.Err()
+   }
+  }
   decision,err:=auditResidentQuiescenceReadOnly(checkCtx,root)
   if err!=nil{return fmt.Errorf("failed candidate/process/port-53 fence refused: %w",err)}
   if !decision.ReadyForFurtherChecks||!decision.MotorProcessesStopped||!decision.DNSPortFree{
-   return errors.New("candidate or DNS endpoint remains active; original DNS restoration refused")
+   return errors.New("failed candidate or foreign DNS endpoint remains active; original DNS restoration refused")
   }
   return checkCtx.Err()
  }
