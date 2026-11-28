@@ -190,3 +190,26 @@ En paralelo, `inapp/resident_durable_publisher_boot_windows.go` tiene `durablePu
 No hace falta volver a escribir el restaurador de EXE/tarea. La pieza pendiente de ingeniería es **componer el restaurador de motor + tarea + arranque con el driver DNS-aware**, bajo el mismo mutex, la misma autorización editorial, el mismo journal y el fence del candidato; luego verificar el DNS original, DNS/Internet health y el recibo terminal. También sigue sin existir el registro productivo del watchdog como tarea de inicio/servicio en el instalador: el propio código de `resident_pinned_boot_components_windows.go` y `resident_pinned_boot_terminal_windows.go` lo declara no registrado/no invocado.
 
 Los tests Windows relacionados presentes en el árbol incluyen `TestSignedCombinedRecoveryMissingExeThenTaskOneMutexNoReceipt`, `TestSignedCombinedRecoveryRejectsLiveDNS53NoTaskOrExeChanges`, `TestPinnedResidentBootDriverRejectsInteractiveWindowsToken` y `TestMotorOnlyPinnedBootRefusesCompleteOrPartialDNSEvidence`. Esta revisión fue estática: no se ejecutaron esos tests en esta intervención, no hubo VM, reboot, writes de DNS/tareas ni cambios a 0.28.6.
+
+
+## Bloqueo de secuencia detectado en la futura composición DNS-aware — 2026-11-28
+
+La revisión de contratos encontró una incompatibilidad funcional que debe resolverse antes de conectar el driver DNS-aware al CLI:
+
+1. `residentSignedBootOriginalOps.RestoreOriginal` llama a `recoverSignedLegacyOriginalAndSYSTEMTaskLockedWindows` y luego a `startSignedRestoredOriginalTaskLockedWindows`. Por lo tanto, al retornar ya solicitó el arranque de `VOLVE-DNS-SERVER-0270`.
+2. `RecoverPendingResidentAfterBootWithOriginalDNS` llama a `driver.RestoreOriginal` antes de `dns.RestoreOriginalDNS`.
+3. `durablePublisherDNSBootDriver.RestoreOriginalDNS` necesita que el callback `verifyCandidateStopped` demuestre que el candidato fallido ya no puede escribir DNS.
+4. El observador reutilizable `auditResidentQuiescenceReadOnly` es más estricto: exige cero procesos VOLVÉ y cero listeners UDP/TCP 53. Si se reutiliza sin adaptación como fence DNS, también rechazará el motor original que acaba de iniciar el paso 1.
+
+Por lo tanto, conectar directamente el driver DNS-aware actual con `residentSignedBootOriginalOps` y usar el fence de quiescencia existente puede producir una restauración parcial: EXE y tarea originales restaurados, motor iniciado, pero DNS sin restaurar y journal todavía pendiente. El mecanismo fail-closed evita escribir el recibo terminal, pero el objetivo funcional no se completa.
+
+### Contrato requerido antes de integrar
+
+- Un fence DNS-aware debe identificar al ejecutable candidato exacto por ruta/hash, proceso/PID y principal, y demostrar que ese candidato —y cualquier relanzador suyo— no puede seguir modificando DNS. No debe confundir el candidato con el motor original firmado.
+- Si para modificar DNS se exige que el puerto 53 esté libre, la secuencia debe dividir explícitamente las fases bajo la misma lease: detener/controlar únicamente el candidato, restaurar y verificar DNS, iniciar el motor original sólo después, y verificar DNS local + conectividad. Si se admite el original ya activo, el fence debe probar que TODOS los endpoints puerto 53 pertenecen únicamente a la instancia original exacta, no a un candidato ni a otro proceso.
+- La decisión entre ambas estrategias debe derivarse de la política de activación/restauración y quedar fijada por pruebas de contrato. No inferirla de un contador de procesos igual a cero ni relajar el fence.
+- Cualquier operación de detener, deshabilitar, restaurar, registrar o iniciar tareas/servicios requiere conservar la firma editorial, la lease global, el journal de una sola transacción y el recibo create-only; ninguna ruta productiva debe quedar conectada antes de verificar todos los pasos.
+
+### Estado de esta intervención
+
+Revisión estática de seis componentes y del orden de llamadas. **No se modificó el motor, el DNS, la tarea, el servicio o la configuración del usuario; no se ejecutó VM, reinicio, workflow Windows ni prueba productiva.** La integración DNS-aware no se habilitó. El estado de aceptación se mantiene en 50% (5/10); este hallazgo refina la puerta de recuperación/watchdog y evita una integración que podría quedarse a mitad de camino.
