@@ -76,14 +76,19 @@ jobs:
           if($LASTEXITCODE -ne 0){throw 'First native boot sample failed'}
           $second=(& $probe --observe)
           if($LASTEXITCODE -ne 0 -or $first -cne $second){throw 'Same-boot observation unstable'}
-          $oldPreference=$ErrorActionPreference
-          try{
-            $ErrorActionPreference='Continue'
-            $denial=@($first | & $probe --verify-later 2>&1)
-            $rejected=$LASTEXITCODE
-          }finally{$ErrorActionPreference=$oldPreference}
-          if($rejected -ne 1 -or (($denial | ForEach-Object {[string]$_}) -join "`n").Trim() -cne 'BOOT NOT VERIFIED: a later Windows boot is not independently proven'){
-            throw ('Observer did not explicitly reject the same boot: '+($denial -join ' '))
+          # Windows PowerShell native pipelines can recode JSON or prepend
+          # a BOM. Redirect an exact UTF-8 no-BOM file instead, without
+          # changing the Go parser or weakening the rejection assertion.
+          $sample=Join-Path $env:RUNNER_TEMP 'volve-before-boot.json'
+          $stdout=Join-Path $env:RUNNER_TEMP 'volve-boot-negative.stdout'
+          $stderr=Join-Path $env:RUNNER_TEMP 'volve-boot-negative.stderr'
+          [IO.File]::WriteAllText($sample,[string]$first,[Text.UTF8Encoding]::new($false))
+          $bytes=[IO.File]::ReadAllBytes($sample)
+          if($bytes.Length -lt 2 -or $bytes[0] -ne 123){throw 'Native boot sample must start with a JSON object, without BOM'}
+          $p=Start-Process -FilePath $probe -ArgumentList '--verify-later' -RedirectStandardInput $sample -RedirectStandardOutput $stdout -RedirectStandardError $stderr -NoNewWindow -Wait -PassThru
+          $denial=[IO.File]::ReadAllText($stderr).Trim()
+          if($p.ExitCode -ne 1 -or $denial -cne 'BOOT NOT VERIFIED: a later Windows boot is not independently proven' -or (Get-Item -LiteralPath $stdout).Length -ne 0){
+            throw ('Observer did not explicitly reject the same boot: '+$denial)
           }
           Write-Host 'PASS VOLVE_VM_BOOT_OBSERVER_COMPILED_NATIVE_SAME_BOOT_REFUSED'
           # The native exit 1 is the expected NEGATIVE test result. GitHub

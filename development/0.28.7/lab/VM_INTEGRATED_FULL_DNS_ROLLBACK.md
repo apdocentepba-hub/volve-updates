@@ -43,10 +43,13 @@ Reiniciar **solamente Windows invitado dentro de la VM** desde Inicio → Reinic
 Luego de entrar de nuevo en el invitado, comprobar primero el reinicio con el mismo observador:
 
 ```powershell
-Get-Content -Raw 'C:\Lab\Integrated\boot-before.json' |
-  & 'C:\Lab\Integrated\VOLVE-CI-BootObserver.exe' --verify-later |
-  Set-Content -Encoding ASCII 'C:\Lab\Integrated\boot-after.json'
-if ($LASTEXITCODE -ne 0) { throw 'El reinicio real no fue acreditado' }
+$probe = 'C:\Lab\Integrated\VOLVE-CI-BootObserver.exe'
+$p = Start-Process -FilePath $probe -ArgumentList '--verify-later' `
+  -RedirectStandardInput 'C:\Lab\Integrated\boot-before.json' `
+  -RedirectStandardOutput 'C:\Lab\Integrated\boot-after.json' `
+  -RedirectStandardError 'C:\Lab\Integrated\boot-error.txt' `
+  -NoNewWindow -Wait -PassThru
+if ($p.ExitCode -ne 0) { throw 'El reinicio real no fue acreditado; conservar boot-error.txt' }
 ```
 
 Conservar ambos JSON. La prueba de arranque es independiente de la comprobación de recuperación. Luego ejecutar:
