@@ -213,3 +213,36 @@ Por lo tanto, conectar directamente el driver DNS-aware actual con `residentSign
 ### Estado de esta intervención
 
 Revisión estática de seis componentes y del orden de llamadas. **No se modificó el motor, el DNS, la tarea, el servicio o la configuración del usuario; no se ejecutó VM, reinicio, workflow Windows ni prueba productiva.** La integración DNS-aware no se habilitó. El estado de aceptación se mantiene en 50% (5/10); este hallazgo refina la puerta de recuperación/watchdog y evita una integración que podría quedarse a mitad de camino.
+
+
+## Integración DNS-aware: separar restore, readback y activación del motor — 2026-11-28
+
+Se implementó una corrección de orden en la política común de recuperación:
+
+1. Reabrir y verificar el intent, permiso y respaldo firmado.
+2. Restaurar el EXE original y reimportar la tarea SYSTEM, dejándola READY pero sin iniciar.
+3. Restaurar la configuración DNS original con el driver DNS-aware bajo la misma lease.
+4. Volver a leer y verificar de forma independiente el censo completo IPv4/IPv6 y el binding firmado.
+5. Invocar `StartOriginal` como fase distinta bajo la misma lease.
+6. Verificar identidad real del motor, DNS local y conectividad; sólo después crear el recibo terminal.
+
+Cambios de código:
+- `motorupdate.ResidentDNSBootRecoveryDriver` ahora exige `StartOriginal`.
+- `RecoverPendingResidentAfterBootWithOriginalDNS` ejecuta explícitamente `RestoreOriginalDNS → VerifyOriginalDNS → StartOriginal`; no exige que el motor esté activo antes de restaurar DNS.
+- `residentSignedBootOriginalOps.RestoreOriginal` deja de arrancar la tarea. `StartOriginal` hace el arranque separado y no-op sólo si una nueva verificación acredita EXE original, XML íntegro, tarea SYSTEM, proceso SYSTEM único y propiedad exclusiva de UDP/TCP 53 en 127.0.0.1 y ::1.
+- `durablePublisherDNSBootDriver.StartOriginal` vuelve a abrir permiso/editor, intent y binding DNS firmado bajo la misma lease; revalida fence y censo antes de delegar al starter.
+- El driver pinned se construye como DNS-aware, exige el alcance editorial `ResidentRecoveryScopeMotorAndDNS` en cada operación y verifica el intent/nonce/hash exactos.
+- El fence admite únicamente dos estados: el original exacto ya está corriendo y es dueño exclusivo de sockets; o no hay proceso VOLVÉ ni endpoints locales UDP/TCP 53. Candidato vivo, proceso adicional, identidad incierta o endpoint extranjero bloquean.
+- El adaptador `MotorOnly` conserva un camino separado y explícito de restore + start para transacciones que no cambiaron DNS; no se usa para la ruta DNS-aware.
+
+Cobertura añadida en fuentes de test:
+- Secuencia esperada `restore-dns → verify-dns → start-original → final verify-dns`.
+- Fallo de `StartOriginal` conserva el journal en `recovery-required` y no escribe recibo terminal.
+- Test Windows del driver DNS-aware verifica que el motor no se inicia antes del readback de DNS y que el start ocurre bajo la lease.
+
+### Estado de validación
+
+- Revisión estática de los archivos modificados: una única definición de `durablePublisherDNSBootDriver.StartOriginal`; las implementaciones de la interfaz y los fakes de contrato contienen el nuevo método.
+- La regresión automática heredada #46155953540 falló compilando el SHA previo `f217918` por una doble declaración de `StartOriginal`. La duplicación se eliminó luego en `c0976276`.
+- **No se volvió a compilar ni ejecutar el test después de la corrección.** La ejecución Windows era automática y se desactivó por la directiva sin VM; no se reintentará desde esta intervención.
+- Por lo tanto, el cambio está **IMPLEMENTADO EN CÓDIGO / NO VALIDADO EN EJECUCIÓN**. El reinicio real, instalación productiva, registro del watchdog y firma editorial continúan pendientes. El scorecard permanece en 50% (5/10).
