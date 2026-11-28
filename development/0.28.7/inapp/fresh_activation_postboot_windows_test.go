@@ -6,6 +6,9 @@ import(
  "bytes"
  "context"
  "crypto/sha256"
+ "crypto/ed25519"
+ "crypto/rand"
+ "encoding/json"
  "encoding/hex"
  "errors"
  "os"
@@ -125,4 +128,37 @@ func TestFreshMotorRuntimeRequiresFourExactSamePIDListeners(t *testing.T){
   if err:=verifyFreshMotorRuntimeObservation(pin,bad,boot);err==nil{t.Fatal("unsafe identity accepted",mode)}
  }
  t.Log("PASS VOLVE_FRESH_RUNTIME_EXACT_FOUR_LISTENERS_SAME_SYSTEM_PID")
+}
+
+
+func TestFreshStagingProofBindsCatalogAndMotorTask(t *testing.T){
+ pub,priv,err:=ed25519.GenerateKey(rand.Reader);if err!=nil{t.Fatal(err)}
+ pins:=freshActivationEvidence{strings.Repeat("a",32),strings.Repeat("1",64),strings.Repeat("2",64),strings.Repeat("3",64),strings.Repeat("4",64),strings.Repeat("5",64),strings.Repeat("6",64),strings.Repeat("7",64),strings.Repeat("8",64)}
+ admission:=strings.Repeat("9",64)
+ root:=`C:\VOLVE`
+ motor:=freshMotorRuntimePin{Executable:filepath.Join(root,"motor-0.28.7","VOLVE_DNS_Motor_0_28_7.exe"),TaskXMLSHA256:strings.Repeat("a",64),TaskDaclSHA256:strings.Repeat("b",64)}
+ good:=freshStagingProof{1,"volve-fresh-staged-motor-catalog-review-only-v1",pins,admission,motor,root,[4]freshStageFeed{}}
+ for i,name:=range freshStageFeedNames{good.Feeds[i].Name=name}
+ good.Feeds[0].Bytes=11000000;good.Feeds[0].SHA256=strings.Repeat("c",64)
+ raw,err:=json.Marshal(good);if err!=nil{t.Fatal(err)}
+ sig:=ed25519.Sign(priv,raw)
+ if got,err:=verifyFreshStagingProof(pub,raw,sig,pins,admission,motor);err!=nil||got!=good{t.Fatal("exact staging proof refused",err)}
+ for _,mode:=range []string{"foreign-transaction","foreign-admission","other-task","other-root","missing-full","reordered","unbound-optional","scope","tamper"}{
+  bad:=good
+  switch mode{
+  case "foreign-transaction":bad.Evidence.TransactionID=strings.Repeat("b",32)
+  case "foreign-admission":bad.AdmissionSHA256=strings.Repeat("a",64)
+  case "other-task":bad.Motor.TaskDaclSHA256=strings.Repeat("d",64)
+  case "other-root":bad.InstallRoot=`D:\Other`
+  case "missing-full":bad.Feeds[0].Bytes=0;bad.Feeds[0].SHA256=""
+  case "reordered":bad.Feeds[0],bad.Feeds[1]=bad.Feeds[1],bad.Feeds[0]
+  case "unbound-optional":bad.Feeds[1].Bytes=42
+  case "scope":bad.Scope="activate"
+  case "tamper":bad.Feeds[0].SHA256=strings.Repeat("d",64)
+  }
+  b,e:=json.Marshal(bad);if e!=nil{t.Fatal(e)}
+  s:=ed25519.Sign(priv,b);if mode=="tamper"{s=sig}
+  if _,e:=verifyFreshStagingProof(pub,b,s,pins,admission,motor);e==nil{t.Fatal("unsafe staging proof accepted",mode)}
+ }
+ t.Log("PASS VOLVE_FRESH_STAGE_SIGNED_CATALOG_AND_MOTOR_TASK_BOUND")
 }

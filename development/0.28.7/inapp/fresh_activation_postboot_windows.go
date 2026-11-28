@@ -232,19 +232,22 @@ func verifyFreshActiveDNSCensus(records []DNSRestoreRecord,states []DNSServerSta
 
 // Production-oriented read-only audit, not a product installation outcome.
 // The privileged controller must independently pin the admission digest,
-// policy baseline and actual signed motor identity. The identity dependency
-// MUST independently check real running SYSTEM identity and trusted catalog.
-// Actual permitted/blocked UDP and persistent TCP DNS and external TCP
-// probes are mandatory here, not supplied by that dependency. A successful
+// policy baseline and actual signed motor identity. A separate signed
+// staging proof binds the motor registration and the four catalog slots.
+// Exact on-disk catalog verification is not an attestation of loaded rules.
+// Actual permitted/blocked UDP, persistent TCP DNS and external TCP
+// probes are mandatory. A successful
 // audit does not disable rescue or grant authority to write terminal state.
-func auditFreshPostBootHealthAsSYSTEM(ctx context.Context,root string,key ed25519.PublicKey,pins freshActivationEvidence,admissionSHA string,watchdog freshWatchdogTaskPin,policy WindowsDNSOverrideCensus,motor freshMotorRuntimePin,verifyCatalog func(context.Context,freshActivationEvidence)error)(freshBootIdentity,error){
+func auditFreshPostBootHealthAsSYSTEM(ctx context.Context,root string,key ed25519.PublicKey,pins freshActivationEvidence,admissionSHA string,watchdog freshWatchdogTaskPin,policy WindowsDNSOverrideCensus,motor freshMotorRuntimePin,stageRaw,stageSig []byte)(freshBootIdentity,error){
  var denied freshBootIdentity
- if ctx==nil||verifyCatalog==nil{return denied,errors.New("trusted postboot catalog checks required")}
+ if ctx==nil{return denied,errors.New("trusted postboot context required")}
  if err:=ctx.Err();err!=nil{return denied,err}
  if err:=VerifyWindowsCurrentSystemSIDReadOnly();err!=nil{return denied,err}
  if watchdog.Name!="VOLVE-FRESH-WATCHDOG"{return denied,errors.New("postboot audit requires exact production watchdog identity")}
  if err:=bindFreshWatchdogAdmission(pins,watchdog);err!=nil{return denied,err}
  key=append(ed25519.PublicKey(nil),key...)
+ stage,err:=verifyFreshStagingProof(key,append([]byte(nil),stageRaw...),append([]byte(nil),stageSig...),pins,admissionSHA,motor)
+ if err!=nil{return denied,err}
  release,err:=AcquireProtectedResidentTransitionLease(ctx)
  if err!=nil{return denied,err}
  defer release()
@@ -264,15 +267,16 @@ func auditFreshPostBootHealthAsSYSTEM(ctx context.Context,root string,key ed2551
  }
  if err:=attest();err!=nil{return denied,err}
  running,err:=verifyFreshMotorRuntimeNative(ctx,pins,motor,first);if err!=nil{return denied,err}
- if err:=verifyCatalog(ctx,pins);err!=nil{return denied,err}
+ if err:=verifyFreshStagedCatalogNative(ctx,stage);err!=nil{return denied,err}
  if err:=probeFreshResidentNetworkHealth(ctx);err!=nil{return denied,err}
- if err:=verifyCatalog(ctx,pins);err!=nil{return denied,err}
+ if err:=verifyFreshStagedCatalogNative(ctx,stage);err!=nil{return denied,err}
  again,err:=verifyFreshMotorRuntimeNative(ctx,pins,motor,first);if err!=nil{return denied,err}
  if running.PID!=again.PID||running.CreatedUnixMilli!=again.CreatedUnixMilli{return denied,errors.New("motor process replaced during postboot health checks")}
  if err:=attest();err!=nil{return denied,err}
  final,err:=verifyFreshPostBootEvidenceUnderLease(ctx,root,key,pins,admissionSHA,observeFreshBootNative)
  if err!=nil||final!=first{return denied,errors.New("postboot protected transaction changed during health audit")}
- // Reopen exact authenticated original backup after the health callback.
+ if err:=verifyFreshStagedCatalogNative(ctx,stage);err!=nil{return denied,err}
+ // Reopen exact authenticated original backup after the health checks.
  if _,err:=ReadDNSOriginalBackupNativeWindows(ctx,filepath.Join(root,"legacy-engine-recovery"),pins.OriginalDNSJournalSHA256);err!=nil{return denied,err}
  if err:=attest();err!=nil{return denied,err}
  return final,ctx.Err()
@@ -369,4 +373,79 @@ func verifyFreshMotorRuntimeNative(ctx context.Context,pins freshActivationEvide
  if err:=verifyFreshMotorRuntimeObservation(pin,second,boot);err!=nil{return denied,err}
  if first.PID!=second.PID||first.CreatedUnixMilli!=second.CreatedUnixMilli{return denied,errors.New("motor process replaced during identity verification")}
  return second,ctx.Err()
+}
+
+
+// Separate publisher scope, compatible with the existing nine-pin admission.
+// The signed proof does not grant install, recovery, or permission to change
+// feeds; it merely pins the staged state that the postboot audit must reopen.
+var freshStageFeedNames=[4]string{"hagezi_gambling_full.txt","hagezi_gambling_medium.txt","stevenblack_gambling.txt","arkynx_gambling.txt"}
+type freshStageFeed struct{
+ Name string `json:"name"`
+ Bytes int64 `json:"bytes"`
+ SHA256 string `json:"sha256"`
+}
+type freshStagingProof struct{
+ Schema int `json:"schema"`
+ Scope string `json:"scope"`
+ Evidence freshActivationEvidence `json:"evidence"`
+ AdmissionSHA256 string `json:"admission_sha256"`
+ Motor freshMotorRuntimePin `json:"motor"`
+ InstallRoot string `json:"install_root"`
+ Feeds [4]freshStageFeed `json:"feeds"`
+}
+func verifyFreshStagingProof(key ed25519.PublicKey,raw,sig []byte,pins freshActivationEvidence,admissionSHA string,motor freshMotorRuntimePin)(freshStagingProof,error){
+ var denied freshStagingProof
+ if err:=validateFreshActivationEvidence(pins);err!=nil{return denied,err}
+ if verifyCanonicalLowerSHA256(admissionSHA)!=nil||admissionSHA==strings.Repeat("0",64){return denied,errors.New("missing consumed admission digest")}
+ if len(raw)<2||len(raw)>16384||len(key)!=ed25519.PublicKeySize||len(sig)!=ed25519.SignatureSize||!ed25519.Verify(key,raw,sig){return denied,errors.New("fresh staging proof signature invalid")}
+ var got freshStagingProof
+ if err:=json.Unmarshal(raw,&got);err!=nil{return denied,err}
+ canonical,err:=json.Marshal(got)
+ if err!=nil||!bytes.Equal(raw,canonical){return denied,errors.New("fresh staging proof not canonical")}
+ if got.Schema!=1||got.Scope!="volve-fresh-staged-motor-catalog-review-only-v1"||got.Evidence!=pins||got.AdmissionSHA256!=admissionSHA||got.Motor!=motor{return denied,errors.New("fresh staging proof transaction or motor mismatch")}
+ if !filepath.IsAbs(got.InstallRoot)||filepath.Clean(got.InstallRoot)!=got.InstallRoot||strings.HasPrefix(got.InstallRoot,"\\\\")||
+  !strings.EqualFold(motor.Executable,filepath.Join(got.InstallRoot,"motor-0.28.7","VOLVE_DNS_Motor_0_28_7.exe")){return denied,errors.New("staged catalog root does not match exact versioned motor")}
+ for _,v:=range []string{motor.TaskXMLSHA256,motor.TaskDaclSHA256}{if verifyCanonicalLowerSHA256(v)!=nil||v==strings.Repeat("0",64){return denied,errors.New("staged motor task pins invalid")}}
+ for i,feed:=range got.Feeds{
+  if feed.Name!=freshStageFeedNames[i]{return denied,errors.New("missing or reordered staged catalog slot")}
+  if feed.Bytes==0&&feed.SHA256==""&&i!=0{continue}
+  if feed.Bytes<1||feed.Bytes>128<<20||verifyCanonicalLowerSHA256(feed.SHA256)!=nil||feed.SHA256==strings.Repeat("0",64){return denied,errors.New("invalid staged catalog digest or size")}
+ }
+ return got,nil
+}
+
+// Caller holds the protected transition lease and has verified the signed
+// proof. Each of the four names read by the service feed reloader must be
+// present with exact signed bytes or explicitly absent. Nothing is rewritten.
+func verifyFreshStagedCatalogNative(ctx context.Context,stage freshStagingProof)error{
+ if ctx==nil{return errors.New("catalog verification requires context")}
+ catalog:=filepath.Join(stage.InstallRoot,"catalog")
+ feeds:=filepath.Join(catalog,"feeds")
+ check:=func(p string)error{return nativeDNSOriginalBackupACL(ctx,p)}
+ directories:=[]string{stage.InstallRoot,catalog,feeds}
+ for _,dir:=range directories{if err:=verifyOriginalHostsBackupNode(dir,true,check);err!=nil{return err}}
+ for _,feed:=range stage.Feeds{
+  if err:=ctx.Err();err!=nil{return err}
+  path:=filepath.Join(feeds,feed.Name)
+  if feed.Bytes==0&&feed.SHA256==""{
+   if _,err:=os.Lstat(path);!errors.Is(err,os.ErrNotExist){return errors.New("unsigned optional catalog appeared")}
+   continue
+  }
+  if err:=verifyOriginalHostsBackupNode(path,false,check);err!=nil{return err}
+  before,err:=os.Lstat(path)
+  if err!=nil||before.Size()!=feed.Bytes{return errors.New("signed catalog size mismatch")}
+  file,err:=os.Open(path);if err!=nil{return err}
+  opened,err:=file.Stat()
+  if err!=nil||!os.SameFile(before,opened){file.Close();return errors.New("catalog replaced before read")}
+  h:=sha256.New()
+  n,readErr:=io.Copy(h,io.LimitReader(file,feed.Bytes+1));closeErr:=file.Close()
+  if readErr!=nil||closeErr!=nil{return errors.Join(readErr,closeErr)}
+  if n!=feed.Bytes||hex.EncodeToString(h.Sum(nil))!=feed.SHA256{return errors.New("catalog differs from signed staged content")}
+  if err:=verifyOriginalHostsBackupNode(path,false,check);err!=nil{return err}
+  after,err:=os.Lstat(path)
+  if err!=nil||!os.SameFile(before,after)||before.Size()!=after.Size()||!before.ModTime().Equal(after.ModTime()){return errors.New("catalog identity changed")}
+ }
+ for _,dir:=range directories{if err:=verifyOriginalHostsBackupNode(dir,true,check);err!=nil{return err}}
+ return ctx.Err()
 }
