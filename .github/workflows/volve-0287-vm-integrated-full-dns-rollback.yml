@@ -1,7 +1,7 @@
 name: VOLVE 0.28.7 integrated real Full DNS recovery VM kit (NO RELEASE)
 on:
   push:
-    branches: [feature/motor-updater-0287-pilot]
+    branches: [feature/motor-updater-0287-pilot, work/0287-postboot-proof-20261128]
     paths:
       - '.github/workflows/volve-0287-vm-integrated-full-dns-rollback.yml'
       - 'development/0.28.7/lab/vm_integrated_real_dns_rollback.ps1'
@@ -12,6 +12,8 @@ on:
       - 'development/0.28.7/lab/pack_vm_persistent_reboot_kit.ps1'
       - 'development/0.28.7/inapp/ci_fresh_dns53_windows.go'
       - 'development/0.28.7/inapp/apply_overlay.go'
+      - 'development/0.28.7/inapp/fresh_activation_postboot_windows.go'
+      - 'development/0.28.7/lab/boot_observer_main.go.txt'
   workflow_dispatch:
 permissions:
   contents: read
@@ -57,6 +59,31 @@ jobs:
           go build -tags volveci -trimpath -o "$env:RUNNER_TEMP\VOLVE_CI_FreshDNS53.exe" .
           if($LASTEXITCODE -ne 0){throw 'Could not compile Full lab motor'}
           if((Get-Item -LiteralPath "$env:RUNNER_TEMP\VOLVE_CI_FreshDNS53.exe").Length -lt 1048576){throw 'CI motor too short'}
+      - name: Build and exercise read-only native boot observer
+        shell: powershell
+        working-directory: build/codigo
+        run: |
+          $ErrorActionPreference='Stop'
+          $module=(& go list -m).Trim()
+          if($LASTEXITCODE -ne 0 -or $module -notmatch '^[A-Za-z0-9._/-]+$'){throw 'Invalid reconstructed module path'}
+          $template=Get-Content -LiteralPath (Join-Path $env:GITHUB_WORKSPACE 'development/0.28.7/lab/boot_observer_main.go.txt') -Raw
+          $source=Join-Path $env:RUNNER_TEMP 'volve-readonly-boot-observer.go'
+          [IO.File]::WriteAllText($source,$template.Replace('VOLVE_MODULE',$module),[Text.UTF8Encoding]::new($false))
+          $probe=Join-Path $env:RUNNER_TEMP 'VOLVE-CI-BootObserver.exe'
+          go build -trimpath -o $probe $source
+          if($LASTEXITCODE -ne 0){throw 'Read-only boot observer build failed'}
+          $first=(& $probe --observe)
+          if($LASTEXITCODE -ne 0){throw 'First native boot sample failed'}
+          $second=(& $probe --observe)
+          if($LASTEXITCODE -ne 0 -or $first -cne $second){throw 'Same-boot observation unstable'}
+          $oldPreference=$ErrorActionPreference
+          try{
+            $ErrorActionPreference='Continue'
+            $first | & $probe --verify-later 2>$null
+            $rejected=$LASTEXITCODE
+          }finally{$ErrorActionPreference=$oldPreference}
+          if($rejected -ne 1){throw 'Observer accepted same boot or failed unexpectedly'}
+          Write-Host 'PASS VOLVE_VM_BOOT_OBSERVER_COMPILED_NATIVE_SAME_BOOT_REFUSED'
       - name: Syntax of integrated recovery and core motor scripts
         shell: powershell
         run: |
@@ -139,9 +166,10 @@ jobs:
           $ErrorActionPreference='Stop'
           $out=Join-Path $env:RUNNER_TEMP 'VOLVE_VM_INTEGRATED_FULL_DNS_ROLLBACK'
           & 'development/0.28.7/lab/pack_vm_persistent_reboot_kit.ps1' -MotorExe (Join-Path $env:RUNNER_TEMP 'VOLVE_CI_FreshDNS53.exe') -OutRoot $out
-          $added=@('vm_integrated_real_dns_rollback.ps1','VM_INTEGRATED_FULL_DNS_ROLLBACK.md')
+          $added=@('vm_integrated_real_dns_rollback.ps1','VM_INTEGRATED_FULL_DNS_ROLLBACK.md','VOLVE-CI-BootObserver.exe')
           foreach($file in $added){
-            Copy-Item -LiteralPath (Join-Path 'development/0.28.7/lab' $file) -Destination (Join-Path $out $file) -ErrorAction Stop
+            $source=if($file -eq 'VOLVE-CI-BootObserver.exe'){Join-Path $env:RUNNER_TEMP $file}else{Join-Path 'development/0.28.7/lab' $file}
+            Copy-Item -LiteralPath $source -Destination (Join-Path $out $file) -ErrorAction Stop
           }
           $manifestPath=Join-Path $out 'SHA256_MANIFEST.json'
           $manifest=Get-Content -LiteralPath $manifestPath -Raw|ConvertFrom-Json
@@ -158,7 +186,7 @@ jobs:
           $manifest | Add-Member -MemberType NoteProperty -Name real_original_dns_restore_pending -Value $true
           $manifest|ConvertTo-Json -Depth 8|Set-Content -LiteralPath $manifestPath -Encoding UTF8
           $read=Get-Content -LiteralPath $manifestPath -Raw|ConvertFrom-Json
-          if($read.files.Count -ne 10 -or $read.product_release -ne $false -or
+          if($read.files.Count -ne 11 -or $read.product_release -ne $false -or
             $read.vm_only -ne $true -or $read.publisher_signed -ne $false -or
             $read.integrated_rollback_boot_proven -ne $false -or
             $read.simulated_candidate_only -ne $true){throw 'Misleading or incomplete VM package manifest'}
@@ -166,8 +194,8 @@ jobs:
             $path=Join-Path $out $item.name
             if((Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant() -cne $item.sha256){throw ('File integrity mismatch '+$item.name)}
           }
-          if(@(Get-ChildItem -LiteralPath $out -File).Count -ne 11){throw 'Unexpected VM recovery ZIP content'}
-          Write-Host 'PASS: 11 VM-only files with SHA256 manifest, no signed product claim'
+          if(@(Get-ChildItem -LiteralPath $out -File).Count -ne 12){throw 'Unexpected VM recovery ZIP content'}
+          Write-Host 'PASS: 12 VM-only files with SHA256 manifest, no signed product claim'
       - uses: actions/upload-artifact@v4
         with:
           name: VOLVE-0287-INTEGRATED-VM-REAL-DNS-ROLLBACK-NO-INSTALL

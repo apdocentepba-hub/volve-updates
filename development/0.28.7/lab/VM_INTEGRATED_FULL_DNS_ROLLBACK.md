@@ -7,7 +7,7 @@
 - En Hyper-V, comprobar que `VOLVE-LAB-0287` tiene un **punto de control funcional** llamado `ANTES-INTEGRACION-MOTOR-DNS-0287`. Crear uno nuevo antes de intervenir si falta.
 - No mantener tareas anteriores `VOLVE-CI-FreshMotor-*` o `VOLVE-CI-BootRecovery-*` en ejecución. Las pruebas anteriores con IDs `202611020001` y `20261102000201` ya fueron limpiadas en la VM del usuario.
 - Descargar el artefacto del workflow `volve-0287-vm-integrated-full-dns-rollback.yml` sólo cuando GitHub Actions haya terminado con `SUCCESS`. Extraer **todos** los archivos en `C:\Lab\Integrated` dentro de la VM. Comprobar el manifiesto SHA-256 incluido.
-- Utilizar exclusivamente un **LabId nuevo** `20261102000301`. No reutilizar carpetas de ensayos anteriores.
+- Utilizar exclusivamente un **LabId nuevo** `20261128000101`. No reutilizar carpetas de ensayos anteriores.
 - Abrir Windows PowerShell **como administrador en la VM**. Habilitar historial del Programador de tareas antes de preparar.
 
 ## Pasos
@@ -19,33 +19,52 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\Lab\Integrated\vm_fu
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\Lab\Integrated\vm_integrated_real_dns_rollback.ps1" -Mode Probe
 
 # El motor real de CI se pone en marcha para comprobar 6 DNS y se detiene.
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\Lab\Integrated\vm_full_motor_reboot_dns.ps1" -Mode Prepare -LabId 20261102000301 -MotorExe "C:\Lab\Integrated\VOLVE_CI_FreshDNS53.exe"
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\Lab\Integrated\vm_full_motor_reboot_dns.ps1" -Mode Prepare -LabId 20261128000101 -MotorExe "C:\Lab\Integrated\VOLVE_CI_FreshDNS53.exe"
 
 # Respaldo del XML original y watchdog SYSTEM, luego sustituye SOLAMENTE
 # la tarea descartable por el candidato cmd.exe que falla al iniciar.
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\Lab\Integrated\vm_integrated_real_dns_rollback.ps1" -Mode Arm -LabId 20261102000301
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\Lab\Integrated\vm_integrated_real_dns_rollback.ps1" -Mode Arm -LabId 20261128000101
 ```
 
 **DETENERSE** si Arm no muestra `ARMED`. No improvisar un segundo Prepare o Arm en la misma carpeta; preservar evidencias para diagnóstico.
 
-Reiniciar **solamente Windows invitado dentro de la VM** desde Inicio → Reiniciar. No reiniciar host ni restaurar checkpoint salvo fallo real del invitado. El watchdog SYSTEM intentará restaurar la tarea original y arrancar el motor Full DNS.
-
-Luego de entrar de nuevo en el invitado, ejecutar:
+Antes de reiniciar, conservar una muestra del nuevo observador nativo incluido en el kit:
 
 ```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\Lab\Integrated\vm_integrated_real_dns_rollback.ps1" -Mode Verify -LabId 20261102000301
+$probe = 'C:\Lab\Integrated\VOLVE-CI-BootObserver.exe'
+& $probe --observe | Set-Content -Encoding ASCII 'C:\Lab\Integrated\boot-before.json'
+if ($LASTEXITCODE -ne 0) { throw 'No hay evidencia nativa del arranque inicial' }
+```
+
+El observador sólo consulta WMI, el evento Kernel-General 12 y el tiempo de actividad del kernel. No autoriza ni modifica el DNS. Conservar la muestra original fuera de la VM para auditoría.
+
+Reiniciar **solamente Windows invitado dentro de la VM** desde Inicio → Reiniciar. No reiniciar host ni restaurar checkpoint salvo fallo real del invitado. El watchdog SYSTEM intentará restaurar la tarea original y arrancar el motor Full DNS.
+
+Luego de entrar de nuevo en el invitado, comprobar primero el reinicio con el mismo observador:
+
+```powershell
+Get-Content -Raw 'C:\Lab\Integrated\boot-before.json' |
+  & 'C:\Lab\Integrated\VOLVE-CI-BootObserver.exe' --verify-later |
+  Set-Content -Encoding ASCII 'C:\Lab\Integrated\boot-after.json'
+if ($LASTEXITCODE -ne 0) { throw 'El reinicio real no fue acreditado' }
+```
+
+Conservar ambos JSON. La prueba de arranque es independiente de la comprobación de recuperación. Luego ejecutar:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\Lab\Integrated\vm_integrated_real_dns_rollback.ps1" -Mode Verify -LabId 20261128000101
 ```
 
 Si aparece `PASS: real Windows VM reboot; independent SYSTEM restored REAL Full DNS motor...`, se genera:
 
-`C:\ProgramData\VOLVE-CI-FreshDNS53-20261102000301\integrated-rollback-proof.json`
+`C:\ProgramData\VOLVE-CI-FreshDNS53-20261128000101\integrated-rollback-proof.json`
 
 Copiar **solo el archivo JSON**, no modificar la carpeta protegida; enviarlo para auditoría. La validación exige watchdog SYSTEM con eventos 118/100/201/102 de la misma instancia, motor original real de CI bajo SYSTEM y DNS53 IPv4/IPv6 6/6, TCP Internet directo, archivos con hashes correctos y adaptadores/hosts inalterados. **No declara una firma productiva**.
 
 Después de recibir confirmación de la evidencia y sólo entonces, dentro de la VM:
 
 ```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\Lab\Integrated\vm_integrated_real_dns_rollback.ps1" -Mode Cleanup -LabId 20261102000301
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\Lab\Integrated\vm_integrated_real_dns_rollback.ps1" -Mode Cleanup -LabId 20261128000101
 ```
 
 `Cleanup` retira exclusivamente las dos tareas descartables; conserva los archivos de prueba. Si `Verify` falla, **no ejecutar Cleanup ni repetir Prepare** y no restaurar el punto de control antes de preservar el informe.

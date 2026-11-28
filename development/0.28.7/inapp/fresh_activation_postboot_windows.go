@@ -182,3 +182,20 @@ func(g *freshBootCommitGuard)CommitActive(ctx context.Context,pin string)error{
  if err:=g.freshAdmissionGuard.VerifyArmed(ctx,pin);err!=nil{return err}
  return g.after(ctx)
 }
+
+
+// Read-only diagnostics for the isolated VM reboot kit. Neither exported
+// helper authorizes installation, recovery writes, or terminal completion.
+// The preboot sample must be preserved independently by the operator.
+func ObserveFreshWindowsBootReadOnly(ctx context.Context)([]byte,error){
+ b,err:=observeFreshBootNative(ctx);if err!=nil{return nil,err}
+ return json.Marshal(b)
+}
+func VerifyLaterFreshWindowsBootReadOnly(ctx context.Context,previous []byte)([]byte,error){
+ if ctx==nil||len(previous)<2||len(previous)>2048{return nil,errors.New("bounded previous boot observation required")}
+ var before freshBootIdentity
+ if err:=residentCanonical(previous,&before);err!=nil{return nil,err}
+ after,err:=observeFreshBootNative(ctx);if err!=nil{return nil,err}
+ if err:=verifyFreshLaterBoot(before,after);err!=nil{return nil,err}
+ return json.Marshal(after)
+}

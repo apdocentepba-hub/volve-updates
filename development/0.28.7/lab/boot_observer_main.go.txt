@@ -1,0 +1,29 @@
+// Diagnostic only. No OS writes, installation, reboot or recovery command.
+package main
+
+import (
+ "context"
+ "fmt"
+ "io"
+ "os"
+ "time"
+ motorupdate "VOLVE_MODULE/motorupdate"
+)
+func main(){
+ ctx,cancel:=context.WithTimeout(context.Background(),30*time.Second)
+ defer cancel()
+ var out []byte
+ var err error
+ if len(os.Args)==2&&os.Args[1]=="--observe"{
+  out,err=motorupdate.ObserveFreshWindowsBootReadOnly(ctx)
+ }else if len(os.Args)==2&&os.Args[1]=="--verify-later"{
+  var previous []byte
+  previous,err=io.ReadAll(io.LimitReader(os.Stdin,2049))
+  if err==nil{out,err=motorupdate.VerifyLaterFreshWindowsBootReadOnly(ctx,previous)}
+ }else{
+  fmt.Fprintln(os.Stderr,"Use --observe or --verify-later with previous JSON on stdin")
+  os.Exit(2)
+ }
+ if err!=nil{fmt.Fprintln(os.Stderr,"BOOT NOT VERIFIED:",err);os.Exit(1)}
+ fmt.Println(string(out))
+}
