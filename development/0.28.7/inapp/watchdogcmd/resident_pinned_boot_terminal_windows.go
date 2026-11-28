@@ -114,6 +114,6 @@ func runPinnedResidentBootRecoveryWindows(ctx context.Context,installedRoot stri
  seal:=func(path string)error{
   return sealPinnedResidentTerminalReceiptNTFS(ctx,installedRoot,path)
  }
- return motorupdate.RecoverPendingResidentAfterBoot(
+ return motorupdate.RecoverPendingResidentAfterBootWithOriginalDNS(
   ctx,components.JournalDir,seal,protect,components.Health,components.Driver)
 }
