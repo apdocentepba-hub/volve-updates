@@ -1,11 +1,6 @@
 name: "VOLVE 0.28.7 - Protected original-state backup on Windows (NO CLEANUP)"
 
 on:
-  push:
-    branches: [work/0287-native-setup-preview-20261113]
-    paths:
-      - 'development/0.28.7/installer-wizard/migration/**'
-      - '.github/workflows/volve-0287-local-rollback-snapshot-pr.yml'
   workflow_dispatch:
 
 permissions:
