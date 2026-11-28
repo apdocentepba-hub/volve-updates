@@ -105,6 +105,15 @@ function SixDNS {
   }
  }
 }
+# Read all endpoints with terminating errors: a failed inventory cannot
+# masquerade as a free port. TCP TIME_WAIT is not a listening socket.
+function Get-LoopbackDNSListeners {
+    $addresses=@('127.0.0.1','::1','0.0.0.0','::','::ffff:127.0.0.1')
+    $udp=@(Get-NetUDPEndpoint -ErrorAction Stop | Where-Object {$_.LocalPort -eq 53 -and $_.LocalAddress -in $addresses})
+    $tcp=@(Get-NetTCPConnection -ErrorAction Stop | Where-Object {$_.LocalPort -eq 53 -and $_.State -eq 'Listen' -and $_.LocalAddress -in $addresses})
+    foreach($entry in $udp){[pscustomobject]@{Protocol='UDP';Address=$entry.LocalAddress;PID=[uint32]$entry.OwningProcess}}
+    foreach($entry in $tcp){[pscustomobject]@{Protocol='TCP';Address=$entry.LocalAddress;PID=[uint32]$entry.OwningProcess}}
+}
 function EngineIdentity([string]$exe){
  $procs=@(Get-CimInstance Win32_Process -ErrorAction Stop |
   Where-Object {[string]$_.ExecutablePath -ieq $exe})
@@ -166,10 +175,10 @@ if($Mode -eq 'Arm'){
    $before.computer -cne $env:COMPUTERNAME){throw 'Unexpected Full motor preboot lab identity'}
  if((SHA $motor) -cne $before.motorSHA256 -or (SHA $catalog) -cne $before.catalogSHA256){throw 'Original real motor/catalog changed'}
  $original=TaskExact $task $motor $oldArg $true
- if($original.State -eq 'Running'){throw 'Refusing to switch a running Full DNS motor'}
- foreach($ip in @('127.0.0.1','::1')){
-  if(@(Get-NetUDPEndpoint -LocalAddress $ip -LocalPort 53 -ErrorAction SilentlyContinue).Count -ne 0){throw 'DNS53 occupied before simulated interruption'}
- }
+ if($original.State -ne 'Ready'){throw 'Refusing to switch a motor that is not stopped and Ready'}
+ $remaining=@(Get-CimInstance Win32_Process -ErrorAction Stop | Where-Object {[string]$_.ExecutablePath -ieq $motor})
+ $listeners=@(Get-LoopbackDNSListeners)
+ if($remaining.Count -ne 0 -or $listeners.Count -ne 0){throw ('DNS53 not quiescent before simulated interruption: exact-processes='+$remaining.Count+' listeners='+($listeners|ConvertTo-Json -Compress))}
  if(Get-ScheduledTask -TaskName $watch -ErrorAction SilentlyContinue){throw 'Watchdog task already exists'}
  foreach($path in @($planPath,$oldXML,$recoverScript,$receiptPath)){
   if(Test-Path -LiteralPath $path){throw ('Refusing existing lab recovery asset: '+$path)}
@@ -233,9 +242,8 @@ if($Mode -eq 'Recover'){
  $running=@(Get-CimInstance Win32_Process|Where-Object{[string]$_.ExecutablePath -ieq $motor})
  if($running.Count -gt 0 -and $candidate){throw 'Unsafe: original motor running while candidate task is selected'}
  if($candidate){
-  foreach($ip in @('127.0.0.1','::1')){
-   if(@(Get-NetUDPEndpoint -LocalAddress $ip -LocalPort 53 -ErrorAction SilentlyContinue).Count -ne 0){throw 'Port53 not free for original recovery'}
-  }
+  $listeners=@(Get-LoopbackDNSListeners)
+  if($listeners.Count -ne 0){throw ('Port53 not free for original recovery: '+($listeners|ConvertTo-Json -Compress))}
   $xml=[IO.File]::ReadAllText($oldXML)
   if($xml -notmatch 'VOLVE_CI_FreshDNS53.exe'){throw 'Original task XML does not identify Full CI motor'}
   Register-ScheduledTask -TaskName $task -TaskPath '\' -Xml $xml -Force -ErrorAction Stop|Out-Null

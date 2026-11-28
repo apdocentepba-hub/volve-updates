@@ -58,6 +58,15 @@ function CurrentNetwork {
         Select-Object InterfaceIndex,AddressFamily,ServerAddresses) |
         ConvertTo-Json -Depth 6 -Compress)
 }
+# Read all endpoints with terminating errors: a failed inventory cannot
+# masquerade as a free port. TCP TIME_WAIT is not a listening socket.
+function Get-LoopbackDNSListeners {
+    $addresses=@('127.0.0.1','::1','0.0.0.0','::','::ffff:127.0.0.1')
+    $udp=@(Get-NetUDPEndpoint -ErrorAction Stop | Where-Object {$_.LocalPort -eq 53 -and $_.LocalAddress -in $addresses})
+    $tcp=@(Get-NetTCPConnection -ErrorAction Stop | Where-Object {$_.LocalPort -eq 53 -and $_.State -eq 'Listen' -and $_.LocalAddress -in $addresses})
+    foreach($entry in $udp){[pscustomobject]@{Protocol='UDP';Address=$entry.LocalAddress;PID=[uint32]$entry.OwningProcess}}
+    foreach($entry in $tcp){[pscustomobject]@{Protocol='TCP';Address=$entry.LocalAddress;PID=[uint32]$entry.OwningProcess}}
+}
 function OwnDNSProcess([string]$exe){
     $processes=@(Get-CimInstance Win32_Process -ErrorAction Stop |
         Where-Object { [string]$_.ExecutablePath -ieq $exe })
@@ -177,11 +186,8 @@ if($Mode -eq 'Prepare'){
     }
     $eventLog=Get-WinEvent -ListLog 'Microsoft-Windows-TaskScheduler/Operational' -ErrorAction Stop
     if(-not $eventLog.IsEnabled){throw 'Enable Task Scheduler Operational history on this disposable VM first'}
-    foreach($ip in @('127.0.0.1','::1')){
-        if(@(Get-NetUDPEndpoint -LocalAddress $ip -LocalPort 53 -ErrorAction SilentlyContinue).Count -ne 0){
-            throw ('DNS/53 occupied before VM trial on '+$ip)
-        }
-    }
+    $initialListeners=@(Get-LoopbackDNSListeners)
+    if($initialListeners.Count -ne 0){throw ('DNS/53 occupied before VM trial: '+($initialListeners|ConvertTo-Json -Compress))}
     $beforeNetwork=CurrentNetwork
     $hosts=Join-Path $env:WINDIR 'System32\drivers\etc\hosts'
     $beforeHosts=Digest $hosts
@@ -248,9 +254,26 @@ if($Mode -eq 'Prepare'){
         }
         $record|ConvertTo-Json -Depth 6|Set-Content -LiteralPath $state -Encoding UTF8
     }finally{
-        # No test DNS process may continue BEFORE the actual VM reboot.
-        $t=Get-ScheduledTask -TaskName $task -ErrorAction Stop
-        if($t.State -eq 'Running'){Stop-ScheduledTask -TaskName $task -ErrorAction Stop}
+        # Scheduler stop is asynchronous. Verify the exact task and wait
+        # for the corresponding process and both protocols to quiesce.
+        $t=Assert-Task $task $exe $arg
+        if($t.State -eq 'Running'){Stop-ScheduledTask -TaskName $task -TaskPath '\' -ErrorAction Stop}
+        $deadline=[Diagnostics.Stopwatch]::StartNew()
+        $quiet=$false
+        while($deadline.Elapsed.TotalSeconds -lt 30){
+            $t=Assert-Task $task $exe $arg
+            $live=@(Get-CimInstance Win32_Process -ErrorAction Stop | Where-Object {[string]$_.ExecutablePath -ieq $exe})
+            $listeners=@(Get-LoopbackDNSListeners)
+            if($t.State -eq 'Ready' -and $live.Count -eq 0 -and $listeners.Count -eq 0){
+                $quiet=$true
+                break
+            }
+            # Never kill or disable any listener; observe only. A foreign
+            # process, including a wildcard bind, must not be ignored.
+            Start-Sleep -Milliseconds 500
+        }
+        if(-not $quiet){throw ('DNS motor did not quiesce after stop: task='+$t.State+' exact-processes='+$live.Count+' listeners='+($listeners|ConvertTo-Json -Compress))}
+        Write-Host 'PASS VOLVE_VM_STOP_CONFIRMED_PROCESS_EXIT_TCP_UDP53_FREE'
     }
     if((CurrentNetwork) -cne $beforeNetwork -or (Digest $hosts) -cne $beforeHosts){
         throw 'Host DNS configuration changed during VM preflight'
