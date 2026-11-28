@@ -23,7 +23,7 @@ concurrency:
 jobs:
   fresh-system-dns53:
     runs-on: windows-latest
-    timeout-minutes: 30
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5

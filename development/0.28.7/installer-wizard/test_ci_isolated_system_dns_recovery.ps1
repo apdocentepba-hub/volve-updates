@@ -68,19 +68,22 @@ try {
   $env:VOLVE_CI_DNS_REAL_DISPOSABLE='INTERNAL_HYPERV_VM_ONLY'
   $env:VOLVE_CI_DNS_LAB_ALIAS=$alias
   $env:VOLVE_CI_DNS_LAB_GUID=$guid
+  $env:VOLVE_CI_FRESH_REAL_RESCUE='1'
   Write-Host "Disposable internal switch created: alias=$alias, GUID=$guid, index=$($adapter.InterfaceIndex)"
   # Exercise the same reconstructed motorupdate package as the
   # approved NSIS-to-SYSTEM candidate, not a stale source subset.
   Push-Location (Join-Path $env:GITHUB_WORKSPACE 'build/codigo')
   try {
-    $proof=@(go test ./motorupdate -count=1 -timeout 6m -v -run '^TestWindowsRealDNSSYSTEMWatchdogAfterUpdaterCrash$')
+    $proof=@(go test ./motorupdate -count=1 -timeout 9m -v -run '^TestWindowsRealDNSSYSTEMWatchdogAfterUpdaterCrash$')
     $exit=$LASTEXITCODE
     $proof|Write-Host
     if($exit -ne 0){throw 'Real LocalSystem watchdog / NTFS lab DNS recovery FAILED'}
     if(@($proof|Where-Object {$_ -match '^--- PASS: TestWindowsRealDNSSYSTEMWatchdogAfterUpdaterCrash '}).Count -ne 1){throw 'Real recovery test did not execute'}
+    if(@($proof|Where-Object {$_ -match 'PASS VOLVE_FRESH_SIGNED_PENDING_REAL_SYSTEM_DNS_RESCUE_NATIVE_RECEIPT$'}).Count -ne 1){throw 'Fresh signed SYSTEM rescue was not proven'}
     Write-Host 'PASS VOLVE_CURRENT_CANDIDATE_ISOLATED_SYSTEM_DNS_CRASH_RESTORATION'
   }finally{Pop-Location}
 }finally{
+  Remove-Item Env:\VOLVE_CI_FRESH_REAL_RESCUE -ErrorAction SilentlyContinue
   Remove-Item Env:\VOLVE_CI_DNS_REAL_DISPOSABLE -ErrorAction SilentlyContinue
   Remove-Item Env:\VOLVE_CI_DNS_LAB_ALIAS -ErrorAction SilentlyContinue
   Remove-Item Env:\VOLVE_CI_DNS_LAB_GUID -ErrorAction SilentlyContinue
