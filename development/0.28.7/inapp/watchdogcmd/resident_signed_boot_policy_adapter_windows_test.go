@@ -65,9 +65,13 @@ func TestSignedBootOriginalOpsUnderProtectedPolicyLeaseLeavesPendingJournal(t *t
  }
  if calls!=0{t.Fatal("read-only publisher audit reached Scheduler")}
  if err:=ops.RestoreOriginal(ctx,state.Intent);err!=nil{
-  t.Fatalf("boot policy original restore failed while holding protected lock: %v",err)
+  t.Fatalf("boot policy original file/task restore failed while holding protected lock: %v",err)
  }
- if calls!=2{t.Fatalf("expected task import AND verified original task start, got %d",calls)}
+ if calls!=1{t.Fatalf("DNS-aware restore must defer task start until after DNS readback; task calls=%d",calls)}
+ if err:=ops.StartOriginal(ctx,state.Intent);err!=nil{
+  t.Fatalf("separate original start phase failed under protected policy lease: %v",err)
+ }
+ if calls!=2{t.Fatalf("expected task import then separately authorized original start, got %d",calls)}
  pending,err:=auditResidentJournal(ctx,journalDir)
  if err!=nil||pending.Status!="recovery-required"{
   t.Fatalf("policy original ops incorrectly marked DNS or Internet healthy: %+v %v",pending,err)
