@@ -84,3 +84,21 @@ func TestWindowsFreshProvisionalNativeStorageAndPostBootGate(t *testing.T){
  if _,err:=os.Lstat(filepath.Join(root,freshDNSRestoredName));!os.IsNotExist(err){t.Fatal("boot proof created terminal DNS restoration receipt")}
  t.Log("PASS VOLVE_FRESH_PROVISIONAL_NATIVE_NTFS_CONSUMED_ADMISSION_SAME_BOOT_REFUSED_SIMULATED_LATER_BOOT")
 }
+
+
+func TestFreshPostBootActiveCensusRejectsPartialOrForeignFamilies(t *testing.T){
+ raw,pin,_,_:=prepareActivationTest(t)
+ records,err:=VerifyDNSOriginalJournal(context.Background(),raw,pin)
+ if err!=nil{t.Fatal(err)}
+ states:=make([]DNSServerState,len(records))
+ for i,r:=range records{states[i]=copyWindowsActivationDNSState(r.Expected)}
+ if err:=verifyFreshActiveDNSCensus(records,states);err!=nil{t.Fatal(err)}
+ reversed:=[]DNSServerState{states[1],states[0]}
+ if err:=verifyFreshActiveDNSCensus(records,reversed);err!=nil{t.Fatal("census order incorrectly treated as identity",err)}
+ foreign:=copyWindowsActivationDNSState(states[0]);foreign.InterfaceGUID="{11111111-2222-3333-4444-555555555555}"
+ original:=copyWindowsActivationDNSState(records[0].Original)
+ for _,bad:=range [][]DNSServerState{nil,states[:1],{states[0],states[0]},{foreign,states[1]},{original,states[1]},append(append([]DNSServerState(nil),states...),foreign)}{
+  if err:=verifyFreshActiveDNSCensus(records,bad);err==nil{t.Fatal("incomplete, duplicate or unprotected postboot DNS accepted",bad)}
+ }
+ t.Log("PASS VOLVE_FRESH_POSTBOOT_ALL_ACTIVE_DNS_FAMILIES_READ_ONLY")
+}

@@ -199,3 +199,75 @@ func VerifyLaterFreshWindowsBootReadOnly(ctx context.Context,previous []byte)([]
  if err:=verifyFreshLaterBoot(before,after);err!=nil{return nil,err}
  return json.Marshal(after)
 }
+
+
+// Verify all live DNS families against the authenticated expected state.
+// Reboot may legitimately change InterfaceIndex, so this read-only audit
+// compares complete GUID/family coverage and exact static assignments.
+// No arbitrary netsh writer or mutable backend is involved.
+func verifyFreshActiveDNSCensus(records []DNSRestoreRecord,states []DNSServerState)error{
+ if len(records)==0||len(records)!=len(states){return errors.New("postboot DNS family coverage differs from authenticated journal")}
+ expected:=make(map[string]DNSServerState,len(records))
+ for _,record:=range records{
+  if err:=validDNSState(record.Expected);err!=nil{return err}
+  if record.Expected.Mode!=DNSStatic||len(record.Expected.Servers)!=1||
+   (record.Expected.Family==DNSIPv4&&record.Expected.Servers[0]!="127.0.0.1")||
+   (record.Expected.Family==DNSIPv6&&record.Expected.Servers[0]!="::1"){
+   return errors.New("postboot expected DNS is not exact local protection")
+  }
+  k:=windowsActivationFamilyKey(record.Expected.InterfaceGUID,record.Expected.Family)
+  if _,exists:=expected[k];exists{return errors.New("duplicate authenticated DNS family")}
+  expected[k]=record.Expected
+ }
+ for _,state:=range states{
+  if err:=validDNSState(state);err!=nil{return err}
+  k:=windowsActivationFamilyKey(state.InterfaceGUID,state.Family)
+  want,exists:=expected[k]
+  if !exists||!sameDNSState(state,want){return errors.New("postboot live DNS assignment differs from authenticated localhost state")}
+  delete(expected,k)
+ }
+ if len(expected)!=0{return errors.New("postboot DNS family missing")}
+ return nil
+}
+
+// Production-oriented read-only audit, not a product installation outcome.
+// The privileged controller must independently pin the admission digest,
+// policy baseline and actual signed motor identity. The health dependency
+// MUST check real running SYSTEM identity, permitted and blocked queries
+// via both address families and direct upstream connectivity. A successful
+// audit does not disable rescue or grant authority to write terminal state.
+func auditFreshPostBootHealthAsSYSTEM(ctx context.Context,root string,key ed25519.PublicKey,pins freshActivationEvidence,admissionSHA string,watchdog freshWatchdogTaskPin,policy WindowsDNSOverrideCensus,health func(context.Context,freshActivationEvidence)error)(freshBootIdentity,error){
+ var denied freshBootIdentity
+ if ctx==nil||health==nil{return denied,errors.New("trusted postboot health checks required")}
+ if err:=ctx.Err();err!=nil{return denied,err}
+ if err:=VerifyWindowsCurrentSystemSIDReadOnly();err!=nil{return denied,err}
+ if watchdog.Name!="VOLVE-FRESH-WATCHDOG"{return denied,errors.New("postboot audit requires exact production watchdog identity")}
+ if err:=bindFreshWatchdogAdmission(pins,watchdog);err!=nil{return denied,err}
+ key=append(ed25519.PublicKey(nil),key...)
+ release,err:=AcquireProtectedResidentTransitionLease(ctx)
+ if err!=nil{return denied,err}
+ defer release()
+ first,err:=verifyFreshPostBootEvidenceUnderLease(ctx,root,key,pins,admissionSHA,observeFreshBootNative)
+ if err!=nil{return denied,err}
+ records,err:=ReadDNSOriginalBackupNativeWindows(ctx,filepath.Join(root,"legacy-engine-recovery"),pins.OriginalDNSJournalSHA256)
+ if err!=nil{return denied,err}
+ attest:=func()error{
+  if err:=VerifyWindowsCurrentSystemSIDReadOnly();err!=nil{return err}
+  if err:=verifyFreshWatchdogRegistrationNative(ctx,watchdog);err!=nil{return err}
+  observed,err:=InspectWindowsDNSOverrideCensusReadOnly(ctx,DefaultWindowsReadOnlyPowerShell)
+  if err!=nil{return err}
+  if observed!=policy{return errors.New("postboot DNS override policy differs from trusted baseline")}
+  census,err:=InspectWindowsDNSAssignmentProvenanceReadOnly(ctx,DefaultWindowsReadOnlyPowerShell)
+  if err!=nil{return err}
+  return verifyFreshActiveDNSCensus(records,census.States)
+ }
+ if err:=attest();err!=nil{return denied,err}
+ if err:=health(ctx,pins);err!=nil{return denied,err}
+ if err:=attest();err!=nil{return denied,err}
+ final,err:=verifyFreshPostBootEvidenceUnderLease(ctx,root,key,pins,admissionSHA,observeFreshBootNative)
+ if err!=nil||final!=first{return denied,errors.New("postboot protected transaction changed during health audit")}
+ // Reopen exact authenticated original backup after the health callback.
+ if _,err:=ReadDNSOriginalBackupNativeWindows(ctx,filepath.Join(root,"legacy-engine-recovery"),pins.OriginalDNSJournalSHA256);err!=nil{return denied,err}
+ if err:=attest();err!=nil{return denied,err}
+ return final,ctx.Err()
+}
