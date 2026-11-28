@@ -123,3 +123,26 @@ New branch work/0287-dns-overrides-preflight-20261127 derives from the approved 
 - **Resultado real de preflight del runner:** `observed_host_route=contradictory-installed-protection-no-write`, `next_review_mode=STOP_CONFLICTING_PROTECTION`, `review_progress_percent=0`, `can_install=false`, `can_upgrade=false`, `can_change_dns=false`, `can_change_tasks=false`. No se pudieron capturar respaldos en ese trayecto (`NOT_CHECKED_NO_ARCHIVES`); el censo protegido de navegadores no quedó establecido y el TCP del resolvedor configurado quedó explícitamente `UNVERIFIED_ACTUAL_CONFIGURED_RESOLVER_TCP`. El workflow aprobó porque exigió exactamente esta negativa segura y verificó que DNS, tareas y protecciones permanecieran intactos. **No interpretar SUCCESS del workflow como autorización de instalación.**
 - El certificado Authenticode fue creado para CI y no es el certificado editorial. El EXE se generó en el runner temporal y el workflow no publicó artefactos; no hay binario descargable de producción ni release. No hubo reinicio real persistente, migración 0.28.6, rollback productivo, cambio en la PC del usuario o uso de NEXO.
 - **Siguiente hito material:** ejecutar el kit VM-only con snapshot previo en una VM Windows persistente y separada, verificar candidato DNS real → fallo exit 83 → reinicio genuino → recuperación SYSTEM del motor original → seis respuestas DNS IPv4/IPv6 → recibo independiente. La aceptación sigue HOLD hasta esa evidencia, un backend de instalación transaccional real y credenciales editoriales de producción.
+
+
+## Restricción operativa de continuidad — 2026-11-28
+
+Directiva del responsable del producto: **no utilizar máquinas virtuales**. No crear, iniciar ni solicitar VMs para cerrar los pendientes de VOLVÉ. Tampoco sustituir una prueba de reinicio real por una simulación ni ejecutar cambios en el Windows habitual del usuario para compensar la ausencia de VM.
+
+### Trabajo permitido sin VM
+- Revisión estática de código, arquitectura, amenazas y contratos de interfaces.
+- Pruebas unitarias/contractuales que no cambien DNS, HOSTS, tareas, servicios ni registro del sistema.
+- Compilación/análisis de fuentes en entornos no virtualizados disponibles, siempre que no se atribuya evidencia de reboot o de Windows host real que no se haya producido.
+- Completar la integración del controlador y watchdog en código con gates explícitos de autorización, identidad SYSTEM, mutex, journal y rollback.
+- Mantener el bloqueo de `VOLVE-DNS-SERVER-0270` hasta que exista una implementación real y una autorización válida.
+
+### Hallazgos de auditoría de código
+- `inapp/native_task_switch_windows.go`: `switchVerifiedMotorTaskAction` devuelve explícitamente error para `dnsServiceTask` (`VOLVE-DNS-SERVER-0270`); el cambio productivo sigue bloqueado.
+- `inapp/resident_boot_recovery.go`: la política de recuperación define contratos, journal y secuencia, pero declara que no es un restaurador productivo y requiere un driver independiente.
+- `inapp/resident_protected_boot_driver_windows.go`: el adaptador aplica el mutex protegido, pero recibe `ResidentOriginalRecoveryOps` por interfaz; no contiene por sí mismo las operaciones nativas de restauración de ejecutable/tarea.
+- `inapp/dns_boot_original_recovery_windows.go`: el tramo DNS está implementado como puente privado SYSTEM, con permisos y censo protegidos; sus comentarios declaran que no está conectado al producto/updater/NSIS y que no restaura motor ni tareas.
+- `inapp/resident_durable_publisher_boot_windows.go`: enlaza firma editorial durable, journal y lease, pero no aporta el operador nativo final ni registra el watchdog como tarea productiva.
+- El preflight integrado del run #46150894578 terminó en `STOP_CONFLICTING_PROTECTION`, progreso 0, sin instalación/cambio DNS/tareas permitido; además reportó respaldos `NOT_CHECKED_NO_ARCHIVES` y TCP del resolvedor configurado `UNVERIFIED_ACTUAL_CONFIGURED_RESOLVER_TCP`. El workflow pasó porque verificó esa negativa segura.
+
+### Criterio de veracidad
+El EXE NSIS/bundle/motor y las pruebas de integridad están aprobados en laboratorio CI; esto no equivale a un instalador productivo. Sin VM, no se intentará cerrar la puerta de reboot persistente mediante infraestructura virtual. Se puede continuar con ingeniería y pruebas no destructivas, pero el reinicio genuino y la restauración post-arranque quedan **NO DEMOSTRADOS**. No se eleva el scorecard global por tareas que no satisfacen su criterio de aceptación.
