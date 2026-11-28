@@ -62,7 +62,7 @@ Si aparece `PASS: real Windows VM reboot; independent SYSTEM restored REAL Full 
 
 `C:\ProgramData\VOLVE-CI-FreshDNS53-20261128000101\integrated-rollback-proof.json`
 
-Copiar **solo el archivo JSON**, no modificar la carpeta protegida; enviarlo para auditoría. La validación exige watchdog SYSTEM con eventos 118/100/201/102 de la misma instancia, motor original real de CI bajo SYSTEM y DNS53 IPv4/IPv6 6/6, TCP Internet directo, archivos con hashes correctos y adaptadores/hosts inalterados. **No declara una firma productiva**.
+Copiar **solo el archivo JSON**, no modificar la carpeta protegida; enviarlo para auditoría. La validación exige watchdog SYSTEM con eventos 118/100/201/102 de la misma instancia, motor original real de CI bajo SYSTEM con cuatro sockets locales UDP/TCP IPv4/IPv6 del mismo proceso, seis respuestas UDP correctas, TCP Internet directo, archivos (incluido el comprobador TCP) con hashes correctos y adaptadores/hosts inalterados. El recibo debe corresponder al arranque actual. **No declara una firma productiva**.
 
 Después de recibir confirmación de la evidencia y sólo entonces, dentro de la VM:
 

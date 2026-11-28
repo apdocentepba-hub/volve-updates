@@ -121,10 +121,14 @@ function EngineIdentity([string]$exe){
  $p=$procs[0]
  $sid=Invoke-CimMethod -InputObject $p -MethodName GetOwnerSid -ErrorAction Stop
  if($sid.ReturnValue -ne 0 -or $sid.Sid -ne 'S-1-5-18'){throw 'Original DNS motor is not SYSTEM'}
- foreach($ip in @('127.0.0.1','::1')){
-  $ports=@(Get-NetUDPEndpoint -LocalAddress $ip -LocalPort 53 -ErrorAction Stop)
-  if($ports.Count -ne 1 -or $ports[0].OwningProcess -ne $p.ProcessId){throw ('Original motor does not exclusively own DNS53 '+$ip)}
- }
+    $listeners=@(Get-LoopbackDNSListeners)
+    if($listeners.Count -ne 4){throw 'Expected exactly four local DNS53 listeners'}
+    foreach($protocol in @('UDP','TCP')){
+        foreach($hostIP in @('127.0.0.1','::1')){
+            $matching=@($listeners|Where-Object {$_.Protocol -ceq $protocol -and $_.Address -ceq $hostIP -and $_.PID -eq $p.ProcessId})
+            if($matching.Count -ne 1){throw ('DNS53 exclusive SYSTEM socket missing: '+$protocol+' '+$hostIP)}
+        }
+    }
  return $p
 }
 function VerifiedInputs($plan,[string]$root){
@@ -136,6 +140,7 @@ function VerifiedInputs($plan,[string]$root){
   'vm_integrated_real_dns_rollback.ps1'=$plan.recoverySHA256
   'reboot_event_chain.ps1'=$plan.eventParserSHA256
   'vm_dns_reply_contract.ps1'=$plan.dnsParserSHA256
+  'vm_direct_internet_probe.ps1'=$plan.internetHelperSHA256
  }
  foreach($rel in $v.Keys){
   $p=Join-Path $root $rel
@@ -187,6 +192,9 @@ if($Mode -eq 'Arm'){
  if(-not (Get-WinEvent -ListLog 'Microsoft-Windows-TaskScheduler/Operational' -ErrorAction Stop).IsEnabled){throw 'Task history is disabled'}
  [IO.File]::WriteAllText($oldXML,(Export-ScheduledTask -TaskName $task -TaskPath '\' -ErrorAction Stop),[Text.UTF8Encoding]::new($false))
  Copy-Item -LiteralPath $PSCommandPath -Destination $recoverScript -ErrorAction Stop
+ $internetHelper=Join-Path $root 'vm_direct_internet_probe.ps1'
+ RequireFile $internetHelper
+ if((SHA $internetHelper) -cne [string]$before.internetHelperSHA256){throw 'Direct TCP probe changed since original preboot snapshot'}
  $meta=[ordered]@{
   schema=1;kind='VOLVE_VM_REAL_MOTOR_ROLLBACK_PENDING';labId=$LabId;computer=$env:COMPUTERNAME;
   bootBeforeUtc=(BootUTC).ToString('o');oldTask=$task;watchdog=$watch;
@@ -194,6 +202,7 @@ if($Mode -eq 'Arm'){
   xmlSHA256=(SHA $oldXML);recoverySHA256=(SHA $recoverScript);
   eventParserSHA256=(SHA (Join-Path $root 'reboot_event_chain.ps1'));
   dnsParserSHA256=(SHA (Join-Path $root 'vm_dns_reply_contract.ps1'));
+  internetHelperSHA256=$before.internetHelperSHA256;
   networkJSON=$before.networkJSON;hostsSHA256=$before.hostsSHA256;
   originalArgs=$oldArg;candidateArgs=$candidateArg;status='recovery-required';
   signedPublisherPermit=$false;productionMotorMigration=$false
@@ -255,7 +264,13 @@ if($Mode -eq 'Recover'){
  $healthy=$false;$reason='No DNS checked'
  for($i=0;$i -lt 40;$i++){
   Start-Sleep -Milliseconds 900
-  try {$null=EngineIdentity $motor;SixDNS;$healthy=$true;break}
+  try {
+   $first=EngineIdentity $motor
+   SixDNS
+   $last=EngineIdentity $motor
+   if($first.ProcessId -ne $last.ProcessId -or $first.CreationDate -ne $last.CreationDate){throw 'Recovered motor changed during DNS checks'}
+   $healthy=$true;break
+  }
   catch {$reason=$_.Exception.Message}
  }
  if(-not $healthy){throw ('Original Full DNS motor not verified after rescue: '+$reason)}
@@ -283,7 +298,8 @@ if($Mode -eq 'Verify'){
  if($receipt.schema -ne 1 -or $receipt.kind -cne 'VOLVE_VM_INTEGRATED_FULL_DNS_ROLLBACK' -or
   $receipt.labId -cne $LabId -or $receipt.result -cne 'restored-real-lab-dns' -or
   $receipt.restoredBySystem -ne $true -or $receipt.publisherSigned -ne $false -or $receipt.dnsChecks -ne 6 -or
-  $receipt.motorSHA256 -cne $plan.motorSHA256 -or $receipt.originalTaskSHA256 -cne $plan.xmlSHA256){
+  $receipt.motorSHA256 -cne $plan.motorSHA256 -or $receipt.originalTaskSHA256 -cne $plan.xmlSHA256 -or
+  $receipt.bootBeforeUtc -cne $plan.bootBeforeUtc -or $receipt.bootAfterUtc -cne $bootAfter.ToString('o')){
   throw 'NOT VERIFIED: unexpected or incomplete SYSTEM receipt'
  }
  $null=TaskExact $task $motor $oldArg $true
@@ -299,6 +315,9 @@ if($Mode -eq 'Verify'){
  . (Join-Path $root 'vm_direct_internet_probe.ps1')
  $tcp=Assert-VolvDirectInternetTCP
  if(-not $tcp.Verified -or $tcp.Transport -cne 'direct-ipv4-tcp'){throw 'NOT VERIFIED: no direct TCP Internet after rollback'}
+ $last=EngineIdentity $motor
+ if($p.ProcessId -ne $last.ProcessId -or $p.CreationDate -ne $last.CreationDate){throw 'NOT VERIFIED: recovered motor replaced during health checks'}
+ VerifiedInputs $plan $root
  if((NetworkSnapshot) -cne $plan.networkJSON -or (SHA $hosts) -cne $plan.hostsSHA256){throw 'NOT VERIFIED: VM DNS adapter/hosts changed'}
  $result=[ordered]@{
   schema=1;kind='VOLVE_VM_INTEGRATED_REAL_MOTOR_ROLLBACK_PROOF';
@@ -307,7 +326,8 @@ if($Mode -eq 'Verify'){
   verifiedUtc=[DateTime]::UtcNow.ToString('o');watchdog=$watch;motorTask=$task;
   watchdogEventIds=$chain.EventIds;watchdogEventRecordIds=$chain.RecordIds;
   watchdogInstanceId=$chain.InstanceId;watchdogLastTaskResult=[int]$taskInfo.LastTaskResult;
-  motorPid=[int]$p.ProcessId;motorSHA256=$plan.motorSHA256;catalogSHA256=$plan.catalogSHA256;
+  motorPid=[int]$p.ProcessId;motorCreationUTC=$p.CreationDate.ToUniversalTime().ToString('o');
+  localDNS53ListenersVerified=4;motorSHA256=$plan.motorSHA256;catalogSHA256=$plan.catalogSHA256;
   originalTaskXMLSHA256=$plan.xmlSHA256;dnsIPv4IPv6Expected=6;dnsCorrect=6;
   directInternetTCP=$true;internetEndpoint=$tcp.Endpoint;
   signedProductionMigrationProven=$false;simulatedCandidate='cmd.exe /C exit 83';

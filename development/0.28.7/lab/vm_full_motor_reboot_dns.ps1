@@ -76,10 +76,12 @@ function OwnDNSProcess([string]$exe){
     if($owner.ReturnValue -ne 0 -or $owner.Sid -ne 'S-1-5-18'){
         throw 'VM DNS motor is not running as LocalSystem'
     }
-    foreach($hostIP in @('127.0.0.1','::1')){
-        $endpoints=@(Get-NetUDPEndpoint -LocalAddress $hostIP -LocalPort 53 -ErrorAction Stop)
-        if($endpoints.Count -ne 1 -or $endpoints[0].OwningProcess -ne $p.ProcessId){
-            throw ('DNS/53 is not exclusively owned by CI SYSTEM motor on '+$hostIP)
+    $listeners=@(Get-LoopbackDNSListeners)
+    if($listeners.Count -ne 4){throw 'Expected exactly four local DNS53 listeners'}
+    foreach($protocol in @('UDP','TCP')){
+        foreach($hostIP in @('127.0.0.1','::1')){
+            $matching=@($listeners|Where-Object {$_.Protocol -ceq $protocol -and $_.Address -ceq $hostIP -and $_.PID -eq $p.ProcessId})
+            if($matching.Count -ne 1){throw ('DNS53 exclusive SYSTEM socket missing: '+$protocol+' '+$hostIP)}
         }
     }
     return $p
@@ -223,8 +225,11 @@ if($Mode -eq 'Prepare'){
         for($i=0;$i -lt 45;$i++){
             Start-Sleep -Milliseconds 800
             try{
-                $null=OwnDNSProcess $exe
+                $firstProcess=OwnDNSProcess $exe
                 Assert-RealDNS
+                $lastProcess=OwnDNSProcess $exe
+                if($firstProcess.ProcessId -ne $lastProcess.ProcessId -or $firstProcess.CreationDate -ne $lastProcess.CreationDate){throw 'CI motor changed during preboot DNS checks'}
+                Write-Host 'PASS VOLVE_VM_SYSTEM_MOTOR_FOUR_LOCAL_SOCKETS_SAME_PROCESS'
                 $ok=$true
                 break
             }catch{
