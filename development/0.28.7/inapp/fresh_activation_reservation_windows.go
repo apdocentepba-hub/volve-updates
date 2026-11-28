@@ -80,3 +80,71 @@ func reserveFreshActivationUnderHeldLease(ctx context.Context,root string,raw,si
  if _,err:=verify();err!=nil{return denied,err}
  return receipt,nil
 }
+
+
+// This private controller joins the previously isolated fresh admission,
+// signed original archives and durable reservation to the existing DNS
+// transaction coordinator. No product entrypoint calls it yet. The caller
+// must supply an independently authenticated actual SYSTEM watchdog guard,
+// trusted host observations and native backend; the CI test supplies memory
+// DNS and a simulated guard. The native mutex itself is not simulated.
+type freshAdmissionGuard struct{
+ inner DNSActivationSafetyGuard
+ verify func(context.Context,string)error
+ review func(context.Context)error
+}
+func(g *freshAdmissionGuard)VerifyArmed(ctx context.Context,pin string)error{
+ if err:=g.verify(ctx,pin);err!=nil{return err}
+ if err:=g.inner.VerifyArmed(ctx,pin);err!=nil{return err}
+ return g.verify(ctx,pin)
+}
+func(g *freshAdmissionGuard)VerifyLiveProtection(ctx context.Context,pin string)error{
+ if err:=g.verify(ctx,pin);err!=nil{return err}
+ if err:=g.inner.VerifyLiveProtection(ctx,pin);err!=nil{return err}
+ return g.verify(ctx,pin)
+}
+func(g *freshAdmissionGuard)CommitActive(ctx context.Context,pin string)error{
+ if err:=g.verify(ctx,pin);err!=nil{return err}
+ if err:=g.review(ctx);err!=nil{return err}
+ if err:=g.VerifyArmed(ctx,pin);err!=nil{return err}
+ return g.inner.CommitActive(ctx,pin)
+}
+func(g *freshAdmissionGuard)RecoverIndependently(ctx context.Context,pin string)error{
+ // Expired admission or damaged review must not suppress emergency rescue.
+ return g.inner.RecoverIndependently(ctx,pin)
+}
+
+func activateFreshDNSUnderProtectedLease(ctx context.Context,root string,raw,sig []byte,key ed25519.PublicKey,pins freshActivationEvidence,host FreshMotorInstallEvidence,baseline ProtectionSnapshot,browser WindowsBrowserPolicyEvidence,inventory WindowsFreshVOLVETaskInventory,originalJournal []byte,inner DNSActivationSafetyGuard,factory dnsActivationBackendFactory)error{
+ if ctx==nil||inner==nil||factory==nil{return errors.New("fresh controller missing context, independent watchdog or backend")}
+ raw=append([]byte(nil),raw...);sig=append([]byte(nil),sig...);key=append(ed25519.PublicKey(nil),key...)
+ originalJournal=append([]byte(nil),originalJournal...)
+ if _,err:=verifyFreshActivationAdmission(ctx,raw,sig,key,pins,host,time.Now());err!=nil{return err}
+ if inventory.VOLVETaskCount!=0||inventory.VerifiedCatalogTask!=nil||len(inventory.UnknownTaskNames)!=0{return errors.New("fresh controller requires absence of original VOLVE tasks")}
+ reviewPin,err:=originalRecoveryReviewPin(pins.TransactionID,baseline,pins.OriginalDNSJournalSHA256)
+ if err!=nil||reviewPin!=pins.OriginalReviewSHA256{return errors.New("fresh admission not bound to original protection census")}
+ records,err:=VerifyDNSOriginalJournal(ctx,originalJournal,pins.OriginalDNSJournalSHA256)
+ if err!=nil{return err}
+ review:=func(c context.Context)error{
+  r,err:=inspectPersistedSignedReviewUnderLease(c,root,pins.TransactionID,key,baseline,browser,inventory,pins.OriginalDNSJournalSHA256)
+  if err!=nil||r.Status!="SIGNED_BOUND_FOUR_ARCHIVES_VERIFIED_READ_ONLY"||!r.HostsVerified||r.BrowserKeysVerified!=3||!r.DNSBackupVerified||!r.CatalogBackupVerified||r.CompleteRecoverySnapshot||r.InstallAuthorized||r.RestoreAuthorized{return errors.New("fresh controller requires intact signed four-archive review")}
+  return c.Err()
+ }
+ guard:=&freshAdmissionGuard{inner:inner,review:review,verify:func(c context.Context,pin string)error{
+  if pin!=pins.OriginalDNSJournalSHA256{return errors.New("fresh activation journal changed")}
+  _,err:=verifyFreshActivationAdmission(c,raw,sig,key,pins,host,time.Now())
+  return err
+ }}
+ return activateVOLVEDNSUnderProtectedLease(ctx,originalJournal,pins.OriginalDNSJournalSHA256,guard,AcquireProtectedResidentTransitionLease,func(c context.Context,held DNSActivationSafetyGuard)(DNSAdapterBackend,error){
+  exclusive,ok:=held.(*exclusiveDNSActivationGuard)
+  if !ok{return nil,errors.New("fresh controller lost shared native lease")}
+  if err:=held.VerifyArmed(c,pins.OriginalDNSJournalSHA256);err!=nil{return nil,err}
+  if err:=review(c);err!=nil{return nil,err}
+  // Refuse replays before calling even the read-only backend factory.
+  if _,err:=os.Lstat(filepath.Join(root,freshReservationName));!errors.Is(err,os.ErrNotExist){return nil,errors.New("fresh activation reservation already exists or is inaccessible")}
+  backend,err:=factory(c,held)
+  if err!=nil||backend==nil{return nil,errors.New("fresh controller backend unavailable")}
+  if err:=verifyDNSActivationTransition(c,records,backend,0);err!=nil{return nil,err}
+  if _,err:=reserveFreshActivationUnderHeldLease(c,root,raw,sig,key,pins,host,exclusive);err!=nil{return nil,err}
+  return backend,nil
+ })
+}

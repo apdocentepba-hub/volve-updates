@@ -7,6 +7,8 @@ import(
  "context"
  "crypto/ed25519"
  "crypto/rand"
+ "crypto/sha256"
+ "encoding/hex"
  "encoding/base64"
  "encoding/json"
  "errors"
@@ -55,3 +57,55 @@ func(*freshReservationFixtureGuard)VerifyArmed(context.Context,string)error{retu
 func(*freshReservationFixtureGuard)VerifyLiveProtection(context.Context,string)error{return errors.New("fixture cannot verify live protection")}
 func(*freshReservationFixtureGuard)RecoverIndependently(context.Context,string)error{return errors.New("fixture cannot restore DNS")}
 func(*freshReservationFixtureGuard)CommitActive(context.Context,string)error{return errors.New("fixture cannot commit activation")}
+
+
+func TestWindowsFreshControllerSignedArchivesAndRecovery(t *testing.T){
+ if os.Getenv("GITHUB_ACTIONS")!="true"||os.Getenv("RUNNER_ENVIRONMENT")!="github-hosted"{t.Skip("hosted NTFS only")}
+ ctx,cancel:=context.WithTimeout(context.Background(),150*time.Second);defer cancel()
+ _,snap,browser,hosts,policies:=makeOriginalProtectionPairFixture(t)
+ id:=strings.Repeat("b",32)
+ root:=filepath.Join(t.TempDir(),id)
+ parent:=filepath.Join(root,"original-protection-recovery")
+ dnsParent:=filepath.Join(root,"legacy-engine-recovery")
+ seal:=func(p string)error{return nativeSealApprovedOriginalBackupNode(ctx,p)}
+ check:=func(p string)error{return nativeDNSOriginalBackupACL(ctx,p)}
+ for _,dir:=range []string{root,parent,dnsParent}{if err:=os.Mkdir(dir,0700);err!=nil{t.Fatal(err)};if err:=seal(dir);err!=nil{t.Fatal(err)}}
+ observed,err:=InspectWindowsDNSAssignmentProvenanceReadOnly(ctx,protectionSnapshotDNSInspect)
+ if err!=nil{t.Fatal(err)}
+ journal,dnsPin,err:=BuildDNSOriginalJournal(ctx,observed.States)
+ if err!=nil{t.Fatal(err)}
+ snap.DNSAdaptersSHA256=observed.SHA256
+ sum:=sha256.Sum256([]byte(catalogTaskAbsentMarker))
+ snap.CatalogTaskDefinitionSHA256=hex.EncodeToString(sum[:])
+ inv:=WindowsFreshVOLVETaskInventory{}
+ if err:=storeOriginalWindowsHostsBackupUnarmed(ctx,parent,hosts,WindowsHostsFileEvidence{SHA256:snap.HostsSHA256,BlockedRuleCount:snap.HostsBlockedRuleCount},seal,check);err!=nil{t.Fatal(err)}
+ if err:=storeBrowserOriginalArchiveUnarmed(ctx,parent,browser,policies,seal,check);err!=nil{t.Fatal(err)}
+ if _,err:=StoreDNSOriginalBackupUnarmed(ctx,dnsParent,journal,dnsPin,seal,check);err!=nil{t.Fatal(err)}
+ if err:=storeOriginalCatalogArchiveUnarmed(ctx,parent,snap,inv,originalCatalogDefinition{},seal,check);err!=nil{t.Fatal(err)}
+ pin,err:=originalRecoveryReviewPin(id,snap,dnsPin);if err!=nil{t.Fatal(err)}
+ if err:=PersistBoundOriginalRecoveryNativeUnarmed(ctx,root,id,pin,snap,browser,inv,dnsPin);err!=nil{t.Fatal(err)}
+ pub,priv,err:=ed25519.GenerateKey(rand.Reader);if err!=nil{t.Fatal(err)}
+ reviewRaw,err:=json.Marshal(SignedOriginalRecoveryReview{1,signedOriginalRecoveryReviewComponent,id,pin});if err!=nil{t.Fatal(err)}
+ pins:=freshActivationEvidence{id,strings.Repeat("1",64),strings.Repeat("2",64),pin,dnsPin,strings.Repeat("5",64),strings.Repeat("6",64)}
+ now:=time.Now()
+ raw,err:=json.Marshal(freshActivationAdmission{1,freshActivationComponent,freshActivationOperation,pins,now.Add(-time.Minute).Unix(),now.Add(5*time.Minute).Unix()});if err!=nil{t.Fatal(err)}
+ sig:=[]byte(base64.StdEncoding.EncodeToString(ed25519.Sign(priv,raw)))
+ host:=FreshMotorInstallEvidence{InspectedAsAdministrator:true,InspectedMotorFiles:true,InspectedTaskScheduler:true,InspectedServices:true,InspectedDNSAdapters:true,InspectedPort53Listeners:true,InspectedRecoveryState:true}
+ backend:=&activationTestBackend{current:map[string]DNSServerState{},failOn:1}
+ for _,state:=range observed.States{backend.current[activationKey(state.InterfaceGUID,state.Family)]=copyActivationState(state)}
+ guard:=&activationTestGuard{backend:backend,originals:observed.States}
+ calls:=0
+ run:=func()error{return activateFreshDNSUnderProtectedLease(ctx,root,raw,sig,pub,pins,host,snap,browser,inv,journal,guard,func(context.Context,DNSActivationSafetyGuard)(DNSAdapterBackend,error){calls++;return backend,nil})}
+ marker:=filepath.Join(root,freshReservationName)
+ if err:=run();err==nil||calls!=0||backend.writes!=0{t.Fatal("unsigned historical review reached backend")}
+ if _,err:=os.Lstat(marker);!os.IsNotExist(err){t.Fatal("unsigned review consumed reservation")}
+ if err:=PersistSignedOriginalRecoveryNativeUnarmed(ctx,root,id,reviewRaw,ed25519.Sign(priv,reviewRaw),pub,snap,browser,inv,dnsPin);err!=nil{t.Fatal(err)}
+ // Real protected files + lease, simulated DNS write failure and rescue.
+ if err:=run();err==nil||!strings.Contains(err.Error(),"DNS activation write")||calls!=1||backend.writes!=1||guard.recoverCalls!=1||guard.commitCalls!=0{t.Fatal("failed activation did not request independent recovery",err)}
+ records,err:=VerifyDNSOriginalJournal(ctx,journal,dnsPin);if err!=nil{t.Fatal(err)}
+ if err:=verifyDNSActivationTransition(ctx,records,backend,0);err!=nil{t.Fatal("original readback differs",err)}
+ before,err:=os.ReadFile(marker);if err!=nil{t.Fatal(err)}
+ if err:=run();err==nil||calls!=1||backend.writes!=1||guard.commitCalls!=0{t.Fatal("replay reached backend",err)}
+ after,err:=os.ReadFile(marker);if err!=nil||!bytes.Equal(before,after){t.Fatal("replay modified durable marker")}
+ t.Log("PASS VOLVE_FRESH_SIGNED_ARCHIVES_RESERVATION_RECOVERY_CHAIN_MEMORY_DNS_ONLY")
+}
