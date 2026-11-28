@@ -27,7 +27,7 @@ import (
 // driver, and the resulting operations re-attest SYSTEM under the lock.
 func newPinnedResidentBootRecoveryDriverWindows(
  ctx context.Context,root string,
-)(motorupdate.ResidentBootRecoveryDriver,error){
+)(motorupdate.ResidentDNSBootRecoveryDriver,error){
  if err:=ctx.Err();err!=nil{return nil,err}
  if !filepath.IsAbs(root)||filepath.Clean(root)!=root{
   return nil,errors.New("signed resident boot driver requires canonical absolute installation root")
@@ -68,21 +68,30 @@ func newPinnedResidentBootRecoveryDriverWindows(
  }
  ops,err:=newResidentSignedBootOriginalOps(root,ed25519.PublicKey(key),deps)
  if err!=nil{return nil,err}
- // This is THE OS-wide Windows kernel lease, not a local test lock. The
- // inner operations are explicitly lock-held, avoiding double acquisition.
- // Never let this motor-only entry finalize a transaction that has
- // staged DNS evidence. The separate DNS-aware driver remains disabled
- // until the actual candidate fence and reboot/network tests pass.
- verifyScope:=func(ctx context.Context,intent motorupdate.ResidentRecoveryIntent)error{
-  grant,err:=motorupdate.LoadResidentDurablePublisherGrant(ctx,root,ed25519.PublicKey(key),acl,acl,acl)
-  if err!=nil{return err}
-  pending,err:=motorupdate.InspectResidentRecoveryJournal(ctx,grant.JournalDir,acl)
-  if err!=nil||pending.Status!="recovery-required"||pending.Intent!=intent{
-   return errors.New("signed recovery scope not bound to current pending intent")
+ // Fence the exact pending transaction and require an empty motor/port-53
+ // census before restoring DNS. This is deliberately conservative: it does
+ // not treat a live original listener as a stopped candidate.
+ fence:=func(checkCtx context.Context,intent motorupdate.ResidentRecoveryIntent)error{
+  if intent.Task!="VOLVE-DNS-SERVER-0270"||intent.TargetVersion!="0.28.7"{
+   return errors.New("DNS recovery intent is not the pinned VOLVE motor transaction")
   }
-  return motorupdate.VerifyExplicitResidentRecoveryScope(ctx,grant.Permit,grant.Signature,ed25519.PublicKey(key),motorupdate.ResidentRecoveryScopeMotorOnly,intent.Nonce)
+  evidence,err:=auditPostSwitchResidentRecovery(checkCtx,root)
+  if err!=nil{return fmt.Errorf("candidate recovery identity unavailable: %w",err)}
+  if evidence.LegacySHA256!=intent.LegacySHA256||
+   evidence.TaskXMLSHA256!=intent.TaskXMLSHA256||
+   evidence.TargetSHA256!=intent.TargetSHA256||
+   evidence.TargetVersion!=intent.TargetVersion||
+   evidence.IntentNonce!=intent.Nonce{
+   return errors.New("candidate fence does not match exact signed recovery intent")
+  }
+  decision,err:=auditResidentQuiescenceReadOnly(checkCtx,root)
+  if err!=nil{return fmt.Errorf("failed candidate/process/port-53 fence refused: %w",err)}
+  if !decision.ReadyForFurtherChecks||!decision.MotorProcessesStopped||!decision.DNSPortFree{
+   return errors.New("candidate or DNS endpoint remains active; original DNS restoration refused")
+  }
+  return checkCtx.Err()
  }
- return motorupdate.NewProtectedResidentBootDriver(&motorOnlyPinnedBootOps{root:root,original:ops,verifyScope:verifyScope})
+ return newNativeDurablePublisherDNSBootDriver(ops,root,ed25519.PublicKey(key),fence)
 }
 
 
