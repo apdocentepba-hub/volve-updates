@@ -74,12 +74,13 @@ try {
   # approved NSIS-to-SYSTEM candidate, not a stale source subset.
   Push-Location (Join-Path $env:GITHUB_WORKSPACE 'build/codigo')
   try {
-    $proof=@(go test ./motorupdate -count=1 -timeout 9m -v -run '^TestWindowsRealDNSSYSTEMWatchdogAfterUpdaterCrash$')
+    $proof=@(go test ./motorupdate -count=1 -timeout 11m -v -run '^TestWindowsRealDNSSYSTEMWatchdogAfterUpdaterCrash$')
     $exit=$LASTEXITCODE
     $proof|Write-Host
     if($exit -ne 0){throw 'Real LocalSystem watchdog / NTFS lab DNS recovery FAILED'}
     if(@($proof|Where-Object {$_ -match '^--- PASS: TestWindowsRealDNSSYSTEMWatchdogAfterUpdaterCrash '}).Count -ne 1){throw 'Real recovery test did not execute'}
     if(@($proof|Where-Object {$_ -match 'PASS VOLVE_FRESH_SIGNED_PENDING_REAL_SYSTEM_DNS_RESCUE_NATIVE_RECEIPT$'}).Count -ne 1){throw 'Fresh signed SYSTEM rescue was not proven'}
+    if(@($proof|Where-Object {$_ -match 'PASS VOLVE_FRESH_NATIVE_ADMISSION_RESERVED_BEFORE_REAL_DUAL_STACK_ACTIVATION_AND_SYSTEM_RESCUE$'}).Count -ne 1){throw 'Fresh protected native activation and recovery not proven'}
     Write-Host 'PASS VOLVE_CURRENT_CANDIDATE_ISOLATED_SYSTEM_DNS_CRASH_RESTORATION'
   }finally{Pop-Location}
 }finally{

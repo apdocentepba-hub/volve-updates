@@ -16,6 +16,7 @@ import (
  "crypto/rand"
  "reflect"
  "encoding/hex"
+ "encoding/base64"
  "encoding/json"
  "errors"
  "flag"
@@ -53,6 +54,8 @@ type windowsSYSDNSLabConfig struct {
  FreshRoot string
  FreshPins freshActivationEvidence
  FreshPub []byte
+ FreshAdmission []byte
+ FreshAdmissionSignature []byte
 }
 
 func windowsSYSDNSQuote(s string)string{return "'"+strings.ReplaceAll(s,"'","''")+"'"}
@@ -147,10 +150,10 @@ func windowsSYSDNSReadConfig(path string)(windowsSYSDNSLabConfig,error){
  }
  if c.FreshRoot!=""{
   if c.FreshRoot!=filepath.Join(filepath.Dir(c.PlanPath),c.FreshPins.TransactionID)||
-   len(c.FreshPub)!=ed25519.PublicKeySize||validateFreshActivationEvidence(c.FreshPins)!=nil{
+   len(c.FreshPub)!=ed25519.PublicKeySize||validateFreshActivationEvidence(c.FreshPins)!=nil||len(c.FreshAdmission)==0||len(c.FreshAdmissionSignature)==0{
    return c,errors.New("invalid disposable fresh rescue identity")
   }
- }else if c.FreshPins!=(freshActivationEvidence{})||len(c.FreshPub)!=0{return c,errors.New("partial fresh lab configuration")}
+ }else if c.FreshPins!=(freshActivationEvidence{})||len(c.FreshPub)!=0||len(c.FreshAdmission)!=0||len(c.FreshAdmissionSignature)!=0{return c,errors.New("partial fresh lab configuration")}
  return c,nil
 }
 
@@ -171,7 +174,7 @@ func windowsSYSDNSWatchdog(t *testing.T){
     []byte("LocalSystem watchdog refused at stage: "+stage),0600)
   }
  }()
- ctx,cancel:=context.WithTimeout(context.Background(),240*time.Second)
+ ctx,cancel:=context.WithTimeout(context.Background(),360*time.Second)
  defer cancel()
  if cfg.FreshRoot!=""{
   if err:=nativeDNSOriginalBackupACL(ctx,*windowsSYSDNSConfigFlag);err!=nil{t.Fatal("fresh CI configuration not sealed",err)}
@@ -349,7 +352,7 @@ func TestWindowsRealDNSSYSTEMWatchdogAfterUpdaterCrash(t *testing.T){
   t.Skip("real SYSTEM DNS test requires uniquely disposable internal Hyper-V CI workflow")
  }
  if os.Getenv("GITHUB_ACTIONS")!="true"{t.Fatal("not on ephemeral GitHub Windows runner")}
- ctx,cancel:=context.WithTimeout(context.Background(),360*time.Second)
+ ctx,cancel:=context.WithTimeout(context.Background(),480*time.Second)
  defer cancel()
  alias,guid:=os.Getenv("VOLVE_CI_DNS_LAB_ALIAS"),os.Getenv("VOLVE_CI_DNS_LAB_GUID")
  if _,err:=VerifyWindowsDisposableDNSAdapterReadOnly(ctx,alias,guid,
@@ -407,7 +410,7 @@ func TestWindowsRealDNSSYSTEMWatchdogAfterUpdaterCrash(t *testing.T){
  }
  if os.Getenv("VOLVE_CI_FRESH_REAL_RESCUE")=="1"{
   if os.Getenv("RUNNER_ENVIRONMENT")!="github-hosted"{t.Fatal("fresh real rescue requires hosted disposable VM")}
-  cfg.FreshRoot,cfg.FreshPins,cfg.FreshPub=prepareFreshSYSTEMRecoveryLab(t,ctx,root,records)
+  cfg.FreshRoot,cfg.FreshPins,cfg.FreshPub,cfg.FreshAdmission,cfg.FreshAdmissionSignature=prepareFreshSYSTEMRecoveryLab(t,ctx,root,records)
  }
  configPath:=filepath.Join(root,"system-watchdog-config.json")
  conf,err:=json.Marshal(cfg);if err!=nil{t.Fatal(err)}
@@ -494,6 +497,18 @@ func TestWindowsRealDNSSYSTEMWatchdogAfterUpdaterCrash(t *testing.T){
   }()
   release()
   if verifyErr!=nil{t.Fatal("separate controller could not reopen fresh SYSTEM DNS completion",verifyErr)}
+  // Verify the independently consumed admission, not only the recovery.
+  raw,err:=os.ReadFile(filepath.Join(cfg.FreshRoot,freshReservationName))
+  if err!=nil{t.Fatal("missing native activation reservation",err)}
+  var receipt freshActivationReservation
+  if err:=json.Unmarshal(raw,&receipt);err!=nil{t.Fatal(err)}
+  sum:=sha256.Sum256(cfg.FreshAdmission)
+  if receipt.Evidence!=cfg.FreshPins||receipt.AdmissionSHA256!=hex.EncodeToString(sum[:]){t.Fatal("native activation receipt not bound to exact signed admission")}
+  release,err=AcquireProtectedResidentTransitionLease(ctx);if err!=nil{t.Fatal(err)}
+  verifyErr=verifyFreshReservationNative(ctx,cfg.FreshRoot,receipt)
+  release()
+  if verifyErr!=nil{t.Fatal("native activation receipt verification failed",verifyErr)}
+  t.Log("PASS VOLVE_FRESH_NATIVE_ADMISSION_RESERVED_BEFORE_REAL_DUAL_STACK_ACTIVATION_AND_SYSTEM_RESCUE")
   t.Log("PASS VOLVE_FRESH_SIGNED_PENDING_REAL_SYSTEM_DNS_RESCUE_NATIVE_RECEIPT")
  }
  t.Log("PASS: SYSTEM watchdog with genuine at-startup trigger prearmed BEFORE first DNS write, restored REAL IPv4/IPv6 after crash with sealed NTFS CI permit and durable receipt")
@@ -504,7 +519,7 @@ func TestWindowsRealDNSSYSTEMWatchdogAfterUpdaterCrash(t *testing.T){
 // this fixture are explicitly synthetic CI identities, not publisher trust.
 // The DNS original is the existing disposable vNIC's fixed lab plan.
 // No user or production installation root is accepted.
-func prepareFreshSYSTEMRecoveryLab(t *testing.T,ctx context.Context,outer string,records []DNSRestoreRecord)(string,freshActivationEvidence,[]byte){
+func prepareFreshSYSTEMRecoveryLab(t *testing.T,ctx context.Context,outer string,records []DNSRestoreRecord)(string,freshActivationEvidence,[]byte,[]byte,[]byte){
  t.Helper()
  nonce:=make([]byte,16);if _,err:=rand.Read(nonce);err!=nil{t.Fatal(err)}
  id:=hex.EncodeToString(nonce)
@@ -526,7 +541,11 @@ func prepareFreshSYSTEMRecoveryLab(t *testing.T,ctx context.Context,outer string
  pub,private,err:=ed25519.GenerateKey(rand.Reader);if err!=nil{t.Fatal(err)}
  permit,err:=json.Marshal(freshRecoveryPermit{1,freshRecoveryPermitComponent,freshRecoveryOperation,pins});if err!=nil{t.Fatal(err)}
  if err:=persistFreshRecoveryPermitNative(ctx,root,permit,ed25519.Sign(private,permit),pub,pins);err!=nil{t.Fatal(err)}
- return root,pins,pub
+ now:=time.Now()
+ admission,err:=json.Marshal(freshActivationAdmission{2,freshActivationComponent,freshActivationOperation,pins,now.Unix(),now.Add(10*time.Minute).Unix()})
+ if err!=nil{t.Fatal(err)}
+ signature:=[]byte(base64.StdEncoding.EncodeToString(ed25519.Sign(private,admission)))
+ return root,pins,pub,admission,signature
 }
 func runFreshSYSTEMRecoveryLab(ctx context.Context,cfg windowsSYSDNSLabConfig,records []DNSRestoreRecord,scoped WindowsReadOnlyPowerShell,attestor WindowsSealedDNSRecoveryAttestor,index uint32)error{
  if err:=VerifyWindowsCurrentSystemSIDReadOnly();err!=nil{return err}
@@ -568,4 +587,91 @@ func runFreshSYSTEMRecoveryLab(ctx context.Context,cfg windowsSYSDNSLabConfig,re
  if err:=restoreFreshOriginalDNSUnderLease(ctx,cfg.FreshRoot,cfg.FreshPub,cfg.FreshPins,fence,scoped,invoke);err!=nil{return err}
  if writes!=3{return errors.New("fresh real DNS completion was not idempotent")}
  return nil
+}
+
+
+// CI-only native activation guard. The parent has created a separate
+// SYSTEM task which holds the exact live updater handle. This guard is
+// never a production trust root, health/commit adapter, or full installer.
+type freshCrashActivationLabGuard struct{
+ freshReservationFixtureGuard
+ verify func(context.Context,string)error
+}
+func(g *freshCrashActivationLabGuard)VerifyArmed(ctx context.Context,pin string)error{return g.verify(ctx,pin)}
+
+func activateFreshCrashLabNative(ctx context.Context,plan windowsDNSCrashRecoveryPlan,index uint32)error{
+ if os.Getenv("GITHUB_ACTIONS")!="true"||os.Getenv("RUNNER_ENVIRONMENT")!="github-hosted"||os.Getenv("VOLVE_CI_DNS_REAL_DISPOSABLE")!="INTERNAL_HYPERV_VM_ONLY"||os.Getenv("VOLVE_CI_FRESH_REAL_RESCUE")!="1"{return errors.New("native activation trial requires disposable hosted VM")}
+ config:=filepath.Join(filepath.Dir(os.Getenv("VOLVE_CI_DNS_CRASH_PLAN")),"system-watchdog-config.json")
+ if err:=nativeDNSOriginalBackupACL(ctx,config);err!=nil{return err}
+ cfg,err:=windowsSYSDNSReadConfig(config)
+ if err!=nil{return err}
+ if cfg.FreshRoot==""||cfg.PID!=os.Getpid()||cfg.Alias!=plan.Alias||cfg.GUID!=plan.GUID||cfg.PlanPath!=os.Getenv("VOLVE_CI_DNS_CRASH_PLAN")||cfg.PlanSHA256!=os.Getenv("VOLVE_CI_DNS_CRASH_SHA256"){return errors.New("native activation trial config not bound to exact updater")}
+ scoped,err:=windowsCrashLabProvenanceInspector(cfg.Alias,cfg.GUID,DefaultWindowsReadOnlyPowerShell)
+ if err!=nil{return err}
+ originals:=[]DNSServerState{}
+ for _,r:=range plan.Records{originals=append(originals,r.Original)}
+ journal,pin,err:=BuildDNSOriginalJournal(ctx,originals)
+ if err!=nil||pin!=cfg.FreshPins.OriginalDNSJournalSHA256{return errors.New("native activation trial journal pin mismatch")}
+ records,err:=VerifyDNSOriginalJournal(ctx,journal,pin)
+ if err!=nil{return err}
+ // These flags refer to the disposable lab's synthetic initial inventory;
+ // no full-machine fresh-install authorization is inferred.
+ host:=FreshMotorInstallEvidence{InspectedAsAdministrator:true,InspectedMotorFiles:true,InspectedTaskScheduler:true,InspectedServices:true,InspectedDNSAdapters:true,InspectedPort53Listeners:true,InspectedRecoveryState:true}
+ release,err:=AcquireProtectedResidentTransitionLease(ctx)
+ if err!=nil{return err}
+ var spent *freshActivationReservation
+ guard:=&freshCrashActivationLabGuard{verify:func(c context.Context,p string)error{
+  if p!=pin{return errors.New("foreign lab activation journal")}
+  if _,err:=verifyFreshActivationAdmission(c,cfg.FreshAdmission,cfg.FreshAdmissionSignature,cfg.FreshPub,cfg.FreshPins,host,time.Now());err!=nil{return err}
+  permit,err:=loadFreshRecoveryPermitUnderLease(c,cfg.FreshRoot,cfg.FreshPub,cfg.FreshPins)
+  if err!=nil{return err}
+  pending,err:=expectedFreshRecoveryPending(cfg.FreshPins,permit)
+  if err!=nil{return err}
+  if err:=verifyFreshRecoveryPendingUnderLease(c,cfg.FreshRoot,pending);err!=nil{return err}
+  if err:=requireFreshDNSRestoredAbsent(c,cfg.FreshRoot);err!=nil{return err}
+  if spent!=nil{if err:=verifyFreshReservationNative(c,cfg.FreshRoot,*spent);err!=nil{return err}}
+  if err:=windowsSYSDNShellVerifyRunning(c,cfg,config);err!=nil{return err}
+  observed,err:=FindWindowsAdapterIndex(c,cfg.GUID,DefaultWindowsReadOnlyPowerShell)
+  if err!=nil||observed!=index{return errors.New("lab activation adapter index changed")}
+  return c.Err()
+ }}
+ held:=&exclusiveDNSActivationGuard{inner:guard,acquire:AcquireProtectedResidentTransitionLease,release:release}
+ defer held.close()
+ allowed:=[][]string{}
+ for _,r:=range records{
+  if !strings.EqualFold(r.Original.InterfaceGUID,cfg.GUID){return errors.New("foreign lab activation adapter")}
+  cmds,err:=PlanWindowsDNSRestore(r.Expected,index);if err!=nil{return err}
+  for _,cmd:=range cmds{allowed=append(allowed,cmd.Args)}
+ }
+ writes:=0
+ backend,err:=newWindowsPinnedDNSActivationBackend(ctx,journal,pin,scoped,func(c context.Context,args []string)error{
+  ok:=false;for _,exact:=range allowed{if reflect.DeepEqual(exact,args){ok=true}}
+  if !ok||spent==nil{return errors.New("unreserved or out-of-scope native lab activation")}
+  if err:=runPinnedWindowsNativeDNS(c,args);err!=nil{return err}
+  writes++
+  return nil
+ },held)
+ if err!=nil{return err}
+ if err:=verifyDNSActivationTransition(ctx,records,backend,0);err!=nil{return err}
+ reservation,err:=reserveFreshActivationUnderHeldLease(ctx,cfg.FreshRoot,cfg.FreshAdmission,cfg.FreshAdmissionSignature,cfg.FreshPub,cfg.FreshPins,host,held)
+ if err!=nil{return err}
+ spent=&reservation
+ for i,r:=range records{
+  if err:=held.VerifyArmed(ctx,pin);err!=nil{return err}
+  if err:=verifyDNSActivationTransition(ctx,records,backend,i);err!=nil{return err}
+  if err:=backend.Apply(ctx,r.Expected);err!=nil{return err}
+  if err:=verifyDNSActivationTransition(ctx,records,backend,i+1);err!=nil{return err}
+ }
+ if writes!=2{return errors.New("native trial did not perform exactly two family writes")}
+ // Intentional crash follows in the existing child handshake. No commit,
+ // no claim of live health, and no production activation is attempted.
+ return held.VerifyArmed(ctx,pin)
+}
+
+func windowsSYSDNShellVerifyRunning(ctx context.Context,cfg windowsSYSDNSLabConfig,config string)error{
+ if !windowsSYSDNSTaskPattern.MatchString(cfg.Task){return errors.New("invalid lab watchdog task identity")}
+ args:="-test.run=^TestWindowsRealDNSSYSTEMWatchdogAfterUpdaterCrash$ -test.v -volve-ci-sys-watchdog-config="+"\""+config+"\""
+ q:=windowsSYSDNSQuote
+ return windowsSYSDNSShell(ctx,`$ErrorActionPreference='Stop';$t=Get-ScheduledTask -TaskPath '\' -TaskName `+q(cfg.Task)+` -ErrorAction Stop;
+ if($t.State -ne 'Running' -or $t.Principal.UserId -notin @('SYSTEM','S-1-5-18') -or @($t.Actions).Count -ne 1 -or @($t.Triggers).Count -ne 1 -or $t.Triggers[0].CimClass.CimClassName -ne 'MSFT_TaskBootTrigger' -or $t.Actions[0].Execute -ine `+q(os.Args[0])+` -or $t.Actions[0].Arguments -cne `+q(args)+`){throw 'Independent lab SYSTEM watchdog no longer running with exact action'}`)
 }

@@ -106,7 +106,7 @@ func windowsDNSCrashAwaitFile(ctx context.Context,path string)error{
 func windowsDNSCrashChildUpdater(t *testing.T){
  plan,err:=windowsDNSCrashPlanFromDisk()
  if err!=nil{t.Fatal(err)}
- ctx,cancel:=context.WithTimeout(context.Background(),110*time.Second)
+ ctx,cancel:=context.WithTimeout(context.Background(),300*time.Second)
  defer cancel()
  adapter,err:=VerifyWindowsDisposableDNSAdapterReadOnly(ctx,plan.Alias,plan.GUID,DefaultWindowsDisposableDNSInspect)
  if err!=nil{t.Fatalf("updater did not prove fresh isolated adapter: %v",err)}
@@ -128,8 +128,12 @@ func windowsDNSCrashChildUpdater(t *testing.T){
  for _,record:=range plan.Records {
   if err:=windowsDNSCrashApplyAndVerify(ctx,record,index,true);err!=nil{t.Fatal(err)}
  }
- for _,record:=range plan.Records {
-  if err:=windowsDNSCrashApplyAndVerify(ctx,record,index,false);err!=nil{t.Fatal(err)}
+ if os.Getenv("VOLVE_CI_FRESH_REAL_RESCUE")=="1"{
+  if err:=activateFreshCrashLabNative(ctx,plan,index);err!=nil{t.Fatal("native fresh activation trial failed",err)}
+ }else{
+  for _,record:=range plan.Records {
+   if err:=windowsDNSCrashApplyAndVerify(ctx,record,index,false);err!=nil{t.Fatal(err)}
+  }
  }
  if _,err:=VerifyWindowsDisposableDNSAdapterWithLocalDNSReadOnly(ctx,plan.Alias,plan.GUID,DefaultWindowsDisposableDNSInspect);err!=nil{
   t.Fatalf("updater produced untrusted network state: %v",err)
