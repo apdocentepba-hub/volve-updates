@@ -169,7 +169,14 @@ func TestSignedBootPolicyFullRecoveryUnderSharedMutexSealsExactlyOnce(t *testing
  }
  ops,err:=newResidentSignedBootOriginalOps(root,ed25519.PublicKey(key),deps)
  if err!=nil{t.Fatal(err)}
- driver,err:=motorupdate.NewProtectedResidentBootDriver(ops)
+ motorOnly:=&motorOnlyPinnedBootOps{
+  root:root,
+  original:ops,
+  // This fixture uses a synthetic signed motor-only grant. Production
+  // construction pins and verifies the durable grant in the real watchdog.
+  verifyScope:func(context.Context,motorupdate.ResidentRecoveryIntent)error{return nil},
+ }
+ driver,err:=motorupdate.NewProtectedResidentBootDriver(motorOnly)
  if err!=nil{t.Fatal(err)}
  sealed:=func(path string)error{
   hardenedTestACL(t,path,path)
