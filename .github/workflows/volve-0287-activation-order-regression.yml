@@ -10,7 +10,7 @@ permissions:
 jobs:
   order-regression:
     runs-on: windows-2025
-    timeout-minutes: 12
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
         with:
@@ -52,7 +52,7 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference='Stop'
-          $result=@(go test ./motorupdate -run '^(TestFreshActivationAdmissionSeparatesFreshFromMigration|TestWindowsFreshReservationNativeCreateOnly|TestWindowsFreshControllerSignedArchivesAndRecovery|TestWindowsFreshWatchdogNativeRegistrationAttestation|TestWindowsFreshNativeActivationRejectsNonSYSTEM|TestWindowsFreshRecoveryPermitDistinctScope|TestWindows(ActivationPolicyDriftInsideAttestationPreventsCommit|DNSActivationOverrideGuardRejectsDriftWithoutSuppressingRecovery|PinnedDNSActivation.*))$' -count=1 -v -timeout 7m)
+          $result=@(go test ./motorupdate -run '^(TestFreshActivationAdmissionSeparatesFreshFromMigration|TestWindowsFreshReservationNativeCreateOnly|TestWindowsFreshControllerSignedArchivesAndRecovery|TestWindowsFreshWatchdogNativeRegistrationAttestation|TestWindowsFreshNativeActivationRejectsNonSYSTEM|TestWindowsFreshRecoveryPermitDistinctScope|TestWindowsFreshPersistedRecoveryResumesWithoutActivationGrant|TestWindows(ActivationPolicyDriftInsideAttestationPreventsCommit|DNSActivationOverrideGuardRejectsDriftWithoutSuppressingRecovery|PinnedDNSActivation.*))$' -count=1 -v -timeout 10m)
           $code=$LASTEXITCODE
           $result|Write-Host
           if($code -ne 0){throw 'Activation order regression failed'}
@@ -65,4 +65,5 @@ jobs:
           if(@($result|Where-Object {$_ -match 'PASS VOLVE_FRESH_NATIVE_WATCHDOG_REGISTRATION_PINNED_INERT_NO_START_NO_DNS$'}).Count -ne 1){throw 'Missing native watchdog registration proof'}
           if(@($result|Where-Object {$_ -match 'PASS VOLVE_FRESH_WATCHDOG_ADMISSION_BINDS_XML_EXE_DACL$'}).Count -ne 1 -or @($result|Where-Object {$_ -match 'PASS VOLVE_FRESH_NATIVE_ROUTE_REFUSES_NON_SYSTEM_NO_WRITES$'}).Count -ne 1){throw 'Missing fresh native admission binding and non-SYSTEM refusal proof'}
           if(@($result|Where-Object {$_ -match 'PASS VOLVE_FRESH_RECOVERY_PERMIT_DISTINCT_SCOPE_NO_ACTIVATION_EXPIRY$'}).Count -ne 1){throw 'Missing fresh recovery-only scope proof'}
+          if(@($result|Where-Object {$_ -match 'PASS VOLVE_FRESH_PERSISTED_RESCUE_RESUME_IDEMPOTENT_WITHOUT_ACTIVATION_MEMORY_DNS_ONLY$'}).Count -ne 1){throw 'Missing durable fresh rescue resume proof'}
           Write-Host 'PASS VOLVE_ACTIVATION_ORDER_MEMORY_ONLY_NO_INSTALL_NO_RELEASE'

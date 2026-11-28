@@ -16,6 +16,7 @@ import(
  "encoding/hex"
  "encoding/json"
  "errors"
+ "fmt"
  "io"
  "os"
  "os/exec"
@@ -330,6 +331,9 @@ func activateFreshDNSAsSYSTEM(ctx context.Context,root string,raw,sig []byte,key
  if err:=VerifyWindowsCurrentSystemSIDReadOnly();err!=nil{return errors.New("fresh native activation requires actual LocalSystem")}
  if watchdog.Name!="VOLVE-FRESH-WATCHDOG"{return errors.New("fresh native activation requires exact production watchdog identity")}
  if err:=bindFreshWatchdogAdmission(pins,watchdog);err!=nil{return err}
+ // Detach once before closures retain the trusted evidence.
+ raw=append([]byte(nil),raw...);sig=append([]byte(nil),sig...)
+ key=append(ed25519.PublicKey(nil),key...);originalJournal=append([]byte(nil),originalJournal...)
  if _,err:=verifyFreshActivationAdmission(ctx,raw,sig,key,pins,host,time.Now());err!=nil{return err}
  // Native registration attestation and all-policy baseline comparison
  // are repeated inside the shared activation lease. Recovery is delegated
@@ -337,10 +341,17 @@ func activateFreshDNSAsSYSTEM(ctx context.Context,root string,raw,sig []byte,key
  policy:=&dnsActivationOverrideGuard{inner:independent,observe:func(c context.Context)(WindowsDNSOverrideCensus,error){
   return InspectWindowsDNSOverrideCensusReadOnly(c,DefaultWindowsReadOnlyPowerShell)
  }}
+ var firstRescue *freshRecoveryEnvelope
  native:=&freshAdmissionGuard{inner:independent,review:func(c context.Context)error{return c.Err()},verify:func(c context.Context,pin string)error{
   if pin!=pins.OriginalDNSJournalSHA256{return errors.New("fresh native original DNS pin mismatch")}
   if err:=VerifyWindowsCurrentSystemSIDReadOnly();err!=nil{return err}
   if err:=verifyFreshWatchdogRegistrationNative(c,watchdog);err!=nil{return err}
+  // Require the distinct, durable rescue authorization BEFORE activation
+  // and throughout the protected transition. Rescue itself never depends
+  // on the activation permit or reservation remaining readable.
+  rescue,err:=loadFreshRecoveryPermitUnderLease(c,root,key,pins)
+  if err!=nil{return fmt.Errorf("fresh native activation lacks protected recovery permit: %w",err)}
+  if firstRescue==nil{firstRescue=&rescue}else if !bytes.Equal(firstRescue.Payload,rescue.Payload)||!bytes.Equal(firstRescue.Signature,rescue.Signature){return errors.New("fresh recovery permit changed during activation")}
   if !policy.captured{
    if err:=policy.capture(c);err!=nil{return err}
    if policy.baseline!=expectedPolicy{return errors.New("fresh native DNS policy changed since original census")}
