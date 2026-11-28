@@ -67,10 +67,20 @@ func(*freshReservationFixtureGuard)CommitActive(context.Context,string)error{ret
 
 
 func TestWindowsFreshControllerSignedArchivesAndRecovery(t *testing.T){
+ runFreshControllerSignedArchives(t,true)
+}
+
+func TestWindowsFreshControllerSignedArchivesSuccessfulCommit(t *testing.T){
+ runFreshControllerSignedArchives(t,false)
+}
+
+func runFreshControllerSignedArchives(t *testing.T, corrupt bool){
+ t.Helper()
  if os.Getenv("GITHUB_ACTIONS")!="true"||os.Getenv("RUNNER_ENVIRONMENT")!="github-hosted"{t.Skip("hosted NTFS only")}
  ctx,cancel:=context.WithTimeout(context.Background(),240*time.Second);defer cancel()
  _,snap,browser,hosts,policies:=makeOriginalProtectionPairFixture(t)
  id:=strings.Repeat("b",32)
+ if !corrupt{id=strings.Repeat("d",32)}
  root:=filepath.Join(t.TempDir(),id)
  parent:=filepath.Join(root,"original-protection-recovery")
  dnsParent:=filepath.Join(root,"legacy-engine-recovery")
@@ -104,10 +114,32 @@ func TestWindowsFreshControllerSignedArchivesAndRecovery(t *testing.T){
  calls:=0
  marker:=filepath.Join(root,freshReservationName)
  corrupted:=&freshReservationCorruptingBackend{activationTestBackend:backend,marker:marker}
- run:=func()error{return activateFreshDNSUnderProtectedLease(ctx,root,raw,sig,pub,pins,host,snap,browser,inv,journal,guard,func(context.Context,DNSActivationSafetyGuard)(DNSAdapterBackend,error){calls++;return corrupted,nil})}
+ run:=func()error{return activateFreshDNSUnderProtectedLease(ctx,root,raw,sig,pub,pins,host,snap,browser,inv,journal,guard,func(context.Context,DNSActivationSafetyGuard)(DNSAdapterBackend,error){calls++;if corrupt{return corrupted,nil};return backend,nil})}
  if err:=run();err==nil||calls!=0||backend.writes!=0{t.Fatal("unsigned historical review reached backend")}
  if _,err:=os.Lstat(marker);!os.IsNotExist(err){t.Fatal("unsigned review consumed reservation")}
  if err:=PersistSignedOriginalRecoveryNativeUnarmed(ctx,root,id,reviewRaw,ed25519.Sign(priv,reviewRaw),pub,snap,browser,inv,dnsPin);err!=nil{t.Fatal(err)}
+ if !corrupt{
+  // Successful DNS coordinator path, real protected archives/reservation
+  // but memory-only backend and simulated health/commit callback.
+  // This deliberately is NOT a durable product installation commit.
+  if err:=run();err!=nil{t.Fatal("signed fresh healthy path refused",err)}
+  records,err:=VerifyDNSOriginalJournal(ctx,journal,dnsPin);if err!=nil{t.Fatal(err)}
+  if calls!=1||backend.writes!=len(records)||guard.healthCalls!=1||guard.commitCalls!=1||guard.recoverCalls!=0{t.Fatal("successful transaction did not reach exactly one health/commit callback")}
+  if err:=verifyDNSActivationTransition(ctx,records,backend,len(records));err!=nil{t.Fatal("active DNS readback differs",err)}
+  before,err:=os.ReadFile(marker);if err!=nil{t.Fatal(err)}
+  var receipt freshActivationReservation
+  if err:=json.Unmarshal(before,&receipt);err!=nil{t.Fatal(err)}
+  sum:=sha256.Sum256(raw)
+  if receipt.Evidence!=pins||receipt.AdmissionSHA256!=hex.EncodeToString(sum[:]){t.Fatal("consumed receipt does not bind admission")}
+  release,err:=AcquireProtectedResidentTransitionLease(ctx);if err!=nil{t.Fatal(err)}
+  checkErr:=verifyFreshReservationNative(ctx,root,receipt)
+  release()
+  if checkErr!=nil{t.Fatal(checkErr)}
+  if err:=run();err==nil||calls!=1||backend.writes!=len(records)||guard.commitCalls!=1||guard.recoverCalls!=0{t.Fatal("successful admission replay reached backend or repeated commit",err)}
+  after,err:=os.ReadFile(marker);if err!=nil||!bytes.Equal(before,after){t.Fatal("successful replay modified durable receipt")}
+  t.Log("PASS VOLVE_FRESH_SIGNED_ARCHIVES_HEALTH_COMMIT_ONCE_MEMORY_DNS_ONLY")
+  return
+ }
  // Real protected files + lease, simulated successful first DNS write
  // followed by deliberate damage to the consumed receipt.
  if err:=run();err==nil||!strings.Contains(err.Error(),"recovery attestation lost")||calls!=1||backend.writes!=1||guard.recoverCalls!=1||guard.commitCalls!=0||!corrupted.corrupted{t.Fatal("damaged reservation did not prevent next write and request rescue",err)}
