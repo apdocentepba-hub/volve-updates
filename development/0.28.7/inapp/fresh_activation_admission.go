@@ -16,7 +16,7 @@ import (
  "time"
 )
 
-const freshActivationComponent="volve-publisher-fresh-activation-admission-v1"
+const freshActivationComponent="volve-publisher-fresh-activation-admission-v2"
 const freshActivationOperation="fresh-motor-install-and-local-dns"
 
 type freshActivationEvidence struct {
@@ -27,6 +27,8 @@ type freshActivationEvidence struct {
  OriginalDNSJournalSHA256 string `json:"original_dns_journal_sha256"`
  WatchdogTaskXMLSHA256 string `json:"watchdog_task_xml_sha256"`
  OwnerApprovalSHA256 string `json:"owner_approval_sha256"`
+ WatchdogExecutableSHA256 string `json:"watchdog_executable_sha256"`
+ WatchdogSecurityDescriptorSHA256 string `json:"watchdog_security_descriptor_sha256"`
 }
 type freshActivationAdmission struct {
  Schema int `json:"schema"`
@@ -42,7 +44,7 @@ func validateFreshActivationEvidence(e freshActivationEvidence)error{
  IntentNonce:e.TransactionID,OriginalDNSJournalSHA256:e.OriginalDNSJournalSHA256,
  TargetMotorSHA256:e.MotorSHA256,WatchdogTaskXMLSHA256:e.WatchdogTaskXMLSHA256});err!=nil{return err}
  if e.TransactionID==strings.Repeat("0",32){return errors.New("fresh transaction ID is zero")}
- for _,v:=range []string{e.SignedPackageSHA256,e.MotorSHA256,e.OriginalReviewSHA256,e.OriginalDNSJournalSHA256,e.WatchdogTaskXMLSHA256,e.OwnerApprovalSHA256}{
+ for _,v:=range []string{e.SignedPackageSHA256,e.MotorSHA256,e.OriginalReviewSHA256,e.OriginalDNSJournalSHA256,e.WatchdogTaskXMLSHA256,e.OwnerApprovalSHA256,e.WatchdogExecutableSHA256,e.WatchdogSecurityDescriptorSHA256}{
   if err:=verifyCanonicalLowerSHA256(v);err!=nil||v==strings.Repeat("0",64){return errors.New("fresh activation evidence pin invalid")}
  }
  return nil
@@ -66,7 +68,7 @@ func verifyFreshActivationAdmission(ctx context.Context,raw,signature []byte,key
  if err:=json.Unmarshal(raw,&got);err!=nil{return denied,err}
  canonical,err:=json.Marshal(got)
  if err!=nil||!bytes.Equal(raw,canonical){return denied,errors.New("fresh admission must be exact canonical JSON")}
- if got.Schema!=1||got.Component!=freshActivationComponent||got.Operation!=freshActivationOperation||got.Evidence!=pins{return denied,errors.New("fresh admission scope or independent evidence mismatch")}
+ if got.Schema!=2||got.Component!=freshActivationComponent||got.Operation!=freshActivationOperation||got.Evidence!=pins{return denied,errors.New("fresh admission scope or independent evidence mismatch")}
  issued,expires:=time.Unix(got.IssuedAtUnix,0),time.Unix(got.ExpiresAtUnix,0)
  life:=expires.Sub(issued)
  if life<=0||life>dnsActivationGrantMaxLifetime||issued.After(now.Add(dnsActivationGrantMaxClockSkew))||!now.Before(expires){return denied,errors.New("fresh admission outside valid time window")}

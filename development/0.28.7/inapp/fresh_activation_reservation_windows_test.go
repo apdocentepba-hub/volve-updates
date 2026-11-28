@@ -22,7 +22,7 @@ import(
 func TestWindowsFreshReservationNativeCreateOnly(t *testing.T){
  if os.Getenv("GITHUB_ACTIONS")!="true"||os.Getenv("RUNNER_ENVIRONMENT")!="github-hosted"{t.Skip("hosted NTFS only")}
  ctx,cancel:=context.WithTimeout(context.Background(),60*time.Second);defer cancel()
- pins:=freshActivationEvidence{strings.Repeat("a",32),strings.Repeat("1",64),strings.Repeat("2",64),strings.Repeat("3",64),strings.Repeat("4",64),strings.Repeat("5",64),strings.Repeat("6",64)}
+ pins:=freshActivationEvidence{strings.Repeat("a",32),strings.Repeat("1",64),strings.Repeat("2",64),strings.Repeat("3",64),strings.Repeat("4",64),strings.Repeat("5",64),strings.Repeat("6",64),strings.Repeat("7",64),strings.Repeat("8",64)}
  root:=filepath.Join(t.TempDir(),pins.TransactionID)
  if err:=os.Mkdir(root,0700);err!=nil{t.Fatal(err)}
  if err:=nativeSealApprovedOriginalBackupNode(ctx,root);err!=nil{t.Fatal(err)}
@@ -33,7 +33,7 @@ func TestWindowsFreshReservationNativeCreateOnly(t *testing.T){
  if err:=residentCreate(reviewPath,historical,func(p string)error{return nativeSealApprovedOriginalBackupNode(ctx,p)},func(p string)error{return nativeDNSOriginalBackupACL(ctx,p)});err!=nil{t.Fatal(err)}
  pub,priv,err:=ed25519.GenerateKey(rand.Reader);if err!=nil{t.Fatal(err)}
  now:=time.Now()
- raw,err:=json.Marshal(freshActivationAdmission{1,freshActivationComponent,freshActivationOperation,pins,now.Add(-time.Minute).Unix(),now.Add(5*time.Minute).Unix()});if err!=nil{t.Fatal(err)}
+ raw,err:=json.Marshal(freshActivationAdmission{2,freshActivationComponent,freshActivationOperation,pins,now.Add(-time.Minute).Unix(),now.Add(5*time.Minute).Unix()});if err!=nil{t.Fatal(err)}
  sig:=[]byte(base64.StdEncoding.EncodeToString(ed25519.Sign(priv,raw)))
  host:=FreshMotorInstallEvidence{InspectedAsAdministrator:true,InspectedMotorFiles:true,InspectedTaskScheduler:true,InspectedServices:true,InspectedDNSAdapters:true,InspectedPort53Listeners:true,InspectedRecoveryState:true}
  release,err:=AcquireProtectedResidentTransitionLease(ctx);if err!=nil{t.Fatal(err)}
@@ -93,9 +93,9 @@ func TestWindowsFreshControllerSignedArchivesAndRecovery(t *testing.T){
  if err:=PersistBoundOriginalRecoveryNativeUnarmed(ctx,root,id,pin,snap,browser,inv,dnsPin);err!=nil{t.Fatal(err)}
  pub,priv,err:=ed25519.GenerateKey(rand.Reader);if err!=nil{t.Fatal(err)}
  reviewRaw,err:=json.Marshal(SignedOriginalRecoveryReview{1,signedOriginalRecoveryReviewComponent,id,pin});if err!=nil{t.Fatal(err)}
- pins:=freshActivationEvidence{id,strings.Repeat("1",64),strings.Repeat("2",64),pin,dnsPin,strings.Repeat("5",64),strings.Repeat("6",64)}
+ pins:=freshActivationEvidence{id,strings.Repeat("1",64),strings.Repeat("2",64),pin,dnsPin,strings.Repeat("5",64),strings.Repeat("6",64),strings.Repeat("7",64),strings.Repeat("8",64)}
  now:=time.Now()
- raw,err:=json.Marshal(freshActivationAdmission{1,freshActivationComponent,freshActivationOperation,pins,now.Add(-time.Minute).Unix(),now.Add(5*time.Minute).Unix()});if err!=nil{t.Fatal(err)}
+ raw,err:=json.Marshal(freshActivationAdmission{2,freshActivationComponent,freshActivationOperation,pins,now.Add(-time.Minute).Unix(),now.Add(5*time.Minute).Unix()});if err!=nil{t.Fatal(err)}
  sig:=[]byte(base64.StdEncoding.EncodeToString(ed25519.Sign(priv,raw)))
  host:=FreshMotorInstallEvidence{InspectedAsAdministrator:true,InspectedMotorFiles:true,InspectedTaskScheduler:true,InspectedServices:true,InspectedDNSAdapters:true,InspectedPort53Listeners:true,InspectedRecoveryState:true}
  backend:=&activationTestBackend{current:map[string]DNSServerState{}}
@@ -167,6 +167,19 @@ func TestWindowsFreshWatchdogNativeRegistrationAttestation(t *testing.T){
  sum:=sha256.Sum256(original)
  pin:=freshWatchdogTaskPin{name,exe,args,"",hex.EncodeToString(sum[:]),observed.DefinitionSHA256,observed.SecurityDescriptorSHA256}
  if err:=verifyFreshWatchdogRegistrationNative(ctx,pin);err!=nil{t.Fatal("native inert watchdog identity refused",err)}
+ evidence:=freshActivationEvidence{
+  TransactionID:strings.Repeat("a",32),SignedPackageSHA256:strings.Repeat("1",64),
+  MotorSHA256:strings.Repeat("2",64),OriginalReviewSHA256:strings.Repeat("3",64),
+  OriginalDNSJournalSHA256:strings.Repeat("4",64),OwnerApprovalSHA256:strings.Repeat("5",64),
+  WatchdogTaskXMLSHA256:pin.DefinitionSHA256,WatchdogExecutableSHA256:pin.ExecutableSHA256,
+  WatchdogSecurityDescriptorSHA256:pin.SecurityDescriptorSHA256}
+ if err:=bindFreshWatchdogAdmission(evidence,pin);err!=nil{t.Fatal("matching signed watchdog pins refused",err)}
+ for _,variant:=range []string{"xml","exe","acl"}{
+  wrong:=pin
+  switch variant{case "xml":wrong.DefinitionSHA256=strings.Repeat("f",64);case "exe":wrong.ExecutableSHA256=strings.Repeat("f",64);case "acl":wrong.SecurityDescriptorSHA256=strings.Repeat("f",64)}
+  if err:=bindFreshWatchdogAdmission(evidence,wrong);err==nil{t.Fatal("foreign watchdog evidence accepted",variant)}
+ }
+ t.Log("PASS VOLVE_FRESH_WATCHDOG_ADMISSION_BINDS_XML_EXE_DACL")
  bad:=pin;bad.Arguments="/D /C exit 1"
  if err:=verifyFreshWatchdogRegistrationNative(ctx,bad);err==nil{t.Fatal("wrong watchdog command accepted")}
  bad=pin;bad.ExecutableSHA256=strings.Repeat("f",64)
@@ -176,4 +189,13 @@ func TestWindowsFreshWatchdogNativeRegistrationAttestation(t *testing.T){
  if err:=windowsSYSDNSShell(ctx,`$ErrorActionPreference='Stop';Disable-ScheduledTask -TaskPath '\' -TaskName `+q(name)+` -ErrorAction Stop|Out-Null`);err!=nil{t.Fatal(err)}
  if err:=verifyFreshWatchdogRegistrationNative(ctx,pin);err==nil{t.Fatal("disabled watchdog accepted")}
  t.Log("PASS VOLVE_FRESH_NATIVE_WATCHDOG_REGISTRATION_PINNED_INERT_NO_START_NO_DNS")
+}
+
+
+func TestWindowsFreshNativeActivationRejectsNonSYSTEM(t *testing.T){
+ if os.Getenv("GITHUB_ACTIONS")!="true"||os.Getenv("RUNNER_ENVIRONMENT")!="github-hosted"{t.Skip("hosted native refusal only")}
+ if VerifyWindowsCurrentSystemSIDReadOnly()==nil{t.Fatal("expected non-SYSTEM hosted test process")}
+ err:=activateFreshDNSAsSYSTEM(context.Background(),"",nil,nil,nil,freshActivationEvidence{},FreshMotorInstallEvidence{},ProtectionSnapshot{},WindowsBrowserPolicyEvidence{},WindowsFreshVOLVETaskInventory{},nil,freshWatchdogTaskPin{},WindowsDNSOverrideCensus{},&freshReservationFixtureGuard{})
+ if err==nil||!strings.Contains(err.Error(),"actual LocalSystem"){t.Fatal("native route did not reject non-SYSTEM first",err)}
+ t.Log("PASS VOLVE_FRESH_NATIVE_ROUTE_REFUSES_NON_SYSTEM_NO_WRITES")
 }

@@ -305,3 +305,52 @@ func verifyFreshWatchdogRegistrationNative(ctx context.Context,pin freshWatchdog
  if err:=verifyTask(second);err!=nil{return err}
  return ctx.Err()
 }
+
+
+// Check that the watchdog registration pins are covered by the SAME signed
+// fresh admission, not an independently substituted executable or DACL.
+func bindFreshWatchdogAdmission(pins freshActivationEvidence,watchdog freshWatchdogTaskPin)error{
+ if err:=validateFreshActivationEvidence(pins);err!=nil{return err}
+ if watchdog.DefinitionSHA256!=pins.WatchdogTaskXMLSHA256||
+  watchdog.ExecutableSHA256!=pins.WatchdogExecutableSHA256||
+  watchdog.SecurityDescriptorSHA256!=pins.WatchdogSecurityDescriptorSHA256{
+  return errors.New("fresh watchdog identity differs from signed admission")
+ }
+ return nil
+}
+
+// Private native adapter, deliberately no CLI or installation command.
+// The independent guard MUST be the real authenticated boot recovery
+// controller, including live readiness and durable commit/restore.
+// Registration alone cannot satisfy that dependency. The original policy
+// census must originate in the independently observed pre-staging state.
+func activateFreshDNSAsSYSTEM(ctx context.Context,root string,raw,sig []byte,key ed25519.PublicKey,pins freshActivationEvidence,host FreshMotorInstallEvidence,baseline ProtectionSnapshot,browser WindowsBrowserPolicyEvidence,inventory WindowsFreshVOLVETaskInventory,originalJournal []byte,watchdog freshWatchdogTaskPin,expectedPolicy WindowsDNSOverrideCensus,independent DNSActivationSafetyGuard)error{
+ if ctx==nil||independent==nil{return errors.New("fresh native activation requires independent authenticated recovery")}
+ if err:=ctx.Err();err!=nil{return err}
+ if err:=VerifyWindowsCurrentSystemSIDReadOnly();err!=nil{return errors.New("fresh native activation requires actual LocalSystem")}
+ if watchdog.Name!="VOLVE-FRESH-WATCHDOG"{return errors.New("fresh native activation requires exact production watchdog identity")}
+ if err:=bindFreshWatchdogAdmission(pins,watchdog);err!=nil{return err}
+ if _,err:=verifyFreshActivationAdmission(ctx,raw,sig,key,pins,host,time.Now());err!=nil{return err}
+ // Native registration attestation and all-policy baseline comparison
+ // are repeated inside the shared activation lease. Recovery is delegated
+ // directly and must not be blocked by expiry or watchdog identity drift.
+ policy:=&dnsActivationOverrideGuard{inner:independent,observe:func(c context.Context)(WindowsDNSOverrideCensus,error){
+  return InspectWindowsDNSOverrideCensusReadOnly(c,DefaultWindowsReadOnlyPowerShell)
+ }}
+ native:=&freshAdmissionGuard{inner:independent,review:func(c context.Context)error{return c.Err()},verify:func(c context.Context,pin string)error{
+  if pin!=pins.OriginalDNSJournalSHA256{return errors.New("fresh native original DNS pin mismatch")}
+  if err:=VerifyWindowsCurrentSystemSIDReadOnly();err!=nil{return err}
+  if err:=verifyFreshWatchdogRegistrationNative(c,watchdog);err!=nil{return err}
+  if !policy.captured{
+   if err:=policy.capture(c);err!=nil{return err}
+   if policy.baseline!=expectedPolicy{return errors.New("fresh native DNS policy changed since original census")}
+  }
+  if policy.baseline!=expectedPolicy{return errors.New("fresh native DNS policy is not bound to original census")}
+  return policy.check(c)
+ }}
+ return activateFreshDNSUnderProtectedLease(ctx,root,raw,sig,key,pins,host,baseline,browser,inventory,originalJournal,native,
+  func(c context.Context,held DNSActivationSafetyGuard)(DNSAdapterBackend,error){
+   return newWindowsPinnedDNSActivationBackend(c,originalJournal,pins.OriginalDNSJournalSHA256,
+    DefaultWindowsReadOnlyPowerShell,runPinnedWindowsNativeDNS,held)
+  })
+}
