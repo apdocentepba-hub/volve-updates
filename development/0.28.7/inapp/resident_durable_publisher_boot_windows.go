@@ -234,3 +234,28 @@ func(d *durablePublisherDNSBootDriver)VerifyOriginalDNS(ctx context.Context,inte
   return d.verifyCandidateStopped(ctx,intent)
  })
 }
+
+// StartOriginal is the final activation phase of DNS-aware recovery. It
+// reopens the durable publisher grant and original DNS binding under the
+// SAME protected lease, rechecks the candidate fence and original adapter
+// census, and delegates only to a bound original-task starter. It must not
+// be called until RestoreOriginalDNS and VerifyOriginalDNS have succeeded.
+func(d *durablePublisherDNSBootDriver)StartOriginal(ctx context.Context,intent ResidentRecoveryIntent)error{
+ return d.withOriginalDNS(ctx,intent,func(protected *protectedResidentBootDriver,raw,sig []byte,records []DNSRestoreRecord)error{
+  if err:=d.verifyCandidateStopped(ctx,intent);err!=nil{return err}
+  if err:=verifySignedDNSBootRestoreCensus(ctx,records,d.inspect,true);err!=nil{return err}
+  after,signature,err:=loadSignedOriginalDNSEvidenceUnderLeaseWindows(ctx,d.root,d.publisher)
+  if err!=nil||!bytes.Equal(after,raw)||!bytes.Equal(signature,sig){
+   return errors.New("signed original DNS evidence changed before original motor start")
+  }
+  starter,ok:=protected.operations.(interface{
+   StartOriginal(context.Context,ResidentRecoveryIntent)error
+  })
+  if !ok{return errors.New("protected original recovery operations lack the separate original-task starter")}
+  if err:=d.verifySystem();err!=nil{return err}
+  if err:=d.verifyCandidateStopped(ctx,intent);err!=nil{return err}
+  if err:=starter.StartOriginal(ctx,intent);err!=nil{return fmt.Errorf("publisher-bound original motor start refused: %w",err)}
+  return ctx.Err()
+ })
+}
+
