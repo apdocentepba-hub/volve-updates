@@ -112,5 +112,14 @@ func(o *residentSignedBootOriginalOps)StartOriginal(
 )error{
  if o==nil{return errors.New("signed original starter unavailable")}
  if err:=o.VerifySealedOriginal(ctx,intent);err!=nil{return err}
+ // Recovery is idempotent when the exact original was already running
+ // before the DNS repair. Verify its full SYSTEM task/process/socket identity
+ // first; only request Start-ScheduledTask when that exact original is absent.
+ // An ambiguous or foreign active listener is never treated as healthy.
+ if health,err:=newPinnedResidentBootHealthWindows(ctx,o.root);err==nil{
+  if err:=health.VerifyRunningIdentity(ctx,intent,"restored");err==nil{
+   return ctx.Err()
+  }
+ }
  return startSignedRestoredOriginalTaskLockedWindows(ctx,o.root,o.publisher,o.deps.Task)
 }
