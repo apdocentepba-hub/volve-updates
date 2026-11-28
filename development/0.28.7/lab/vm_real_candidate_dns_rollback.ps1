@@ -106,6 +106,26 @@ function SixDNS {
   }
  }
 }
+function Get-LoopbackDNSListeners {
+ $addresses=@('127.0.0.1','::1','0.0.0.0','::','::ffff:127.0.0.1')
+ $udp=@(Get-NetUDPEndpoint -ErrorAction Stop | Where-Object {$_.LocalPort -eq 53 -and $_.LocalAddress -in $addresses})
+ $tcp=@(Get-NetTCPConnection -ErrorAction Stop | Where-Object {$_.LocalPort -eq 53 -and $_.State -eq 'Listen' -and $_.LocalAddress -in $addresses})
+ foreach($entry in $udp){[pscustomobject]@{Protocol='UDP';Address=$entry.LocalAddress;PID=[uint32]$entry.OwningProcess}}
+ foreach($entry in $tcp){[pscustomobject]@{Protocol='TCP';Address=$entry.LocalAddress;PID=[uint32]$entry.OwningProcess}}
+}
+function Assert-Quiescent([string]$exe){
+ $deadline=[Diagnostics.Stopwatch]::StartNew()
+ while($deadline.Elapsed.TotalSeconds -lt 30){
+  $live=@(Get-CimInstance Win32_Process -ErrorAction Stop | Where-Object {[string]$_.ExecutablePath -ieq $exe})
+  $listeners=@(Get-LoopbackDNSListeners)
+  if($live.Count -eq 0 -and $listeners.Count -eq 0){return}
+  foreach($listener in $listeners){
+   if(@($live|Where-Object {$_.ProcessId -eq $listener.PID}).Count -ne 1){throw 'Foreign or inaccessible DNS53 listener; no process will be terminated'}
+  }
+  Start-Sleep -Milliseconds 400
+ }
+ throw 'Exact motor process or local TCP/UDP53 listeners did not quiesce'
+}
 function EngineIdentity([string]$exe){
  $procs=@(Get-CimInstance Win32_Process -ErrorAction Stop |
   Where-Object {[string]$_.ExecutablePath -ieq $exe})
@@ -113,9 +133,12 @@ function EngineIdentity([string]$exe){
  $p=$procs[0]
  $sid=Invoke-CimMethod -InputObject $p -MethodName GetOwnerSid -ErrorAction Stop
  if($sid.ReturnValue -ne 0 -or $sid.Sid -ne 'S-1-5-18'){throw 'Original DNS motor is not SYSTEM'}
- foreach($ip in @('127.0.0.1','::1')){
-  $ports=@(Get-NetUDPEndpoint -LocalAddress $ip -LocalPort 53 -ErrorAction Stop)
-  if($ports.Count -ne 1 -or $ports[0].OwningProcess -ne $p.ProcessId){throw ('Original motor does not exclusively own DNS53 '+$ip)}
+ $listeners=@(Get-LoopbackDNSListeners)
+ if($listeners.Count -ne 4){throw 'Expected exactly four local DNS53 listeners'}
+ foreach($protocol in @('UDP','TCP')){
+  foreach($ip in @('127.0.0.1','::1')){
+   if(@($listeners|Where-Object {$_.Protocol -ceq $protocol -and $_.Address -ceq $ip -and $_.PID -eq $p.ProcessId}).Count -ne 1){throw ('Missing exclusive SYSTEM DNS53 listener '+$protocol+' '+$ip)}
+  }
  }
  return $p
 }
@@ -129,6 +152,7 @@ function VerifiedInputs($plan,[string]$root){
   'VOLVE_CI_Failing_Candidate.exe'=$plan.candidateSHA256
   'reboot_event_chain.ps1'=$plan.eventParserSHA256
   'vm_dns_reply_contract.ps1'=$plan.dnsParserSHA256
+  'vm_direct_internet_probe.ps1'=$plan.internetHelperSHA256
  }
  foreach($rel in $v.Keys){
   $p=Join-Path $root $rel
@@ -201,29 +225,8 @@ if($Mode -eq 'Arm'){
   throw 'Invalid or duplicate candidate binary'
  }
  $original=TaskExact $task $motor $oldArg $true
- if($original.State -eq 'Running'){throw 'Refusing to switch a running Full DNS motor'}
- # The preparer stops the exact original SYSTEM motor, but Task Scheduler
- # may say Ready before Windows finishes releasing the UDP socket. Never
- # stop/kill another process or assume that a foreign DNS53 owner is safe.
- $free=$false
- $deadline=(Get-Date).AddSeconds(15)
- do{
-  $ports=@(foreach($ip in @('127.0.0.1','::1')){
-    Get-NetUDPEndpoint -LocalAddress $ip -LocalPort 53 -ErrorAction SilentlyContinue
-  })
-  if($ports.Count -eq 0){$free=$true;break}
-  $owners=@($ports|Select-Object -ExpandProperty OwningProcess -Unique)
-  $running=@(Get-CimInstance Win32_Process -ErrorAction Stop)
-  foreach($ownerId in $owners){
-   $match=@($running|Where-Object{$_.ProcessId -eq $ownerId -and
-     [string]$_.ExecutablePath -ieq $motor})
-   if($match.Count -ne 1){
-    throw ('REFUSED: foreign or inaccessible DNS53 owner PID '+$ownerId)
-   }
-  }
-  Start-Sleep -Milliseconds 400
- }while((Get-Date) -lt $deadline)
- if(-not $free){throw 'REFUSED: original motor did not release dual-stack UDP53 after stop'}
+ if($original.State -ne 'Ready'){throw 'Refusing to switch a motor that is not stopped and Ready'}
+ Assert-Quiescent $motor
  if(Get-ScheduledTask -TaskName $watch -ErrorAction SilentlyContinue){throw 'Watchdog task already exists'}
  foreach($path in @($planPath,$oldXML,$recoverScript,$receiptPath,$candidateExe,$candidateProof,$candidateStageProof)){
   if(Test-Path -LiteralPath $path){throw ('Refusing existing lab recovery asset: '+$path)}
@@ -234,6 +237,9 @@ if($Mode -eq 'Arm'){
  Copy-Item -LiteralPath $PSCommandPath -Destination $recoverScript -ErrorAction Stop
  Copy-Item -LiteralPath $SourceCandidate -Destination $candidateExe -ErrorAction Stop
  if((SHA $candidateExe) -cne (SHA $SourceCandidate)){throw 'CI candidate EXE changed on copy'}
+ $internetHelper=Join-Path $root 'vm_direct_internet_probe.ps1'
+ RequireFile $internetHelper
+ if((SHA $internetHelper) -cne [string]$before.internetHelperSHA256){throw 'Direct TCP probe changed since original preboot snapshot'}
  $meta=[ordered]@{
   schema=1;kind='VOLVE_VM_REAL_CANDIDATE_DNS_ROLLBACK_PENDING';labId=$LabId;computer=$env:COMPUTERNAME;
   bootBeforeUtc=(BootUTC).ToString('o');oldTask=$task;watchdog=$watch;
@@ -242,6 +248,7 @@ if($Mode -eq 'Arm'){
   xmlSHA256=(SHA $oldXML);recoverySHA256=(SHA $recoverScript);
   eventParserSHA256=(SHA (Join-Path $root 'reboot_event_chain.ps1'));
   dnsParserSHA256=(SHA (Join-Path $root 'vm_dns_reply_contract.ps1'));
+  internetHelperSHA256=$before.internetHelperSHA256;
   networkJSON=$before.networkJSON;hostsSHA256=$before.hostsSHA256;
   originalArgs=$oldArg;candidateArgs=$candidateArg;status='recovery-required';
   signedPublisherPermit=$false;productionMotorMigration=$false
@@ -283,11 +290,8 @@ if($Mode -eq 'Arm'){
     $p.simulated_exit_code -ne 83 -or $p.publisher_signed -ne $false -or $p.pid -le 0){
   throw 'Full DNS candidate did not prove six dual-stack answers before crashing'
  }
- foreach($ip in @('127.0.0.1','::1')){
-  if(@(Get-NetUDPEndpoint -LocalAddress $ip -LocalPort 53 -ErrorAction SilentlyContinue).Count -ne 0){
-   throw ('Candidate exited but UDP53 remains occupied '+$ip)
-  }
- }
+ Assert-Quiescent $candidateExe
+ Write-Host 'PASS VOLVE_REAL_CANDIDATE_EXIT83_PROCESS_GONE_TCP_UDP53_FREE'
  if((NetworkSnapshot) -cne $plan.networkJSON -or (SHA $hosts) -cne $plan.hostsSHA256){
   throw 'Real CI candidate changed DNS adapters/hosts'
  }
@@ -333,9 +337,7 @@ if($Mode -eq 'Recover'){
  $running=@(Get-CimInstance Win32_Process|Where-Object{[string]$_.ExecutablePath -ieq $motor})
  if($running.Count -gt 0 -and $selected){throw 'Unsafe: original motor running while candidate task is selected'}
  if($selected){
-  foreach($ip in @('127.0.0.1','::1')){
-   if(@(Get-NetUDPEndpoint -LocalAddress $ip -LocalPort 53 -ErrorAction SilentlyContinue).Count -ne 0){throw 'Port53 not free for original recovery'}
-  }
+  Assert-Quiescent $candidateExe
   $xml=[IO.File]::ReadAllText($oldXML)
   if($xml -notmatch 'VOLVE_CI_FreshDNS53.exe'){throw 'Original task XML does not identify Full CI motor'}
   Register-ScheduledTask -TaskName $task -TaskPath '\' -Xml $xml -Force -ErrorAction Stop|Out-Null
@@ -347,7 +349,13 @@ if($Mode -eq 'Recover'){
  $healthy=$false;$reason='No DNS checked'
  for($i=0;$i -lt 40;$i++){
   Start-Sleep -Milliseconds 900
-  try {$null=EngineIdentity $motor;SixDNS;$healthy=$true;break}
+  try {
+   $first=EngineIdentity $motor
+   SixDNS
+   $last=EngineIdentity $motor
+   if($first.ProcessId -ne $last.ProcessId -or $first.CreationDate -ne $last.CreationDate){throw 'Recovered motor changed during DNS checks'}
+   $healthy=$true;break
+  }
   catch {$reason=$_.Exception.Message}
  }
  if(-not $healthy){throw ('Original Full DNS motor not verified after rescue: '+$reason)}
@@ -377,7 +385,8 @@ if($Mode -eq 'Verify'){
   $receipt.labId -cne $LabId -or $receipt.result -cne 'restored-after-real-candidate-crash' -or
   $receipt.restoredBySystem -ne $true -or $receipt.publisherSigned -ne $false -or $receipt.dnsChecks -ne 6 -or
   $receipt.motorSHA256 -cne $plan.motorSHA256 -or $receipt.originalTaskSHA256 -cne $plan.xmlSHA256 -or
-  $receipt.candidateProofSHA256 -cne (SHA $candidateProof)){
+  $receipt.candidateProofSHA256 -cne (SHA $candidateProof) -or
+  $receipt.bootBeforeUtc -cne $plan.bootBeforeUtc -or $receipt.bootAfterUtc -cne $bootAfter.ToString('o')){
   throw 'NOT VERIFIED: unexpected or incomplete SYSTEM receipt'
  }
  $null=TaskExact $task $motor $oldArg $true
@@ -393,6 +402,9 @@ if($Mode -eq 'Verify'){
  . (Join-Path $root 'vm_direct_internet_probe.ps1')
  $tcp=Assert-VolvDirectInternetTCP
  if(-not $tcp.Verified -or $tcp.Transport -cne 'direct-ipv4-tcp'){throw 'NOT VERIFIED: no direct TCP Internet after rollback'}
+ $last=EngineIdentity $motor
+ if($p.ProcessId -ne $last.ProcessId -or $p.CreationDate -ne $last.CreationDate){throw 'NOT VERIFIED: recovered motor replaced during health checks'}
+ VerifiedInputs $plan $root
  if((NetworkSnapshot) -cne $plan.networkJSON -or (SHA $hosts) -cne $plan.hostsSHA256){throw 'NOT VERIFIED: VM DNS adapter/hosts changed'}
  $result=[ordered]@{
   schema=1;kind='VOLVE_VM_REAL_CANDIDATE_DNS_ROLLBACK_PROOF';
@@ -401,7 +413,8 @@ if($Mode -eq 'Verify'){
   verifiedUtc=[DateTime]::UtcNow.ToString('o');watchdog=$watch;motorTask=$task;
   watchdogEventIds=$chain.EventIds;watchdogEventRecordIds=$chain.RecordIds;
   watchdogInstanceId=$chain.InstanceId;watchdogLastTaskResult=[int]$taskInfo.LastTaskResult;
-  motorPid=[int]$p.ProcessId;motorSHA256=$plan.motorSHA256;catalogSHA256=$plan.catalogSHA256;
+  motorPid=[int]$p.ProcessId;motorCreationUTC=$p.CreationDate.ToUniversalTime().ToString('o');
+  localDNS53ListenersVerified=4;motorSHA256=$plan.motorSHA256;catalogSHA256=$plan.catalogSHA256;
   originalTaskXMLSHA256=$plan.xmlSHA256;dnsIPv4IPv6Expected=6;dnsCorrect=6;
   directInternetTCP=$true;internetEndpoint=$tcp.Endpoint;
   signedProductionMigrationProven=$false;candidateMode='REAL_FULL_CI_DNS_EXIT_83';
@@ -443,7 +456,8 @@ if($Mode -eq 'Cleanup'){
     $e.candidateProofSHA256 -cne (SHA $candidateProof) -or
     $e.prebootReceiptSHA256 -cne (SHA $candidateStageProof) -or
     $e.receiptSHA256 -cne (SHA $receiptPath) -or
-    $e.dnsIPv4IPv6Expected -ne 6 -or $e.dnsCorrect -ne 6 -or
+    $e.dnsIPv4IPv6Expected -ne 6 -or $e.dnsCorrect -ne 6 -or $e.localDNS53ListenersVerified -ne 4 -or
+    $e.bootBeforeUtc -cne $plan.bootBeforeUtc -or $e.bootAfterUtc -cne $bootAfter.ToString('o') -or
     $e.directInternetTCP -ne $true -or
     $e.candidateMode -cne 'REAL_FULL_CI_DNS_EXIT_83' -or
     $e.signedProductionMigrationProven -ne $false){

@@ -1,7 +1,7 @@
 name: VOLVE 0.28.7 REAL candidate DNS-to-rollback persistent VM kit (NO RELEASE)
 on:
   push:
-    branches: [feature/motor-updater-0287-pilot]
+    branches: [feature/motor-updater-0287-pilot, work/0287-postboot-proof-20261128]
     paths:
       - '.github/workflows/volve-0287-vm-real-candidate-rollback.yml'
       - 'development/0.28.7/lab/vm_real_candidate_dns_rollback.ps1'
