@@ -1,10 +1,6 @@
 name: VOLVE activation order regression (MEMORY ONLY NO INSTALL)
 on:
-  push:
-    branches: [work/0287-activation-order-regression-20261127, work/0287-postboot-proof-20261128]
-    paths:
-      - 'development/0.28.7/inapp/**'
-      - '.github/workflows/volve-0287-activation-order-regression.yml'
+  workflow_dispatch:
 permissions:
   contents: read
 jobs:
