@@ -346,3 +346,12 @@ Comprobado en el mismo candidato integrado:
 **Crédito de aceptación:** se mantiene **50% (5/10 puertas)**. El nuevo ensayo no satisface por sí solo la firma editorial auténtica (puerta 6), el ejecutor transaccional productivo y watchdog/journal compartido (puerta 7), el reboot real con recuperación en la misma VM persistente (puerta 8), la publicación oficial/canal del Centro (puerta 9) ni el ensayo final de migración 0.28.6→0.28.7 (puerta 10). No se modificó el Centro instalado 0.28.6 ni el motor/tareas/DNS de la PC del usuario.
 
 **Siguiente hito:** validar el candidato real que falla (exit 83) y la recuperación independiente SYSTEM del motor original después de un reinicio auténtico, en una VM Windows persistente aislada con snapshot. El kit #46146061911 está disponible solo para ese laboratorio; su manifiesto indica `vm_only=true`, `publisher_signed=false` e `integrated_rollback_boot_proven=false`. No distribuirlo ni ejecutarlo en un Windows de uso diario.
+
+
+## Precisión adicional del alcance del watchdog — 28/11/2026
+
+La puerta 7 no está pendiente por ausencia absoluta de restaurador. Existe código privado para recuperar el EXE original, reimportar su XML SYSTEM y solicitar su arranque (`watchdogcmd/resident_signed_original_and_task_transaction_windows.go`, `resident_signed_task_restore_windows.go`, `resident_signed_original_start_windows.go`). También existe un CLI SYSTEM con raíz fija.
+
+**La integración productiva sigue bloqueada:** el CLI pinned actualmente construye `motorOnlyPinnedBootOps`, exige alcance de permiso `MotorOnly` y rechaza cualquier evidencia de snapshot/binding DNS. El driver DNS-aware existe en `motorupdate` pero permanece privado y no está conectado al CLI; tampoco se registra el watchdog desde NSIS como tarea de inicio/servicio productivo. La implementación pendiente es la composición segura de restauración EXE+tarea+arranque con el driver DNS-aware, fence del candidato, comprobación de DNS/Internet y recibo terminal.
+
+Esta precisión no modifica el crédito de aceptación: **50% (5/10 puertas)**. La revisión fue estática y no ejecutó pruebas, VM ni reinicio.
