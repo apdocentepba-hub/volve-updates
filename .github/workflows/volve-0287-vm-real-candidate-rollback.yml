@@ -1,18 +1,5 @@
 name: VOLVE 0.28.7 REAL candidate DNS-to-rollback persistent VM kit (NO RELEASE)
 on:
-  push:
-    branches: [feature/motor-updater-0287-pilot, work/0287-postboot-proof-20261128]
-    paths:
-      - '.github/workflows/volve-0287-vm-real-candidate-rollback.yml'
-      - 'development/0.28.7/lab/vm_real_candidate_dns_rollback.ps1'
-      - 'development/0.28.7/lab/VM_REAL_CANDIDATE_ROLLBACK.md'
-      - 'development/0.28.7/lab/vm_full_motor_reboot_dns.ps1'
-      - 'development/0.28.7/lab/reboot_event_chain.ps1'
-      - 'development/0.28.7/lab/vm_dns_reply_contract.ps1'
-      - 'development/0.28.7/lab/pack_vm_persistent_reboot_kit.ps1'
-      - 'development/0.28.7/inapp/ci_fresh_dns53_windows.go'
-      - 'development/0.28.7/inapp/ci_failing_candidate_dns53_windows.go'
-      - 'development/0.28.7/inapp/apply_overlay.go'
   workflow_dispatch:
 permissions:
   contents: read
