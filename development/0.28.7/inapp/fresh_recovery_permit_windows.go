@@ -203,29 +203,35 @@ func verifyFreshRecoveryPendingUnderLease(ctx context.Context,root string,expect
 // Shared bounded native reader for these two fixed protected records.
 // Never allow a caller to nominate an arbitrary file.
 func verifyFreshFixedRecordUnderLease(ctx context.Context,root,name string,expected any)error{
- if ctx==nil{return errors.New("fresh record context required")}
- if name!=freshRecoveryPendingName&&name!=freshDNSRestoredName{return errors.New("unsupported fresh recovery record")}
+ data,err:=readFreshFixedRecordUnderLease(ctx,root,name)
+ if err!=nil{return err}
+ canonical,err:=json.Marshal(expected)
+ if err!=nil||!bytes.Equal(data,append(canonical,'\n')){return errors.New("fresh protected record differs from authenticated evidence")}
+ return ctx.Err()
+}
+func readFreshFixedRecordUnderLease(ctx context.Context,root,name string)([]byte,error){
+ if ctx==nil{return nil,errors.New("fresh record context required")}
+ if name!=freshRecoveryPendingName&&name!=freshDNSRestoredName&&name!=freshProvisionalName{return nil,errors.New("unsupported fresh recovery record")}
  path:=filepath.Join(root,name)
  check:=func(p string)error{return nativeDNSOriginalBackupACL(ctx,p)}
  verify:=func()error{
   if err:=verifyOriginalHostsBackupNode(root,true,check);err!=nil{return err}
   return verifyOriginalHostsBackupNode(path,false,check)
  }
- if err:=verify();err!=nil{return err}
+ if err:=verify();err!=nil{return nil,err}
  before,err:=os.Lstat(path)
- if err!=nil||before.Size()<2||before.Size()>4096{return errors.New("fresh recovery pending record missing or malformed")}
- file,err:=os.Open(path);if err!=nil{return err}
+ if err!=nil||before.Size()<2||before.Size()>4096{return nil,errors.New("fresh recovery pending record missing or malformed")}
+ file,err:=os.Open(path);if err!=nil{return nil,err}
  opened,err:=file.Stat()
- if err!=nil||!os.SameFile(before,opened){file.Close();return errors.New("fresh pending recovery record replaced")}
+ if err!=nil||!os.SameFile(before,opened){file.Close();return nil,errors.New("fresh pending recovery record replaced")}
  data,readErr:=io.ReadAll(io.LimitReader(file,4097))
  closeErr:=file.Close()
- if readErr!=nil||closeErr!=nil{return errors.Join(readErr,closeErr)}
- canonical,err:=json.Marshal(expected)
- if err!=nil||int64(len(data))!=before.Size()||!bytes.Equal(data,append(canonical,'\n')){return errors.New("fresh pending recovery record differs from authenticated permit")}
- if err:=verify();err!=nil{return err}
+ if readErr!=nil||closeErr!=nil{return nil,errors.Join(readErr,closeErr)}
+ if int64(len(data))!=before.Size(){return nil,errors.New("fresh protected record length changed during read")}
+ if err:=verify();err!=nil{return nil,err}
  after,err:=os.Lstat(path)
- if err!=nil||!os.SameFile(before,after)||before.Size()!=after.Size()||!before.ModTime().Equal(after.ModTime()){return errors.New("fresh pending recovery record changed during readback")}
- return ctx.Err()
+ if err!=nil||!os.SameFile(before,after)||before.Size()!=after.Size()||!before.ModTime().Equal(after.ModTime()){return nil,errors.New("fresh pending recovery record changed during readback")}
+ return data,ctx.Err()
 }
 
 func armFreshRecoveryPendingUnderLease(ctx context.Context,root string,key ed25519.PublicKey,pins freshActivationEvidence,held *exclusiveDNSActivationGuard)(freshRecoveryPending,error){

@@ -1,7 +1,7 @@
 name: VOLVE activation order regression (MEMORY ONLY NO INSTALL)
 on:
   push:
-    branches: [work/0287-activation-order-regression-20261127]
+    branches: [work/0287-activation-order-regression-20261127, work/0287-postboot-proof-20261128]
     paths:
       - 'development/0.28.7/inapp/**'
       - '.github/workflows/volve-0287-activation-order-regression.yml'
@@ -48,6 +48,7 @@ jobs:
           go run development/0.28.7/inapp/apply_overlay.go build/codigo
           if($LASTEXITCODE -ne 0){throw 'Overlay failed'}
       - name: Test exact activation order with simulated DNS writes and native fresh reservation
+        if: github.ref == 'refs/heads/work/0287-activation-order-regression-20261127'
         working-directory: build/codigo
         shell: pwsh
         run: |
@@ -70,3 +71,17 @@ jobs:
           if(@($result|Where-Object {$_ -match 'PASS VOLVE_FRESH_DNS_ONLY_TERMINAL_READBACK_REPLAY_AND_DRIFT_NO_WRITES$'}).Count -ne 1){throw 'Missing DNS-only completion lifecycle proof'}
           if(@($result|Where-Object {$_ -match 'PASS VOLVE_FRESH_SIGNED_ARCHIVES_HEALTH_COMMIT_ONCE_MEMORY_DNS_ONLY$'}).Count -ne 1){throw 'Missing integrated healthy activation callback proof'}
           Write-Host 'PASS VOLVE_ACTIVATION_ORDER_MEMORY_ONLY_NO_INSTALL_NO_RELEASE'
+
+      - name: Test new boot evidence only (no reboot, no DNS writes)
+        if: github.ref == 'refs/heads/work/0287-postboot-proof-20261128'
+        working-directory: build/codigo
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $result=@(go test ./motorupdate -run '^(TestFreshBootIdentityRejectsSameBootAndInconsistentEvidence|TestWindowsFreshNativeBootObservationReadOnly)$' -count=1 -v -timeout 2m)
+          $code=$LASTEXITCODE
+          $result|Write-Host
+          if($code -ne 0){throw 'Boot evidence validation failed'}
+          foreach($marker in @('PASS VOLVE_FRESH_BOOT_IDENTITY_REFUSES_SAME_BOOT_CLOCK_ONLY','PASS VOLVE_FRESH_NATIVE_BOOT_WMI_EVENT_KERNEL_UPTIME_READ_ONLY')){
+            if(@($result|Where-Object {$_ -match ([regex]::Escape($marker)+'$')}).Count -ne 1){throw ('Missing boot proof: '+$marker)}
+          }
