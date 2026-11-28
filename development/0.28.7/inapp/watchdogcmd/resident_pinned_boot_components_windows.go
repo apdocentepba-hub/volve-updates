@@ -5,8 +5,8 @@ package main
 // Private construction of a *matched* signed boot driver, SYSTEM-only health
 // verifier, and canonical journal path. This creates no startup trigger,
 // scheduled task, service, UI action, DNS setting or recovery receipt.
-// Production recovery remains DISABLED pending a persistent VM reboot and
-// authentic publisher grant for the installed legacy engine.
+// Production recovery remains DISABLED pending an authentic publisher grant,
+// real reboot acceptance and product startup-task registration.
 import (
  "context"
  "errors"
@@ -17,7 +17,7 @@ import (
 )
 
 type residentPinnedBootComponentsWindows struct {
- Driver motorupdate.ResidentBootRecoveryDriver
+ Driver motorupdate.ResidentDNSBootRecoveryDriver
  Health motorupdate.ResidentCompletionChecks
  JournalDir string
 }
