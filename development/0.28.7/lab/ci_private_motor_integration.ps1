@@ -8,6 +8,12 @@ param([Parameter(Mandatory=$true)][string]$MotorExe,
       [Parameter(Mandatory=$true)][ValidatePattern('^[A-F0-9]{64}$')][string]$WireProbeSHA,
       [Parameter(Mandatory=$true)][ValidatePattern('^[0-9]{6,20}$')][string]$Trial,
       [switch]$PrivateGatewayControl)
+
+# The optional route control is enabled only by the PR's disposable nested-VM
+# workflow. It performs A/B/A with fresh DNS names, verifies the exact route
+# tuple before removal, and must finish with no default route and unchanged
+# IPv4/IPv6 loopback assignments. It is diagnostic only: it never waives the
+# configured TCP resolver gate or authorizes a product install.
 Set-StrictMode -Version Latest
 $ErrorActionPreference='Stop'
 if($env:GITHUB_ACTIONS -cne 'true' -or $env:RUNNER_ENVIRONMENT -cne 'github-hosted' -or $env:VOLVE_CI_NESTED_GUEST_DNS -cne 'PRIVATE_GUEST_ONLY'){throw 'Isolated hosted CI only'}
