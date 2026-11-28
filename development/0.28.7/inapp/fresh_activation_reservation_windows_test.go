@@ -134,3 +134,46 @@ func(b *freshReservationCorruptingBackend)Apply(ctx context.Context,next DNSServ
  }
  return nil
 }
+
+
+func TestWindowsFreshWatchdogNativeRegistrationAttestation(t *testing.T){
+ if os.Getenv("GITHUB_ACTIONS")!="true"||os.Getenv("RUNNER_ENVIRONMENT")!="github-hosted"{t.Skip("hosted inert task only")}
+ ctx,cancel:=context.WithTimeout(context.Background(),90*time.Second);defer cancel()
+ name:="VOLVE-CI-FreshWatchdog-"+os.Getenv("GITHUB_RUN_ID")+"00000"
+ if !freshWatchdogLabName.MatchString(name){t.Fatal("invalid lab task name")}
+ root:=t.TempDir()
+ if err:=nativeSealApprovedOriginalBackupNode(ctx,root);err!=nil{t.Fatal(err)}
+ exe:=filepath.Join(root,"VOLVE-FreshWatchdog.exe")
+ original,err:=os.ReadFile(filepath.Join(os.Getenv("SystemRoot"),"System32","cmd.exe"));if err!=nil{t.Fatal(err)}
+ if err:=os.WriteFile(exe,original,0600);err!=nil{t.Fatal(err)}
+ if err:=nativeSealApprovedOriginalBackupNode(ctx,exe);err!=nil{t.Fatal(err)}
+ args:="/D /C exit 0"
+ // Never start this inert task. Its disposable startup trigger and identity
+ // are native Scheduler observations; there is no real watchdog here.
+ q:=windowsSYSDNSQuote
+ script:=`$ErrorActionPreference='Stop';$n=`+q(name)+`;
+ if(Get-ScheduledTask -TaskName $n -ErrorAction SilentlyContinue){throw 'task collision'};
+ $a=New-ScheduledTaskAction -Execute `+q(exe)+` -Argument `+q(args)+`;
+ $p=New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest;
+ $b=New-ScheduledTaskTrigger -AtStartup;
+ Register-ScheduledTask -TaskPath '\' -TaskName $n -Action $a -Principal $p -Trigger $b -ErrorAction Stop|Out-Null`
+ if err:=windowsSYSDNSShell(ctx,script);err!=nil{t.Fatal(err)}
+ defer func(){
+  cleanup,cancel:=context.WithTimeout(context.Background(),20*time.Second);defer cancel()
+  if err:=windowsSYSDNSShell(cleanup,`$ErrorActionPreference='Stop';Unregister-ScheduledTask -TaskPath '\' -TaskName `+q(name)+` -Confirm:$false -ErrorAction Stop`);err!=nil{t.Error("inert watchdog task cleanup failed",err)}
+ }()
+ release,err:=AcquireProtectedResidentTransitionLease(ctx);if err!=nil{t.Fatal(err)};defer release()
+ observed,err:=observeFreshWatchdogTaskNative(ctx,name);if err!=nil{t.Fatal(err)}
+ sum:=sha256.Sum256(original)
+ pin:=freshWatchdogTaskPin{name,exe,args,"",hex.EncodeToString(sum[:]),observed.DefinitionSHA256,observed.SecurityDescriptorSHA256}
+ if err:=verifyFreshWatchdogRegistrationNative(ctx,pin);err!=nil{t.Fatal("native inert watchdog identity refused",err)}
+ bad:=pin;bad.Arguments="/D /C exit 1"
+ if err:=verifyFreshWatchdogRegistrationNative(ctx,bad);err==nil{t.Fatal("wrong watchdog command accepted")}
+ bad=pin;bad.ExecutableSHA256=strings.Repeat("f",64)
+ if err:=verifyFreshWatchdogRegistrationNative(ctx,bad);err==nil{t.Fatal("wrong watchdog executable digest accepted")}
+ bad=pin;bad.SecurityDescriptorSHA256=strings.Repeat("f",64)
+ if err:=verifyFreshWatchdogRegistrationNative(ctx,bad);err==nil{t.Fatal("wrong watchdog security descriptor accepted")}
+ if err:=windowsSYSDNSShell(ctx,`$ErrorActionPreference='Stop';Disable-ScheduledTask -TaskPath '\' -TaskName `+q(name)+` -ErrorAction Stop|Out-Null`);err!=nil{t.Fatal(err)}
+ if err:=verifyFreshWatchdogRegistrationNative(ctx,pin);err==nil{t.Fatal("disabled watchdog accepted")}
+ t.Log("PASS VOLVE_FRESH_NATIVE_WATCHDOG_REGISTRATION_PINNED_INERT_NO_START_NO_DNS")
+}

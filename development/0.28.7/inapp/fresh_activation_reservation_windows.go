@@ -18,6 +18,8 @@ import(
  "errors"
  "io"
  "os"
+ "os/exec"
+ "regexp"
  "path/filepath"
  "strings"
  "time"
@@ -184,4 +186,122 @@ func activateFreshDNSUnderProtectedLease(ctx context.Context,root string,raw,sig
   if err:=verifyFreshReservationNative(c,root,receipt);err!=nil{return nil,err}
   return backend,nil
  })
+}
+
+
+// Read-only native watchdog registration attestation. It is NOT a proof of
+// watchdog liveness, recovery authorization, or successful restoration.
+// The future SYSTEM controller must independently pin these identities in
+// its signed, durable recovery evidence. No production task is created here.
+type freshWatchdogTaskObservation struct{
+ Name string
+ TaskPath string
+ Principal string
+ LogonType string
+ RunLevel string
+ State string
+ Enabled bool
+ Actions int
+ ActionType string
+ Execute string
+ Arguments string
+ WorkingDirectory string
+ Triggers int
+ BootTriggers int
+ EnabledBootTriggers int
+ DefinitionSHA256 string
+ SecurityDescriptorSHA256 string
+}
+type freshWatchdogTaskPin struct{
+ Name string
+ Executable string
+ Arguments string
+ WorkingDirectory string
+ ExecutableSHA256 string
+ DefinitionSHA256 string
+ SecurityDescriptorSHA256 string
+}
+var freshWatchdogLabName=regexp.MustCompile(`^VOLVE-CI-FreshWatchdog-[0-9]{12,20}$`)
+func allowedFreshWatchdogName(name string)bool{
+ return name=="VOLVE-FRESH-WATCHDOG"||(freshWatchdogLabName.MatchString(name)&&os.Getenv("GITHUB_ACTIONS")=="true"&&os.Getenv("RUNNER_ENVIRONMENT")=="github-hosted")
+}
+
+func observeFreshWatchdogTaskNative(ctx context.Context,name string)(freshWatchdogTaskObservation,error){
+ var denied freshWatchdogTaskObservation
+ if ctx==nil||!allowedFreshWatchdogName(name){return denied,errors.New("untrusted fresh watchdog task name")}
+ if err:=ctx.Err();err!=nil{return denied,err}
+ root:=os.Getenv("SystemRoot")
+ if !filepath.IsAbs(root)||strings.HasPrefix(root,string(filepath.Separator)+string(filepath.Separator)){return denied,errors.New("Windows system root unavailable")}
+ ps:=filepath.Join(root,"System32","WindowsPowerShell","v1.0","powershell.exe")
+ script:=`$ErrorActionPreference='Stop';$ProgressPreference='SilentlyContinue';$n='`+name+`';
+ $tasks=@(Get-ScheduledTask -TaskPath '\' -TaskName $n -ErrorAction Stop);
+ if($tasks.Count -ne 1){throw 'Watchdog task identity not unique'};
+ $t=$tasks[0];
+ $actions=@($t.Actions);$triggers=@($t.Triggers);
+ $boot=@($triggers|Where-Object {$_.CimClass.CimClassName -eq 'MSFT_TaskBootTrigger'});
+ $enabledBoot=@($boot|Where-Object {$_.Enabled -eq $true});
+ if($actions.Count -ne 1){throw 'Watchdog must have one action'};
+ $xml=Export-ScheduledTask -TaskPath '\' -TaskName $n -ErrorAction Stop;
+ $svc=New-Object -ComObject 'Schedule.Service';$svc.Connect();
+ $rt=$svc.GetFolder('\').GetTask($n);
+ $sd=[string]$rt.GetSecurityDescriptor(7);
+ if([string]::IsNullOrWhiteSpace($sd)){throw 'Missing watchdog security descriptor'};
+ $h=[Security.Cryptography.SHA256]::Create();
+ try {
+ $xmlHash=[BitConverter]::ToString($h.ComputeHash([Text.Encoding]::UTF8.GetBytes([string]$xml))).Replace('-','').ToLowerInvariant();
+ $sdHash=[BitConverter]::ToString($h.ComputeHash([Text.Encoding]::UTF8.GetBytes($sd))).Replace('-','').ToLowerInvariant();
+ }finally{$h.Dispose()};
+ [pscustomobject]@{
+ Name=[string]$t.TaskName;TaskPath=[string]$t.TaskPath;Principal=[string]$t.Principal.UserId;
+ LogonType=[string]$t.Principal.LogonType;RunLevel=[string]$t.Principal.RunLevel;State=[string]$t.State;
+ Enabled=[bool]$t.Settings.Enabled;Actions=[int]$actions.Count;ActionType=[string]$actions[0].CimClass.CimClassName;
+ Execute=[string]$actions[0].Execute;Arguments=[string]$actions[0].Arguments;WorkingDirectory=[string]$actions[0].WorkingDirectory;
+ Triggers=[int]$triggers.Count;BootTriggers=[int]$boot.Count;EnabledBootTriggers=[int]$enabledBoot.Count;
+ DefinitionSHA256=$xmlHash;SecurityDescriptorSHA256=$sdHash
+ }|ConvertTo-Json -Compress`
+ out,err:=exec.CommandContext(ctx,ps,"-NoLogo","-NoProfile","-NonInteractive","-Command",script).Output()
+ if err!=nil||len(out)==0||len(out)>16384{return denied,errors.New("native watchdog registration observation unavailable")}
+ dec:=json.NewDecoder(bytes.NewReader(out));dec.DisallowUnknownFields()
+ var got freshWatchdogTaskObservation
+ if err:=dec.Decode(&got);err!=nil{return denied,err}
+ var extra any
+ if err:=dec.Decode(&extra);err!=io.EOF{return denied,errors.New("trailing watchdog task observation")}
+ return got,ctx.Err()
+}
+
+func verifyFreshWatchdogRegistrationNative(ctx context.Context,pin freshWatchdogTaskPin)error{
+ if ctx==nil||!allowedFreshWatchdogName(pin.Name)||!filepath.IsAbs(pin.Executable)||filepath.Clean(pin.Executable)!=pin.Executable||strings.HasPrefix(pin.Executable,string(filepath.Separator)+string(filepath.Separator))||!strings.EqualFold(filepath.Base(pin.Executable),"VOLVE-FreshWatchdog.exe")||pin.Arguments==""{return errors.New("fresh watchdog requires exact independently pinned executable and command")}
+ for _,v:=range []string{pin.ExecutableSHA256,pin.DefinitionSHA256,pin.SecurityDescriptorSHA256}{
+  if verifyCanonicalLowerSHA256(v)!=nil||v==strings.Repeat("0",64){return errors.New("fresh watchdog digest missing")}
+ }
+ check:=func(p string)error{return nativeDNSOriginalBackupACL(ctx,p)}
+ verifyFile:=func()error{
+  if err:=verifyOriginalHostsBackupNode(filepath.Dir(pin.Executable),true,check);err!=nil{return err}
+  return verifyOriginalHostsBackupNode(pin.Executable,false,check)
+ }
+ verifyTask:=func(t freshWatchdogTaskObservation)error{
+  if t.Name!=pin.Name||t.TaskPath!="\\"||!(strings.EqualFold(t.Principal,"SYSTEM")||t.Principal=="S-1-5-18")||t.LogonType!="ServiceAccount"||t.RunLevel!="Highest"||!t.Enabled||(t.State!="Ready"&&t.State!="Running")||t.Actions!=1||t.ActionType!="MSFT_TaskExecAction"||!strings.EqualFold(t.Execute,pin.Executable)||t.Arguments!=pin.Arguments||t.WorkingDirectory!=pin.WorkingDirectory||t.Triggers!=1||t.BootTriggers!=1||t.EnabledBootTriggers!=1||t.DefinitionSHA256!=pin.DefinitionSHA256||t.SecurityDescriptorSHA256!=pin.SecurityDescriptorSHA256{return errors.New("fresh watchdog registration no longer matches trusted enabled SYSTEM boot identity")}
+  return nil
+ }
+ first,err:=observeFreshWatchdogTaskNative(ctx,pin.Name)
+ if err!=nil{return err}
+ if err:=verifyTask(first);err!=nil{return err}
+ if err:=verifyFile();err!=nil{return err}
+ before,err:=os.Lstat(pin.Executable)
+ if err!=nil||before.Size()<1||before.Size()>128<<20{return errors.New("fresh watchdog executable size invalid")}
+ file,err:=os.Open(pin.Executable);if err!=nil{return err}
+ opened,err:=file.Stat()
+ if err!=nil||!os.SameFile(before,opened){file.Close();return errors.New("fresh watchdog executable replaced before read")}
+ h:=sha256.New()
+ n,readErr:=io.Copy(h,io.LimitReader(file,(128<<20)+1))
+ closeErr:=file.Close()
+ if readErr!=nil||closeErr!=nil{return errors.Join(readErr,closeErr)}
+ if n!=before.Size()||hex.EncodeToString(h.Sum(nil))!=pin.ExecutableSHA256{return errors.New("fresh watchdog executable digest mismatch")}
+ if err:=verifyFile();err!=nil{return err}
+ after,err:=os.Lstat(pin.Executable)
+ if err!=nil||!os.SameFile(before,after)||before.Size()!=after.Size()||!before.ModTime().Equal(after.ModTime()){return errors.New("fresh watchdog executable changed during verification")}
+ second,err:=observeFreshWatchdogTaskNative(ctx,pin.Name)
+ if err!=nil{return err}
+ if err:=verifyTask(second);err!=nil{return err}
+ return ctx.Err()
 }
