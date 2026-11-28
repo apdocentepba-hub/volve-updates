@@ -258,20 +258,31 @@ func TestBootRecoveryNeverWritesRestoredReceiptWhenOriginalChangesAfterRestore(t
 // implement the stopped-candidate proof and signed census separately.
 type bootDNSPolicyLab struct{
  bootPolicyLab
- dnsRestores,dnsChecks int
+ dnsRestores,dnsChecks,startCalls int
  failDNSRestore bool
  failDNSCheckAt int
+ failStart bool
+ order []string
 }
 func(l *bootDNSPolicyLab)RestoreOriginalDNS(context.Context,ResidentRecoveryIntent)error{
  if l.lockCalls!=l.unlockCalls+1{return errors.New("DNS restore outside exclusive lease")}
+ l.order=append(l.order,"restore-dns")
  l.dnsRestores++
  if l.failDNSRestore{return errors.New("simulated DNS recovery failure")}
  return nil
 }
 func(l *bootDNSPolicyLab)VerifyOriginalDNS(context.Context,ResidentRecoveryIntent)error{
  if l.lockCalls!=l.unlockCalls+1{return errors.New("DNS readback outside exclusive lease")}
+ l.order=append(l.order,"verify-dns")
  l.dnsChecks++
  if l.dnsChecks==l.failDNSCheckAt{return errors.New("simulated original DNS mismatch")}
+ return nil
+}
+func(l *bootDNSPolicyLab)StartOriginal(context.Context,ResidentRecoveryIntent)error{
+ if l.lockCalls!=l.unlockCalls+1{return errors.New("original motor start outside exclusive lease")}
+ l.order=append(l.order,"start-original")
+ l.startCalls++
+ if l.failStart{return errors.New("simulated original motor start failure")}
  return nil
 }
 func TestDNSAwareBootRecoveryChecksOriginalEvenWhenMotorAlreadyRunning(t *testing.T){
@@ -279,18 +290,18 @@ func TestDNSAwareBootRecoveryChecksOriginalEvenWhenMotorAlreadyRunning(t *testin
  lab:=&bootDNSPolicyLab{}
  checks:=&bootIdentityLab{}
  state,err:=RecoverPendingResidentAfterBootWithOriginalDNS(context.Background(),dir,residentLabACL,residentLabACL,checks,lab)
- if err!=nil||state!="restored"||lab.restoreCalls!=0||lab.dnsRestores!=1||lab.dnsChecks!=2||lab.unlockCalls!=1{
-  t.Fatalf("DNS-only recovery skipped or unexpected motor switch: %s %v %+v",state,err,lab)
+ if err!=nil||state!="restored"||lab.restoreCalls!=0||lab.dnsRestores!=1||lab.dnsChecks!=2||lab.startCalls!=1||lab.unlockCalls!=1{
+  t.Fatalf("DNS recovery/start order incomplete: %s %v %+v",state,err,lab)
  }
  state,err=RecoverPendingResidentAfterBootWithOriginalDNS(context.Background(),dir,residentLabACL,residentLabACL,checks,lab)
- if err!=nil||state!="restored"||lab.dnsRestores!=1||lab.dnsChecks!=2{t.Fatal("terminal receipt triggered DNS mutations")}
+ if err!=nil||state!="restored"||lab.dnsRestores!=1||lab.dnsChecks!=2||lab.startCalls!=1{t.Fatal("terminal receipt triggered DNS or motor mutations")}
 }
 func TestDNSAwareBootRecoveryNeverFinalizesOnWrongOriginalDNS(t *testing.T){
  for _,tc:=range []struct{name string;restoreFail bool;checkAt int;identityFail bool;networkFail bool;expectedDNSCalls int}{
   {"restore-fails",true,0,false,false,1},
   {"initial-readback-fails",false,1,false,false,1},
   {"final-readback-fails-after-healthy-network",false,2,false,false,1},
-  {"motor-still-wrong",false,0,true,false,0},
+  {"motor-still-wrong",false,0,true,false,1},
   {"network-fails",false,0,false,true,1},
  }{
   t.Run(tc.name,func(t *testing.T){
@@ -313,6 +324,28 @@ func TestDNSAwareBootRecoveryNeverFinalizesOnWrongOriginalDNS(t *testing.T){
   })
  }
 }
+
+func TestDNSAwareBootRecoveryStartsOriginalOnlyAfterDNSReadback(t *testing.T){
+ dir:=armBootPolicyJournal(t)
+ lab:=&bootDNSPolicyLab{}
+ checks:=&bootIdentityLab{}
+ state,err:=RecoverPendingResidentAfterBootWithOriginalDNS(context.Background(),dir,residentLabACL,residentLabACL,checks,lab)
+ if err!=nil||state!="restored"{t.Fatalf("ordered DNS recovery failed: %s %v",state,err)}
+ want:=[]string{"restore-dns","verify-dns","start-original","verify-dns"}
+ if len(lab.order)!=len(want){t.Fatalf("unexpected recovery sequence: %#v",lab.order)}
+ for i:=range want{if lab.order[i]!=want[i]{t.Fatalf("recovery order[%d]=%q want %q; full=%#v",i,lab.order[i],want[i],lab.order)}}
+ if lab.startCalls!=1||lab.unlockCalls!=1{t.Fatalf("start not under one exclusive recovery lease: %+v",lab)}
+}
+func TestDNSAwareBootRecoveryStartFailureKeepsJournalPending(t *testing.T){
+ dir:=armBootPolicyJournal(t)
+ lab:=&bootDNSPolicyLab{failStart:true}
+ state,err:=RecoverPendingResidentAfterBootWithOriginalDNS(context.Background(),dir,residentLabACL,residentLabACL,&bootIdentityLab{},lab)
+ if err==nil||state!=""||lab.startCalls!=1||lab.unlockCalls!=1{t.Fatalf("failed original start was treated as success: %s %v %+v",state,err,lab)}
+ journal,e:=InspectResidentRecoveryJournal(context.Background(),dir,residentLabACL)
+ if e!=nil||journal.Status!="recovery-required"{t.Fatalf("failed start consumed recovery journal: %+v %v",journal,e)}
+ if _,e:=os.Lstat(filepath.Join(dir,ResidentResultFile));!os.IsNotExist(e){t.Fatal("failed original start wrote terminal receipt")}
+}
+
 func TestDNSAwareBootRecoveryRequiresExplicitDriverAndContext(t *testing.T){
  dir:=armBootPolicyJournal(t)
  checks:=&bootIdentityLab{}
@@ -334,7 +367,7 @@ func TestDNSAwareBootRecoveryRejectsMotorOnlyDispatch(t *testing.T){
  pending,err:=InspectResidentRecoveryJournal(context.Background(),dir,residentLabACL)
  if err!=nil||pending.Status!="recovery-required"{t.Fatalf("wrong entrypoint consumed pending recovery: %+v %v",pending,err)}
  state,err=RecoverPendingResidentAfterBootWithOriginalDNS(context.Background(),dir,residentLabACL,residentLabACL,checks,lab)
- if err!=nil||state!="restored"||lab.dnsRestores!=1||lab.dnsChecks!=2||lab.unlockCalls!=1{t.Fatalf("correct dispatch failed: %s %v %+v",state,err,lab)}
+ if err!=nil||state!="restored"||lab.dnsRestores!=1||lab.dnsChecks!=2||lab.startCalls!=1||lab.unlockCalls!=1{t.Fatalf("correct dispatch failed: %s %v %+v",state,err,lab)}
 }
 
 
