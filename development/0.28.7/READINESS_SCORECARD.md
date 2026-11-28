@@ -1,6 +1,6 @@
 # VOLVÉ 0.28.7 — Scorecard de actualización SIN reinstalar
 
-Última revisión: 2026-10-31. Rama de laboratorio: `feature/motor-updater-0287-pilot`.
+Última revisión: 2026-11-28. Rama de laboratorio integrada: `work/0287-postboot-proof-20261128`.
 
 **Progreso de ingeniería del piloto: 50% (5/10 puertas de aceptación aprobadas).**
 Escala interna de 10 hitos de peso igual; se acredita 10% solamente cuando las pruebas delimitadas del hito aprobaron. Los hitos pendientes pueden tener código parcial. **No** equivale a 50% de confiabilidad, probabilidad de lanzamiento ni permiso para instalar en producción.
@@ -327,3 +327,22 @@ Los tests se ejecutaron **solo en Windows hosted CI**, con una VM descartable y 
 **PENDIENTE DE VERIFICAR:** [GitHub Actions #41355920243](https://github.com/apdocentepba-hub/volve-updates/actions/runs/41355920243) prueba el nuevo adaptador lazy de inicio con grant persistido, revalidación y no-op terminal. Hasta que termine en verde, no acreditar esa cobertura.
 
 **FALTA PARA HITO 7:** almacenamiento productivo desde la autorización efectiva del editor y un ejecutor productivo independiente que restaure bytes + tarea SYSTEM con pasos duraderos y control de errores; enlazar el Centro 0.28.6 con ese proceso, pruebas reales tras reboot de la misma VM y aprobación explícita para usar la PC. **Progreso global inalterado 50%, 5/10 hitos**. El éxito aislado de persistencia no acredita un watchdog de producción.
+
+
+## Integración del instalador único sobre la rama de recuperación — 28/11/2026
+
+**Nueva evidencia de ingeniería; sin crédito adicional de puertas:** [Actions #46150894578](https://github.com/apdocentepba-hub/volve-updates/actions/runs/46150894578), commit `e39441da853cfaa7fced8ea9be41432ea828cc4c`, **SUCCESS Windows, 25 pasos reportados, cero fallos**.
+
+Comprobado en el mismo candidato integrado:
+- Diez fuentes Windows formateadas del motor reconstruidas y comparadas byte por byte.
+- Pruebas nativas de respaldo original, sellado NTFS, reapertura desde otro proceso, concurrencia, rechazo de evidencia ajena/alterada y censo de políticas DNS/NRPT/DoH.
+- NSIS de un solo EXE con motor DNS real compilado + bundle Ed25519 de siete componentes.
+- Authenticode de CI y pin SHA-256 del EXE; pin SHA-256 del motor real; rechazo de motor/bundle adulterado.
+- Inventario read-only de seis superficies Windows, captura y reapertura de cuatro archivos, wizard y handoff review-only.
+- DNS, HOSTS y tareas del runner permanecieron sin cambios; sin instalación, sin release y sin artefacto de producto publicado.
+
+**Dictamen efectivo de preflight del runner:** `observed_host_route=contradictory-installed-protection-no-write`; `next_review_mode=STOP_CONFLICTING_PROTECTION`; `review_progress_percent=0`; `can_install=false`; `can_upgrade=false`; `can_change_dns=false`; `can_change_tasks=false`. El respaldo completo quedó `NOT_CHECKED_NO_ARCHIVES`; el resolvedor TCP configurado siguió `UNVERIFIED_ACTUAL_CONFIGURED_RESOLVER_TCP`. El PASS de CI acredita que la negativa segura funciona, **no** que haya autorización para instalar.
+
+**Crédito de aceptación:** se mantiene **50% (5/10 puertas)**. El nuevo ensayo no satisface por sí solo la firma editorial auténtica (puerta 6), el ejecutor transaccional productivo y watchdog/journal compartido (puerta 7), el reboot real con recuperación en la misma VM persistente (puerta 8), la publicación oficial/canal del Centro (puerta 9) ni el ensayo final de migración 0.28.6→0.28.7 (puerta 10). No se modificó el Centro instalado 0.28.6 ni el motor/tareas/DNS de la PC del usuario.
+
+**Siguiente hito:** validar el candidato real que falla (exit 83) y la recuperación independiente SYSTEM del motor original después de un reinicio auténtico, en una VM Windows persistente aislada con snapshot. El kit #46146061911 está disponible solo para ese laboratorio; su manifiesto indica `vm_only=true`, `publisher_signed=false` e `integrated_rollback_boot_proven=false`. No distribuirlo ni ejecutarlo en un Windows de uso diario.
