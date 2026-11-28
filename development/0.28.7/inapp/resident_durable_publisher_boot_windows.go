@@ -171,6 +171,18 @@ func(d *durablePublisherDNSBootDriver)withOriginalDNS(
  return protected.underProtectedLease(ctx,func()error{
   if err:=d.verifySystem();err!=nil{return err}
   if err:=d.verifyDurableEvidence(ctx,intent);err!=nil{return err}
+  // DNS restoration is a distinct publisher-authorized scope. A valid
+  // motor-only permit must never authorize adapter writes or DNS terminal
+  // recovery, even when all file hashes and task identities match.
+  if len(d.firstPermit)==0||len(d.firstSignature)==0{
+   return errors.New("missing durable publisher permit for motor-and-DNS recovery")
+  }
+  if err:=VerifyExplicitResidentRecoveryScope(
+   ctx,d.firstPermit,d.firstSignature,d.publisher,
+   ResidentRecoveryScopeMotorAndDNS,intent.Nonce,
+  );err!=nil{
+   return fmt.Errorf("publisher permit does not authorize exact MotorAndDNS recovery scope: %w",err)
+  }
   raw,sig,err:=loadSignedOriginalDNSEvidenceUnderLeaseWindows(ctx,d.root,d.publisher)
   if err!=nil{return err}
   receipt,err:=VerifySignedDNSOriginalBinding(ctx,raw,sig,d.publisher,intent,d.firstPermit)
