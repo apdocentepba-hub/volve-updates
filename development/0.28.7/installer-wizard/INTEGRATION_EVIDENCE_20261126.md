@@ -166,3 +166,27 @@ A pedido del responsable del producto, se suspenden las ejecuciones automáticas
 Los resultados históricos anteriores se mantienen como evidencia histórica, pero no se repiten ni se acreditan como pruebas nuevas. La restricción no convierte en demostrado el reinicio real: ese criterio sigue pendiente y no se sustituye por simulación.
 
 Commits de endurecimiento de triggers: `dab2961e`, `989c93de`, `0da9a636`, `2e929078`, `ab07606d`, `a04208b1`, `aa5ef937`, `f4ab4c35`.
+
+
+## Corrección de auditoría: el restaurador de motor/tarea sí existe; falta el puente DNS-aware — 2026-11-28
+
+Se corrige la descripción previa que decía que no existía el operador de restauración. La inspección del árbol `watchdogcmd` encontró implementación privada reutilizable:
+
+- `resident_signed_missing_original_restore_windows.go` prepara/publica el EXE original cuando está ausente, bajo grant editorial, ACL NTFS, mutex y quiescencia.
+- `resident_signed_task_restore_windows.go` reimporta el XML original completo de `VOLVE-DNS-SERVER-0270` y exige identidad SYSTEM, firma, hash del motor/XML y quiescencia antes de registrar la tarea.
+- `resident_signed_original_and_task_transaction_windows.go` compone ambos pasos bajo una sola lease; no emite recibo ni afirma salud DNS.
+- `resident_signed_original_start_windows.go` solicita el arranque de la tarea restaurada, bajo la misma lease y con comprobaciones previas; tampoco emite recibo de salud.
+- `resident_pinned_boot_cli_windows.go` resuelve una raíz fija de ProgramData y exige SID LocalSystem. El comando privado `--recover-pinned-signed-boot` existe en `main_windows.go`.
+- `resident_pinned_boot_terminal_windows.go` conecta los componentes y la política de recuperación, con recibo NTFS create-only reservado al resultado terminal.
+
+### Bloqueo exacto de la ruta actual
+
+El constructor `newPinnedResidentBootRecoveryDriverWindows` no monta un driver DNS-aware: crea `motorOnlyPinnedBootOps`, exige un permiso de alcance `ResidentRecoveryScopeMotorOnly` y llama a `RecoverPendingResidentAfterBoot`. Su función `rejectDNSStagingForMotorOnlyBoot` rechaza la presencia de `dns-original-binding.json`, `dns-original-binding.sig` o del respaldo DNS nativo. El test `TestMotorOnlyPinnedBootRefusesCompleteOrPartialDNSEvidence` documenta esa denegación deliberada.
+
+En paralelo, `inapp/resident_durable_publisher_boot_windows.go` tiene `durablePublisherDNSBootDriver` con restauración/readback de DNS IPv4/IPv6, comprobación de SYSTEM y fence del candidato, y `RecoverPendingResidentAfterBootWithOriginalDNS` existe en el paquete `motorupdate`. Pero ese adaptador permanece privado y no está conectado al CLI independiente; el entrypoint pinned invoca la ruta motor-only. La interfaz `ResidentOriginalRecoveryOps` y los operadores de tarea no sustituyen ese puente de DNS.
+
+### Conclusión corregida
+
+No hace falta volver a escribir el restaurador de EXE/tarea. La pieza pendiente de ingeniería es **componer el restaurador de motor + tarea + arranque con el driver DNS-aware**, bajo el mismo mutex, la misma autorización editorial, el mismo journal y el fence del candidato; luego verificar el DNS original, DNS/Internet health y el recibo terminal. También sigue sin existir el registro productivo del watchdog como tarea de inicio/servicio en el instalador: el propio código de `resident_pinned_boot_components_windows.go` y `resident_pinned_boot_terminal_windows.go` lo declara no registrado/no invocado.
+
+Los tests Windows relacionados presentes en el árbol incluyen `TestSignedCombinedRecoveryMissingExeThenTaskOneMutexNoReceipt`, `TestSignedCombinedRecoveryRejectsLiveDNS53NoTaskOrExeChanges`, `TestPinnedResidentBootDriverRejectsInteractiveWindowsToken` y `TestMotorOnlyPinnedBootRefusesCompleteOrPartialDNSEvidence`. Esta revisión fue estática: no se ejecutaron esos tests en esta intervención, no hubo VM, reboot, writes de DNS/tareas ni cambios a 0.28.6.
