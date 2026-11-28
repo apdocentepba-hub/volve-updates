@@ -8,6 +8,7 @@ import (
 )
 
 func verifiedHealth(context.Context)error{return nil}
+func observeRestart(t *testing.T,s *State){t.Helper();if err:=s.ResumePostBootVerification(context.Background(),verifiedHealth);err!=nil{t.Fatal(err)}}
 
 func advance(t *testing.T,s *State,n int) {
  t.Helper()
@@ -24,7 +25,9 @@ func TestComplete(t *testing.T) {
  }
  if s.View().Status!="awaiting_reboot" || !s.View().RebootRequired || s.View().Next!=PostBootVerified {t.Fatal(s.View())}
  if s.Confirm(PostBootVerified)==nil || s.ConfirmReboot(context.Background(),verifiedHealth)==nil {t.Fatal("unattested post-boot stage accepted")}
- if s.RequireReboot()!=nil || s.ConfirmReboot(context.Background(),verifiedHealth)!=nil {t.Fatal(s.View())}
+ if s.RequireReboot()!=nil {t.Fatal(s.View())}
+ observeRestart(t,s)
+ if s.ConfirmReboot(context.Background(),verifiedHealth)!=nil {t.Fatal(s.View())}
  if v:=s.View();v.Status!="completed"||v.Percent!=100||v.RebootRequired||v.Next!="" {t.Fatal(v)}
  if s.Confirm(CommitVerified)==nil||s.Fail()==nil||s.ConfirmReboot(context.Background(),verifiedHealth)==nil {t.Fatal("terminal accepted")}
 }
@@ -41,6 +44,7 @@ func TestReboot(t *testing.T) {
   if err:=s.Confirm(order[i]);err!=nil {t.Fatal(err)}
  }
  if s.RequireReboot()!=nil||s.RequireReboot()==nil||s.Confirm(PostBootVerified)==nil||!s.View().RebootRequired {t.Fatal(s.View())}
+ observeRestart(t,s)
  if s.ConfirmReboot(context.Background(),verifiedHealth)!=nil||s.View().Percent!=100 {t.Fatal(s.View())}
 }
 func TestFailureBeforeActivation(t *testing.T) {
@@ -84,7 +88,9 @@ func TestConcurrentReaders(t *testing.T) {
   }()
  }
  advance(t,s,len(order)-1)
- if s.RequireReboot()!=nil||s.ConfirmReboot(context.Background(),verifiedHealth)!=nil {t.Fatal(s.View())}
+ if s.RequireReboot()!=nil {t.Fatal(s.View())}
+ observeRestart(t,s)
+ if s.ConfirmReboot(context.Background(),verifiedHealth)!=nil {t.Fatal(s.View())}
  wg.Wait()
 }
 
@@ -132,17 +138,18 @@ func TestResumeRestartCancellationAndConcurrentRequest(t *testing.T) {
  during,stop:=context.WithCancel(ctx)
  defer stop()
  if err:=s.ResumePostBootVerification(during,func(context.Context)error{stop();return nil});!errors.Is(err,context.Canceled)||s.ConfirmReboot(context.Background(),verifiedHealth)==nil{t.Fatal("canceled reboot evidence accepted")}
- if err:=s.ResumePostBootVerification(ctx,func(context.Context)error{return s.RequireReboot()});err==nil{t.Fatal("concurrent reboot request not detected")}
+ if err:=s.ResumePostBootVerification(ctx,func(context.Context)error{return s.ResumePostBootVerification(ctx,verifiedHealth)});err==nil{t.Fatal("concurrent observed restart not detected")}
 }
 
 func TestPostBootHealthEvidenceRequired(t *testing.T){
  ctx:=context.Background()
  s:=New();advance(t,s,len(order)-1)
  if err:=s.RequireReboot();err!=nil{t.Fatal(err)}
+ observeRestart(t,s)
  if s.ConfirmReboot(ctx,nil)==nil||s.ConfirmReboot(nil,verifiedHealth)==nil{t.Fatal("missing verifier accepted")}
  bad:=errors.New("live protection not verified")
  if err:=s.ConfirmReboot(ctx,func(context.Context)error{return bad});!errors.Is(err,bad){t.Fatal(err)}
- if v:=s.View();v.Percent!=87||v.Status!="awaiting_reboot"{t.Fatal(v)}
+ if v:=s.View();v.Percent!=87||v.Status!="verifying_postboot"{t.Fatal(v)}
  during,cancel:=context.WithCancel(ctx)
  defer cancel()
  if err:=s.ConfirmReboot(during,func(context.Context)error{cancel();return nil});!errors.Is(err,context.Canceled){t.Fatal(err)}
@@ -157,6 +164,7 @@ func TestConcurrentPostBootProofOnlyOneFinalizes(t *testing.T){
  ctx:=context.Background()
  s:=New();advance(t,s,len(order)-1)
  if err:=s.RequireReboot();err!=nil{t.Fatal(err)}
+ observeRestart(t,s)
  entered:=make(chan struct{},2)
  release:=make(chan struct{})
  outcomes:=make(chan error,2)
@@ -198,4 +206,21 @@ func TestConcurrentRecoveryProofOnlyOneFinalizes(t *testing.T){
  <-entered;<-entered;close(release)
  a,b:=<-outcomes,<-outcomes
  if (a==nil)==(b==nil)||s.View().Status!="recovered_not_installed"{t.Fatalf("unexpected results: %v %v %+v",a,b,s.View())}
+}
+
+
+func TestRebootRequestIsNotObservedRestart(t *testing.T){
+ ctx:=context.Background()
+ s:=New();advance(t,s,len(order)-1)
+ if err:=s.RequireReboot();err!=nil{t.Fatal(err)}
+ if v:=s.View();v.Percent!=87||!v.RebootRequired||!v.RebootRequested||v.RestartObserved{t.Fatal(v)}
+ called:=false
+ if err:=s.ConfirmReboot(ctx,func(context.Context)error{called=true;return nil});err==nil||called{t.Fatal("health ran before verified restart")}
+ if err:=s.ResumePostBootVerification(ctx,func(context.Context)error{return errors.New("same boot")});err==nil{t.Fatal("same boot accepted")}
+ if v:=s.View();v.Percent!=87||v.RestartObserved{t.Fatal(v)}
+ observeRestart(t,s)
+ if v:=s.View();v.Percent!=87||v.RebootRequired||!v.RestartObserved||v.Status!="verifying_postboot"||v.Next!=PostBootVerified{t.Fatal(v)}
+ if s.ResumePostBootVerification(ctx,verifiedHealth)==nil||s.RequireReboot()==nil{t.Fatal("duplicate restart accepted")}
+ if err:=s.ConfirmReboot(ctx,verifiedHealth);err!=nil{t.Fatal(err)}
+ if v:=s.View();v.Percent!=100||v.Status!="completed"||v.RebootRequired||v.RebootRequested||!v.RestartObserved{t.Fatal(v)}
 }

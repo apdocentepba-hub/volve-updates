@@ -1,0 +1,26 @@
+name: VOLVE installer progress actual reboot observation gate (UI ONLY)
+on:
+  push:
+    branches: [work/0287-postboot-proof-20261128]
+    paths:
+      - 'development/0.28.7/installer-wizard/installerprogress/**'
+      - '.github/workflows/volve-0287-installer-progress-postboot.yml'
+permissions:
+  contents: read
+jobs:
+  progress:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.x'
+          cache: false
+      - name: Verify UI stage and concurrent state transitions
+        working-directory: development/0.28.7/installer-wizard/installerprogress
+        env:
+          GO111MODULE: 'off'
+        run: go test -race -count=1 -v -timeout 2m .

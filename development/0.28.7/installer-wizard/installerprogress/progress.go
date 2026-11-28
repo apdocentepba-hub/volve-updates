@@ -30,12 +30,15 @@ type State struct {
  next int
  status string
  rebootRequested bool
+ restartObserved bool
 }
 type View struct {
  Percent int
  Status string
  Next Stage
  RebootRequired bool
+ RebootRequested bool
+ RestartObserved bool
 }
 func New() *State { return &State{status:"running"} }
 
@@ -62,15 +65,16 @@ func (s *State) ResumePostBootVerification(ctx context.Context, verifyRestart fu
  if err:=ctx.Err();err!=nil{return err}
  // Do not hold the UI mutex across I/O or a controller callback.
  s.mu.Lock()
- eligible:=s.status=="awaiting_reboot" && !s.rebootRequested && s.next==len(order)-1
+ eligible:=s.status=="awaiting_reboot" && !s.restartObserved && s.next==len(order)-1
  s.mu.Unlock()
  if !eligible{return errors.New("restart observation not expected")}
  if err:=verifyRestart(ctx);err!=nil{return err}
  s.mu.Lock()
  defer s.mu.Unlock()
  if err:=ctx.Err();err!=nil{return err}
- if s.status!="awaiting_reboot" || s.rebootRequested || s.next!=len(order)-1{return errors.New("restart observation invalidated during verification")}
- s.rebootRequested=true
+ if s.status!="awaiting_reboot" || s.restartObserved || s.next!=len(order)-1{return errors.New("restart observation invalidated during verification")}
+ s.restartObserved=true
+ s.status="verifying_postboot"
  return nil
 }
 
@@ -109,14 +113,14 @@ func (s *State) ConfirmReboot(ctx context.Context, verifyHealth func(context.Con
  if ctx==nil || verifyHealth==nil{return errors.New("verified post-boot health reader required")}
  if err:=ctx.Err();err!=nil{return err}
  s.mu.Lock()
- eligible:=s.status=="awaiting_reboot" && s.rebootRequested && s.next==len(order)-1
+ eligible:=s.status=="verifying_postboot" && s.restartObserved && s.next==len(order)-1
  s.mu.Unlock()
  if !eligible{return errors.New("post-boot confirmation not expected")}
  if err:=verifyHealth(ctx);err!=nil{return err}
  s.mu.Lock()
  defer s.mu.Unlock()
  if err:=ctx.Err();err!=nil{return err}
- if s.status!="awaiting_reboot" || !s.rebootRequested || s.next!=len(order)-1 {
+ if s.status!="verifying_postboot" || !s.restartObserved || s.next!=len(order)-1 {
   return errors.New("post-boot confirmation invalidated during verification")
  }
  s.next++
@@ -130,10 +134,11 @@ func (s *State) ConfirmReboot(ctx context.Context, verifyHealth func(context.Con
 func (s *State) Fail() error {
  s.mu.Lock()
  defer s.mu.Unlock()
- if s.status != "running" && s.status != "awaiting_reboot" {
+ if s.status != "running" && s.status != "awaiting_reboot" && s.status != "verifying_postboot" {
   return errors.New("unexpected failure transition")
  }
  s.rebootRequested=false
+ s.restartObserved=false
  if s.next>=3 { s.status="recovery_required" } else { s.status="failed_before_activation" }
  return nil
 }
@@ -166,7 +171,7 @@ func (s *State) RecoveryFailed() error {
 func (s *State) View() View {
  s.mu.Lock()
  defer s.mu.Unlock()
- v:=View{Percent:s.next*100/len(order),Status:s.status,RebootRequired:s.status=="awaiting_reboot"}
- if s.status=="running" || s.status=="awaiting_reboot" { v.Next=order[s.next] }
+ v:=View{Percent:s.next*100/len(order),Status:s.status,RebootRequired:s.status=="awaiting_reboot",RebootRequested:s.rebootRequested,RestartObserved:s.restartObserved}
+ if s.status=="running" || s.status=="awaiting_reboot" || s.status=="verifying_postboot" { v.Next=order[s.next] }
  return v
 }
