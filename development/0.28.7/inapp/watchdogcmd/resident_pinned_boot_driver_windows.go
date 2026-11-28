@@ -154,5 +154,10 @@ func(o *motorOnlyPinnedBootOps)RestoreOriginal(ctx context.Context,intent motoru
  if o==nil||o.original==nil{return errors.New("missing motor-only original restorer")}
  if err:=o.verifyMotorOnlyScope(ctx,intent);err!=nil{return err}
  if err:=o.original.RestoreOriginal(ctx,intent);err!=nil{return err}
+ starter,ok:=o.original.(interface{
+  StartOriginal(context.Context,motorupdate.ResidentRecoveryIntent)error
+ })
+ if !ok{return errors.New("motor-only recovery operations lack explicit original-task starter")}
+ if err:=starter.StartOriginal(ctx,intent);err!=nil{return fmt.Errorf("motor-only original start failed: %w",err)}
  return o.verifyMotorOnlyScope(ctx,intent)
 }
