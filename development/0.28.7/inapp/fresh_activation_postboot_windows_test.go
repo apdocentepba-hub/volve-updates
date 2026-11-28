@@ -102,3 +102,27 @@ func TestFreshPostBootActiveCensusRejectsPartialOrForeignFamilies(t *testing.T){
  }
  t.Log("PASS VOLVE_FRESH_POSTBOOT_ALL_ACTIVE_DNS_FAMILIES_READ_ONLY")
 }
+
+
+func TestFreshMotorRuntimeRequiresFourExactSamePIDListeners(t *testing.T){
+ pin:=freshMotorRuntimePin{Executable:`C:\VOLVE\motor-0.28.7\VOLVE_DNS_Motor_0_28_7.exe`}
+ now:=time.Now().UnixMilli()
+ boot:=freshBootIdentity{now-600000,10,now-599000}
+ good:=freshMotorRuntimeObservation{PID:123,CreatedUnixMilli:now-500000,Path:pin.Executable,CommandLine:"\""+pin.Executable+"\" --dns-service",OwnerSID:"S-1-5-18",Endpoints:[]windowsFreshPort53Row{{"UDP","127.0.0.1",53,123},{"UDP","::1",53,123},{"TCP","127.0.0.1",53,123},{"TCP","::1",53,123}}}
+ if err:=verifyFreshMotorRuntimeObservation(pin,good,boot);err!=nil{t.Fatal(err)}
+ for _,mode:=range []string{"other-sid","old-process","wrong-argv","foreign-pid","wildcard","duplicate","missing","extra"}{
+  bad:=good;bad.Endpoints=append([]windowsFreshPort53Row(nil),good.Endpoints...)
+  switch mode{
+  case "other-sid":bad.OwnerSID="S-1-5-19"
+  case "old-process":bad.CreatedUnixMilli=boot.BootUnixMilli-1
+  case "wrong-argv":bad.CommandLine+=" --unexpected"
+  case "foreign-pid":bad.Endpoints[3].PID=124
+  case "wildcard":bad.Endpoints[0].Address="0.0.0.0"
+  case "duplicate":bad.Endpoints[3]=bad.Endpoints[2]
+  case "missing":bad.Endpoints=bad.Endpoints[:3]
+  case "extra":bad.Endpoints=append(bad.Endpoints,bad.Endpoints[0])
+  }
+  if err:=verifyFreshMotorRuntimeObservation(pin,bad,boot);err==nil{t.Fatal("unsafe identity accepted",mode)}
+ }
+ t.Log("PASS VOLVE_FRESH_RUNTIME_EXACT_FOUR_LISTENERS_SAME_SYSTEM_PID")
+}

@@ -229,7 +229,7 @@ func allowedFreshWatchdogName(name string)bool{
 
 func observeFreshWatchdogTaskNative(ctx context.Context,name string)(freshWatchdogTaskObservation,error){
  var denied freshWatchdogTaskObservation
- if ctx==nil||!allowedFreshWatchdogName(name){return denied,errors.New("untrusted fresh watchdog task name")}
+ if ctx==nil||(!allowedFreshWatchdogName(name)&&name!=residentRunningTask){return denied,errors.New("untrusted fresh task observation name")}
  if err:=ctx.Err();err!=nil{return denied,err}
  root:=os.Getenv("SystemRoot")
  if !filepath.IsAbs(root)||strings.HasPrefix(root,string(filepath.Separator)+string(filepath.Separator)){return denied,errors.New("Windows system root unavailable")}

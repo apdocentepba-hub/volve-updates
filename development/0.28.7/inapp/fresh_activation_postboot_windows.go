@@ -237,9 +237,9 @@ func verifyFreshActiveDNSCensus(records []DNSRestoreRecord,states []DNSServerSta
 // Actual permitted/blocked UDP and persistent TCP DNS and external TCP
 // probes are mandatory here, not supplied by that dependency. A successful
 // audit does not disable rescue or grant authority to write terminal state.
-func auditFreshPostBootHealthAsSYSTEM(ctx context.Context,root string,key ed25519.PublicKey,pins freshActivationEvidence,admissionSHA string,watchdog freshWatchdogTaskPin,policy WindowsDNSOverrideCensus,identity func(context.Context,freshActivationEvidence)error)(freshBootIdentity,error){
+func auditFreshPostBootHealthAsSYSTEM(ctx context.Context,root string,key ed25519.PublicKey,pins freshActivationEvidence,admissionSHA string,watchdog freshWatchdogTaskPin,policy WindowsDNSOverrideCensus,motor freshMotorRuntimePin,verifyCatalog func(context.Context,freshActivationEvidence)error)(freshBootIdentity,error){
  var denied freshBootIdentity
- if ctx==nil||identity==nil{return denied,errors.New("trusted postboot identity checks required")}
+ if ctx==nil||verifyCatalog==nil{return denied,errors.New("trusted postboot catalog checks required")}
  if err:=ctx.Err();err!=nil{return denied,err}
  if err:=VerifyWindowsCurrentSystemSIDReadOnly();err!=nil{return denied,err}
  if watchdog.Name!="VOLVE-FRESH-WATCHDOG"{return denied,errors.New("postboot audit requires exact production watchdog identity")}
@@ -263,9 +263,12 @@ func auditFreshPostBootHealthAsSYSTEM(ctx context.Context,root string,key ed2551
   return verifyFreshActiveDNSCensus(records,census.States)
  }
  if err:=attest();err!=nil{return denied,err}
- if err:=identity(ctx,pins);err!=nil{return denied,err}
+ running,err:=verifyFreshMotorRuntimeNative(ctx,pins,motor,first);if err!=nil{return denied,err}
+ if err:=verifyCatalog(ctx,pins);err!=nil{return denied,err}
  if err:=probeFreshResidentNetworkHealth(ctx);err!=nil{return denied,err}
- if err:=identity(ctx,pins);err!=nil{return denied,err}
+ if err:=verifyCatalog(ctx,pins);err!=nil{return denied,err}
+ again,err:=verifyFreshMotorRuntimeNative(ctx,pins,motor,first);if err!=nil{return denied,err}
+ if running.PID!=again.PID||running.CreatedUnixMilli!=again.CreatedUnixMilli{return denied,errors.New("motor process replaced during postboot health checks")}
  if err:=attest();err!=nil{return denied,err}
  final,err:=verifyFreshPostBootEvidenceUnderLease(ctx,root,key,pins,admissionSHA,observeFreshBootNative)
  if err!=nil||final!=first{return denied,errors.New("postboot protected transaction changed during health audit")}
@@ -273,4 +276,97 @@ func auditFreshPostBootHealthAsSYSTEM(ctx context.Context,root string,key ed2551
  if _,err:=ReadDNSOriginalBackupNativeWindows(ctx,filepath.Join(root,"legacy-engine-recovery"),pins.OriginalDNSJournalSHA256);err!=nil{return denied,err}
  if err:=attest();err!=nil{return denied,err}
  return final,ctx.Err()
+}
+
+
+// The motor task's XML and DACL are separately pinned by the trusted staging
+// controller. They are not automatically authenticated by the existing nine
+// admission pins. The executable digest MUST match the signed admission.
+type freshMotorRuntimePin struct{
+ Executable,WorkingDirectory,TaskXMLSHA256,TaskDaclSHA256 string
+}
+type freshMotorRuntimeObservation struct{
+ PID uint32
+ CreatedUnixMilli int64
+ Path,CommandLine,OwnerSID string
+ Endpoints []windowsFreshPort53Row
+}
+func verifyFreshMotorRuntimeObservation(pin freshMotorRuntimePin,got freshMotorRuntimeObservation,boot freshBootIdentity)error{
+ if !validFreshBootIdentity(boot)||got.PID==0||got.CreatedUnixMilli<boot.BootUnixMilli||got.CreatedUnixMilli>time.Now().UnixMilli()||got.OwnerSID!="S-1-5-18"||!strings.EqualFold(got.Path,pin.Executable){return errors.New("fresh motor process identity or boot origin invalid")}
+ if got.CommandLine!=pin.Executable+" --dns-service"&&got.CommandLine!="\""+pin.Executable+"\" --dns-service"{return errors.New("fresh motor command line mismatch")}
+ if len(got.Endpoints)!=4{return errors.New("fresh motor requires exactly four host-wide DNS listeners")}
+ want:=map[string]bool{"UDP|127.0.0.1":true,"UDP|::1":true,"TCP|127.0.0.1":true,"TCP|::1":true}
+ for _,e:=range got.Endpoints{
+  k:=e.Transport+"|"+e.Address
+  if e.Port!=53||e.PID!=got.PID||!want[k]{return errors.New("foreign, duplicate or non-loopback DNS listener")}
+  delete(want,k)
+ }
+ return nil
+}
+
+func observeFreshMotorRuntimeNative(ctx context.Context,pin freshMotorRuntimePin)(freshMotorRuntimeObservation,error){
+ var denied freshMotorRuntimeObservation
+ if ctx==nil||!filepath.IsAbs(pin.Executable)||filepath.Clean(pin.Executable)!=pin.Executable||strings.HasPrefix(pin.Executable,"\\\\"){return denied,errors.New("exact local motor executable required")}
+ root:=os.Getenv("SystemRoot")
+ if !filepath.IsAbs(root){return denied,errors.New("Windows system root unavailable")}
+ ps:=filepath.Join(root,"System32","WindowsPowerShell","v1.0","powershell.exe")
+ script:=`$ErrorActionPreference='Stop';$ProgressPreference='SilentlyContinue';
+ $exe='`+strings.ReplaceAll(pin.Executable,"'","''")+`';
+ $procs=@(Get-CimInstance Win32_Process -ErrorAction Stop|Where-Object {[string]$_.ExecutablePath -ieq $exe});
+ if($procs.Count -ne 1){throw 'Expected exactly one motor process'};
+ $p=$procs[0];$owner=Invoke-CimMethod -InputObject $p -MethodName GetOwnerSid -ErrorAction Stop;
+ if($owner.ReturnValue -ne 0){throw 'Cannot verify SYSTEM SID'};
+ $rows=@(
+ Get-NetTCPConnection -State Listen -ErrorAction Stop|Where-Object {$_.LocalPort -eq 53}|ForEach-Object {[pscustomobject]@{Transport='TCP';Address=[string]$_.LocalAddress;Port=53;PID=[uint32]$_.OwningProcess}}
+ Get-NetUDPEndpoint -ErrorAction Stop|Where-Object {$_.LocalPort -eq 53}|ForEach-Object {[pscustomobject]@{Transport='UDP';Address=[string]$_.LocalAddress;Port=53;PID=[uint32]$_.OwningProcess}}
+ );
+ [pscustomobject]@{PID=[uint32]$p.ProcessId;CreatedUnixMilli=([DateTimeOffset]($p.CreationDate.ToUniversalTime())).ToUnixTimeMilliseconds();Path=[string]$p.ExecutablePath;CommandLine=[string]$p.CommandLine;OwnerSID=[string]$owner.Sid;Endpoints=$rows}|ConvertTo-Json -Compress -Depth 5`
+ out,err:=exec.CommandContext(ctx,ps,"-NoLogo","-NoProfile","-NonInteractive","-Command",script).Output()
+ if err!=nil||len(out)==0||len(out)>16384{return denied,errors.New("native motor runtime observation failed")}
+ dec:=json.NewDecoder(bytes.NewReader(out));dec.DisallowUnknownFields()
+ var got freshMotorRuntimeObservation
+ if err:=dec.Decode(&got);err!=nil{return denied,err}
+ var extra any
+ if err:=dec.Decode(&extra);err!=io.EOF{return denied,errors.New("trailing motor observation")}
+ return got,ctx.Err()
+}
+
+// Independent OS identity check. No task changes or process termination.
+// Disk image hash does not prove loaded memory bytes or task ancestry.
+// Catalog authority is still a separate authenticated dependency.
+func verifyFreshMotorRuntimeNative(ctx context.Context,pins freshActivationEvidence,pin freshMotorRuntimePin,boot freshBootIdentity)(freshMotorRuntimeObservation,error){
+ var denied freshMotorRuntimeObservation
+ if ctx==nil{return denied,errors.New("motor identity context required")}
+ if err:=validateFreshActivationEvidence(pins);err!=nil{return denied,err}
+ if !filepath.IsAbs(pin.Executable)||filepath.Clean(pin.Executable)!=pin.Executable||strings.HasPrefix(pin.Executable,"\\\\")||!strings.EqualFold(filepath.Base(pin.Executable),"VOLVE_DNS_Motor_0_28_7.exe"){return denied,errors.New("unrecognized pinned 0.28.7 motor executable")}
+ for _,v:=range []string{pin.TaskXMLSHA256,pin.TaskDaclSHA256}{if verifyCanonicalLowerSHA256(v)!=nil||v==strings.Repeat("0",64){return denied,errors.New("motor task trust pins missing")}}
+ taskCheck:=func()error{
+  t,err:=observeFreshWatchdogTaskNative(ctx,residentRunningTask);if err!=nil{return err}
+  if t.Name!=residentRunningTask||t.TaskPath!="\\"||!(strings.EqualFold(t.Principal,"SYSTEM")||t.Principal=="S-1-5-18")||t.LogonType!="ServiceAccount"||t.RunLevel!="Highest"||!t.Enabled||t.State!="Running"||t.Actions!=1||t.ActionType!="MSFT_TaskExecAction"||!strings.EqualFold(t.Execute,pin.Executable)||t.Arguments!="--dns-service"||t.WorkingDirectory!=pin.WorkingDirectory||t.Triggers!=1||t.BootTriggers!=1||t.EnabledBootTriggers!=1||t.DefinitionSHA256!=pin.TaskXMLSHA256||t.SecurityDescriptorSHA256!=pin.TaskDaclSHA256{return errors.New("fresh SYSTEM motor task differs from independent registration pins")}
+  return nil
+ }
+ check:=func(p string)error{return nativeDNSOriginalBackupACL(ctx,p)}
+ fileCheck:=func()error{
+  if err:=verifyOriginalHostsBackupNode(filepath.Dir(pin.Executable),true,check);err!=nil{return err}
+  return verifyOriginalHostsBackupNode(pin.Executable,false,check)
+ }
+ if err:=taskCheck();err!=nil{return denied,err}
+ if err:=fileCheck();err!=nil{return denied,err}
+ first,err:=observeFreshMotorRuntimeNative(ctx,pin);if err!=nil{return denied,err}
+ if err:=verifyFreshMotorRuntimeObservation(pin,first,boot);err!=nil{return denied,err}
+ before,err:=os.Lstat(pin.Executable);if err!=nil||before.Size()<1||before.Size()>128<<20{return denied,errors.New("motor disk image size invalid")}
+ file,err:=os.Open(pin.Executable);if err!=nil{return denied,err}
+ opened,err:=file.Stat()
+ if err!=nil||!os.SameFile(before,opened){file.Close();return denied,errors.New("motor disk image replaced")}
+ h:=sha256.New()
+ n,readErr:=io.Copy(h,io.LimitReader(file,(128<<20)+1));closeErr:=file.Close()
+ if readErr!=nil||closeErr!=nil{return denied,errors.Join(readErr,closeErr)}
+ if n!=before.Size()||hex.EncodeToString(h.Sum(nil))!=pins.MotorSHA256{return denied,errors.New("motor disk image differs from signed admission")}
+ if err:=fileCheck();err!=nil{return denied,err}
+ after,err:=os.Lstat(pin.Executable);if err!=nil||!os.SameFile(before,after)||before.Size()!=after.Size()||!before.ModTime().Equal(after.ModTime()){return denied,errors.New("motor disk identity changed")}
+ if err:=taskCheck();err!=nil{return denied,err}
+ second,err:=observeFreshMotorRuntimeNative(ctx,pin);if err!=nil{return denied,err}
+ if err:=verifyFreshMotorRuntimeObservation(pin,second,boot);err!=nil{return denied,err}
+ if first.PID!=second.PID||first.CreatedUnixMilli!=second.CreatedUnixMilli{return denied,errors.New("motor process replaced during identity verification")}
+ return second,ctx.Err()
 }
